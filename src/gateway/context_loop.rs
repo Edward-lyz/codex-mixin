@@ -816,10 +816,22 @@ pub(crate) fn context_session(
         return Ok(None);
     };
     let client = executor.client_identity(headers);
-    Ok(Some(format!(
-        "{client}{SESSION_SEPARATOR}{}",
-        routing.hash_key
-    )))
+    let base = format!("{client}{SESSION_SEPARATOR}{}", routing.hash_key);
+    let Some(engine) = executor.context_engine() else {
+        return Ok(Some(base));
+    };
+    // One client session id can carry several personas; the engine keeps the
+    // main conversation on the raw key and forks auxiliary ones away from it.
+    let instructions = body.get("instructions").and_then(Value::as_str);
+    let items: &[Value] = body
+        .get("input")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    engine
+        .session_identity(&base, instructions, items)
+        .map(Some)
+        .map_err(GatewayError::Other)
 }
 
 #[cfg(test)]

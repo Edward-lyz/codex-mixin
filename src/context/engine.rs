@@ -11,8 +11,8 @@ use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
 use super::store::{LeaseState, SegmentRow, Store, TurnSample};
 use super::tools;
 use super::types::{
-    CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SegmentKind,
-    SessionStats, SessionSummary, StatsTotals, Tier, TurnView, estimate_item_tokens,
+    CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SESSION_SEPARATOR,
+    SegmentKind, SessionStats, SessionSummary, StatsTotals, Tier, TurnView, estimate_item_tokens,
     estimate_text_tokens, is_context_tool, session_display_name,
 };
 
@@ -35,6 +35,14 @@ pub(crate) const LEASE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 pub struct ContextEngine {
     store: Mutex<Store>,
     settings: crate::config::ContextSettings,
+    /// Instructions text that owns a raw session key, keyed by that key.
+    ///
+    /// One client session id can carry several personas (a title request, an
+    /// auto-review call). The first persona anchors the raw key; any other one
+    /// forks onto its own key so it cannot take the main turn's lease or
+    /// overwrite its view. Anchors live in memory: a restart re-anchors on the
+    /// next arrival, and the continuation check migrates them back.
+    anchors: Mutex<HashMap<String, String>>,
 }
 
 /// Held for the whole turn; the session becomes usable again on drop.
@@ -73,6 +81,7 @@ impl ContextEngine {
         Ok(Self {
             store: Mutex::new(store),
             settings,
+            anchors: Mutex::new(HashMap::new()),
         })
     }
 
@@ -82,6 +91,7 @@ impl ContextEngine {
         Ok(Self {
             store: Mutex::new(store),
             settings,
+            anchors: Mutex::new(HashMap::new()),
         })
     }
 
@@ -148,6 +158,92 @@ impl ContextEngine {
             }
             tokio::time::sleep(LEASE_RETRY_INTERVAL).await;
         }
+    }
+
+    /// Resolves the archive session for one request of a client session.
+    ///
+    /// Clients stamp one session id on every model request of a conversation,
+    /// including auxiliary ones (session title, auto-review). Those carry a
+    /// different instructions text and a fresh message line, so they must not
+    /// share the main turn's lease, view or archived history. The first
+    /// persona seen under `base` anchors it; another one forks to
+    /// `<base><SEP>sub:<fingerprint>` unless it continues the archived chain
+    /// (a model switch replays the same history and keeps the raw key).
+    ///
+    /// A request that replays more history than the archive holds takes the
+    /// raw key back: browsing turns always resend the whole conversation while
+    /// auxiliary requests send a single message, so an auxiliary request that
+    /// anchored the key first cannot strand the main conversation's state.
+    pub(crate) fn session_identity(
+        &self,
+        base: &str,
+        instructions: Option<&str>,
+        items: &[Value],
+    ) -> Result<String> {
+        let Some(instructions) = instructions.filter(|text| !text.is_empty()) else {
+            return Ok(base.to_owned());
+        };
+        // A chained request carries no item array; it continues the session by
+        // definition, so it can neither fork nor re-anchor. A checkpoint item
+        // is the same promise: the token is bound to this session, and the
+        // items it expands to cannot be compared against the archive here.
+        if items.is_empty() || items.iter().any(checkpoint::is_checkpoint_item) {
+            return Ok(base.to_owned());
+        }
+        let persona = persona_fingerprint(instructions);
+        let (history_len, divergence) = self.history_shape(base, items)?;
+        let mut anchors = self.lock_anchors()?;
+        match anchors.get(base) {
+            None => {
+                if history_len > 0 && divergence == 0 {
+                    let forked = forked_session(base, &persona);
+                    tracing::info!(
+                        session = %session_display_name(base),
+                        forked = %session_display_name(&forked),
+                        "archived session belongs to another persona"
+                    );
+                    return Ok(forked);
+                }
+                anchors.insert(base.to_owned(), persona);
+                Ok(base.to_owned())
+            }
+            Some(anchor) if *anchor == persona => Ok(base.to_owned()),
+            Some(_) => {
+                let continues = history_len > 0 && divergence == history_len;
+                let replays = history_len > 0 && items.len() > history_len;
+                if continues || replays {
+                    anchors.insert(base.to_owned(), persona);
+                    return Ok(base.to_owned());
+                }
+                let forked = forked_session(base, &persona);
+                tracing::info!(
+                    session = %session_display_name(base),
+                    forked = %session_display_name(&forked),
+                    "auxiliary persona forked off the session"
+                );
+                Ok(forked)
+            }
+        }
+    }
+
+    /// Longest common prefix between the archived history and the incoming
+    /// items, plus the archived length.
+    fn history_shape(&self, key: &str, items: &[Value]) -> Result<(usize, usize)> {
+        let fingerprints: Vec<String> = items.iter().map(fingerprint).collect();
+        let store = self.lock()?;
+        let history = store.history(key)?;
+        let divergence = history
+            .iter()
+            .zip(fingerprints.iter())
+            .position(|(entry, incoming)| entry.fingerprint != *incoming)
+            .unwrap_or_else(|| history.len().min(fingerprints.len()));
+        Ok((history.len(), divergence))
+    }
+
+    fn lock_anchors(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, String>>> {
+        self.anchors
+            .lock()
+            .map_err(|_| anyhow!("context anchor lock is poisoned"))
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Store>> {
@@ -577,6 +673,16 @@ fn common_prefix_length(left: &[Value], right: &[Value]) -> usize {
         .zip(right)
         .take_while(|(left, right)| fingerprint(left) == fingerprint(right))
         .count()
+}
+
+/// Stable short fingerprint of a persona's instructions text.
+fn persona_fingerprint(instructions: &str) -> String {
+    let digest = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, instructions.as_bytes());
+    digest.simple().to_string()[..16].to_owned()
+}
+
+fn forked_session(base: &str, persona: &str) -> String {
+    format!("{base}{SESSION_SEPARATOR}sub:{persona}")
 }
 
 fn fingerprint(item: &Value) -> String {
@@ -1587,6 +1693,86 @@ mod tests {
             Err(error) => error,
         };
         assert!(format!("{error}").contains("busy"), "{error}");
+    }
+
+    #[test]
+    fn forks_an_auxiliary_persona_off_the_main_session() {
+        let engine = engine();
+        let base = format!("DSH{SESSION_SEPARATOR}thread-9");
+        let main = vec![message("user", "hello"), message("user", "second")];
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("main system"), &main)
+                .expect("identity"),
+            base
+        );
+        engine.begin_turn(&base, &main, 100_000).expect("main turn");
+        let title = vec![message("user", "Generate the title")];
+        let forked = engine
+            .session_identity(&base, Some("title system"), &title)
+            .expect("identity");
+        assert!(forked.starts_with(&base), "{forked}");
+        assert!(forked.contains("sub:"), "{forked}");
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("title system"), &title)
+                .expect("identity"),
+            forked,
+            "the same persona keeps one forked session"
+        );
+        let view = engine
+            .begin_turn(&base, &main, 100_000)
+            .expect("the main conversation still owns the raw key");
+        assert_eq!(
+            view.revision, 0,
+            "the auxiliary request must not rewrite the main history"
+        );
+    }
+
+    #[test]
+    fn keeps_the_raw_key_when_a_model_switch_replays_the_history() {
+        let engine = engine();
+        let base = format!("DSH{SESSION_SEPARATOR}thread-10");
+        let first = vec![message("user", "hello")];
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("system a"), &first)
+                .expect("identity"),
+            base
+        );
+        engine.begin_turn(&base, &first, 100_000).expect("turn");
+        let replay = vec![message("user", "hello"), message("user", "follow up")];
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("system b"), &replay)
+                .expect("identity"),
+            base,
+            "a replayed conversation keeps the raw key"
+        );
+    }
+
+    #[test]
+    fn takes_the_raw_key_back_from_an_auxiliary_anchor() {
+        let engine = engine();
+        let base = format!("DSH{SESSION_SEPARATOR}thread-11");
+        let title = vec![message("user", "Generate the title")];
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("title system"), &title)
+                .expect("identity"),
+            base
+        );
+        engine
+            .begin_turn(&base, &title, 100_000)
+            .expect("title turn");
+        let main = vec![message("user", "hi"), message("user", "follow up")];
+        assert_eq!(
+            engine
+                .session_identity(&base, Some("main system"), &main)
+                .expect("identity"),
+            base,
+            "the request that replays more history takes the raw key"
+        );
     }
 
     #[test]

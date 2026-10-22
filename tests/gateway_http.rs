@@ -10036,3 +10036,73 @@ async fn concurrent_turns_of_one_session_wait_instead_of_failing() {
         assert!(stream.contains("hello codex"), "missing answer: {stream}");
     }
 }
+
+/// A session-title style request carries its own instructions text and a fresh
+/// message line. It must land on its own session so it cannot take the main
+/// turn's lease or rewrite the archived view.
+#[tokio::test]
+async fn auxiliary_persona_forks_off_the_main_session() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let client = reqwest::Client::new();
+
+    let main = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(main.status(), StatusCode::OK);
+    let _ = main.bytes().await.unwrap();
+
+    let title_body = json!({
+        "model": "DeepSeek-V4-Flash-custom",
+        "stream": true,
+        "instructions": "Create a concise title for a session.",
+        "input": [
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"Name the session"}]}
+        ]
+    });
+    let title = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona")
+        .json(&title_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(title.status(), StatusCode::OK);
+    let _ = title.bytes().await.unwrap();
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2, "round count: {recorded:?}");
+    let title_view = recorded[1]["messages"].to_string();
+    assert!(title_view.contains("Name the session"), "{title_view}");
+    assert!(
+        !title_view.contains("dev rules"),
+        "the auxiliary request inherited the main view: {title_view}"
+    );
+
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let keys: String = connection
+        .query_row(
+            "SELECT group_concat(session_key, ' ') FROM sessions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        keys.contains("sub:"),
+        "the auxiliary request needs its own session: {keys}"
+    );
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 2, "main and forked sessions: {keys}");
+}
