@@ -13,7 +13,7 @@ use super::turn_usage::unix_millis;
 use crate::context::ContextEngine;
 use crate::context::TurnSample;
 use crate::context::checkpoint;
-use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, with_guidance};
+use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, NUDGE_MARKER, with_guidance};
 use crate::context::types::{SESSION_SEPARATOR, TOOL_COMPRESS, TOOL_DECOMPRESS, is_context_tool};
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
@@ -203,7 +203,7 @@ impl ContextRun {
                         }
                     }
                 };
-                client.begin_round();
+                client.begin_round(note.contains(NUDGE_MARKER));
                 let mut decoder = SseDecoder::default();
                 let mut completed = None;
                 while completed.is_none() {
@@ -308,10 +308,12 @@ impl ContextRun {
                     // Client actions become visible only after internal commits.
                     client.complete(&mut completed, &template);
                     self.record_completed(&completed, revision, &client.output);
+                    for chunk in client.drain_reasoning() { yield Ok(chunk); }
                     for chunk in client.drain_actions() { yield Ok(chunk); }
                     yield Ok(client.encode(Some("response.completed"), json!({"type":"response.completed", "response":completed})));
                     return;
                 }
+                client.discard_reasoning();
                 let view = match self
                     .engine
                     .begin_turn(&self.session, &original, self.window_tokens)
@@ -420,8 +422,9 @@ impl ContextRun {
     }
 }
 
-// Only client tool events wait for internal commits. Text stays incremental,
-// and the held events have a fixed memory ceiling rather than buffering a turn.
+// Client tool events wait for internal commits, and so does reasoning in a
+// round that carries a compression nudge. Text stays incremental, and the held
+// events have a fixed memory ceiling rather than buffering a turn.
 const MAX_PENDING_TOOL_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Default)]
@@ -438,10 +441,21 @@ struct ContextEvents {
     pending_actions: Vec<(Option<String>, Value)>,
     pending_bytes: usize,
     output: Vec<Value>,
+    // A nudged round usually ends in an internal compression. Its reasoning
+    // only prepares that call, so it is held until the round shows whether the
+    // client gets to see it.
+    hold_reasoning: bool,
+    reasoning_items: HashSet<String>,
+    pending_reasoning: Vec<(Option<String>, Value)>,
+    round_start: usize,
 }
 
 impl ContextEvents {
-    fn begin_round(&mut self) {
+    fn begin_round(&mut self, hold_reasoning: bool) {
+        self.hold_reasoning = hold_reasoning;
+        self.reasoning_items.clear();
+        self.pending_reasoning.clear();
+        self.round_start = self.output.len();
         self.indices.clear();
         self.hidden_items.clear();
         self.hidden_calls.clear();
@@ -498,14 +512,12 @@ impl ContextEvents {
         {
             payload["response_id"] = json!(id);
         }
-        if let Some(index) = payload.get("output_index").and_then(Value::as_u64) {
-            let next = self.indices.entry(index).or_insert_with(|| {
-                let next = self.next_index;
-                self.next_index += 1;
-                next
-            });
-            payload["output_index"] = json!(next);
+        if self.hold_reasoning && self.holds_reasoning(&payload) {
+            self.reserve_pending(event.data.len())?;
+            self.pending_reasoning.push((event.event.clone(), payload));
+            return Ok(None);
         }
+        self.remap_index(&mut payload);
         let action = payload.get("item").is_some_and(is_client_action);
         if action && let Some(item) = payload.get("item") {
             remember_hidden_item(item, &mut self.action_items, &mut self.action_calls);
@@ -520,16 +532,84 @@ impl ContextEvents {
                 .and_then(Value::as_str)
                 .is_some_and(|id| self.action_calls.contains(id));
         if held {
-            self.pending_bytes = self.pending_bytes.saturating_add(event.data.len());
-            if self.pending_bytes > MAX_PENDING_TOOL_BYTES {
-                return Err(GatewayError::Other(anyhow::anyhow!(
-                    "context client tool events exceed the buffer limit"
-                )));
-            }
+            self.reserve_pending(event.data.len())?;
             self.pending_actions.push((event.event.clone(), payload));
             return Ok(None);
         }
-        Ok(Some(self.encode(event.event.as_deref(), payload)))
+        // Visible output means the client gets this round, so the reasoning
+        // that came first must precede it and stop being held.
+        let is_output = payload.get("item").is_some() || payload.get("item_id").is_some();
+        let mut out = Vec::new();
+        if is_output && !self.pending_reasoning.is_empty() {
+            self.hold_reasoning = false;
+            for chunk in self.drain_reasoning() {
+                out.extend_from_slice(&chunk);
+            }
+        }
+        out.extend_from_slice(&self.encode(event.event.as_deref(), payload));
+        Ok(Some(Bytes::from(out)))
+    }
+
+    fn reserve_pending(&mut self, len: usize) -> Result<(), GatewayError> {
+        self.pending_bytes = self.pending_bytes.saturating_add(len);
+        if self.pending_bytes > MAX_PENDING_TOOL_BYTES {
+            return Err(GatewayError::Other(anyhow::anyhow!(
+                "context held events exceed the buffer limit"
+            )));
+        }
+        Ok(())
+    }
+
+    fn remap_index(&mut self, payload: &mut Value) {
+        let Some(index) = payload.get("output_index").and_then(Value::as_u64) else {
+            return;
+        };
+        let next = self.indices.entry(index).or_insert_with(|| {
+            let next = self.next_index;
+            self.next_index += 1;
+            next
+        });
+        payload["output_index"] = json!(next);
+    }
+
+    fn holds_reasoning(&mut self, payload: &Value) -> bool {
+        if let Some(item) = payload.get("item")
+            && item.get("type").and_then(Value::as_str) == Some("reasoning")
+        {
+            if let Some(id) = item.get("id").and_then(Value::as_str) {
+                self.reasoning_items.insert(id.to_owned());
+            }
+            return true;
+        }
+        payload
+            .get("item_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| self.reasoning_items.contains(id))
+    }
+
+    /// The round is internal only: its reasoning never reaches the client and
+    /// leaves the recorded output too, so the stream and the history agree.
+    fn discard_reasoning(&mut self) {
+        if !self.hold_reasoning {
+            return;
+        }
+        self.pending_reasoning.clear();
+        let round = self.output.split_off(self.round_start);
+        self.output.extend(
+            round
+                .into_iter()
+                .filter(|item| item.get("type").and_then(Value::as_str) != Some("reasoning")),
+        );
+    }
+
+    fn drain_reasoning(&mut self) -> Vec<Bytes> {
+        std::mem::take(&mut self.pending_reasoning)
+            .into_iter()
+            .map(|(event, mut payload)| {
+                self.remap_index(&mut payload);
+                self.encode(event.as_deref(), payload)
+            })
+            .collect()
     }
 
     fn failure(&mut self, body: &Value, message: String) -> Bytes {
@@ -954,7 +1034,7 @@ mod tests {
         let mut client = ContextEvents::default();
         let mut seen = Vec::new();
         for (round, expected_index) in [("first", 0), ("second", 1)] {
-            client.begin_round();
+            client.begin_round(false);
             let created = crate::protocol::sse::SseEvent {
                 event: Some("response.created".to_owned()),
                 data: json!({"type":"response.created", "response":{"id":round}}).to_string(),
@@ -1010,6 +1090,73 @@ mod tests {
         let events = client.drain_actions();
         assert_eq!(events.len(), 2);
         assert_eq!(decoded(events[0].clone())["item"]["name"], "shell");
+    }
+
+    fn reasoning_events(client: &mut ContextEvents) -> usize {
+        let added = crate::protocol::sse::SseEvent {
+            event: Some("response.output_item.added".to_owned()),
+            data: json!({"output_index":0, "item":{"type":"reasoning", "id":"rs_1"}}).to_string(),
+        };
+        let delta = crate::protocol::sse::SseEvent {
+            event: Some("response.reasoning_summary_text.delta".to_owned()),
+            data: json!({"item_id":"rs_1", "output_index":0, "delta":"compress"}).to_string(),
+        };
+        [added, delta]
+            .iter()
+            .filter(|event| {
+                client
+                    .render(event, &json!({}))
+                    .expect("reasoning")
+                    .is_some()
+            })
+            .count()
+    }
+
+    #[test]
+    fn drops_reasoning_of_a_nudged_internal_round() {
+        let mut client = ContextEvents::default();
+        client.begin_round(true);
+        assert_eq!(reasoning_events(&mut client), 0, "nudged reasoning is held");
+        client.output.push(json!({"type":"reasoning", "id":"rs_1"}));
+        client.discard_reasoning();
+        assert!(client.drain_reasoning().is_empty());
+        assert!(client.output.is_empty(), "history agrees with the stream");
+    }
+
+    #[test]
+    fn releases_reasoning_when_the_nudged_round_finishes() {
+        let mut client = ContextEvents::default();
+        client.begin_round(true);
+        assert_eq!(reasoning_events(&mut client), 0);
+        let events = client.drain_reasoning();
+        assert_eq!(events.len(), 2);
+        assert_eq!(decoded(events[1].clone())["item_id"], "rs_1");
+    }
+
+    #[test]
+    fn orders_held_reasoning_before_visible_output() {
+        let mut client = ContextEvents::default();
+        client.begin_round(true);
+        assert_eq!(reasoning_events(&mut client), 0);
+        let message = crate::protocol::sse::SseEvent {
+            event: Some("response.output_item.added".to_owned()),
+            data: json!({"output_index":1, "item":{"type":"message", "id":"msg_1"}}).to_string(),
+        };
+        let bytes = client
+            .render(&message, &json!({}))
+            .expect("message")
+            .expect("visible");
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        let reasoning = text.find("rs_1").expect("reasoning flushed");
+        assert!(reasoning < text.find("msg_1").expect("message"));
+        assert!(!client.hold_reasoning, "later output is no longer held");
+    }
+
+    #[test]
+    fn streams_reasoning_without_a_nudge() {
+        let mut client = ContextEvents::default();
+        client.begin_round(false);
+        assert_eq!(reasoning_events(&mut client), 2);
     }
 
     #[test]

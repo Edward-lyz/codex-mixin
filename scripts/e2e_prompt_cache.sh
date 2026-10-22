@@ -17,6 +17,7 @@ e2e_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-mixin-prompt-cache.XXXXXX")"
 # Isolate every state location and the OS startup-service identity so the
 # CLI can never reach the developer's real gateway or service.
 export HOME="$e2e_dir/home"
+export DSH_HOME="$e2e_dir/home/.dsh"
 export CODEX_HOME="$e2e_dir/codex-home"
 export CODEX_GATEWAY_CONFIG="$e2e_dir/config.json"
 export CODEX_GATEWAY_RUNTIME_FILE="$e2e_dir/runtime.json"

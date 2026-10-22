@@ -20,6 +20,10 @@ pub const GUIDANCE_WITHOUT_TOOLS: &str = "<context_management>\n\
 The conversation transcript grows long. Keep every turn dense: preserve goals, constraints, decisions and their reasons, file paths, function names, commands, error messages and open TODOs, and drop repetition.\n\
 </context_management>\n";
 
+/// Marks a note that asks the model to compress, so the gateway can tell
+/// which rounds are likely to end in an internal tool call.
+pub const NUDGE_MARKER: &str = "compress consumed context";
+
 const MIN_CONTEXT_RATIO: f64 = 0.45;
 const MIN_GROWTH_TOKENS: u64 = 20_000;
 const MIN_GROWTH_RATIO: f64 = 0.45;
@@ -96,7 +100,7 @@ impl NudgeState {
             "GROWTH"
         };
         note.push_str(&format!(
-            "{urgency} T{}: {} pending tokens; compress consumed context following these rules.\n",
+            "{urgency} T{}: {} pending tokens; {NUDGE_MARKER} following these rules.\n",
             tier + 1,
             tiers[tier].tokens
         ));

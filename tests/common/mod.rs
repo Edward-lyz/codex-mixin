@@ -25,6 +25,9 @@ pub fn isolate(command: &mut Command, root: &Path) {
     let service_id = format!("test-{}-{:x}", std::process::id(), hasher.finish());
     command
         .env("CODEX_HOME", root.join("codex"))
+        // DSH_HOME overrides HOME for the DSH client, so a test run inside DSH
+        // would otherwise rewrite the developer's real DSH profile.
+        .env("DSH_HOME", root.join("home").join(".dsh"))
         .env("CODEX_GATEWAY_CONFIG", root.join("config.json"))
         .env("CODEX_GATEWAY_RUNTIME_FILE", root.join("runtime.json"))
         .env("CODEX_GATEWAY_DAEMON_FILE", root.join("daemon.json"))
