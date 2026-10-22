@@ -59,17 +59,16 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      - name: Install ripgrep
+      # Tests and the macOS app build shell out to `rg`; the static CLI build
+      # needs the musl toolchain. One `apt-get update` covers both.
+      - name: Install test dependencies
         shell: bash
         run: |
-          if command -v rg >/dev/null; then
-            exit 0
-          fi
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install --yes ripgrep
+            sudo apt-get install --yes ripgrep musl-tools
           elif [[ "${RUNNER_OS}" == "macOS" ]]; then
-            brew install ripgrep
+            command -v rg >/dev/null || brew install ripgrep
           else
             echo "unsupported runner OS: ${RUNNER_OS}" >&2
             exit 1
@@ -98,20 +97,11 @@ jobs:
       - name: Build static Linux CLI
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
           rustup target add x86_64-unknown-linux-musl
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
           CC_x86_64_unknown_linux_musl=musl-gcc \
             cargo build --locked --release --target x86_64-unknown-linux-musl
           ./scripts/verify-linux-static.sh target/x86_64-unknown-linux-musl/release/codex-mixin
-      - name: Upload Linux CLI artifact
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: codex-mixin-linux-cli-${{ github.sha }}
-          path: target/x86_64-unknown-linux-musl/release/codex-mixin
-          if-no-files-found: error
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:
