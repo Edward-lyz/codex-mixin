@@ -117,8 +117,8 @@ public sealed partial class MainWindow
             ("会话", UsageView.Compact(totals.Sessions), $"{UsageView.Compact(totals.Messages)} 条归档消息"),
             ("压缩次数", UsageView.Compact(totals.Compressions), "含已被更高层合并的压缩"),
             ("节省 tokens", UsageView.Compact(totals.SavedTokens), $"当前视图 {UsageView.Compact(totals.ViewTokens)}"),
-            ("缓存命中", cache.Turns == 0 ? "—" : $"{cache.HitPercent:0.0}%",
-                cache.Turns == 0 ? "尚无缓存记录" : $"命中 {UsageView.Compact(cache.CachedTokens)} / 输入 {UsageView.Compact(cache.InputTokens)}")
+            ("缓存命中", cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
+                cache.HitPercent is null ? "缓存命中率不可用" : "仅统计支持缓存观测的请求")
         };
         for (var index = 0; index < metrics.Length; index++)
         {
@@ -179,7 +179,7 @@ public sealed partial class MainWindow
         ToolTipService.SetToolTip(display, $"{session.Session}\nrevision {session.Revision}");
         var updated = session.UpdatedAt <= 0 ? "未知"
             : DateTimeOffset.FromUnixTimeSeconds(session.UpdatedAt).ToLocalTime().ToString("MM-dd HH:mm");
-        var hit = session.Cache.Turns == 0 ? "—" : $"{session.Cache.HitPercent:0.0}%";
+        var hit = session.Cache.HitPercent is null ? "—" : $"{session.Cache.HitPercent:0.0}%";
         var cells = new UIElement[]
         {
             display,

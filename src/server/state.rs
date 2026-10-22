@@ -110,7 +110,9 @@ impl AppState {
         let config = Arc::new(config);
         let upstream = Arc::new(UpstreamAccess::new(Arc::clone(&config), client));
         let image_routes = ImageRouteRegistry::default();
-        let cache_shapes = Arc::new(CacheShapeTracker::with_usage(usage));
+        let cache_shapes = Arc::new(CacheShapeTracker::with_usage(
+            usage.with_providers(&config.providers),
+        ));
         let context = match context_database {
             Some(path) => Some(Arc::new(crate::context::ContextEngine::open(
                 config.context.clone(),

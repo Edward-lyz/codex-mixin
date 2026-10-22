@@ -5,6 +5,7 @@ import Foundation
 struct TurnUsageRecord: Decodable, Identifiable, Equatable {
     let atMs: UInt64
     let session: String
+    let sessionDisplay: String?
     let providerID: String
     let catalogSlug: String
     let upstreamModelID: String
@@ -26,6 +27,7 @@ struct TurnUsageRecord: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case atMs = "at_ms"
         case session
+        case sessionDisplay = "session_display"
         case providerID = "provider_id"
         case catalogSlug = "catalog_slug"
         case upstreamModelID = "upstream_model_id"
@@ -67,6 +69,7 @@ struct DailyUsageRecord: Decodable, Equatable {
     let cacheReadTokens: UInt64
     let cacheCreationTokens: UInt64
     let outputTokens: UInt64
+    let cacheHitPercent: Double?
 
     enum CodingKeys: String, CodingKey {
         case day
@@ -77,6 +80,7 @@ struct DailyUsageRecord: Decodable, Equatable {
         case cacheReadTokens = "cache_read_tokens"
         case cacheCreationTokens = "cache_creation_tokens"
         case outputTokens = "output_tokens"
+        case cacheHitPercent = "cache_hit_percent"
     }
 
     var totalTokens: UInt64 { inputTokens + cacheReadTokens + cacheCreationTokens + outputTokens }
@@ -96,8 +100,10 @@ struct UsageTotals: Equatable {
             requests += row.requestCount
             tokens += row.totalTokens
             output += row.outputTokens
-            cached += row.cacheReadTokens
-            prompt += row.cacheReadTokens + row.inputTokens + row.cacheCreationTokens
+            if row.cacheHitPercent != nil {
+                cached += row.cacheReadTokens
+                prompt += row.cacheReadTokens + row.inputTokens + row.cacheCreationTokens
+            }
         }
     }
 

@@ -53,6 +53,8 @@ pub(crate) struct TurnUsage {
     /// Short hash of the client session, so turns of one conversation group
     /// together without exposing the session identifier.
     pub(crate) session: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_display: Option<String>,
     pub(crate) provider_id: String,
     pub(crate) catalog_slug: String,
     pub(crate) upstream_model_id: String,
@@ -223,6 +225,7 @@ fn load_turns(path: &Path) -> anyhow::Result<VecDeque<TurnUsage>> {
         Ok(TurnUsage {
             at_ms: row.get(0)?,
             session: row.get(1)?,
+            session_display: None,
             provider_id: row.get(2)?,
             catalog_slug: row.get(3)?,
             upstream_model_id: row.get(4)?,
@@ -298,6 +301,7 @@ mod tests {
         TurnUsage {
             at_ms,
             session: session_tag("session-a"),
+            session_display: None,
             provider_id: provider_id.to_owned(),
             catalog_slug: "glm-5.2".to_owned(),
             upstream_model_id: "glm-5.2".to_owned(),

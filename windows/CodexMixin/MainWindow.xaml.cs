@@ -1143,7 +1143,8 @@ public sealed partial class MainWindow : Window
         {
             var shown = session == null ? turns : turns.Where(turn => Json.Text(turn, "session") == session).ToArray();
             summaryHost.Content = UsageView.Summary(daily, shown, Card);
-            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {session} · {shown.Length} 条";
+            var sessionTitle = shown.Length == 0 ? session : Json.OptionalText(shown[0], "session_display") ?? session;
+            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {sessionTitle} · {shown.Length} 条";
             turnsHost.Content = Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
                 : new Border { Child = UsageView.Turns(shown, tag => { session = session == tag ? null : tag; RenderTurns(); }), Style = Themed("ListCard") });
         }

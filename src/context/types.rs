@@ -166,8 +166,12 @@ pub struct CacheStats {
     pub input_tokens: u64,
     pub cached_tokens: u64,
     pub output_tokens: u64,
-    /// Share of the billed input tokens that the upstream served from cache.
-    pub hit_percent: f64,
+    /// Cache share for observable rounds only; billed totals include all rounds.
+    pub hit_percent: Option<f64>,
+    #[serde(skip)]
+    pub(crate) observed_input_tokens: u64,
+    #[serde(skip)]
+    pub(crate) observed_cached_tokens: u64,
 }
 
 impl CacheStats {
@@ -176,11 +180,15 @@ impl CacheStats {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.cached_tokens = self.cached_tokens.saturating_add(other.cached_tokens);
         self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
-        self.hit_percent = if self.input_tokens == 0 {
-            0.0
-        } else {
-            self.cached_tokens as f64 / self.input_tokens as f64 * 100.0
-        };
+        self.observed_input_tokens = self
+            .observed_input_tokens
+            .saturating_add(other.observed_input_tokens);
+        self.observed_cached_tokens = self
+            .observed_cached_tokens
+            .saturating_add(other.observed_cached_tokens);
+        self.hit_percent = (self.observed_input_tokens > 0).then(|| {
+            self.observed_cached_tokens as f64 / self.observed_input_tokens as f64 * 100.0
+        });
     }
 }
 

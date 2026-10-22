@@ -4,6 +4,8 @@ use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
 
 use crate::platform::write_atomic_if_changed;
 
+pub(crate) mod titles;
+
 pub const MANAGED_MARKER: &str = "codex-mixin managed config";
 pub const MANAGED_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
 pub const CUSTOM_ONLY_PROVIDER: &str = "codex-mixin-custom";

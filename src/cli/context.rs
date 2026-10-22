@@ -267,22 +267,29 @@ fn stats(json_output: bool) -> Result<()> {
         stats.totals.view_tokens
     );
     println!(
-        "cache: turns {}  hit {:.1}%  input {}  cached {}  output {}",
+        "cache: turns {}  hit {}  input {}  cached {}  output {}",
         stats.totals.cache.turns,
-        stats.totals.cache.hit_percent,
+        stats
+            .totals
+            .cache
+            .hit_percent
+            .map_or_else(|| "-".to_owned(), |value| format!("{value:.1}%")),
         stats.totals.cache.input_tokens,
         stats.totals.cache.cached_tokens,
         stats.totals.cache.output_tokens
     );
     for session in stats.sessions {
         println!(
-            "{}  messages={} compressions={} saved_tokens={} view_tokens={} cache_hit={:.1}%",
+            "{}  messages={} compressions={} saved_tokens={} view_tokens={} cache_hit={}",
             session.display,
             session.messages,
             session.compressions,
             session.saved_tokens,
             session.view_tokens,
-            session.cache.hit_percent
+            session
+                .cache
+                .hit_percent
+                .map_or_else(|| "-".to_owned(), |value| format!("{value:.1}%"))
         );
     }
     Ok(())

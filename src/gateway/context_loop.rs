@@ -38,6 +38,7 @@ const CLIENT_ACTION_TYPES: [&str; 7] = [
 pub(crate) struct ContextRun {
     engine: Arc<ContextEngine>,
     session: String,
+    codex_thread_id: Option<String>,
     window_tokens: u64,
     max_internal_rounds: usize,
     enabled: bool,
@@ -93,9 +94,17 @@ impl ContextRun {
         };
         let max_internal_rounds = settings.max_internal_rounds;
         let guidance_only = settings.guidance_only;
+        // Routing keys include prompt namespaces and subagents, so their UUID
+        // cannot in general be reversed to the desktop thread for display.
+        let codex_thread_id = if executor.client_identity(headers) == "Codex" {
+            super::stable_oneapi_routing(headers, body)?.map(|routing| routing.session_id)
+        } else {
+            None
+        };
         Ok(Some(Self {
             engine,
             session,
+            codex_thread_id,
             window_tokens,
             max_internal_rounds,
             enabled,
@@ -147,6 +156,17 @@ impl ContextRun {
             &note,
         );
         let (first, _) = executor.send_round(first_plan, &headers).await?;
+        let cache_metrics_available = match &plan.target {
+            super::plan::UpstreamTarget::Official => true,
+            super::plan::UpstreamTarget::Provider {
+                provider_id,
+                upstream_model_id,
+                ..
+            } => executor
+                .cache_shapes
+                .usage()
+                .cache_metrics_available(provider_id, upstream_model_id),
+        };
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
             let _lease = lease;
@@ -224,7 +244,7 @@ impl ContextRun {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                self.record_usage(&completed);
+                self.record_usage(&completed, cache_metrics_available);
                 client.output.extend(output.iter().filter(|item| internal_tool_name(item).is_none()).cloned());
                 let internal: Vec<Value> = output
                     .iter()
@@ -350,7 +370,7 @@ impl ContextRun {
 
     /// Records the billed usage of one upstream round. A round without usage is
     /// skipped instead of being counted as a free round.
-    fn record_usage(&self, completed: &Value) {
+    fn record_usage(&self, completed: &Value, cache_metrics_available: bool) {
         let Some(usage) = completed.get("usage") else {
             return;
         };
@@ -358,6 +378,8 @@ impl ContextRun {
             return;
         };
         let sample = TurnSample {
+            codex_thread_id: self.codex_thread_id.clone(),
+            cache_metrics_available,
             at_ms: unix_millis() as i64,
             input_tokens,
             cached_tokens: usage

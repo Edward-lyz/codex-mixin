@@ -319,11 +319,14 @@ async fn token_usage_turns(
         }
         None => None,
     };
-    Ok(Json(state.cache_shapes.usage_turns(
-        &crate::gateway::TurnQuery {
+    let turns = tokio::task::spawn_blocking(move || {
+        state.cache_shapes.usage_turns(&crate::gateway::TurnQuery {
             since_ms,
             provider_id: query.provider,
             limit,
-        },
-    )))
+        })
+    })
+    .await
+    .map_err(|error| GatewayError::Other(error.into()))?;
+    Ok(Json(turns))
 }
