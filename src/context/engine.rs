@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use super::checkpoint;
 use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
-use super::store::{SegmentRow, Store, TurnSample};
+use super::store::{LeaseState, SegmentRow, Store, TurnSample};
 use super::tools;
 use super::types::{
     CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SegmentKind,
@@ -19,6 +20,17 @@ use super::types::{
 /// must outlive one model exchange but not leak after a crash. The TTL only
 /// guards against a holder that died without releasing.
 pub(crate) const LEASE_TTL_SECONDS: i64 = 30 * 60;
+
+/// How long a turn waits for the live holder before it is refused.
+///
+/// Clients fire auxiliary requests (a session-title call) on the same session
+/// identity as the main turn; those finish in seconds, so waiting keeps the
+/// main turn alive instead of failing it. A real concurrent turn still fails
+/// after this window rather than interleaving two views.
+pub(crate) const LEASE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Polling interval while the lease is held by another turn.
+pub(crate) const LEASE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct ContextEngine {
     store: Mutex<Store>,
@@ -89,15 +101,53 @@ impl ContextEngine {
         GUIDANCE
     }
 
-    pub fn acquire_lease(self: &std::sync::Arc<Self>, session: &str) -> Result<Lease> {
+    /// Takes the lease when the session is free, without waiting.
+    ///
+    /// A `None` result means another turn holds the session. Request paths use
+    /// [`Self::acquire_lease`] instead, so contention queues instead of
+    /// failing the arriving turn.
+    pub(crate) fn try_acquire_lease(
+        self: &std::sync::Arc<Self>,
+        session: &str,
+    ) -> Result<Option<Lease>> {
         let owner = uuid::Uuid::new_v4().to_string();
-        self.lock()?
+        let state = self
+            .lock()?
             .acquire_lease(session, &owner, LEASE_TTL_SECONDS)?;
-        Ok(Lease {
+        if state == LeaseState::Busy {
+            return Ok(None);
+        }
+        Ok(Some(Lease {
             engine: std::sync::Arc::clone(self),
             session: session.to_owned(),
             owner,
-        })
+        }))
+    }
+
+    /// Takes the session lease for one turn, waiting for a live holder.
+    ///
+    /// A client may fire two requests on one session identity (a title call
+    /// racing the main turn). The holder finishes in seconds, so the arriving
+    /// turn waits; only a wait that runs out is refused.
+    pub async fn acquire_lease(self: &std::sync::Arc<Self>, session: &str) -> Result<Lease> {
+        self.acquire_lease_within(session, LEASE_WAIT_TIMEOUT).await
+    }
+
+    pub(crate) async fn acquire_lease_within(
+        self: &std::sync::Arc<Self>,
+        session: &str,
+        wait: Duration,
+    ) -> Result<Lease> {
+        let deadline = Instant::now() + wait;
+        loop {
+            if let Some(lease) = self.try_acquire_lease(session)? {
+                return Ok(lease);
+            }
+            if Instant::now() >= deadline {
+                bail!("context session is busy with another turn");
+            }
+            tokio::time::sleep(LEASE_RETRY_INTERVAL).await;
+        }
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Store>> {
@@ -1471,19 +1521,72 @@ mod tests {
     fn serializes_turns_of_one_session_with_a_lease() {
         let engine = std::sync::Arc::new(engine());
         let session = session();
-        let first = engine.acquire_lease(&session).expect("first lease");
-        let error = match engine.acquire_lease(&session) {
-            Ok(_) => panic!("a second turn must not take the same session"),
-            Err(error) => error,
-        };
-        assert!(format!("{error}").contains("busy"), "{error}");
+        let first = engine
+            .try_acquire_lease(&session)
+            .expect("lease query")
+            .expect("first lease");
+        assert!(
+            engine
+                .try_acquire_lease(&session)
+                .expect("lease query")
+                .is_none(),
+            "a second turn must not take the same session"
+        );
         let other = format!("codex{SESSION_SEPARATOR}thread-2");
-        let second = engine.acquire_lease(&other).expect("other session");
+        let second = engine
+            .try_acquire_lease(&other)
+            .expect("lease query")
+            .expect("other session");
         drop(second);
         drop(first);
         engine
-            .acquire_lease(&session)
+            .try_acquire_lease(&session)
+            .expect("lease query")
             .expect("the session is free after the turn ends");
+    }
+
+    #[tokio::test]
+    async fn waits_for_a_busy_session_instead_of_failing() {
+        let engine = std::sync::Arc::new(engine());
+        let session = session();
+        let first = engine
+            .try_acquire_lease(&session)
+            .expect("lease query")
+            .expect("first lease");
+        let waiter = {
+            let engine = std::sync::Arc::clone(&engine);
+            let session = session.clone();
+            tokio::spawn(async move { engine.acquire_lease(&session).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !waiter.is_finished(),
+            "the arriving turn must wait for the live holder"
+        );
+        drop(first);
+        let lease = waiter
+            .await
+            .expect("waiter joins")
+            .expect("the waiting turn takes the session once it is free");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_turn_that_outwaits_the_holder() {
+        let engine = std::sync::Arc::new(engine());
+        let session = session();
+        let _first = engine
+            .try_acquire_lease(&session)
+            .expect("lease query")
+            .expect("first lease");
+        let error = match engine
+            .acquire_lease_within(&session, Duration::from_millis(150))
+            .await
+        {
+            Ok(_) => panic!("a held session must refuse after the wait window"),
+            Err(error) => error,
+        };
+        assert!(format!("{error}").contains("busy"), "{error}");
     }
 
     #[test]

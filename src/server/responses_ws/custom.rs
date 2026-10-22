@@ -37,7 +37,9 @@ pub(super) async fn run_custom_ws_request(
             .gateway
             .resolve_model_route(&requested_model)
             .await?;
-        if let Some(response) = compact::context_checkpoint(context.state, context.headers, body)? {
+        if let Some(response) =
+            compact::context_checkpoint(context.state, context.headers, body).await?
+        {
             return complete_custom_compaction(
                 context.client_sender,
                 response,

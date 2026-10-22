@@ -109,10 +109,10 @@ impl ContextRun {
         plan: RequestPlan,
         headers: HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
-        let lease = self
-            .engine
-            .clone()
+        let engine = Arc::clone(&self.engine);
+        let lease = engine
             .acquire_lease(&self.session)
+            .await
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
         let original = context_input(&self.engine, &self.session, &plan.body)?;
         if !self.enabled {

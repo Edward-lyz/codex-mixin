@@ -31,7 +31,7 @@ pub(super) async fn compact(
     check_gateway_auth(&state, &headers).await?;
     let body = super::request_body::parse_json(body).await?;
     validate_compact_request(&body)?;
-    if let Some(response) = context_checkpoint_response(&state, &headers, &body)? {
+    if let Some(response) = context_checkpoint_response(&state, &headers, &body).await? {
         return Ok(response);
     }
     let model = body
@@ -131,18 +131,19 @@ fn compaction_http_response(response: Value, stream: bool) -> Result<Response, G
 ///
 /// Returns None when the feature is off or the request has no session
 /// identity, so the existing summary flow stays in charge.
-pub(super) fn context_checkpoint_response(
+pub(super) async fn context_checkpoint_response(
     state: &AppState,
     headers: &HeaderMap,
     body: &Value,
 ) -> Result<Option<Response>, GatewayError> {
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    context_checkpoint(state, headers, body)?
+    context_checkpoint(state, headers, body)
+        .await?
         .map(|response| compaction_http_response(response, stream))
         .transpose()
 }
 
-pub(super) fn context_checkpoint(
+pub(super) async fn context_checkpoint(
     state: &AppState,
     headers: &HeaderMap,
     body: &Value,
@@ -163,6 +164,7 @@ pub(super) fn context_checkpoint(
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
     let _lease = engine
         .acquire_lease(&session)
+        .await
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     let items = crate::gateway::context_input(&engine, &session, body)?;
     let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
