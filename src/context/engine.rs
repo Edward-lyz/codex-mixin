@@ -628,11 +628,55 @@ impl ContextEngine {
     /// Compression and cache totals per session for the console page.
     pub fn stats(&self, window_tokens: u64, enabled: bool) -> Result<ContextStats> {
         let usage = self.lock()?.session_usage()?;
+        let wanted: HashSet<&str> = usage
+            .iter()
+            .filter_map(|row| {
+                row.codex_thread_id
+                    .as_deref()
+                    .or_else(|| codex_session_id(&row.session))
+            })
+            .collect();
+        let mut titles = HashMap::new();
+        if !wanted.is_empty() {
+            crate::clients::codex::titles::visit_titles(|id, title| {
+                // Older context rows only have the routing UUID. Resolve the
+                // standard Codex namespaces without changing that identity.
+                for candidate in [
+                    id.clone(),
+                    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string(),
+                    uuid::Uuid::new_v5(
+                        &uuid::Uuid::NAMESPACE_URL,
+                        format!("thread-id\0{id}").as_bytes(),
+                    )
+                    .to_string(),
+                    uuid::Uuid::new_v5(
+                        &uuid::Uuid::NAMESPACE_URL,
+                        format!("thread-id\0{id}\0prompt-cache-key\0{id}").as_bytes(),
+                    )
+                    .to_string(),
+                ] {
+                    if wanted.contains(candidate.as_str()) {
+                        titles.insert(candidate, title.clone());
+                    }
+                }
+            });
+        }
         let mut sessions = Vec::with_capacity(usage.len());
         for row in usage {
             let status = self.status(&row.session, window_tokens, enabled)?;
             sessions.push(SessionStats {
-                display: session_display_name(&row.session),
+                display: row
+                    .codex_thread_id
+                    .as_deref()
+                    .or_else(|| codex_session_id(&row.session))
+                    .and_then(|id| titles.get(id))
+                    .map(
+                        |title| match row.session.splitn(3, SESSION_SEPARATOR).nth(2) {
+                            Some(persona) => format!("{title} / {persona}"),
+                            None => title.clone(),
+                        },
+                    )
+                    .unwrap_or_else(|| session_display_name(&row.session)),
                 session: row.session,
                 revision: row.revision,
                 updated_at: row.updated_at,
@@ -666,6 +710,15 @@ impl ContextEngine {
         let store = self.lock()?;
         store.export(session)
     }
+}
+
+fn codex_session_id(session: &str) -> Option<&str> {
+    let mut parts = session.split(SESSION_SEPARATOR);
+    parts
+        .next()
+        .is_some_and(|client| client.eq_ignore_ascii_case("codex"))
+        .then(|| parts.next())
+        .flatten()
 }
 
 fn common_prefix_length(left: &[Value], right: &[Value]) -> usize {
@@ -2122,6 +2175,8 @@ mod tests {
             .record_turn(
                 &session,
                 TurnSample {
+                    codex_thread_id: None,
+                    cache_metrics_available: true,
                     at_ms: 1,
                     input_tokens: 1_000,
                     cached_tokens: 600,
@@ -2133,6 +2188,8 @@ mod tests {
             .record_turn(
                 &session,
                 TurnSample {
+                    codex_thread_id: None,
+                    cache_metrics_available: true,
                     at_ms: 2,
                     input_tokens: 1_000,
                     cached_tokens: 700,
@@ -2151,7 +2208,7 @@ mod tests {
         assert_eq!(stats.totals.cache.input_tokens, 2_000);
         assert_eq!(stats.totals.cache.cached_tokens, 1_300);
         assert_eq!(stats.totals.cache.output_tokens, 130);
-        assert!((stats.totals.cache.hit_percent - 65.0).abs() < 1e-9);
+        assert!((stats.totals.cache.hit_percent.unwrap() - 65.0).abs() < 1e-9);
 
         let row = stats.sessions.first().expect("one session");
         assert_eq!(row.session, session);
@@ -2160,7 +2217,91 @@ mod tests {
         assert_eq!(row.compressions, 1);
         assert!(row.view_tokens > 0);
         assert_eq!(row.tiers.t1_blocks, 1);
-        assert_eq!(row.cache.hit_percent, 65.0);
+        assert_eq!(row.cache.hit_percent, Some(65.0));
+    }
+
+    #[test]
+    fn excludes_unobservable_cache_without_losing_billed_usage() {
+        let engine = engine();
+        let first = session();
+        let second = format!("codex{SESSION_SEPARATOR}excluded");
+        for (key, available, input, cached) in [
+            (&first, true, 1_000, 600),
+            (&first, false, 32_000, 0),
+            (&second, false, 32_000, 0),
+        ] {
+            engine.begin_turn(key, &four_messages(), 10_000).unwrap();
+            engine
+                .record_turn(
+                    key,
+                    TurnSample {
+                        codex_thread_id: None,
+                        at_ms: 1,
+                        input_tokens: input,
+                        cached_tokens: cached,
+                        output_tokens: 50,
+                        cache_metrics_available: available,
+                    },
+                )
+                .unwrap();
+        }
+        let stats = engine.stats(10_000, true).unwrap();
+        assert_eq!(stats.totals.cache.turns, 3);
+        assert_eq!(stats.totals.cache.input_tokens, 65_000);
+        assert_eq!(stats.totals.cache.output_tokens, 150);
+        assert_eq!(stats.totals.cache.hit_percent, Some(60.0));
+        assert_eq!(
+            stats
+                .sessions
+                .iter()
+                .find(|row| row.session == second)
+                .unwrap()
+                .cache
+                .hit_percent,
+            None
+        );
+    }
+
+    #[test]
+    fn upgrades_legacy_cache_usage_as_unobservable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("context.db");
+        let key = session();
+        {
+            let engine = ContextEngine::open(settings(), &path).unwrap();
+            engine.begin_turn(&key, &four_messages(), 10_000).unwrap();
+        }
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("DROP TABLE turns;
+            CREATE TABLE turns (session_key TEXT NOT NULL, at_ms INTEGER NOT NULL,
+                input_tokens INTEGER NOT NULL, cached_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL);").unwrap();
+        connection
+            .execute("INSERT INTO turns VALUES (?1, 1, 32000, 0, 100)", [&key])
+            .unwrap();
+        drop(connection);
+        let engine = ContextEngine::open(settings(), &path).unwrap();
+        let stats = engine.stats(10_000, true).unwrap();
+        assert_eq!(stats.totals.cache.input_tokens, 32_000);
+        assert_eq!(stats.totals.cache.output_tokens, 100);
+        assert_eq!(stats.totals.cache.turns, 1);
+        assert_eq!(stats.totals.cache.hit_percent, None);
+        engine
+            .record_turn(
+                &key,
+                TurnSample {
+                    codex_thread_id: None,
+                    at_ms: 2,
+                    input_tokens: 1_000,
+                    cached_tokens: 750,
+                    output_tokens: 50,
+                    cache_metrics_available: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.stats(10_000, true).unwrap().totals.cache.hit_percent,
+            Some(75.0)
+        );
     }
 
     #[test]
@@ -2220,7 +2361,7 @@ mod tests {
         assert!(stats.sessions.is_empty());
         assert_eq!(stats.totals.sessions, 0);
         assert_eq!(stats.totals.saved_tokens, 0);
-        assert_eq!(stats.totals.cache.hit_percent, 0.0);
+        assert_eq!(stats.totals.cache.hit_percent, None);
     }
 
     #[test]

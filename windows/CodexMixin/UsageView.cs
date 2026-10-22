@@ -32,8 +32,9 @@ internal static class UsageView
 
     internal static UIElement Summary(JsonElement[] daily, JsonElement[] turns, Func<string, string, UIElement?, Border> card)
     {
-        var cached = daily.Sum(row => Count(row, "cache_read_tokens"));
-        var prompt = cached + daily.Sum(row => Count(row, "input_tokens") + Count(row, "cache_creation_tokens"));
+        var cacheRows = daily.Where(row => Number(row, "cache_hit_percent") != null).ToArray();
+        var cached = cacheRows.Sum(row => Count(row, "cache_read_tokens"));
+        var prompt = cached + cacheRows.Sum(row => Count(row, "input_tokens") + Count(row, "cache_creation_tokens"));
         var mismatches = turns.Count(turn => turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False);
         var grid = new Grid { ColumnSpacing = 12 };
         var metrics = new (string Title, string Value, string Note)[]
@@ -137,14 +138,15 @@ internal static class UsageView
     private static Border Turn(JsonElement turn, Action<string> onSession)
     {
         var session = Json.Text(turn, "session");
+        var sessionTitle = Json.OptionalText(turn, "session_display") ?? session;
         var sessionButton = new HyperlinkButton
         {
-            Content = new TextBlock { Text = session, TextTrimming = TextTrimming.CharacterEllipsis },
+            Content = new TextBlock { Text = sessionTitle, TextTrimming = TextTrimming.CharacterEllipsis },
             Padding = new Thickness(0), FontFamily = new FontFamily("Consolas"),
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
-        AutomationProperties.SetName(sessionButton, session);
-        ToolTipService.SetToolTip(sessionButton, $"{session}\n只看这个会话，再次点击显示全部");
+        AutomationProperties.SetName(sessionButton, sessionTitle);
+        ToolTipService.SetToolTip(sessionButton, $"{sessionTitle}\n只看这个会话，再次点击显示全部");
         sessionButton.Click += (_, _) => onSession(session);
         var model = new StackPanel();
         model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });

@@ -865,7 +865,7 @@ function turnsTable(turns) {
   const sessionButton = (turn) => h("button", {
     class: "chip-btn mono",
     type: "button",
-    text: turn.session,
+    text: turn.session_display || turn.session,
     title: usagePage.session ? "显示全部会话" : "只看这个会话",
     onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
   });
@@ -916,8 +916,9 @@ RENDERERS.usage = () => {
   if (!usagePage.data) return [toolbar, h("div", { class: "skeleton" })];
 
   const sum = (key) => rows.reduce((total, row) => total + (row[key] || 0), 0);
-  const cached = sum("cache_read_tokens");
-  const prompt = cached + sum("input_tokens") + sum("cache_creation_tokens");
+  const cacheRows = rows.filter((row) => typeof row.cache_hit_percent === "number");
+  const cached = cacheRows.reduce((total, row) => total + (row.cache_read_tokens || 0), 0);
+  const prompt = cached + cacheRows.reduce((total, row) => total + (row.input_tokens || 0) + (row.cache_creation_tokens || 0), 0);
   const mismatches = turns.filter((turn) => turn.model_matches === false).length;
   const buckets = dailyBuckets(rows);
   const keys = seriesKeys(buckets);
@@ -932,7 +933,7 @@ RENDERERS.usage = () => {
       barChart("Tokens", buckets, keys, "tokens", compact),
       barChart("请求次数", buckets, keys, "requests", compact),
       usageLegend(keys))),
-    card("回复明细", usagePage.session ? `会话 ${usagePage.session} · ${turns.length} 条` : `最近 ${turns.length} 条回复；点击会话标签只看该会话`, turnsTable(turns), null, "card-flush"),
+    card("回复明细", usagePage.session ? `会话 ${turns[0]?.session_display || usagePage.session} · ${turns.length} 条` : `最近 ${turns.length} 条回复；点击会话标签只看该会话`, turnsTable(turns), null, "card-flush"),
   ];
 };
 
@@ -2405,7 +2406,7 @@ function contextMetrics(totals) {
     metricCard("会话", totals.sessions || 0, "已有归档的会话数"),
     metricCard("压缩次数", totals.compressions || 0, "含已升级到更高层的压缩"),
     metricCard("节省 token", totals.saved_tokens || 0, "原始 token 减去摘要 token"),
-    metricCard("缓存命中", fixed(cache.hit_percent || 0, 1, "%"), compact(cache.cached_tokens || 0) + " / " + compact(cache.input_tokens || 0) + " 输入 token"),
+    metricCard("缓存命中", fixed(cache.hit_percent, 1, "%"), cache.hit_percent == null ? "缓存命中率不可用" : "仅统计支持缓存观测的请求"),
   );
 }
 
@@ -2439,8 +2440,8 @@ function contextSessionsCard(sessions, totals) {
       h(
         "td",
         { class: "r" },
-        h("div", { text: fixed(cache.hit_percent || 0, 1, "%") }),
-        h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "缓存命中率", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(hit * 100)) },
+        h("div", { text: fixed(cache.hit_percent, 1, "%") }),
+        cache.hit_percent == null ? null : h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "缓存命中率", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(hit * 100)) },
           h("div", { class: "progress-bar", style: { transform: "scaleX(" + fixed(hit, 3, "") + ")" } })),
       ),
       h("td", { class: "r", text: timeAgo((row.updated_at || 0) * 1000) }),
@@ -2458,7 +2459,7 @@ function contextSessionsCard(sessions, totals) {
       h("td", { class: "r", text: compact(totals.compressions || 0) }),
       h("td", { class: "r", text: compact(totals.saved_tokens || 0) }),
       h("td", { class: "r", text: compact(totals.view_tokens || 0) }),
-      h("td", { class: "r", text: fixed(cache.hit_percent || 0, 1, "%") }),
+      h("td", { class: "r", text: fixed(cache.hit_percent, 1, "%") }),
       h("td", { class: "r", text: compact(cache.turns || 0) + " 轮" }),
     ),
   );

@@ -1,6 +1,6 @@
 //! Provider usage accounting and persistence for prompt-cache diagnostics.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +13,8 @@ use super::turn_usage::{TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
 
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
+
+const CLAUDE_FAMILY_NAMES: &[&str] = &["claude", "fable", "opus", "sonet", "sonnet", "haiku"];
 
 /// Provider-level token and prompt cache counters observed on upstream
 /// responses, kept compact so the menu can visualize usage without retaining
@@ -362,6 +364,7 @@ pub(crate) struct TokenUsageAggregator {
     state: Mutex<TokenUsageState>,
     persist_path: Option<PathBuf>,
     turns: TurnLedger,
+    oneapi_providers: HashSet<String>,
 }
 
 impl TokenUsageAggregator {
@@ -377,7 +380,23 @@ impl TokenUsageAggregator {
             state: Mutex::new(state),
             turns: TurnLedger::load(path.clone())?,
             persist_path: path,
+            oneapi_providers: HashSet::new(),
         })
+    }
+
+    pub(crate) fn with_providers(
+        mut self,
+        providers: &[crate::provider::ProviderDefinition],
+    ) -> Self {
+        self.oneapi_providers = providers
+            .iter()
+            .filter(|provider| {
+                provider.model_source == crate::provider::ProviderModelSource::BaiduOneApi
+                    || provider.preset_id.as_deref() == Some("baidu-oneapi")
+            })
+            .map(|provider| provider.id.clone())
+            .collect();
+        self
     }
 
     pub(crate) fn record_turn(&self, turn: TurnUsage) {
@@ -385,7 +404,39 @@ impl TokenUsageAggregator {
     }
 
     pub(crate) fn turns(&self, query: &TurnQuery) -> Vec<TurnUsage> {
-        self.turns.query(query)
+        let mut turns = self.turns.query(query);
+        for turn in &mut turns {
+            if !self.cache_metrics_available(&turn.provider_id, &turn.upstream_model_id) {
+                turn.cache_hit_percent = None;
+            }
+        }
+        let wanted: HashSet<String> = turns.iter().map(|turn| turn.session.clone()).collect();
+        let mut titles = HashMap::new();
+        if !wanted.is_empty() {
+            crate::clients::codex::titles::visit_titles(|id, title| {
+                let tag = super::turn_usage::session_tag(&id);
+                if wanted.contains(&tag) {
+                    // Legacy tags are 32-bit hashes. Never pick an arbitrary
+                    // title if two Codex threads collide.
+                    titles
+                        .entry(tag)
+                        .and_modify(|title| *title = None)
+                        .or_insert(Some(title));
+                }
+            });
+        }
+        for turn in &mut turns {
+            turn.session_display = titles.get(&turn.session).cloned().flatten();
+        }
+        turns
+    }
+
+    pub(crate) fn cache_metrics_available(&self, provider_id: &str, model_id: &str) -> bool {
+        if !self.oneapi_providers.contains(provider_id) {
+            return true;
+        }
+        let model = model_id.to_ascii_lowercase();
+        !CLAUDE_FAMILY_NAMES.iter().any(|name| model.contains(name))
     }
 
     pub(crate) fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
@@ -428,7 +479,7 @@ impl TokenUsageAggregator {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        finalize_usage(entries)
+        self.finalize_entries(entries)
     }
 
     pub(crate) fn snapshot_for_days(&self, days: u64) -> anyhow::Result<Vec<ProviderTokenUsage>> {
@@ -445,7 +496,17 @@ impl TokenUsageAggregator {
                 .or_default();
             add_aggregated_usage(entry, usage);
         }
-        Ok(finalize_usage(aggregated.into_values().collect()))
+        Ok(self.finalize_entries(aggregated.into_values().collect()))
+    }
+
+    fn finalize_entries(&self, entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsage> {
+        let mut entries = finalize_usage(entries);
+        for entry in &mut entries {
+            if !self.cache_metrics_available(&entry.provider_id, &entry.model_id) {
+                entry.cache_hit_percent = None;
+            }
+        }
+        entries
     }
 }
 
@@ -481,7 +542,7 @@ impl TokenUsageAggregator {
             .into_iter()
             .map(|(day, usage)| DailyTokenUsage {
                 day,
-                usage: finalize_usage(vec![usage]).remove(0),
+                usage: self.finalize_entries(vec![usage]).remove(0),
             })
             .collect())
     }
@@ -683,5 +744,47 @@ impl UpstreamCacheUsage {
             .into_iter()
             .flatten()
             .any(|value| value > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn excludes_legacy_oneapi_counters_after_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.sqlite3");
+        let counters = UpstreamCacheUsage {
+            input_tokens: Some(32_000),
+            cache_read_tokens: Some(0),
+            output_tokens: Some(100),
+            ..Default::default()
+        };
+        persist_usage_delta(&path, "renamed", "Fable-5", &counters).unwrap();
+        persist_usage_delta(&path, "renamed", "gpt-5", &counters).unwrap();
+        let usage = TokenUsageAggregator {
+            state: Mutex::new(load_persisted_usage(&path).unwrap()),
+            turns: TurnLedger::load(Some(path.clone())).unwrap(),
+            persist_path: Some(path),
+            oneapi_providers: HashSet::new(),
+        }
+        .with_providers(&[crate::provider::baidu_oneapi_provider("renamed", "unused")]);
+        for rows in [
+            usage.snapshot(),
+            usage.snapshot_for_days(1).unwrap(),
+            usage
+                .daily_series(1)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.usage)
+                .collect(),
+        ] {
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].cache_hit_percent, None);
+            assert_eq!(rows[0].input_tokens, 32_000);
+            assert_eq!(rows[0].output_tokens, 100);
+            assert_eq!(rows[1].cache_hit_percent, Some(0.0));
+        }
     }
 }

@@ -236,6 +236,12 @@ Check("context contract rejects unknown values", async () =>
         {"enabled":true,"database_path":"/tmp/context.db","totals":{"sessions":0,"messages":0,"compressions":0,"saved_tokens":0,"view_tokens":0,"cache":{"turns":0,"input_tokens":0,"cached_tokens":0,"output_tokens":0,"hit_percent":101}},"sessions":[]}
         """);
     await Failure(() => { ContextContract.ParseStats(outOfRange); return Task.CompletedTask; });
+    var unavailable = Parse("""
+        {"enabled":true,"database_path":"/tmp/context.db","totals":{"sessions":0,"messages":0,"compressions":0,"saved_tokens":0,"view_tokens":0,"cache":{"turns":1,"input_tokens":32000,"cached_tokens":0,"output_tokens":100,"hit_percent":null}},"sessions":[]}
+        """);
+    var cache = ContextContract.ParseStats(unavailable).Totals.Cache;
+    Assert(cache.HitPercent is null && cache.InputTokens == 32000,
+        "Unavailable cache metrics must retain billed tokens");
     var valid = Parse("""
         {"context":{"enabled":true,"growth_threshold_tokens":80000,"pressure_ratio":0.6,"urgent_ratio":0.8,"protected_messages":8,"protected_tokens":24000,"max_internal_rounds":2,"max_tier":2,"guidance_only":false,"context_window_tokens":128000},"config_path":"/tmp/config.json","database_path":"/tmp/context.db"}
         """);

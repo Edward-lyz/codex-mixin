@@ -197,14 +197,14 @@ struct ConsoleUsageView: View {
             }
             .width(min: 130, ideal: 150)
             TableColumn(AppLocalization.string("console.usage.session")) { turn in
-                Button(turn.session) {
+                Button(turn.sessionDisplay ?? turn.session) {
                     model.sessionFilter = model.sessionFilter == nil ? turn.session : nil
                 }
                 .buttonStyle(.link)
                 .font(.caption.monospaced())
                 .help(AppLocalization.string("console.usage.sessionHelp"))
             }
-            .width(80)
+            .width(min: 120, ideal: 180)
             TableColumn(AppLocalization.string("console.usage.model")) { turn in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(turn.upstreamModelID)

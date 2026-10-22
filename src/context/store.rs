@@ -79,17 +79,16 @@ CREATE TABLE IF NOT EXISTS turns (
     at_ms INTEGER NOT NULL,
     input_tokens INTEGER NOT NULL,
     cached_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL
+    output_tokens INTEGER NOT NULL,
+    cache_metrics_available INTEGER NOT NULL DEFAULT 0,
+    codex_thread_id TEXT
 );
 CREATE INDEX IF NOT EXISTS turns_session ON turns (session_key, at_ms);
 ";
 
 /// Cached prompt tokens are a subset of the billed input tokens.
-pub(crate) fn cache_hit_percent(cached_tokens: u64, input_tokens: u64) -> f64 {
-    if input_tokens == 0 {
-        return 0.0;
-    }
-    cached_tokens as f64 / input_tokens as f64 * 100.0
+pub(crate) fn cache_hit_percent(cached_tokens: u64, input_tokens: u64) -> Option<f64> {
+    (input_tokens > 0).then(|| cached_tokens as f64 / input_tokens as f64 * 100.0)
 }
 
 pub(crate) fn unix_now() -> i64 {
@@ -140,17 +139,20 @@ pub(crate) struct BlockRow {
 
 /// Billed usage of one upstream round; unknown counters are not recorded so
 /// cached-token totals stay honest.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct TurnSample {
     pub at_ms: i64,
     pub input_tokens: u64,
     pub cached_tokens: u64,
     pub output_tokens: u64,
+    pub cache_metrics_available: bool,
+    pub codex_thread_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct SessionUsage {
     pub session: String,
+    pub codex_thread_id: Option<String>,
     pub revision: i64,
     pub updated_at: i64,
     pub messages: u64,
@@ -212,6 +214,25 @@ impl Store {
             .context("upgrade context schema")?;
         self.upgrade_block_tokens()
             .context("upgrade context schema")?;
+        let mut statement = self.connection.prepare("PRAGMA table_info(turns)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        if !columns
+            .iter()
+            .any(|column| column == "cache_metrics_available")
+        {
+            // Legacy rounds have no provider/model identity. Keep billed usage,
+            // but do not claim their cache counters are comparable.
+            self.connection.execute("ALTER TABLE turns ADD COLUMN cache_metrics_available INTEGER NOT NULL DEFAULT 0", [])
+                .context("upgrade context cache accounting")?;
+        }
+        if !columns.iter().any(|column| column == "codex_thread_id") {
+            self.connection
+                .execute("ALTER TABLE turns ADD COLUMN codex_thread_id TEXT", [])
+                .context("upgrade context thread metadata")?;
+        }
         // CLI readers share this database with the gateway. Opening another
         // connection must never revoke a live turn's lease.
         self.connection
@@ -936,14 +957,16 @@ impl Store {
         self.ensure_session(key)?;
         self.connection
             .execute(
-                "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens, cache_metrics_available, codex_thread_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     key,
                     sample.at_ms,
                     sample.input_tokens as i64,
                     sample.cached_tokens as i64,
-                    sample.output_tokens as i64
+                    sample.output_tokens as i64,
+                    sample.cache_metrics_available,
+                    sample.codex_thread_id
                 ],
             )
             .context("record context turn usage")?;
@@ -968,7 +991,13 @@ impl Store {
                         (SELECT COALESCE(SUM(t.cached_tokens), 0) FROM turns t
                          WHERE t.session_key = s.session_key),
                         (SELECT COALESCE(SUM(t.output_tokens), 0) FROM turns t
-                         WHERE t.session_key = s.session_key)
+                         WHERE t.session_key = s.session_key),
+                        (SELECT COALESCE(SUM(t.input_tokens), 0) FROM turns t
+                         WHERE t.session_key = s.session_key AND t.cache_metrics_available = 1),
+                        (SELECT COALESCE(SUM(t.cached_tokens), 0) FROM turns t
+                         WHERE t.session_key = s.session_key AND t.cache_metrics_available = 1),
+                        (SELECT t.codex_thread_id FROM turns t WHERE t.session_key = s.session_key
+                         AND t.codex_thread_id IS NOT NULL LIMIT 1)
                  FROM sessions s ORDER BY s.updated_at DESC",
             )
             .context("prepare session usage")?;
@@ -976,6 +1005,7 @@ impl Store {
             .query_map([], |row| {
                 Ok(SessionUsage {
                     session: row.get(0)?,
+                    codex_thread_id: row.get(12)?,
                     revision: row.get(1)?,
                     updated_at: row.get(2)?,
                     messages: row.get::<_, i64>(3)?.max(0) as u64,
@@ -986,7 +1016,9 @@ impl Store {
                         input_tokens: row.get::<_, i64>(7)?.max(0) as u64,
                         cached_tokens: row.get::<_, i64>(8)?.max(0) as u64,
                         output_tokens: row.get::<_, i64>(9)?.max(0) as u64,
-                        hit_percent: 0.0,
+                        hit_percent: None,
+                        observed_input_tokens: row.get::<_, i64>(10)?.max(0) as u64,
+                        observed_cached_tokens: row.get::<_, i64>(11)?.max(0) as u64,
                     },
                 })
             })
@@ -994,8 +1026,10 @@ impl Store {
         let mut usage = Vec::new();
         for row in rows {
             let mut row = row.context("read session usage row")?;
-            row.cache.hit_percent =
-                cache_hit_percent(row.cache.cached_tokens, row.cache.input_tokens);
+            row.cache.hit_percent = cache_hit_percent(
+                row.cache.observed_cached_tokens,
+                row.cache.observed_input_tokens,
+            );
             usage.push(row);
         }
         Ok(usage)

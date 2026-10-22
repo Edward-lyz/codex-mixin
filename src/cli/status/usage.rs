@@ -149,7 +149,9 @@ fn turn_line(row: &serde_json::Value) -> String {
     };
     format!(
         "{} {}/{}{model}: input {}, cached {} ({cache}), output {}, reasoning {}",
-        text("session"),
+        row["session_display"]
+            .as_str()
+            .unwrap_or_else(|| row["session"].as_str().unwrap_or("?")),
         text("provider_id"),
         text("upstream_model_id"),
         count("input_tokens"),

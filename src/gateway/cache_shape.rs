@@ -588,6 +588,78 @@ mod tests {
         }
     }
 
+    #[test]
+    fn oneapi_claude_zero_cache_is_not_a_statistic_or_alarm() {
+        let usage = Arc::new(
+            TokenUsageAggregator::default()
+                .with_providers(&[crate::provider::baidu_oneapi_provider("renamed", "unused")]),
+        );
+        let counters = UpstreamCacheUsage {
+            input_tokens: Some(32_000),
+            cache_read_tokens: Some(0),
+            output_tokens: Some(200),
+            ..Default::default()
+        };
+        for model in [
+            "Claude-5",
+            "Fable-5",
+            "OPUS-4.7",
+            "Sonet-5",
+            "Sonnet-4.6",
+            "haiku-4.5",
+        ] {
+            let subject = PrefixObservation {
+                provider_id: "renamed".to_owned(),
+                upstream_model_id: model.to_owned(),
+                usage: usage.clone(),
+                ..observation(PrefixState::AppendOnly, 100_000)
+            };
+            assert!(!subject.discarded_by_provider(&counters), "{model}");
+            subject.report_upstream_cache(&counters);
+            let mut observer = UpstreamCacheObserver::new(subject);
+            observer.observe_value(&json!({"usage": {"input_tokens": 32000, "cache_read_input_tokens": 0, "output_tokens": 200}}));
+            drop(observer);
+        }
+        for (provider, model) in [("renamed", "gpt-5"), ("anthropic", "claude-opus-5")] {
+            let subject = PrefixObservation {
+                provider_id: provider.to_owned(),
+                upstream_model_id: model.to_owned(),
+                usage: usage.clone(),
+                ..observation(PrefixState::AppendOnly, 100_000)
+            };
+            assert!(subject.discarded_by_provider(&counters));
+            subject.report_upstream_cache(&counters);
+        }
+        for row in usage.snapshot() {
+            if row.model_id == "gpt-5" || row.provider_id == "anthropic" {
+                assert_eq!(row.cache_hit_percent, Some(0.0));
+                continue;
+            }
+            assert_eq!(row.cache_hit_percent, None, "{}", row.model_id);
+            assert_eq!(
+                row.input_tokens, 64_000,
+                "token accounting must remain intact"
+            );
+        }
+        assert!(
+            usage
+                .daily_series(1)
+                .unwrap()
+                .iter()
+                .filter(|row| row.usage.provider_id == "renamed" && row.usage.model_id != "gpt-5")
+                .all(|row| row.usage.cache_hit_percent.is_none())
+        );
+        assert!(
+            usage
+                .turns(&crate::gateway::turn_usage::TurnQuery {
+                    limit: 20,
+                    ..Default::default()
+                })
+                .iter()
+                .all(|turn| turn.cache_hit_percent.is_none())
+        );
+    }
+
     /// A turn that appends a large tool result can only reuse part of its prompt,
     /// so the verdict has to compare against the reusable part rather than the
     /// whole prompt. This is the shape that produced 182 false findings on a

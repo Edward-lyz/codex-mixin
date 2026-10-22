@@ -20,7 +20,7 @@ internal sealed record ContextSettings(
 
 internal sealed record ContextConfig(ContextSettings Settings, string ConfigPath, string DatabasePath);
 
-internal sealed record ContextCache(long Turns, long InputTokens, long CachedTokens, long OutputTokens, double HitPercent);
+internal sealed record ContextCache(long Turns, long InputTokens, long CachedTokens, long OutputTokens, double? HitPercent);
 
 internal sealed record ContextSession(
     string Session,
@@ -120,10 +120,10 @@ internal static class ContextContract
             Json.Integer(value, "input_tokens"),
             Json.Integer(value, "cached_tokens"),
             Json.Integer(value, "output_tokens"),
-            Json.Real(value, "hit_percent"));
-        // The CLI derives the share from billed input tokens; anything outside
-        // 0..100 is not the contract this shell was written against.
-        return cache.HitPercent is >= 0 and <= 100 ? cache
+            Json.Field(value, "hit_percent").ValueKind == JsonValueKind.Null ? null : Json.Real(value, "hit_percent"));
+        // The CLI reports an optional cache share for observable rounds.
+        // A present value must remain within 0..100.
+        return cache.HitPercent is null or (>= 0 and <= 100) ? cache
             : throw new CliFailure("CLI contract 字段 hit_percent 必须在 0 到 100 之间。");
     }
 

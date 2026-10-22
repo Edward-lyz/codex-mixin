@@ -171,3 +171,65 @@ fn context_cli_reports_compressed_archive() {
     assert_eq!(session_row["compressions"], 1);
     assert!(session_row["view_tokens"].as_u64().unwrap() > 0);
 }
+
+#[test]
+fn context_stats_use_codex_title_without_changing_session_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let codex_home = directory.path().join("codex");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    let titles = rusqlite::Connection::open(codex_home.join("state_5.sqlite")).unwrap();
+    titles
+        .execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, name TEXT);
+         INSERT INTO threads VALUES ('thread-title', 'Continue Codex thread task', NULL);",
+        )
+        .unwrap();
+    let sessions: Vec<String> = [
+        "thread-title".to_owned(),
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"thread-title").to_string(),
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"thread-id\0thread-title").to_string(),
+        uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            b"thread-id\0thread-title\0prompt-cache-key\0thread-title",
+        )
+        .to_string(),
+        "namespaced-subagent".to_owned(),
+    ]
+    .into_iter()
+    .map(|id| format!("Codex{SESSION_SEPARATOR}{id}"))
+    .collect();
+    let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
+    for session in &sessions {
+        engine
+            .begin_turn(session, &[message("user", "continue")], 10_000)
+            .unwrap();
+    }
+    // New rounds retain the source thread even for an opaque routing namespace.
+    rusqlite::Connection::open(&database).unwrap().execute(
+        "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens, codex_thread_id)
+         VALUES (?1, 1, 100, 0, 1, 'thread-title')", [&sessions[4]],
+    ).unwrap();
+    let stats = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    assert_eq!(stats["sessions"].as_array().unwrap().len(), sessions.len());
+    for row in stats["sessions"].as_array().unwrap() {
+        assert!(sessions.iter().any(|session| row["session"] == *session));
+        assert_eq!(row["display"], "Continue Codex thread task");
+    }
+
+    titles
+        .execute("UPDATE threads SET name = 'Renamed task'", [])
+        .unwrap();
+    let renamed = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    for row in renamed["sessions"].as_array().unwrap() {
+        assert_eq!(row["display"], "Renamed task");
+    }
+}

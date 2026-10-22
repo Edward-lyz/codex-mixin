@@ -194,7 +194,7 @@ struct ContextCacheStats: Decodable, Equatable {
     let inputTokens: UInt64
     let cachedTokens: UInt64
     let outputTokens: UInt64
-    let hitPercent: Double
+    let hitPercent: Double?
 
     private enum CodingKeys: String, CodingKey {
         case turns
@@ -259,9 +259,10 @@ func parseContextStats(_ rawJSON: String) throws -> ContextStats {
     }
 }
 
-/// Share of billed input tokens served from the upstream cache.
-func formatContextPercent(_ percent: Double) -> String {
-    String(format: "%.1f%%", percent)
+/// Cache share for rounds with observable upstream counters.
+func formatContextPercent(_ percent: Double?) -> String {
+    guard let percent else { return "—" }
+    return String(format: "%.1f%%", percent)
 }
 
 // MARK: - CLI errors

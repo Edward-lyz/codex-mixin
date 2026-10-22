@@ -173,7 +173,11 @@ pub(crate) fn record_provider_prefix(
     let tools_hash = shape.tools.hash;
     let report = tracker.record(&session_key, shape);
     let changed_regions = report.changes.as_list();
-    if report.state.is_cache_loss() {
+    if report.state.is_cache_loss()
+        && tracker
+            .usage
+            .cache_metrics_available(provider_id, upstream_model_id)
+    {
         tracing::warn!(
             provider_id,
             catalog_slug,
@@ -287,6 +291,12 @@ impl PrefixObservation {
     /// ASCII code and CJK prose, which is enough to score a 98% cache hit as a
     /// miss.
     pub(super) fn discarded_by_provider(&self, usage: &UpstreamCacheUsage) -> bool {
+        if !self
+            .usage
+            .cache_metrics_available(&self.provider_id, &self.upstream_model_id)
+        {
+            return false;
+        }
         // A provider that never reports cache counters at all cannot be judged:
         // Baidu OneAPI's Opus route caches but omits the fields, so treating a
         // missing counter as a miss would report every turn as a finding.
@@ -445,6 +455,7 @@ impl UpstreamCacheObserver {
         TurnUsage {
             at_ms: unix_millis(),
             session: observation.session.clone(),
+            session_display: None,
             provider_id: observation.provider_id.clone(),
             catalog_slug: observation.catalog_slug.clone(),
             upstream_model_id: observation.upstream_model_id.clone(),
