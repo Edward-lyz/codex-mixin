@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use super::checkpoint;
-use super::guidance::GUIDANCE;
+use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
 use super::store::{SegmentRow, Store, TurnSample};
 use super::tools;
 use super::types::{
@@ -367,6 +367,103 @@ impl ContextEngine {
         )?;
         status.enabled = enabled;
         Ok(status)
+    }
+
+    /// Builds and stamps the upstream-compatible nudge under the session lease.
+    pub(crate) fn pressure_note(
+        &self,
+        session: &str,
+        view: &TurnView,
+        advise: bool,
+    ) -> Result<String> {
+        let store = self.lock()?;
+        let segments = store.segments(session, view.revision)?;
+        let ranges = compressible_ranges(
+            &store,
+            session,
+            &segments,
+            &view.protection,
+            self.settings.max_tier,
+        )?;
+        let mut tiers: [PendingTier; 3] = std::array::from_fn(|_| PendingTier::default());
+        let positions: HashMap<&str, usize> = segments
+            .iter()
+            .enumerate()
+            .map(|(index, segment)| (segment.reference.as_str(), index))
+            .collect();
+        for range in ranges {
+            let tier = match range.tier.as_str() {
+                "t1" => 0,
+                "t2" => 1,
+                "t3" => 2,
+                _ => bail!("invalid compression candidate tier {}", range.tier),
+            };
+            // Match the kernel minCompressRange gate on actual message text,
+            // not JSON framing or rounded-up token estimates.
+            if tier == 0 {
+                let mut chars = 0;
+                let start = positions
+                    .get(range.start.as_str())
+                    .context("candidate start is missing")?;
+                let end = positions
+                    .get(range.end.as_str())
+                    .context("candidate end is missing")?;
+                for segment in &segments[*start..=*end] {
+                    let raw = store
+                        .message_json(session, &segment.reference)?
+                        .with_context(|| {
+                            format!("archived message {} is missing", segment.reference)
+                        })?;
+                    let item: Value =
+                        serde_json::from_str(&raw).context("decode archived message")?;
+                    chars += message_chars(&item);
+                }
+                if chars < MIN_RANGE_CHARS {
+                    continue;
+                }
+                tiers[tier].tokens = tiers[tier].tokens.saturating_add(range.estimated_tokens);
+            }
+            if tiers[tier].oldest.is_none() {
+                tiers[tier].oldest = Some((range.start, range.end));
+            }
+        }
+        // Distillation mass counts active summaries, without topic/framing
+        // overhead, as pendingByTier does in the upstream kernel.
+        for segment in segments
+            .iter()
+            .filter(|segment| segment.kind == SegmentKind::Block)
+        {
+            let block = store
+                .block(session, &segment.reference)?
+                .with_context(|| format!("context block {} is missing", segment.reference))?;
+            let tier = usize::from(block.tier.as_u8());
+            if tier < 3 {
+                tiers[tier].tokens = tiers[tier]
+                    .tokens
+                    .saturating_add(estimate_text_tokens(&block.summary));
+                tiers[tier].blocks += 1;
+            }
+        }
+        // Host ranges must be executable: a protected or isolated block is
+        // not an actionable distillation target in this contiguous adapter.
+        for tier in &mut tiers {
+            if tier.oldest.is_none() {
+                tier.tokens = 0;
+                tier.blocks = 0;
+            }
+        }
+        let mut state = store.nudge_state(session)?;
+        let note = state.note(
+            view.estimated_tokens,
+            view.window_tokens,
+            &self.settings,
+            &tiers,
+            advise,
+        );
+        if advise {
+            store.save_nudge_state(session, &state)?;
+        }
+        Ok(note)
     }
 
     pub fn sessions(&self) -> Result<Vec<SessionSummary>> {
@@ -811,7 +908,8 @@ fn status(
     }
     estimated = estimated.saturating_add(estimate_text_tokens(GUIDANCE));
     let (tiers, archive_messages, archive_bytes) = store.tier_counts(session, revision)?;
-    let compressible = compressible_ranges(store, session, &segments, &protection)?;
+    let compressible =
+        compressible_ranges(store, session, &segments, &protection, settings.max_tier)?;
     Ok(ContextStatus {
         session: session.to_owned(),
         revision,
@@ -837,6 +935,7 @@ fn compressible_ranges(
     session: &str,
     segments: &[SegmentRow],
     protection: &Protection,
+    max_tier: u8,
 ) -> Result<Vec<CompressibleRange>> {
     let protected: HashSet<&str> = protection.protected.iter().map(String::as_str).collect();
     let mut ranges = Vec::new();
@@ -850,7 +949,8 @@ fn compressible_ranges(
                 SegmentKind::Message => Some(1),
                 SegmentKind::Block => store
                     .block(session, &segment.reference)?
-                    .map(|block| block.tier.as_u8()),
+                    .map(|block| (block.tier.as_u8() + 1).min(3))
+                    .filter(|tier| *tier <= max_tier),
             }
         };
         if tier != group_tier || group.is_empty() && tier.is_none() {
@@ -868,6 +968,20 @@ fn compressible_ranges(
         ranges.push(range_of(store, session, &group, group_tier.unwrap_or(1))?);
     }
     Ok(ranges)
+}
+
+/// Only content-bearing fields count toward the kernel character gate.
+fn message_chars(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.encode_utf16().count(),
+        Value::Array(values) => values.iter().map(message_chars).sum(),
+        Value::Object(object) => ["text", "content", "output", "arguments", "input"]
+            .iter()
+            .filter_map(|key| object.get(*key))
+            .map(message_chars)
+            .sum(),
+        _ => 0,
+    }
 }
 
 fn range_of(
@@ -1053,6 +1167,110 @@ mod tests {
     }
 
     #[test]
+    fn nudge_persists_and_resets_after_compression() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("context.db");
+        let engine = ContextEngine::open(settings(), &path).expect("engine");
+        let session = session();
+        let mut items = four_messages();
+        items[1] = message("assistant", &long_body("first", 120_000));
+        items[2] = message("assistant", &long_body("second", 120_000));
+        // Enough pending mass, but a fresh low-pressure view seeds a baseline.
+        let view = engine
+            .begin_turn(&session, &items, 1_000_000)
+            .expect("view");
+        let baseline = view.estimated_tokens;
+        assert!(
+            engine
+                .pressure_note(&session, &view, true)
+                .expect("note")
+                .contains("keep working")
+        );
+        drop(engine);
+        let engine = ContextEngine::open(settings(), &path).expect("reopen");
+        items.push(message("assistant", &long_body("growth", 90_000)));
+        items.push(message("user", "continue"));
+        let view = engine
+            .begin_turn(&session, &items, 1_000_000)
+            .expect("grown view");
+        assert!(view.estimated_tokens >= baseline + 22_500);
+        assert!(
+            engine
+                .pressure_note(&session, &view, true)
+                .expect("note")
+                .contains("GROWTH T1")
+        );
+        assert!(
+            engine
+                .pressure_note(&session, &view, true)
+                .expect("note")
+                .contains("keep working")
+        );
+        let refs = segment_refs(&engine, &session);
+        compress_refs(&engine, &session, view.revision, &refs[1], &refs[2]);
+        // A successful commit clears the pending stamp. Remaining backlog can
+        // trigger first-sight mass immediately, without waiting for new growth.
+        items.push(message("assistant", &long_body("backlog", 240_000)));
+        items.push(message("user", "continue again"));
+        let mut view = engine
+            .begin_turn(&session, &items, 1_000_000)
+            .expect("remaining view");
+        view.estimated_tokens = 450_000;
+        assert!(
+            engine
+                .pressure_note(&session, &view, true)
+                .expect("note")
+                .contains("GROWTH T1")
+        );
+    }
+
+    #[test]
+    fn tiny_ranges_do_not_trigger_a_pressure_nudge() {
+        let engine = engine();
+        let session = session();
+        let mut items = four_messages();
+        items[1] = message("assistant", &"x".repeat(2_000));
+        items[2] = message("assistant", &"x".repeat(2_000));
+        let mut view = engine.begin_turn(&session, &items, 100_000).expect("view");
+        view.estimated_tokens = 95_000;
+        assert!(
+            engine
+                .pressure_note(&session, &view, true)
+                .expect("note")
+                .contains("keep working")
+        );
+        assert_eq!(
+            message_chars(&json!({"content": [{"text": "\u{1f600}"}]})),
+            2
+        );
+    }
+
+    #[test]
+    fn recommends_raw_messages_separately() {
+        let engine = engine();
+        let session = session();
+        let mut items = four_messages();
+        items.insert(1, message("assistant", &long_body("gamma", 900)));
+        items.insert(2, message("assistant", &long_body("delta", 900)));
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let refs = segment_refs(&engine, &session);
+        let first = compress_refs(&engine, &session, view.revision, &refs[1], &refs[2]);
+        let status = status_of(&engine, &session, first.revision);
+        assert_eq!(status.compressible.len(), 1);
+        let range = &status.compressible[0];
+        assert_eq!(range.start, refs[3]);
+        assert_eq!(range.end, refs[4]);
+        assert_eq!(range.tier, "t1");
+        let second = compress_pair(&engine, &session, first.revision, range);
+        assert_eq!(
+            status_of(&engine, &session, second.revision)
+                .tiers
+                .t1_blocks,
+            2
+        );
+    }
+
+    #[test]
     fn escalates_two_tier_one_blocks_into_a_tier_two_block() {
         let engine = engine();
         let session = session();
@@ -1070,6 +1288,8 @@ mod tests {
 
         let status = status_of(&engine, &session, second.revision);
         assert_eq!(status.tiers.t1_blocks, 2);
+        assert_eq!(status.compressible.len(), 1);
+        assert_eq!(status.compressible[0].tier, "t2");
         let refs = segment_refs(&engine, &session);
         let execution = engine
             .execute_tool(
@@ -1113,6 +1333,11 @@ mod tests {
         let second = compress_refs(&engine, &session, view.revision, &refs[2], &refs[3]);
         let view = engine.begin_turn(&session, &items, 10_000).expect("view");
         assert_eq!(view.revision, second.revision);
+        assert!(
+            status_of(&engine, &session, second.revision)
+                .compressible
+                .is_empty()
+        );
         let refs = segment_refs(&engine, &session);
         let error = engine
             .execute_tool(

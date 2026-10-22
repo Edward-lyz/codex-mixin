@@ -218,7 +218,7 @@ fn context_settings_reject_invalid_values() {
     for value in [
         json!({"action": "context_configure", "params": {"enabled": true, "growth_threshold_tokens": 0}}),
         json!({"action": "context_configure", "params": {"enabled": true, "protected_messages": 0}}),
-        json!({"action": "context_configure", "params": {"enabled": true, "max_internal_rounds": 9}}),
+        json!({"action": "context_configure", "params": {"enabled": true, "max_internal_rounds": 11}}),
         json!({"action": "context_configure", "params": {"enabled": true, "context_window_tokens": "1000\n2000"}}),
     ] {
         assert!(action(value).invocation().is_err());

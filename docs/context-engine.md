@@ -17,11 +17,11 @@ codex-mixin context config get --json
 | --- | --- | --- |
 | `enabled` | 总开关 | `false` |
 | `context_window_tokens` | 显式视图窗口；未设置时解析具体模型元数据，缺项时用网关默认值 | 自动 |
-| `growth_threshold_tokens` | 视图增长到该 token 数后提示模型压缩 | 50000 |
+| `growth_threshold_tokens` | T1 待压缩量门槛；同时用于推导增长间隔 | 50000 |
 | `pressure_ratio` / `urgent_ratio` | 提示与强提示的窗口占比 | 0.75 / 0.95 |
-| `protected_messages` | 最近保留的消息条数 | 5 |
+| `protected_messages` | 最近保留的消息条数 | 3 |
 | `protected_tokens` | 最近保留的 token 数 | 5000 |
-| `max_internal_rounds` | 单次用户请求内的内部续轮上限 | 4 |
+| `max_internal_rounds` | 单次用户请求内的内部工具轮次上限 | 10 |
 | `max_tier` | 允许产生的最高压缩层级（1-3），用于消融实验 | 3 |
 | `guidance_only` | 只注入压缩指引、不注入压缩工具（仅消融实验） | `false` |
 
@@ -45,9 +45,29 @@ CLI 只改配置，不启动网关：`codex-mixin context config set --growth-th
 估算 token、窗口占用百分比、增长/压力/紧急阈值的触发原因，以及最早可压缩范围
 （如 `m000002..m000013 (t1)`）。它放在 input 末尾而不是 instructions 里：instructions
 每轮变化会让上游前缀缓存整体失效，追加消息只延长前缀。模型据此自行决定何时调用
-压缩工具，网关不替它选择摘要或强制压缩。增长达到 `growth_threshold_tokens`、
-窗口占用达到 `pressure_ratio`，任一条件满足都会建议压缩；达到 `urgent_ratio` 时
-给出紧急指引。仅指引消融模式不建议调用压缩工具。没有可压缩范围时，提示保留受保护内容。
+压缩工具，网关不替它选择摘要或强制压缩。触发决策与分层摘要规则移植自
+[Billion Context](https://github.com/ranxianglei/billion-context/tree/94f75ccea1b2e509a29ca46e44768dcf9364940f)，
+对应 `kernel/src/compress.ts` 的 `decideNudge` / `nudgeNode` 和
+`kernel/src/compression-rules.ts`，遵守其 MIT 许可证（见
+[`src/context/prompts/LICENSE`](../src/context/prompts/LICENSE)）。
+
+- 增长从持久化的低水位基线或上次提示计算，首次低压力请求只建立基线。增长间隔为
+  `max(20000, ceil(growth_threshold_tokens × 0.45))`，默认 22500 tokens。
+  忽略提示且没有新增长时，不因总长度超过 50000 而反复催促。
+- 初次出现的积压在窗口占用至少 45%、某层待压缩量至少达到增长门槛时可以立即触发。
+  压缩成功在同一 SQLite 事务内清除基线，剩余积压可以重新评估。
+- T1 只计入实际文本长度至少 5000 个 UTF-16 单元的可执行连续范围；T2/T3 计入
+  活跃 T1/T2 摘要的 token 量。普通增长路径优先 T1，其次 T2、T3；后两层的量级门槛
+  默认是 75000 tokens，并须大于低层待压缩量，或达到 1000/2000 个源块的数量门槛。
+- 达到 75% 压力或 95% 紧急门槛时，选择待压缩量最多的层，但仍要求至少
+  `max(5000, round(window × 0.01))` tokens 的潜在收益。
+- 没有可执行范围或收益不足时继续用户任务。仅指引消融模式不提示工具调用或更新基线。
+
+静态指引包含原版的压缩原则和 T1 保真规则；触发时再附加相应层级规则。未完成目标必须
+以带原始消息引用的 `Open objectives:` 继续保留，T2/T3 不得因摘要合并丢失它们。
+移植范围是提示决策、摘要规则与内部循环退出；Rust 仍使用现有连续 segment、保护、
+非收缩拒绝、归档与恢复接口，并非引入整个 TypeScript kernel。摘要合并仍须存在
+至少两个连续且未受保护的 segment；不可执行的层不会被提示。已保存的用户配置保持原值。
 
 HTTP 与 WebSocket（含官方模型）复用同一上下文回路。可见文本事件增量转发，内部工具
 事件被隐藏；同轮出现客户端工具时，先完成内部提交，再交回客户端调用。暂存的客户端
@@ -66,8 +86,10 @@ HTTP 与 WebSocket（含官方模型）复用同一上下文回路。可见文�
 
 每个会话带 revision：模型基于旧视图提交的压缩会得到
 `context revision changed from N to M`，调用方需要重新读取状态。
-内部续轮超限时返回 `response.failed`，错误为
-`context internal rounds exhausted before the model answered`。
+到达内部工具轮次上限时，按原版 Responses adapter 发送 `response.completed`，
+保留已产生的可见内容，不追加一次额外模型请求。若一轮全部是失败的 compress/decompress，
+且重试了之前已经失败的相同参数，也会提前正常结束。没有文本产出的工具轮可能以空输出
+结束；这表示循环已结束，不表示用户任务已完成。上游传输错误仍保持原有失败语义。
 
 ## 存储与会话
 
@@ -195,6 +217,7 @@ EVAL_TASKS=3 EVAL_ROUNDS=2 EVAL_CHUNKS=48 EVAL_WINDOW=16000 \
 任务分三类轮换：长构建日志里埋精确错误码、多文件改动里埋文件路径、目标变更里埋最新目标；
 每类都要模型只回埋进去的那个事实，用于判断关键事实是否被压掉。
 
+以下是本次算法对齐前的历史运行，未用新实现重跑，不作为本次修复的质量证明。
 本机一次真实运行（模型 `DeepSeek-V4.1-Flash-baidu-oneapi`，窗口 16000，三类任务各 48 段
 2000 字符日志 + 2 轮填充）：
 
@@ -214,9 +237,21 @@ EVAL_TASKS=3 EVAL_ROUNDS=2 EVAL_CHUNKS=48 EVAL_WINDOW=16000 \
 每组一次；内存与真实用户任务未测；首 token 是三类任务里的最小值。这些数字不构成对
 其他模型或真实仓库的承诺。
 
-
 ## 范围
 
 本版本提供内核、存储、网关回路、链式请求、压缩接管、CLI 统计、Web 控制面板的
 「上下文」页，以及 macOS 控制台与 Windows 独立窗口的「上下文」设置区；四组消融
 实验脚本见 `scripts/evaluate_context.mjs`，跑法与结果见上文「消融评估」。
+
+## 原版决策回归
+
+`tests/fixtures/context_nudge/expected.json` 包含从上述固定版本的真实 `nudgeNode`
+生成的 256 个决策与状态样本，Rust 单测同时比较所选层级和持久化戳。重新生成方式：
+
+```bash
+# 仓库根目录；Bun 和对应版本的原版 checkout 必须已存在。
+bun tests/fixtures/context_nudge/generate.ts /path/to/billion-context > tests/fixtures/context_nudge/expected.json
+cargo test --locked --lib context::guidance::tests::matches_upstream_nudge_decisions
+```
+
+这些测试验证触发规则和状态演进，不衡量真实模型摘要质量，也不证明完整 kernel 行为等价。

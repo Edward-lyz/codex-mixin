@@ -13,8 +13,8 @@ use super::turn_usage::unix_millis;
 use crate::context::ContextEngine;
 use crate::context::TurnSample;
 use crate::context::checkpoint;
-use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, state_note, with_guidance};
-use crate::context::types::{SESSION_SEPARATOR, is_context_tool};
+use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, with_guidance};
+use crate::context::types::{SESSION_SEPARATOR, TOOL_COMPRESS, TOOL_DECOMPRESS, is_context_tool};
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::{SseDecoder, encode_raw_event, response_failed_payload};
@@ -28,8 +28,6 @@ const CLIENT_ACTION_TYPES: [&str; 7] = [
     "image_generation_call",
     "mcp_approval_request",
 ];
-
-const ROUNDS_EXHAUSTED: &str = "context internal rounds exhausted before the model answered";
 
 /// A request that participates in context management.
 ///
@@ -156,6 +154,7 @@ impl ContextRun {
             let mut appended: Vec<Value> = Vec::new();
             let mut revision = view.revision;
             let mut internal_rounds = 0usize;
+            let mut failed_signatures = HashSet::new();
             let mut pending = Some(first);
             let mut client = ContextEvents::default();
             loop {
@@ -233,18 +232,11 @@ impl ContextRun {
                     .cloned()
                     .collect();
                 let finish_turn = internal.is_empty() || output.iter().any(is_client_action);
-                if !finish_turn && internal_rounds >= self.max_internal_rounds {
-                    yield Ok::<Bytes, Infallible>(client.failure(
-                        &template,
-                        ROUNDS_EXHAUSTED.to_owned(),
-                    ));
-                    return;
-                }
-                if !finish_turn {
-                    internal_rounds += 1;
-                }
+                if !finish_turn { internal_rounds += 1; }
                 let mut outputs: Vec<Value> = Vec::new();
                 let mut broken = None;
+                let mut failed_mutations = 0usize;
+                let mut repeated_failure = false;
                 for item in &internal {
                     let name = internal_tool_name(item).unwrap_or_default();
                     let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
@@ -258,6 +250,11 @@ impl ContextRun {
                     let (content, next_revision) = match execution {
                         Ok(execution) => (execution.content, execution.revision),
                         Err(error) => {
+                            if matches!(name, TOOL_COMPRESS | TOOL_DECOMPRESS) {
+                                failed_mutations += 1;
+                                let signature = (name.to_owned(), arguments.to_string());
+                                repeated_failure |= !failed_signatures.insert(signature);
+                            }
                             if finish_turn {
                                 tracing::warn!(
                                     tool = name,
@@ -279,7 +276,15 @@ impl ContextRun {
                     yield Ok::<Bytes, Infallible>(client.failure(&template, message));
                     return;
                 }
-                if finish_turn {
+                let limit_reached = !finish_turn && internal_rounds >= self.max_internal_rounds;
+                if limit_reached {
+                    tracing::warn!(internal_rounds, "context loop limit reached; completing gracefully");
+                }
+                let failure_loop = !finish_turn && repeated_failure && failed_mutations == internal.len();
+                if failure_loop {
+                    tracing::warn!(internal_rounds, "repeated identical context mutation failure; completing gracefully");
+                }
+                if finish_turn || limit_reached || failure_loop {
                     // Client actions become visible only after internal commits.
                     client.complete(&mut completed, &template);
                     self.record_completed(&completed, revision, &client.output);
@@ -670,23 +675,9 @@ fn pressure_note(
     view: &crate::context::TurnView,
     guidance_only: bool,
 ) -> Result<String, GatewayError> {
-    let ranges = engine
-        .status(session, view.window_tokens, true)?
-        .compressible;
-    let oldest = ranges.first().map(|range| {
-        (
-            range.start.as_str(),
-            range.end.as_str(),
-            range.tier.as_str(),
-        )
-    });
-    Ok(state_note(
-        view.estimated_tokens,
-        view.window_tokens,
-        engine.settings(),
-        oldest,
-        !guidance_only,
-    ))
+    engine
+        .pressure_note(session, view, !guidance_only)
+        .map_err(Into::into)
 }
 
 /// Replaces the input with a view read from the archive without injecting the

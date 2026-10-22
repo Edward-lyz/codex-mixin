@@ -67,8 +67,8 @@ impl ContextSettings {
         if self.protected_tokens == 0 {
             bail!("context protected_tokens must be positive");
         }
-        if self.max_internal_rounds == 0 || self.max_internal_rounds > 8 {
-            bail!("context max_internal_rounds must be between 1 and 8");
+        if self.max_internal_rounds == 0 || self.max_internal_rounds > DEFAULT_MAX_INTERNAL_ROUNDS {
+            bail!("context max_internal_rounds must be between 1 and 10");
         }
         if self.max_tier == 0 || self.max_tier > 3 {
             bail!("context max_tier must be between 1 and 3");

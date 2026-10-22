@@ -311,5 +311,5 @@
 "context.validation.ratioOrder" = "Pressure ratio must be less than urgent ratio.";
 "context.validation.protectedMessages" = "Protected messages must be a positive whole number.";
 "context.validation.protectedTokens" = "Protected tokens must be a positive whole number.";
-"context.validation.maxInternalRounds" = "Internal round cap must be between 1 and 8.";
+"context.validation.maxInternalRounds" = "Internal round cap must be between 1 and 10.";
 "context.validation.contextWindowTokens" = "Context window must be a positive whole number.";
