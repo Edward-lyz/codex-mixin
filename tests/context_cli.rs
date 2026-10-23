@@ -1,5 +1,7 @@
 //! CLI contract of the context console page: settings and statistics JSON.
 
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 use std::process::Output;
 
@@ -401,5 +403,47 @@ fn stats_client_titles_rename() {
             .unwrap()
             .iter()
             .any(|row| row["display"] == "Renamed DSH task")
+    );
+}
+
+#[test]
+fn stats_keep_previews_when_client_title_stores_are_corrupt() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let dsh = directory.path().join("home/.dsh/storages");
+    let claude = directory.path().join("home/.claude/projects/workspace");
+    fs::create_dir_all(&dsh).unwrap();
+    fs::create_dir_all(&claude).unwrap();
+    // A corrupted client store must not hide the usage rows.
+    fs::write(dsh.join("session_projcache.json"), "{not json").unwrap();
+    fs::write(claude.join("sessions-index.json"), "{not json").unwrap();
+    let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
+    for client in ["DSH", "Claude"] {
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, client.as_bytes());
+        engine
+            .begin_turn(
+                &format!("{client}{SESSION_SEPARATOR}{id}"),
+                &[message("user", "Recover this session")],
+                10_000,
+            )
+            .unwrap();
+    }
+    let stats = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    let displays = stats["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["display"].as_str().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        displays,
+        BTreeSet::from([
+            "Claude / Recover this session".to_owned(),
+            "DSH / Recover this session".to_owned()
+        ])
     );
 }

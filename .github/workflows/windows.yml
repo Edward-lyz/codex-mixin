@@ -25,7 +25,14 @@ concurrency:
 jobs:
   rust:
     if: ${{ !inputs.ui_artifact_run }}
+    name: Rust tests (${{ matrix.shard }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - unit
+          - integration
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -36,6 +43,7 @@ jobs:
         with:
           shared-key: rust
       - name: Run strict Clippy
+        if: matrix.shard == 'unit'
         shell: bash
         run: |
           cargo clippy --locked --all-targets -- \
@@ -43,7 +51,15 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      - run: cargo test --locked --all-targets
+      # The two shards together cover the same targets as --all-targets.
+      # Integration binaries are the long pole, so they run beside the lib,
+      # bin, and example harnesses instead of after them.
+      - name: Run unit tests
+        if: matrix.shard == 'unit'
+        run: cargo test --locked --lib --bins --examples
+      - name: Run integration tests
+        if: matrix.shard == 'integration'
+        run: cargo test --locked --tests
   cli:
     if: ${{ !inputs.ui_artifact_run }}
     name: Build Windows CLI
