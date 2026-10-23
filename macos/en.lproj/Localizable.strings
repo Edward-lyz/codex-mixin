@@ -216,6 +216,9 @@
 "codexConnect.customOnlyProvider" = "amazon-bedrock / local placeholder (no AWS)";
 "settings.openProviderSetup" = "Open provider setup";
 "settings.localOAuthCredentials" = "Adding this preset opens browser OAuth. No provider CLI is required.";
+"provider.threadTitleMapping" = "Map Codex thread title model";
+"provider.threadTitleModel" = "Thread title model";
+"provider.threadTitleMappingDetail" = "Use this provider for Codex title requests. One provider can own this mapping; ordinary conversations keep their model.";
 "settings.kiroSessionCredentials" = "Sign in to Kiro on this Mac first. Leave the key empty to use that session.";
 "settings.agyBusinessCredentials" = "Select Business in agy and configure its Cloud project and location, or use authorized-user Application Default Credentials.";
 "settings.optionalAPIKey" = "Optional; leave empty to use local OAuth";

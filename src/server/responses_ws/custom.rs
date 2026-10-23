@@ -25,7 +25,13 @@ pub(super) async fn run_custom_ws_request(
     context: &mut ResponsesWsContext<'_>,
     body: &mut Value,
 ) -> anyhow::Result<Option<CustomWebSocketState>> {
-    expand_custom_websocket_history(context.state, body, context.custom_state.take()).await?;
+    expand_custom_websocket_history(
+        context.state,
+        context.headers,
+        body,
+        context.custom_state.take(),
+    )
+    .await?;
     if compact::is_v2_compaction_request(body) {
         let requested_model = body
             .get("model")
@@ -62,9 +68,14 @@ pub(super) async fn run_custom_ws_request(
         }
     }
     if is_noop_responses_ws_request(body) {
-        return complete_custom_noop(context.state, context.client_sender, body.take())
-            .await
-            .map(Some);
+        return complete_custom_noop(
+            context.state,
+            context.headers,
+            context.client_sender,
+            body.take(),
+        )
+        .await
+        .map(Some);
     }
     strip_custom_websocket_envelope(body);
     proxy_custom_responses_ws(
@@ -132,7 +143,7 @@ async fn proxy_custom_responses_ws(
         .to_owned();
     let route = state
         .gateway
-        .resolve_model_route(&requested_model)
+        .resolve_responses_route(&requested_model, headers, &body)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let model = requested_model;
@@ -148,8 +159,12 @@ async fn proxy_custom_responses_ws(
             (stream, Some(body))
         }
         ResolvedModelRoute::Provider { .. } => {
-            let plan =
-                RequestPlan::from_route(route.clone(), body, provider_routing.clone(), None)?;
+            let plan = RequestPlan::from_route(
+                route.clone(),
+                body,
+                provider_routing.clone(),
+                Some(model.clone()),
+            )?;
             let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
             (stream, Some(body))
         }
@@ -235,6 +250,7 @@ async fn proxy_custom_responses_ws(
 
 async fn expand_custom_websocket_history(
     app_state: &AppState,
+    headers: &HeaderMap,
     body: &mut Value,
     state: Option<CustomWebSocketState>,
 ) -> anyhow::Result<()> {
@@ -257,7 +273,7 @@ async fn expand_custom_websocket_history(
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
     let route = app_state
         .gateway
-        .resolve_model_route(model)
+        .resolve_responses_route(model, headers, body)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if route != state.route {
@@ -278,6 +294,7 @@ async fn expand_custom_websocket_history(
 
 async fn complete_custom_noop(
     state: &AppState,
+    headers: &HeaderMap,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
 ) -> anyhow::Result<CustomWebSocketState> {
@@ -288,7 +305,7 @@ async fn complete_custom_noop(
     let model = model.to_owned();
     let route = state
         .gateway
-        .resolve_model_route(&model)
+        .resolve_responses_route(&model, headers, &body)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let history = take_custom_request_input(&mut body)?;

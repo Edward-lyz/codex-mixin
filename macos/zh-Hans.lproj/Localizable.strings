@@ -216,6 +216,9 @@
 "codexConnect.customOnlyProvider" = "amazon-bedrock / 本地占位（不连接 AWS）";
 "settings.openProviderSetup" = "打开供应商配置说明";
 "settings.localOAuthCredentials" = "新增此预设时会打开浏览器进行 OAuth 授权，无需安装供应商 CLI。";
+"provider.threadTitleMapping" = "Codex 重命名模型映射";
+"provider.threadTitleModel" = "重命名模型";
+"provider.threadTitleMappingDetail" = "Codex 命名请求使用此服务商的模型；仅一个服务商可开启，普通对话保留原模型。";
 "settings.kiroSessionCredentials" = "请先在本机登录 Kiro。密钥留空时复用该登录会话。";
 "settings.agyBusinessCredentials" = "请在 agy 选择 Business 并配置 Cloud 项目和地区，或配置 authorized_user 类型的应用默认凭据。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";

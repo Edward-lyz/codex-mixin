@@ -24,6 +24,7 @@ private struct ProviderConnectionDraft {
     let quotaAuthCookie: String
     let auxiliaryModelUpstream: Bool
     let autoReviewModel: String
+    let codexThreadTitleModel: String
     let baiduAuthBridge: BaiduAuthBridgeMode
     let baiduCodeReport: Bool
 }
@@ -53,6 +54,7 @@ final class ProviderSettingsModel: ObservableObject {
     @Published var quotaAuthCookie = ""
     @Published var auxiliaryModelUpstream = false
     @Published var autoReviewModel = ""
+    @Published var codexThreadTitleModel = ""
     @Published var baiduAuthBridge = BaiduAuthBridgeMode.disabled
     @Published var baiduCodeReport = false
     @Published var applyRetryProviderID: String?
@@ -103,6 +105,7 @@ final class ProviderSettingsModel: ObservableObject {
         if draft.imageGenerationPath != (provider.imageGenerationPath ?? "") { return true }
         if draft.auxiliaryModelUpstream != provider.auxiliaryModelUpstream { return true }
         if draft.autoReviewModel != (provider.autoReviewModel ?? "") { return true }
+        if draft.codexThreadTitleModel != (provider.codexThreadTitleModel ?? "") { return true }
         if provider.presetID == "custom" {
             return draft.displayName != provider.displayName
                 || draft.baseURL != provider.baseURL
@@ -177,6 +180,7 @@ final class ProviderSettingsModel: ObservableObject {
                 quotaAuthCookie: "",
                 auxiliaryModelUpstream: draft.auxiliaryModelUpstream,
                 autoReviewModel: draft.autoReviewModel,
+                codexThreadTitleModel: draft.codexThreadTitleModel,
                 baiduAuthBridge: draft.baiduAuthBridge,
                 baiduCodeReport: draft.baiduCodeReport
             )
@@ -236,6 +240,7 @@ final class ProviderSettingsModel: ObservableObject {
             quotaAuthCookie: "",
             auxiliaryModelUpstream: provider.auxiliaryModelUpstream,
             autoReviewModel: provider.autoReviewModel ?? "",
+            codexThreadTitleModel: provider.codexThreadTitleModel ?? "",
             baiduAuthBridge: provider.effectiveBaiduAuthBridge ?? .disabled,
             baiduCodeReport: provider.baiduCodeReport == true
         ))
@@ -269,6 +274,7 @@ final class ProviderSettingsModel: ObservableObject {
             quotaAuthCookie: quotaAuthCookie,
             auxiliaryModelUpstream: auxiliaryModelUpstream,
             autoReviewModel: autoReviewModel,
+            codexThreadTitleModel: codexThreadTitleModel,
             baiduAuthBridge: baiduAuthBridge,
             baiduCodeReport: baiduCodeReport
         )
@@ -291,6 +297,7 @@ final class ProviderSettingsModel: ObservableObject {
         quotaAuthCookie = draft.quotaAuthCookie
         auxiliaryModelUpstream = draft.auxiliaryModelUpstream
         autoReviewModel = draft.autoReviewModel
+        codexThreadTitleModel = draft.codexThreadTitleModel
         baiduAuthBridge = draft.baiduAuthBridge
         baiduCodeReport = draft.baiduCodeReport
     }
@@ -304,6 +311,7 @@ final class ProviderSettingsModel: ObservableObject {
             provider.imageGenerationPath ?? "",
             String(provider.auxiliaryModelUpstream),
             provider.autoReviewModel ?? "",
+            provider.codexThreadTitleModel ?? "",
             String(provider.apiKeyConfigured),
             String(provider.awsSigV4Configured == true),
             provider.awsRegion ?? "",
@@ -766,6 +774,34 @@ private struct ProviderDetailForm: View {
                                     .frame(width: 260)
                                     .flexiblePickerSizing()
                                     .disabled(!formState.auxiliaryModelUpstream)
+                                }
+                                advancedOptionDivider
+                                advancedOptionRow(
+                                    title: AppLocalization.string("provider.threadTitleMapping"),
+                                    detail: AppLocalization.string("provider.threadTitleMappingDetail")
+                                ) {
+                                    Toggle("", isOn: Binding(
+                                        get: { !formState.codexThreadTitleModel.isEmpty },
+                                        set: { enabled in
+                                            formState.codexThreadTitleModel = enabled
+                                                ? (autoReviewModelChoices(for: provider).first ?? "") : ""
+                                        }
+                                    ))
+                                    .labelsHidden()
+                                    .disabled(autoReviewModelChoices(for: provider).isEmpty)
+                                }
+                                if !formState.codexThreadTitleModel.isEmpty {
+                                    advancedOptionDivider
+                                    advancedOptionRow(title: AppLocalization.string("provider.threadTitleModel")) {
+                                        Picker(AppLocalization.string("provider.threadTitleModel"), selection: $formState.codexThreadTitleModel) {
+                                            ForEach(autoReviewModelChoices(for: provider), id: \.self) { model in
+                                                Text(model).tag(model)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .frame(width: 260)
+                                        .flexiblePickerSizing()
+                                    }
                                 }
                             }
                         }

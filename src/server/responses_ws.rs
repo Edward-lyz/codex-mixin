@@ -78,7 +78,10 @@ async fn route_responses_ws(
             custom_state: &mut custom_state,
         };
         if matches!(
-            state.gateway.resolve_model_route(&model).await,
+            state
+                .gateway
+                .resolve_responses_route(&model, &headers, &body)
+                .await,
             Ok(ResolvedModelRoute::Official)
         ) && !state.gateway.context_required(&body)
         {

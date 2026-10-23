@@ -190,6 +190,7 @@ impl ProviderSpec {
             enabled: true,
             auxiliary_model_upstream: false,
             auto_review_model: None,
+            codex_thread_title_model: None,
             preset_id: Some(self.id.to_owned()),
             protocol: self.protocol,
             base_url: self.base_url.to_owned(),

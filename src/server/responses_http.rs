@@ -13,7 +13,10 @@ pub(super) async fn responses(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let route = state.gateway.resolve_model_route(&requested_model).await?;
+    let route = state
+        .gateway
+        .resolve_responses_route(&requested_model, &headers, &body)
+        .await?;
     log_responses_route(&requested_model, &route);
     if super::compact::is_v2_compaction_request(&body) {
         if let Some(response) =
@@ -73,10 +76,12 @@ pub(super) async fn stream_custom_responses(
     route: ResolvedModelRoute,
 ) -> Result<ResponseStream, GatewayError> {
     let provider_routing = crate::gateway::stable_oneapi_routing(headers, &body)?;
+    let downstream_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
     match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),
         provider_route @ ResolvedModelRoute::Provider { .. } => {
-            let plan = RequestPlan::from_route(provider_route, body, provider_routing, None)?;
+            let plan =
+                RequestPlan::from_route(provider_route, body, provider_routing, downstream_model)?;
             state.gateway.stream(plan, headers).await
         }
         ResolvedModelRoute::Fusion { profile_id } => {
