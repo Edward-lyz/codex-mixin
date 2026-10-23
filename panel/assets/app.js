@@ -1367,7 +1367,7 @@ function serviceHeader(provider) {
     "header",
     { class: "svc-head" },
     providerIcon(provider, 36),
-    h("div", { class: "svc-head-main" }, h("div", { class: "svc-head-title" }, h("span", { text: providerName(provider) }), badge), h("div", { class: "svc-head-sub mono", text: sub })),
+    h("div", { class: "svc-head-main", title: sub }, h("div", { class: "svc-head-title" }, h("span", { text: providerName(provider) }), badge)),
     tabs,
     h("div", { class: "svc-head-actions" }, popoverMenu("更多服务商操作", items)),
   );
@@ -2038,7 +2038,7 @@ function agentRow(agent, templates) {
       "div",
       { class: "agent-main" },
       h("div", { class: "agent-title" }, h("span", { class: "agent-name", text: agent.name }), versions ? h("span", { class: "agent-version mono", text: versions }) : null),
-      h("div", { class: "agent-status", title: detailParts.join(" · ") }, h("span", { class: `dot ${status.tone}`, "aria-hidden": "true" }), h("span", { class: "agent-status-text", text: detailParts.join(" · ") })),
+      status.locked ? null : h("div", { class: "agent-status", title: detailParts.join(" · ") }, h("span", { class: `dot ${status.tone}`, "aria-hidden": "true" }), h("span", { class: "agent-status-text", text: status.text })),
     ),
     agent.id === "codex" && status.on
       ? segmented([["official_account", "官方账号"], ["custom_only", "仅自定义"]], agent.integration.mode === "custom_only" ? "custom_only" : "official_account", async (mode) => {

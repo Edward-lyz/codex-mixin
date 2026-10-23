@@ -211,7 +211,7 @@ public sealed partial class MainWindow : Window
         ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
-        PageTitle.Visibility = ApplySummary.Visibility = header;
+        PageTitle.Visibility = header;
         UpdateRefreshTimer();
     }
 
@@ -435,7 +435,7 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Clear();
         draftDirty = false;
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
-        ShowSummary("配置已同步", "Caption");
+        ShowSummary("配置已同步");
         ToolTipService.SetToolTip(PageTitle, null);
         PageTitle.Text = page switch
         {
@@ -775,7 +775,7 @@ public sealed partial class MainWindow : Window
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         modelBody.Children.Add(list);
-        ShowSummary("正在读取测速结果…", "Caption");
+        ShowSummary("正在读取测速结果…");
         pendingApply = async () =>
         {
             var arguments = new List<string> { "provider", "select", id };
@@ -794,9 +794,9 @@ public sealed partial class MainWindow : Window
 
     private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
 
-    private void MarkDirty() { draftDirty = true; ShowSummary("还有未应用的更改", "CautionCaption"); ApplyChanges.IsEnabled = true; }
+    private void MarkDirty() { draftDirty = true; ShowSummary("还有未应用的更改"); ApplyChanges.IsEnabled = true; }
 
-    private void ShowSummary(string text, string style) { ApplySummary.Text = text; ApplySummary.Style = Themed(style); }
+    private void ShowSummary(string text) { ToolTipService.SetToolTip(ApplyChanges, text); }
 
     private static string Milliseconds(double value) => value < 1000 ? $"{value:0} ms" : $"{value / 1000:0.##} s";
 
@@ -833,7 +833,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             if (!token.IsCancellationRequested && !exiting && page == "providers" && !connectionSelected && !draftDirty)
-                ShowSummary($"无法刷新测速结果：{error.Message}", "CautionCaption");
+                ShowSummary($"无法刷新测速结果：{error.Message}");
         }
         finally { refreshingTimings = false; }
     }
@@ -850,7 +850,7 @@ public sealed partial class MainWindow : Window
         }
         if (snapshot.ValueKind == JsonValueKind.Null)
         {
-            if (!draftDirty) ShowSummary("当前服务商暂无测速结果", "Caption");
+            if (!draftDirty) ShowSummary("当前服务商暂无测速结果");
             return;
         }
         var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
@@ -861,7 +861,7 @@ public sealed partial class MainWindow : Window
             if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
         }
         if (draftDirty) return;
-        if (results.Length == 0) { ShowSummary("当前服务商暂无测速结果", "Caption"); return; }
+        if (results.Length == 0) { ShowSummary("当前服务商暂无测速结果"); return; }
         var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
         var prefix = $"{started:yyyy年M月d日 HH:mm} · 超时 {Json.Field(snapshot, "timeout_seconds")} 秒 · ";
         var completed = results.Count(row => Json.Text(row, "status") == "completed");
@@ -869,9 +869,9 @@ public sealed partial class MainWindow : Window
         var failed = results.Length - completed - timedOut;
         switch (Json.Text(snapshot, "status"))
         {
-            case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}", "Caption"); break;
-            case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}", "CautionCaption"); break;
-            default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}", failed == 0 && timedOut == 0 ? "SuccessCaption" : "CautionCaption"); break;
+            case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}"); break;
+            case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}"); break;
+            default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}"); break;
         }
     }
 
@@ -982,7 +982,7 @@ public sealed partial class MainWindow : Window
         }
         if (auxiliary.Visibility == Visibility.Visible)
             args.AddRange(["--auxiliary-model-upstream", auxiliary.IsChecked == true ? "true" : "false"]);
-        try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ApplySummary.Text = "配置已同步"; }
+        try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ShowSummary("配置已同步"); }
         finally { secrets.Clear(); }
         }
         if (inline && provider is { } connection)
@@ -1077,11 +1077,6 @@ public sealed partial class MainWindow : Window
                 }
                 catch (Exception error) { ShowNotice("Agent 接入失败", error.Message, InfoBarSeverity.Error); }
             };
-            var body = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed, Margin = new Thickness(56, 8, 0, 4) };
-            body.Children.Add(Text(Json.Text(integration, "detail")));
-            if (Json.OptionalText(integration, "error") is { } integrationError) body.Children.Add(Text(integrationError));
-            if (Json.OptionalText(version, "error") is { } versionError) body.Children.Add(Text(versionError));
-            body.Children.Add(Button("升级", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
             var heading = new Grid { ColumnSpacing = 12 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1095,19 +1090,19 @@ public sealed partial class MainWindow : Window
             var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
             var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? $"版本检查失败：{failure}" : null);
-            summary.Children.Add(new TextBlock { Text = problem == null ? stateLabel : $"{stateLabel} · {problem}", Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
-            text.Children.Add(summary);
+            summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
+            ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
+            if (state != "unsupported") text.Children.Add(summary);
             var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
             identity.Children.Add(new Border { Width = 40, Height = 40, Child = Marks.Agent(id) }); identity.Children.Add(text);
-            var details = new Button { Content = identity, Style = Themed("FlatButton"), Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(details, $"查看 {Json.Text(agent, "name")} 详情");
-            details.Click += (_, _) => body.Visibility = body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            heading.Children.Add(details);
-            Grid.SetColumn(connectSwitch, 1); heading.Children.Add(connectSwitch);
-            var entryBody = new StackPanel { Spacing = 0 };
-            entryBody.Children.Add(heading); entryBody.Children.Add(body);
+            heading.Children.Add(identity);
+            var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            if (Json.Flag(version, "update"))
+                controls.Children.Add(Button($"更新到 {Json.Text(version, "latest")}", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
+            controls.Children.Add(connectSwitch);
+            Grid.SetColumn(controls, 1); heading.Children.Add(controls);
             var rows = Json.Flag(agent, "detected") ? detectedRows : undetected;
-            var entry = new Border { Child = entryBody, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
+            var entry = new Border { Child = heading, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
             // Dividers sit above every row except the first, so the last row has no trailing line.
             if (rows.Children.Count > 0) entry.BorderThickness = new Thickness(0, 1, 0, 0);
             rows.Children.Add(entry);
