@@ -28,6 +28,7 @@ pub fn isolate(command: &mut Command, root: &Path) {
         // DSH_HOME overrides HOME for the DSH client, so a test run inside DSH
         // would otherwise rewrite the developer's real DSH profile.
         .env("DSH_HOME", root.join("home").join(".dsh"))
+        .env("CLAUDE_CONFIG_DIR", root.join("home").join(".claude"))
         .env("CODEX_GATEWAY_CONFIG", root.join("config.json"))
         .env("CODEX_GATEWAY_RUNTIME_FILE", root.join("runtime.json"))
         .env("CODEX_GATEWAY_DAEMON_FILE", root.join("daemon.json"))

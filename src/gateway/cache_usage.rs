@@ -413,17 +413,21 @@ impl TokenUsageAggregator {
         let wanted: HashSet<String> = turns.iter().map(|turn| turn.session.clone()).collect();
         let mut titles = HashMap::new();
         if !wanted.is_empty() {
-            crate::clients::codex::titles::visit_titles(|id, title| {
-                let tag = super::turn_usage::session_tag(&id);
-                if wanted.contains(&tag) {
-                    // Legacy tags are 32-bit hashes. Never pick an arbitrary
-                    // title if two Codex threads collide.
-                    titles
-                        .entry(tag)
-                        .and_modify(|title| *title = None)
-                        .or_insert(Some(title));
-                }
-            });
+            for client in crate::clients::session_titles::TITLE_CLIENTS {
+                crate::clients::session_titles::visit_titles(
+                    client,
+                    |id| wanted.contains(&super::turn_usage::session_tag(id)),
+                    |id, title| {
+                        let tag = super::turn_usage::session_tag(&id);
+                        // Legacy tags are 32-bit hashes and omit the client.
+                        // A collision must never name the wrong conversation.
+                        titles
+                            .entry(tag)
+                            .and_modify(|title| *title = None)
+                            .or_insert(Some(title));
+                    },
+                );
+            }
         }
         for turn in &mut turns {
             turn.session_display = titles.get(&turn.session).cloned().flatten();

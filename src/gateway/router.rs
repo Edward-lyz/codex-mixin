@@ -154,11 +154,30 @@ pub(crate) fn stable_oneapi_routing(
     let session_id = opencode_session
         .or(prompt_cache_key)
         .or(x_session_id)
-        .or(session_id);
+        .or(session_id)
+        .map(str::to_owned)
+        .or_else(|| claude_metadata_session(body));
     Ok(session_id.map(|session_id| super::UpstreamRouting {
-        session_id: session_id.to_owned(),
         hash_key: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
+        session_id,
     }))
+}
+
+fn claude_metadata_session(body: &serde_json::Value) -> Option<String> {
+    let user_id = body.pointer("/metadata/user_id")?.as_str()?;
+    // Claude Code has shipped both a structured user_id string and the older
+    // user_*_account_*_session_UUID form. Ordinary Anthropic user IDs are not
+    // session identities and must not merge conversations.
+    let id = if user_id.starts_with('{') {
+        let metadata: serde_json::Value = serde_json::from_str(user_id).ok()?;
+        uuid::Uuid::parse_str(metadata.get("session_id")?.as_str()?).ok()?
+    } else {
+        if !user_id.starts_with("user_") {
+            return None;
+        }
+        uuid::Uuid::parse_str(user_id.rsplit_once("_session_")?.1).ok()?
+    };
+    Some(id.to_string())
 }
 
 #[cfg(test)]
@@ -166,6 +185,48 @@ mod tests {
     use super::*;
     use crate::config::PanelToolsConfig;
     use crate::provider::{ProviderModel, custom_provider};
+
+    #[test]
+    fn claude_metadata_routing() {
+        let id = "018f1234-1234-7123-8123-123456789abc";
+        for user_id in [
+            format!("user_device_account_account_session_{id}"),
+            serde_json::json!({"device_id":"device", "account_uuid":"account", "session_id":id})
+                .to_string(),
+        ] {
+            let body = serde_json::json!({"metadata":{"user_id":user_id}});
+            let mut headers = axum::http::HeaderMap::new();
+            let routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
+            assert_eq!(routing.session_id, id);
+            assert_eq!(
+                routing.hash_key,
+                uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string()
+            );
+            headers.insert("x-session-id", "explicit-session".parse().unwrap());
+            assert_eq!(
+                stable_oneapi_routing(&headers, &body)
+                    .unwrap()
+                    .unwrap()
+                    .session_id,
+                "explicit-session"
+            );
+        }
+        for user_id in [
+            "ordinary-user",
+            "user_device_session_not-a-uuid",
+            "{invalid",
+            "{\"session_id\":\"not-a-uuid\"}",
+        ] {
+            assert!(
+                stable_oneapi_routing(
+                    &axum::http::HeaderMap::new(),
+                    &serde_json::json!({"metadata":{"user_id":user_id}})
+                )
+                .unwrap()
+                .is_none()
+            );
+        }
+    }
 
     fn fusion_profile(id: &str) -> FusionProfile {
         FusionProfile {

@@ -232,7 +232,7 @@ fn context_cli_reports_compressed_archive() {
     assert_eq!(stats["totals"]["compressions"], 1);
     assert!(stats["totals"]["saved_tokens"].as_u64().unwrap() > 0);
     let session_row = &stats["sessions"][0];
-    assert_eq!(session_row["display"], "codex / thread-cli");
+    assert_eq!(session_row["display"], "codex / please start the task");
     assert_eq!(session_row["compressions"], 1);
     assert!(session_row["view_tokens"].as_u64().unwrap() > 0);
 }
@@ -297,4 +297,109 @@ fn context_stats_use_codex_title_without_changing_session_identity() {
     for row in renamed["sessions"].as_array().unwrap() {
         assert_eq!(row["display"], "Renamed task");
     }
+}
+
+#[test]
+fn stats_preview_missing_titles() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
+    let session = format!("Codex{SESSION_SEPARATOR}opaque-routing-id");
+    engine
+        .begin_turn(
+            &session,
+            &[
+                message("developer", "Internal tools"),
+                message(
+                    "user",
+                    "# AGENTS.md instructions for workspace\n<INSTRUCTIONS>rules</INSTRUCTIONS>",
+                ),
+                message(
+                    "user",
+                    "<environment_context>workspace</environment_context>",
+                ),
+                message("user", "Fix the session names\nand simplify the interface"),
+                message("user", "A later request"),
+            ],
+            10_000,
+        )
+        .unwrap();
+    let stats = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    assert_eq!(
+        stats["sessions"][0]["display"],
+        "Codex / Fix the session names and simplify the interface"
+    );
+    assert_eq!(stats["sessions"][0]["session"], session);
+}
+
+#[test]
+fn stats_client_titles_rename() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
+    let dsh = directory
+        .path()
+        .join("home/.dsh/storages/session_projcache/sessions");
+    let claude = directory.path().join("home/.claude/projects/workspace");
+    std::fs::create_dir_all(&dsh).unwrap();
+    std::fs::create_dir_all(&claude).unwrap();
+    let dsh_file = dsh.join("session-task.json");
+    std::fs::write(
+        &dsh_file,
+        r#"{"version":7,"record":{"rows":{"title":{"val":"DSH task"}}}}"#,
+    )
+    .unwrap();
+    let claude_file = claude.join("claude-task.jsonl");
+    std::fs::write(&claude_file, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Claude task\"}}\n{\"type\":\"custom-title\",\"customTitle\":\"Renamed Claude task\",\"sessionId\":\"claude-task\"}\n").unwrap();
+    for (client, id) in [
+        ("DSH", "session-task"),
+        ("Claude", "claude-task"),
+        ("Codex", "session-task"),
+    ] {
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes());
+        engine
+            .begin_turn(
+                &format!("{client}{SESSION_SEPARATOR}{id}"),
+                &[message("user", "Original request")],
+                10_000,
+            )
+            .unwrap();
+    }
+    let stats = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    for row in stats["sessions"].as_array().unwrap() {
+        let session = row["session"].as_str().unwrap();
+        let expected = if session.starts_with("DSH") {
+            "DSH task"
+        } else if session.starts_with("Claude") {
+            "Renamed Claude task"
+        } else {
+            "Codex / Original request"
+        };
+        assert_eq!(row["display"], expected);
+    }
+    std::fs::write(
+        &dsh_file,
+        r#"{"version":7,"record":{"rows":{"title":{"val":"Renamed DSH task"}}}}"#,
+    )
+    .unwrap();
+    let renamed = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    assert!(
+        renamed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["display"] == "Renamed DSH task")
+    );
 }
