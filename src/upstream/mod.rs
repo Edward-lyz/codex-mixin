@@ -5,6 +5,7 @@
 //! exact providers and headers they need; `server` and `gateway` both call
 //! into it. It never depends on `server`, `gateway`, `fusion`, or `cli`.
 
+use anyhow::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ mod ducx;
 #[cfg(test)]
 mod ech_tests;
 mod http_compression;
+mod kiro;
 mod official;
 pub(crate) mod transport_log;
 use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace};
@@ -83,6 +85,31 @@ impl UpstreamAccess {
     where
         T: serde::Serialize + Send + 'static,
     {
+        if provider.definition().preset_id.as_deref() == Some("agy-business") {
+            let payload = serde_json::to_value(body)?;
+            let mut response = None;
+            for force in [false, true] {
+                let (url, headers, payload) = crate::provider::agy_business::prepare_request(
+                    &self.client,
+                    provider,
+                    upstream_model_id,
+                    payload.clone(),
+                    force,
+                )
+                .await?;
+                let reply = self
+                    .send_json(self.client.post(url).headers(headers), payload, None)
+                    .await?;
+                let unauthorized = reply.status() == reqwest::StatusCode::UNAUTHORIZED;
+                response = Some(reply);
+                if !unauthorized || force || !provider.definition().auth.api_key.is_empty() {
+                    break;
+                }
+            }
+            return response
+                .context("Business request was not executed")
+                .map_err(GatewayError::Other);
+        }
         let url = if protocol == ProviderProtocol::GoogleGemini {
             let mut u = provider.api_url_for_model(upstream_model_id).into_owned();
             if !u.query_pairs().any(|(k, _)| k == "alt") {
@@ -276,6 +303,9 @@ impl UpstreamAccess {
         hash_key: Option<&str>,
         client_beta: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
+        if provider.definition().preset_id.as_deref() == Some("kiro") {
+            return self.send_kiro(provider, request, hash_key).await;
+        }
         let provider_beta = if request.speed.as_deref() == Some("fast") {
             Some(match provider.definition().anthropic_beta.as_deref() {
                 Some(configured)

@@ -165,7 +165,10 @@ pub(crate) async fn probe_new_models(
         .iter()
         .find(|provider| provider.id == id)
         .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-    if provider.preset_id.as_deref() == Some("agy") {
+    if matches!(
+        provider.preset_id.as_deref(),
+        Some("agy" | "agy-business" | "kiro")
+    ) {
         return Ok(());
     }
     if !provider.enabled {

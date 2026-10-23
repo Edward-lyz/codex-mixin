@@ -150,7 +150,7 @@ pub(super) async fn run(
             bin.display()
         );
     }
-    let oauth = matches!(preset, "openai" | "agy")
+    let oauth = matches!(preset, "openai" | "agy" | "agy-business" | "kiro")
         && key.as_deref().is_none_or(|key| key.trim().is_empty());
     let key = if oauth {
         String::new()

@@ -364,6 +364,16 @@ impl ProbeOutcome {
 }
 
 async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) -> ProbeOutcome {
+    if target.provider.definition().preset_id.as_deref() == Some("kiro") {
+        return match tokio::time::timeout(PROBE_TIMEOUT, probe_kiro(client, target, body)).await {
+            Ok(Ok(())) => ProbeOutcome {
+                status: CapabilityStatus::Supported,
+                error: None,
+            },
+            Ok(Err(error)) => ProbeOutcome::indeterminate(format!("Kiro probe failed: {error:#}")),
+            Err(error) => ProbeOutcome::indeterminate(format!("Kiro probe timed out: {error}")),
+        };
+    }
     let require_search_evidence = target.protocol == ProviderProtocol::GoogleGemini
         && body
             .get("tools")
@@ -397,11 +407,33 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
     if let Some(session) = target.session {
         body["metadata"] = json!({"user_id": session.hash_key.as_str()});
     }
-    let request = match target.native_headers {
-        Some(headers) => client.post(url.clone()).headers(headers.clone()),
-        None => target
-            .provider
-            .apply_auth_for_protocol(client.post(url), target.protocol),
+    let request = if target.provider.definition().preset_id.as_deref() == Some("agy-business") {
+        match crate::provider::agy_business::prepare_request(
+            client,
+            target.provider,
+            target.model,
+            body.clone(),
+            false,
+        )
+        .await
+        {
+            Ok((url, headers, payload)) => {
+                body = payload;
+                client.post(url).headers(headers)
+            }
+            Err(error) => {
+                return ProbeOutcome::indeterminate(format!(
+                    "AGY Business probe preparation failed: {error:#}"
+                ));
+            }
+        }
+    } else {
+        match target.native_headers {
+            Some(headers) => client.post(url.clone()).headers(headers.clone()),
+            None => target
+                .provider
+                .apply_auth_for_protocol(client.post(url), target.protocol),
+        }
     };
     let request = target
         .provider
@@ -437,6 +469,41 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
     };
     drop(permit);
     outcome
+}
+
+async fn probe_kiro(client: &Client, target: &ProbeTarget<'_>, body: Value) -> anyhow::Result<()> {
+    let _permit = target.request_limit.acquire().await?;
+    let session = crate::provider::kiro::credentials(target.provider, false).await?;
+    let request: crate::anthropic::MessageRequest = serde_json::from_value(body)?;
+    let payload = crate::protocol::kiro::request_payload(
+        &request,
+        session.profile_arn.as_deref(),
+        &uuid::Uuid::new_v4().to_string(),
+    )?;
+    let response = client
+        .post(format!("https://runtime.{}.kiro.dev/", session.region))
+        .bearer_auth(&session.access_token)
+        .header(
+            "x-amz-target",
+            "KiroRuntimeService.GenerateAssistantResponse",
+        )
+        .header(reqwest::header::CONTENT_TYPE, "application/x-amz-json-1.0")
+        .json(&payload)
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut stream = response.bytes_stream();
+    let mut decoder = crate::protocol::kiro::EventDecoder::default();
+    let mut adapter = crate::protocol::kiro::KiroSse::default();
+    while let Some(chunk) = stream.next().await {
+        decoder.push(&chunk?)?;
+        while let Some((kind, payload)) = decoder.next_event()? {
+            adapter.event(&kind, &payload)?;
+        }
+    }
+    decoder.finish()?;
+    adapter.finish()?;
+    Ok(())
 }
 
 async fn validate_probe_stream(

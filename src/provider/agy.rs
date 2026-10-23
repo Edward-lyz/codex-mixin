@@ -125,12 +125,19 @@ async fn fetch_json(
         Some(headers) => request.headers(headers),
         None => provider.apply_auth(request),
     };
-    let mut response = request.send().await?;
+    let response = request.send().await?;
     ensure!(
         response.status().is_success(),
         "AGY {operation} returned {}",
         response.status()
     );
+    bounded_json(response, operation).await
+}
+
+pub(crate) async fn bounded_json(
+    mut response: reqwest::Response,
+    operation: &str,
+) -> anyhow::Result<Value> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         ensure!(
@@ -181,7 +188,7 @@ struct AgentModelGroup {
     model_ids: Vec<String>,
 }
 
-fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
+pub(crate) fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
     let agent_models = AgentModels::deserialize(value).context("invalid AGY agent model groups")?;
     let agent_model_ids = agent_models
         .agent_model_sorts
