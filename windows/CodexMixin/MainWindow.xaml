@@ -44,7 +44,6 @@
                 <Border x:Name="StatusBadge" Style="{StaticResource SuccessBadge}" Visibility="Collapsed" VerticalAlignment="Center"><TextBlock x:Name="StatusBadgeText" FontSize="11" FontWeight="SemiBold"/></Border>
                 <Border x:Name="OfficialBadge" Visibility="Collapsed" Style="{StaticResource SuccessBadge}" VerticalAlignment="Center"><TextBlock Text="官方" FontSize="11" FontWeight="SemiBold"/></Border>
               </StackPanel>
-              <TextBlock x:Name="PageDescription" AutomationProperties.AutomationId="page-description" Text="从左侧选择服务商" Style="{StaticResource Mono}"/>
             </StackPanel>
           </Grid>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">

@@ -458,10 +458,6 @@ private struct AgentManagementView: View {
                     ForEach(model.detectedEntries, id: \.id) { entry in
                         AgentRowView(model: model, entry: entry)
                     }
-                } footer: {
-                    Text(AppLocalization.string("agentManagement.subtitle"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 if !model.undetectedEntries.isEmpty {
                     Section {

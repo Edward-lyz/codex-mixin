@@ -103,8 +103,8 @@ public sealed partial class MainWindow
         body.Children.Add(enabled);
         body.Children.Add(fields);
         body.Children.Add(actions);
-        body.Children.Add(Text("保存时只提交改动过的字段；开关与阈值只在网关重启后生效。"));
-        return Card("上下文引擎", "增长阈值决定何时开始压缩，压力与紧急比例决定压缩时机，保护消息与 token 不进入压缩。", body);
+        ToolTipService.SetToolTip(save, "重启网关后生效。");
+        return Card("上下文引擎", "", body);
     }
 
     private UIElement ContextStatsCards(ContextStats stats)
@@ -115,10 +115,10 @@ public sealed partial class MainWindow
         var metrics = new (string Title, string Value, string Note)[]
         {
             ("会话", UsageView.Compact(totals.Sessions), $"{UsageView.Compact(totals.Messages)} 条归档消息"),
-            ("压缩次数", UsageView.Compact(totals.Compressions), "含已被更高层合并的压缩"),
+            ("压缩次数", UsageView.Compact(totals.Compressions), ""),
             ("节省 tokens", UsageView.Compact(totals.SavedTokens), $"当前视图 {UsageView.Compact(totals.ViewTokens)}"),
             ("缓存命中", cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
-                cache.HitPercent is null ? "缓存命中率不可用" : "仅统计支持缓存观测的请求")
+                "")
         };
         for (var index = 0; index < metrics.Length; index++)
         {
@@ -126,20 +126,18 @@ public sealed partial class MainWindow
             var (title, value, note) = metrics[index];
             var tileBody = new StackPanel { Spacing = 2 };
             tileBody.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            tileBody.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
+            if (!string.IsNullOrWhiteSpace(note))
+                tileBody.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
             var tile = Card(title, "", tileBody);
             Grid.SetColumn(tile, index);
             tiles.Children.Add(tile);
         }
 
         var archive = new StackPanel { Spacing = 8 };
-        var path = Text(stats.DatabasePath);
-        path.Style = Themed("Mono");
-        ToolTipService.SetToolTip(path, $"归档库：{stats.DatabasePath}");
-        archive.Children.Add(path);
+        ToolTipService.SetToolTip(archive, $"归档库：{stats.DatabasePath}");
         if (stats.Sessions.Length == 0)
         {
-            archive.Children.Add(Text("归档库中还没有上下文会话；新会话第一次压缩后才会出现。"));
+            archive.Children.Add(Text("暂无会话。"));
         }
         else
         {
@@ -148,7 +146,7 @@ public sealed partial class MainWindow
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(tiles);
-        body.Children.Add(Card("按会话统计", "压缩次数含已被更高层合并的压缩，节省 tokens 只统计当前视图仍生效的压缩块。", archive));
+        body.Children.Add(Card("按会话统计", "", archive));
         return body;
     }
 

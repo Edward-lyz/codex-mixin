@@ -259,7 +259,6 @@ h1, h2, h3, p { margin: 0; }
   line-height: 1.2;
   letter-spacing: -0.022em;
 }
-.page-subtitle { margin-top: 6px; color: var(--ink-64); font-size: var(--fs-md); }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .refreshed { color: var(--ink-54); font-size: var(--fs-xs); }
 

@@ -211,7 +211,7 @@ public sealed partial class MainWindow : Window
         ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
-        PageTitle.Visibility = PageDescription.Visibility = ApplySummary.Visibility = header;
+        PageTitle.Visibility = ApplySummary.Visibility = header;
         UpdateRefreshTimer();
     }
 
@@ -436,16 +436,16 @@ public sealed partial class MainWindow : Window
         draftDirty = false;
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
         ShowSummary("配置已同步", "Caption");
-        PageDescription.Style = Themed("Caption");
-        (PageTitle.Text, PageDescription.Text) = page switch
+        ToolTipService.SetToolTip(PageTitle, null);
+        PageTitle.Text = page switch
         {
-            "providers" => ("供应商与模型", "管理服务连接与向 Agent 提供的模型"),
-            "agents" => ("Agent 接入", "检测、接入与升级由本地 CLI 执行"),
-            "usage" => ("用量明细", "每日用量、按 Provider 拆分与每条回复的明细"),
-            "context" => ("上下文", "上下文引擎的开关、阈值与统计"),
-            "fusion" => ("Fusion", "组合 Panel、Judge 与 Final 模型"),
-            "settings" => ("设置", "外观、启动、备份与诊断"),
-            _ => ("概览", "模型服务、连接状态与常用操作")
+            "providers" => "供应商与模型",
+            "agents" => "Agent 接入",
+            "usage" => "用量明细",
+            "context" => "上下文",
+            "fusion" => "Fusion",
+            "settings" => "设置",
+            _ => "概览"
         };
         switch (page)
         {
@@ -492,8 +492,6 @@ public sealed partial class MainWindow : Window
             PageBody.Children.Add(Card(Json.Text(provider, "display_name"),
                 $"{Readiness(provider)} · {selected.Length} 个模型", Text(string.Join("  ·  ", selected))));
         }
-        PageBody.Children.Add(Card("使用 Windows 原生界面", "WinUI 3 · Fluent Design · Rust 本地网关",
-            Text($"CLI {Json.Text(metadata, "version")} · 关闭窗口收起到托盘，右键托盘可退出。")));
     }
 
     private static string Readiness(JsonElement provider) => !Json.Flag(provider, "enabled") ? "已停用" :
@@ -557,7 +555,6 @@ public sealed partial class MainWindow : Window
         {
             pendingApply = null; ApplyChanges.IsEnabled = false;
             PageTitle.Text = "还没有服务商";
-            PageDescription.Text = "添加上游 API 后，Codex Mixin 才能为网关提供模型。";
             PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
             return;
         }
@@ -604,8 +601,7 @@ public sealed partial class MainWindow : Window
         StatusBadge.Visibility = Visibility.Visible;
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
             ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():MM/dd HH:mm}" : "";
-        PageDescription.Style = Themed("Mono");
-        PageDescription.Text = $"{providerId} · 已加入 {Json.Field(provider, "selected_models").GetArrayLength()} / 可选 {Json.Field(provider, "cached_models").GetArrayLength()}{refreshed} · 配置 {providerSnapshotAt.ToLocalTime():HH:mm:ss}";
+        ToolTipService.SetToolTip(PageTitle, $"{providerId} · 已加入 {Json.Field(provider, "selected_models").GetArrayLength()} / 可选 {Json.Field(provider, "cached_models").GetArrayLength()}{refreshed} · 配置 {providerSnapshotAt.ToLocalTime():HH:mm:ss}");
         ApplyChanges.IsEnabled = true;
         try
         {
@@ -1027,7 +1023,7 @@ public sealed partial class MainWindow : Window
                 if (Json.OptionalText(version, "error") is { } error) row.Children.Add(Text(error));
                 body.Children.Add(row);
             }
-            PageBody.Children.Insert(1, Card("版本检查结果", "每个 Agent 的查询结果由 CLI 返回。", body));
+            PageBody.Children.Insert(1, Card("版本检查结果", "", body));
         }, readOnly: true));
         checkVersions.Content = IconLabel("\uE895", "检查版本更新");
         checkVersions.Style = Themed("FlatButton");
@@ -1218,7 +1214,7 @@ public sealed partial class MainWindow : Window
             }
         }
         quotaBody.Children.Add(Text("正在查询额度…"));
-        PageBody.Children.Add(Card("供应商额度", "圆环按已用比例绘制；查询失败时展示原因，未知额度不会显示为零。", quotaBody));
+        PageBody.Children.Add(Card("供应商额度", "", quotaBody));
         // Network quota loading must not disable local charts, filters or navigation.
         _ = LoadQuota();
     }
@@ -1319,7 +1315,7 @@ public sealed partial class MainWindow : Window
         };
         ApplyChanges.Content = "保存并重启网关";
         if (saved) form.Children.Add(Button("停用 Fusion", async () => { if (await ConfirmAsync("停用 Fusion？", "将移除当前组合模型配置。", "停用")) await ChangeAsync("停用 Fusion", ["fusion", "delete", "--id", Json.Text(profile, "id")], apply: true); }));
-        PageBody.Children.Add(Card("Fusion 模型编排", "运行模式与 macOS 端保持一致。", form));
+        PageBody.Children.Add(Card("Fusion 模型编排", "", form));
     }
 
     private async Task SettingsAsync(CancellationToken token)
@@ -1335,7 +1331,7 @@ public sealed partial class MainWindow : Window
         };
         var appearance = new StackPanel { Spacing = 16 }; appearance.Children.Add(theme); appearance.Children.Add(startup);
         appearance.Children.Add(Text(NativeShell.StartupBlocked() ? "启动项已被 Windows 禁用，请在系统「启动应用」中调整。" : "界面登录启动与网关自启分别管理。"));
-        PageBody.Children.Add(Card("外观与启动", "原生主题支持系统明暗模式和高对比度。", appearance));
+        PageBody.Children.Add(Card("外观与启动", "", appearance));
         var autostart = await Client.QueryAsync(["service", "autostart", "status", "--json"], token);
         var serviceButtons = Row();
         serviceButtons.Children.Add(Button("启用网关自启", () => ChangeAsync("启用网关自启", ["service", "autostart", "enable", "--json"])));
@@ -1365,14 +1361,14 @@ public sealed partial class MainWindow : Window
             if (file != null && await ConfirmAsync("替换当前配置？", "导入会替换现有供应商与密钥，并应用到已接入的客户端。", "导入"))
                 await ChangeAsync("导入配置", ["config", "import", file.Path], apply: true);
         }));
-        PageBody.Children.Add(Card("配置备份", "由 Rust CLI 导入导出，界面不会读写业务配置文件。", backup));
+        PageBody.Children.Add(Card("配置备份", "", backup));
         var context = Row();
         context.Children.Add(Button("打开上下文设置", () =>
         {
             ((App)Microsoft.UI.Xaml.Application.Current).OpenPage("context");
             return Task.CompletedTask;
         }));
-        PageBody.Children.Add(Card("上下文引擎", "长上下文压缩的开关、阈值、按会话统计与网关重启在独立窗口管理。", context));
+        PageBody.Children.Add(Card("上下文引擎", "", context));
         var diagnostics = Row();
         diagnostics.Children.Add(Button("打开日志目录", () => OpenPathAsync(Path.GetDirectoryName(Json.Text(Json.Field(metadata, "paths"), "gateway_log"))!)));
         diagnostics.Children.Add(Button("打开配置目录", () => OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"))));
@@ -1417,8 +1413,9 @@ public sealed partial class MainWindow : Window
     {
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, TextWrapping = TextWrapping.Wrap });
-        body.Children.Add(new TextBlock { Text = description,
-            Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
+        if (!string.IsNullOrWhiteSpace(description))
+            body.Children.Add(new TextBlock { Text = description,
+                Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
         if (content != null) body.Children.Add(content);
         return new Border { Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["Card"], Child = body };
     }

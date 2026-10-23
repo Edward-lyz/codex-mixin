@@ -216,9 +216,7 @@ private struct AddProviderFormView: View {
                             text: $model.baseURL,
                             prompt: Text(AppLocalization.string("settings.apiURLPrompt"))
                         )
-                        Text(AppLocalization.string("settings.apiURLHint"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        .help(AppLocalization.string("settings.apiURLHint"))
                         TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
                     }
                 }
@@ -226,9 +224,7 @@ private struct AddProviderFormView: View {
                 if model.isAWSBedrock {
                     Section("Amazon Bedrock") {
                         TextField("AWS Region", text: $model.awsRegion, prompt: Text("us-east-1"))
-                        Text("Endpoint 会按 Region 自动设置为 Bedrock Mantle。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .help("Endpoint 会按 Region 自动设置为 Bedrock Mantle。")
                     }
                 }
 
