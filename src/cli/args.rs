@@ -89,7 +89,13 @@ pub(super) enum Command {
         command: EchCommand,
     },
     /// Update this CLI from the latest GitHub release and restart the gateway.
-    Update,
+    Update {
+        /// Check release metadata without downloading or installing a release.
+        #[arg(long)]
+        check: bool,
+        #[arg(long, requires = "check")]
+        json: bool,
+    },
     /// Configure model providers and select their models.
     #[command(name = "provider", visible_alias = "providers")]
     Providers {

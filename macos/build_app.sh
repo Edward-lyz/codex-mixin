@@ -198,6 +198,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/AgentManagementActions.swift" \
   "$ROOT_DIR/macos/AgentManagementWindow.swift" \
   "$ROOT_DIR/macos/UpdateController.swift" \
+  "$ROOT_DIR/macos/SilentUpdateSupport.swift" \
+  "$ROOT_DIR/macos/SilentUpdateDriver.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/UpdateWatchdog.swift" \
   "$ROOT_DIR/macos/AppDataDirectory.swift" \

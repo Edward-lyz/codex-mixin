@@ -61,6 +61,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/images/edits", post(image_edits))
         .layer(RequestDecompressionLayer::new())
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state.activity),
+            super::activity::track_requests,
+        ))
         .layer(axum::middleware::from_fn(super::auth::mark_loopback_peer))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state.config),
@@ -180,6 +184,7 @@ async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     };
     Json(json!({
         "ok": true,
+        "activity": state.activity.snapshot(),
         "provider_readiness": provider_readiness,
     }))
 }

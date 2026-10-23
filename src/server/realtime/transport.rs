@@ -54,8 +54,10 @@ pub(super) async fn proxy_realtime_ws(
     let upstream = connect_realtime_ws(&state, &headers, &uri, route, upstream_call_id.as_deref())
         .await
         .map_err(GatewayError::Other)?;
+    let activity = state.activity.begin();
     Ok(ws
         .on_upgrade(move |client| async move {
+            let _activity = activity;
             bridge_realtime_websockets(client, upstream).await;
         })
         .into_response())
