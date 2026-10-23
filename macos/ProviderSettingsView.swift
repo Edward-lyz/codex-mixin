@@ -22,7 +22,6 @@ private struct ProviderConnectionDraft {
     let quotaUsername: String
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
-    let auxiliaryModelUpstream: Bool
     let autoReviewModel: String
     let codexThreadTitleModel: String
     let baiduAuthBridge: BaiduAuthBridgeMode
@@ -52,7 +51,6 @@ final class ProviderSettingsModel: ObservableObject {
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
-    @Published var auxiliaryModelUpstream = false
     @Published var autoReviewModel = ""
     @Published var codexThreadTitleModel = ""
     @Published var baiduAuthBridge = BaiduAuthBridgeMode.disabled
@@ -103,7 +101,6 @@ final class ProviderSettingsModel: ObservableObject {
     private func draftIsDirty(_ draft: ProviderConnectionDraft, for provider: ProviderView) -> Bool {
         if !draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         if draft.imageGenerationPath != (provider.imageGenerationPath ?? "") { return true }
-        if draft.auxiliaryModelUpstream != provider.auxiliaryModelUpstream { return true }
         if draft.autoReviewModel != (provider.autoReviewModel ?? "") { return true }
         if draft.codexThreadTitleModel != (provider.codexThreadTitleModel ?? "") { return true }
         if provider.presetID == "custom" {
@@ -178,7 +175,6 @@ final class ProviderSettingsModel: ObservableObject {
                 quotaUsername: draft.quotaUsername,
                 quotaWorkspaceID: draft.quotaWorkspaceID,
                 quotaAuthCookie: "",
-                auxiliaryModelUpstream: draft.auxiliaryModelUpstream,
                 autoReviewModel: draft.autoReviewModel,
                 codexThreadTitleModel: draft.codexThreadTitleModel,
                 baiduAuthBridge: draft.baiduAuthBridge,
@@ -238,7 +234,6 @@ final class ProviderSettingsModel: ObservableObject {
             quotaUsername: provider.quotaUsername ?? "",
             quotaWorkspaceID: provider.quotaWorkspaceID ?? "",
             quotaAuthCookie: "",
-            auxiliaryModelUpstream: provider.auxiliaryModelUpstream,
             autoReviewModel: provider.autoReviewModel ?? "",
             codexThreadTitleModel: provider.codexThreadTitleModel ?? "",
             baiduAuthBridge: provider.effectiveBaiduAuthBridge ?? .disabled,
@@ -272,7 +267,6 @@ final class ProviderSettingsModel: ObservableObject {
             quotaUsername: quotaUsername,
             quotaWorkspaceID: quotaWorkspaceID,
             quotaAuthCookie: quotaAuthCookie,
-            auxiliaryModelUpstream: auxiliaryModelUpstream,
             autoReviewModel: autoReviewModel,
             codexThreadTitleModel: codexThreadTitleModel,
             baiduAuthBridge: baiduAuthBridge,
@@ -295,7 +289,6 @@ final class ProviderSettingsModel: ObservableObject {
         quotaUsername = draft.quotaUsername
         quotaWorkspaceID = draft.quotaWorkspaceID
         quotaAuthCookie = draft.quotaAuthCookie
-        auxiliaryModelUpstream = draft.auxiliaryModelUpstream
         autoReviewModel = draft.autoReviewModel
         codexThreadTitleModel = draft.codexThreadTitleModel
         baiduAuthBridge = draft.baiduAuthBridge
@@ -309,7 +302,6 @@ final class ProviderSettingsModel: ObservableObject {
             provider.protocolID,
             provider.websiteURL ?? "",
             provider.imageGenerationPath ?? "",
-            String(provider.auxiliaryModelUpstream),
             provider.autoReviewModel ?? "",
             provider.codexThreadTitleModel ?? "",
             String(provider.apiKeyConfigured),
@@ -737,43 +729,33 @@ private struct ProviderDetailForm: View {
                                 }
                                 advancedOptionDivider
                             }
-                            advancedOptionRow(
-                                title: "辅助模型上游",
-                                detail: "用于绘图、自动审查和语音等辅助任务"
-                            ) {
-                                Toggle("", isOn: $formState.auxiliaryModelUpstream)
-                                    .labelsHidden()
-                                    .disabled(
-                                        provider.kind == .official
-                                            || !isAuxiliaryModelUpstreamSelectable(
-                                                for: provider,
-                                                codexInstallMode: codexInstallMode
-                                            )
-                                    )
-                                    .help(auxiliaryModelTooltip(
-                                        for: provider,
-                                        codexInstallMode: codexInstallMode
-                                    ))
-                            }
                             if provider.kind == .configured {
-                                advancedOptionDivider
                                 advancedOptionRow(
-                                    title: "自动审查模型",
-                                    detail: autoReviewModelDetail(
-                                        auxiliaryModelUpstream: formState.auxiliaryModelUpstream
-                                    )
+                                    title: AppLocalization.string("provider.reviewModelOverride"),
+                                    detail: AppLocalization.string("provider.reviewModelOverrideDetail")
                                 ) {
-                                    Picker("自动审查模型", selection: $formState.autoReviewModel) {
-                                        Text("自动").tag("")
-                                        ForEach(autoReviewModelChoices(for: provider), id: \.self) {
-                                            model in
-                                            Text(model).tag(model)
+                                    Toggle("", isOn: Binding(
+                                        get: { !formState.autoReviewModel.isEmpty },
+                                        set: { enabled in
+                                            formState.autoReviewModel = enabled
+                                                ? (autoReviewModelChoices(for: provider).first ?? "") : ""
                                         }
-                                    }
+                                    ))
                                     .labelsHidden()
-                                    .frame(width: 260)
-                                    .flexiblePickerSizing()
-                                    .disabled(!formState.auxiliaryModelUpstream)
+                                    .disabled(autoReviewModelChoices(for: provider).isEmpty)
+                                }
+                                if !formState.autoReviewModel.isEmpty {
+                                    advancedOptionDivider
+                                    advancedOptionRow(title: AppLocalization.string("provider.reviewModel")) {
+                                        Picker(AppLocalization.string("provider.reviewModel"), selection: $formState.autoReviewModel) {
+                                            ForEach(autoReviewModelChoices(for: provider), id: \.self) { model in
+                                                Text(model).tag(model)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .frame(width: 260)
+                                        .flexiblePickerSizing()
+                                    }
                                 }
                                 advancedOptionDivider
                                 advancedOptionRow(

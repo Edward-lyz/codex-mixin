@@ -262,11 +262,15 @@ pub fn update_provider_config(
         "provider {id} changed during update; retry"
     );
     let maps_titles = provider.codex_thread_title_model.is_some();
+    let overrides_review = provider.auto_review_model.is_some();
     *current = provider;
-    if maps_titles {
-        for other in &mut config.providers {
-            if other.id != id {
+    for other in &mut config.providers {
+        if other.id != id {
+            if maps_titles {
                 other.codex_thread_title_model = None;
+            }
+            if overrides_review {
+                other.auto_review_model = None;
             }
         }
     }
@@ -506,6 +510,7 @@ mod tests {
             ..Default::default()
         }];
         first.codex_thread_title_model = Some(selected.clone());
+        first.auto_review_model = Some(selected.clone());
         let mut second = provider("second");
         second.selected_models = first.selected_models.clone();
         second.cached_models = first.cached_models.clone();
@@ -518,6 +523,8 @@ mod tests {
         update_provider_config(&mut config, "second", &second, updated.clone(), None).unwrap();
         assert!(config.providers[0].codex_thread_title_model.is_none());
         assert!(config.providers[1].codex_thread_title_model.is_some());
+        assert!(config.providers[0].auto_review_model.is_some());
+        assert!(config.providers[1].auto_review_model.is_none());
         let mut cleared = updated.clone();
         cleared.codex_thread_title_model = None;
         update_provider_config(&mut config, "second", &updated, cleared, None).unwrap();
@@ -526,6 +533,15 @@ mod tests {
                 .providers
                 .iter()
                 .all(|provider| provider.codex_thread_title_model.is_none())
+        );
+        let second = config.providers[1].clone();
+        let mut updated = second.clone();
+        updated.auto_review_model = Some("title-model".to_owned());
+        update_provider_config(&mut config, "second", &second, updated, None).unwrap();
+        assert!(config.providers[0].auto_review_model.is_none());
+        assert_eq!(
+            config.providers[1].auto_review_model.as_deref(),
+            Some("title-model")
         );
     }
 

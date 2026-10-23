@@ -1569,7 +1569,7 @@ function modelsTab(provider) {
       })()
     : null;
 
-  const columns = [["selected", "Codex"], ["model", "模型"], ["ttft", "首 Token"], ["tps", "生成速度"], ["context", "上下文"], ...(showRatio ? [["ratio", "倍率"]] : []), ["caps", "能力"]];
+  const columns = [["selected", "是否加入"], ["model", "模型"], ["ttft", "首 Token"], ["tps", "生成速度"], ["context", "上下文"], ...(showRatio ? [["ratio", "倍率"]] : []), ["caps", "能力"]];
   const head = h("tr", null, ...columns.map(([key, label]) => {
     if (key === "caps") return h("th", { scope: "col", text: label });
     const active = svc.sort.key === key;
@@ -1589,7 +1589,7 @@ function modelsTab(provider) {
     if (row.selected !== row.savedSelected) tags.push(h("span", { class: "badge", text: row.selected ? "待加入" : "待移除" }));
     return h("tr", { "data-model": row.model.id, class: row.selected ? "is-selected" : null, title: row.model.description || null },
       h("td", { class: "c-check" }, check),
-      h("td", { class: "c-model" }, h("span", { class: "mono", text: row.model.id }), row.model.display_name ? h("span", { class: "muted", text: ` \u00b7 ${row.model.display_name}` }) : null, ...tags),
+      h("td", { class: "c-model" }, h("span", { class: "mono", text: row.model.id }), ...tags),
       h("td", { class: "r mono", text: fixed(row.bench?.ttft_ms, 0, " ms").replace("\u2014", "-") }),
       h("td", { class: "r mono", text: fixed(row.bench?.tps, 1, " t/s").replace("\u2014", "-") }),
       h("td", { class: "r" }, contextCell(provider, row)),
@@ -1680,12 +1680,18 @@ function connectionTab(provider) {
       formRow("Auth Cookie", h("div", { class: "card-actions" }, inlineSecret("quota_auth_cookie", provider.quota_auth_cookie_configured), provider.quota_auth_cookie_configured ? clearButton("清除额度凭据", provider, { clear_quota_workspace_id: true, clear_quota_auth_cookie: true }, "额度凭据已清除") : null)),
     ));
   }
-  const auxiliary = h("input", { class: "switch", type: "checkbox", role: "switch", name: "auxiliary_model_upstream", checked: Boolean(provider.auxiliary_model_upstream), "aria-label": "辅助模型上游" });
-  const reviewOptions = [["", "自动"], ...(provider.selected_models || []).map((id) => [id, id])];
-  const review = selectControl("auto_review_model", reviewOptions, provider.auto_review_model || "");
-  const syncReview = () => (review.querySelector("select").disabled = !auxiliary.checked);
-  auxiliary.addEventListener("change", syncReview);
-  syncReview();
+  const modelOptions = (provider.selected_models || []).map((id) => [id, id]);
+  const reviewEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "review_override", checked: Boolean(provider.auto_review_model), disabled: !modelOptions.length, "aria-label": "Codex 审查模型覆盖" });
+  const review = selectControl("auto_review_model", modelOptions, provider.auto_review_model || modelOptions[0]?.[0]);
+  const titleEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "title_override", checked: Boolean(provider.codex_thread_title_model), disabled: !modelOptions.length, "aria-label": "Codex 会话命名模型覆盖" });
+  const title = selectControl("codex_thread_title_model", modelOptions, provider.codex_thread_title_model || modelOptions[0]?.[0]);
+  const syncOverrides = () => {
+    review.hidden = !reviewEnabled.checked;
+    title.hidden = !titleEnabled.checked;
+  };
+  reviewEnabled.addEventListener("change", syncOverrides);
+  titleEnabled.addEventListener("change", syncOverrides);
+  syncOverrides();
   const advanced = [];
   if (definition.quota_username_required) {
     advanced.push(
@@ -1695,8 +1701,8 @@ function connectionTab(provider) {
   }
   advanced.push(
     formRow("绘图接口路径", inlineInput("image_generation_path", provider.image_generation_path, { placeholder: "/v1/images/generations" })),
-    formRow("辅助模型上游", auxiliary, "用于绘图、自动审查和语音等辅助任务"),
-    formRow("自动审查模型", review, "需要先开启辅助模型上游；留空时自动选择"),
+    formRow("Codex 审查模型覆盖", h("div", { class: "form" }, reviewEnabled, review), "关闭时使用默认审查路由"),
+    formRow("Codex 会话命名模型覆盖", h("div", { class: "form" }, titleEnabled, title), "仅覆盖会话命名请求，普通对话保留原模型"),
   );
   groups.push(h("details", { class: "fgroup fgroup-details", open: true }, h("summary", { class: "fgroup-title", text: "高级选项" }), h("div", { class: "fgroup-body" }, ...advanced)));
 
@@ -1752,10 +1758,15 @@ function connectionChanges(provider, values) {
     if (values.image_generation_path) options.image_generation_path = values.image_generation_path;
     else options.clear_image_generation = true;
   }
-  if (values.auxiliary_model_upstream !== Boolean(provider.auxiliary_model_upstream)) options.auxiliary_model_upstream = values.auxiliary_model_upstream;
-  if ((values.auto_review_model || "") !== (provider.auto_review_model || "")) {
-    if (values.auto_review_model) options.auto_review_model = values.auto_review_model;
+  const reviewModel = values.review_override ? values.auto_review_model : "";
+  if ((reviewModel || "") !== (provider.auto_review_model || "")) {
+    if (reviewModel) options.auto_review_model = reviewModel;
     else options.clear_auto_review_model = true;
+  }
+  const titleModel = values.title_override ? values.codex_thread_title_model : "";
+  if ((titleModel || "") !== (provider.codex_thread_title_model || "")) {
+    if (titleModel) options.codex_thread_title_model = titleModel;
+    else options.clear_codex_thread_title_model = true;
   }
   return options;
 }

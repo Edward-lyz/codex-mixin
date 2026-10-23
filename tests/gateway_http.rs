@@ -8579,13 +8579,16 @@ async fn codex_thread_title_mapping_never_falls_back_when_selected_model_is_miss
 }
 
 #[tokio::test]
-async fn auxiliary_provider_overrides_official_auto_review_http_backend() {
+async fn review_override_routes_http_without_auxiliary_switch() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let (official_url, official_requests, _, _, _, _) =
         spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
-    config.providers[0].auxiliary_model_upstream = true;
+    config.providers[0].auto_review_model = Some("codex-auto-review".to_owned());
+    config.providers[0]
+        .selected_models
+        .push("codex-auto-review".to_owned());
     config.providers[0].cached_models.push(ProviderModel {
         id: "codex-auto-review".to_owned(),
         ..ProviderModel::default()
@@ -8618,13 +8621,14 @@ async fn auxiliary_provider_overrides_official_auto_review_http_backend() {
 }
 
 #[tokio::test]
-async fn baidu_auxiliary_routes_hidden_auto_review_model_id() {
+async fn baidu_review_override_routes_the_selected_model() {
     let (upstream_url, upstream_requests) = spawn_baidu_protocol_upstream().await;
     let mut config = test_config(upstream_url);
     configure_baidu_policy(&mut config);
     configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
-    config.providers[0].auxiliary_model_upstream = true;
+    let review_model = config.providers[0].selected_models[0].clone();
+    config.providers[0].auto_review_model = Some(review_model.clone());
     config.accept_codex_oauth = false;
     assert!(
         config.providers[0]
@@ -8648,7 +8652,7 @@ async fn baidu_auxiliary_routes_hidden_auto_review_model_id() {
     let upstream_requests = upstream_requests.lock().unwrap();
     assert_eq!(upstream_requests.len(), 1);
     assert_eq!(upstream_requests[0]["path"], "/v1/messages");
-    assert_eq!(upstream_requests[0]["body"]["model"], "codex-auto-review");
+    assert_eq!(upstream_requests[0]["body"]["model"], review_model);
 }
 
 #[tokio::test]

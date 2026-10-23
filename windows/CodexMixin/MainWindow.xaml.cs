@@ -664,12 +664,12 @@ public sealed partial class MainWindow : Window
         Grid Columns()
         {
             var grid = new Grid { ColumnSpacing = 12 };
-            foreach (var width in new[] { 44d, -1d, 76d, 84d, 80d, 48d, 120d })
+            foreach (var width in new[] { 80d, -1d, 76d, 84d, 80d, 48d, 120d })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
         var header = Columns();
-        var labels = new[] { "Codex", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
+        var labels = new[] { "是否加入", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
         for (var index = 0; index < labels.Length; index++)
         {
             var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 2 and <= 5 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
@@ -702,14 +702,9 @@ public sealed partial class MainWindow : Window
             var title = new Grid { ColumnSpacing = 0, VerticalAlignment = VerticalAlignment.Center };
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var name = new TextBlock { Text = Json.OptionalText(model, "display_name") ?? modelId, Style = Themed("MonoPrimary"), MaxWidth = 280 };
+            var name = new TextBlock { Text = modelId, Style = Themed("MonoPrimary"), MaxWidth = 280 };
             AutomationProperties.SetName(name, modelId);
             title.Children.Add(name);
-            if (Json.OptionalText(model, "description") is { Length: > 0 } description)
-            {
-                var detail = new TextBlock { Text = $" · {description}", Style = Themed("Mono") };
-                Grid.SetColumn(detail, 1); title.Children.Add(detail);
-            }
             ToolTipService.SetToolTip(title, string.Join("\n", new[] { modelId, Json.OptionalText(model, "display_name"), Json.OptionalText(model, "description") }.Where(value => !string.IsNullOrEmpty(value)).Distinct()));
             var originalContext = model.TryGetProperty("context_window", out var original) && original.ValueKind == JsonValueKind.Number ? original.GetDouble() : double.NaN;
             var contextText = new TextBlock { Style = Themed("MonoPrimary") };
@@ -910,12 +905,26 @@ public sealed partial class MainWindow : Window
             provider is { } b ? Json.OptionalText(b, "baidu_auth_bridge") ?? "disabled" : "disabled");
         var report = new CheckBox { Content = "OneAPI 代码上报", IsChecked = provider is { } br &&
             Json.Field(br, "baidu_code_report").ValueKind == JsonValueKind.True };
-        var auxiliary = new CheckBox { Content = "作为辅助模型上游", IsChecked = provider is { } a && Json.Flag(a, "auxiliary_model_upstream") };
+        string[] overrideModels = provider is { } configured
+            ? Json.Strings(Json.Field(configured, "selected_models")) : [];
+        var reviewOverride = new ToggleSwitch { Header = "Codex 审查模型覆盖", IsOn = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var reviewModel = Choice("审查模型", overrideModels, provider is { } rm ? Json.OptionalText(rm, "auto_review_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
+        var titleOverride = new ToggleSwitch { Header = "Codex 会话命名模型覆盖", IsOn = provider is { } titleProvider && Json.OptionalText(titleProvider, "codex_thread_title_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var titleModel = Choice("会话命名模型", overrideModels, provider is { } tm ? Json.OptionalText(tm, "codex_thread_title_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
+        void OverrideFields()
+        {
+            reviewOverride.Visibility = titleOverride.Visibility = provider == null ? Visibility.Collapsed : Visibility.Visible;
+            reviewModel.Visibility = provider != null && reviewOverride.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            titleModel.Visibility = provider != null && titleOverride.IsOn ? Visibility.Visible : Visibility.Collapsed;
+        }
+        reviewOverride.Toggled += (_, _) => OverrideFields();
+        titleOverride.Toggled += (_, _) => OverrideFields();
+        OverrideFields();
         var oauthTimeout = Input("OAuth 授权超时（秒）", Json.Field(catalog, "oauth_timeout_seconds").ToString());
         var oauthHint = Text("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。");
         form.Children.Add(oauthTimeout);
         form.Children.Add(oauthHint);
-        foreach (var element in new FrameworkElement[] { preset, id, name, url, website, protocol, apiPath, imagePath, key, username, bridge, report, workspace, cookie, accessKey, secretKey, session, region, auxiliary })
+        foreach (var element in new FrameworkElement[] { preset, id, name, url, website, protocol, apiPath, imagePath, key, username, bridge, report, workspace, cookie, accessKey, secretKey, session, region, reviewOverride, reviewModel, titleOverride, titleModel })
             form.Children.Add(element);
         void Fields()
         {
@@ -927,7 +936,7 @@ public sealed partial class MainWindow : Window
             id.Visibility = oauth && !Json.Flag(definition, "allow_multiple") ? Visibility.Collapsed : Visibility.Visible;
             key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : "API Key（可选；留空使用本地 OAuth）";
             key.Visibility = aws || oauth ? Visibility.Collapsed : Visibility.Visible;
-            foreach (var element in new FrameworkElement[] { name, url, website, imagePath, auxiliary })
+            foreach (var element in new FrameworkElement[] { name, url, website, imagePath })
                 element.Visibility = oauth ? Visibility.Collapsed : Visibility.Visible;
             foreach (var element in new FrameworkElement[] { accessKey, secretKey, session, region }) element.Visibility = aws ? Visibility.Visible : Visibility.Collapsed;
             foreach (var element in new FrameworkElement[] { username, bridge, report }) element.Visibility = Json.Flag(definition, "quota_username_required") ? Visibility.Visible : Visibility.Collapsed;
@@ -982,8 +991,15 @@ public sealed partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(workspace.Text)) args.AddRange(["--quota-workspace-id", workspace.Text.Trim()]);
             Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");
         }
-        if (auxiliary.Visibility == Visibility.Visible)
-            args.AddRange(["--auxiliary-model-upstream", auxiliary.IsChecked == true ? "true" : "false"]);
+        if (provider != null)
+        {
+            if (reviewOverride.IsOn && reviewModel.SelectedItem is string reviewSelection && !string.IsNullOrEmpty(reviewSelection))
+                args.AddRange(["--auto-review-model", reviewSelection]);
+            else args.Add("--clear-auto-review-model");
+            if (titleOverride.IsOn && titleModel.SelectedItem is string titleSelection && !string.IsNullOrEmpty(titleSelection))
+                args.AddRange(["--codex-thread-title-model", titleSelection]);
+            else args.Add("--clear-codex-thread-title-model");
+        }
         try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ShowSummary("配置已同步"); }
         finally { secrets.Clear(); }
         }
