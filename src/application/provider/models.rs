@@ -90,6 +90,13 @@ pub fn apply_model_selection(
     provider.selected_models = models;
     provider.new_models.clear();
     provider.prune_stale_auto_review_model();
+    if provider
+        .codex_thread_title_model
+        .as_ref()
+        .is_some_and(|model| !provider.selected_models.contains(model))
+    {
+        provider.codex_thread_title_model = None;
+    }
     provider.validate()?;
     Ok(models_to_probe)
 }

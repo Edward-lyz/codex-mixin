@@ -161,6 +161,29 @@ impl GatewayExecutor {
         custom_result
     }
 
+    pub(crate) async fn resolve_responses_route(
+        &self,
+        model: &str,
+        headers: &HeaderMap,
+        body: &serde_json::Value,
+    ) -> Result<super::ResolvedModelRoute, GatewayError> {
+        if let Some(provider) = self
+            .config
+            .providers
+            .iter()
+            .find(|provider| provider.enabled && provider.codex_thread_title_model.is_some())
+            && let Some(selected) = &provider.codex_thread_title_model
+            && super::router::is_codex_thread_title(headers, body)?
+        {
+            let slug = crate::provider::catalog_model_slug(selected, &provider.id);
+            // Explicit title mappings fail if unavailable; spending official
+            // quota would violate the user's selected routing policy.
+            return super::ModelRouter::new(&self.config.fusion_profiles, &self.providers, false)
+                .resolve(&slug);
+        }
+        self.resolve_model_route(model).await
+    }
+
     pub(crate) fn resolved_provider_model(
         &self,
         catalog_slug: &str,

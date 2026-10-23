@@ -192,6 +192,9 @@ pub struct ProviderDefinition {
     /// official model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_review_model: Option<String>,
+    /// Selected model for Codex requests explicitly marked thread_title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_thread_title_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
     pub protocol: ProviderProtocol,
@@ -428,6 +431,17 @@ impl ProviderDefinition {
                     .iter()
                     .any(|selected| selected.eq_ignore_ascii_case(auto_review_model)),
                 "provider {} auto review model {auto_review_model} is not one of its selected models",
+                self.id
+            );
+        }
+        if let Some(model) = self.codex_thread_title_model.as_deref() {
+            ensure!(
+                !model.trim().is_empty()
+                    && self
+                        .selected_models
+                        .iter()
+                        .any(|selected| selected == model),
+                "provider {} thread title model {model} is not one of its selected models",
                 self.id
             );
         }

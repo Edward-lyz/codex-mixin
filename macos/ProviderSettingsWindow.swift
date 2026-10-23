@@ -687,6 +687,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             update.append("--auto-review-model")
             update.append(autoReviewModel)
         }
+        if model.codexThreadTitleModel.isEmpty {
+            if provider.codexThreadTitleModel != nil {
+                update.append("--clear-codex-thread-title-model")
+            }
+        } else {
+            update.append("--codex-thread-title-model")
+            update.append(model.codexThreadTitleModel)
+        }
         if provider.presetID == "aws-bedrock" {
             let region = model.awsRegion.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasStoredCredentials = provider.awsSigV4Configured == true

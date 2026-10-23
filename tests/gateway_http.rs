@@ -8436,6 +8436,87 @@ async fn routes_auto_review_to_official_http_backend() {
 }
 
 #[tokio::test]
+async fn codex_thread_title_mapping_routes_http_and_websocket_without_official_quota() {
+    for websocket in [false, true] {
+        let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+        let (official_url, official_requests, _, _, _, _) =
+            spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+        let mut config = test_config(upstream_url);
+        config.official_responses_url = format!("{official_url}/v1/responses");
+        config.providers[0].codex_thread_title_model = Some("DeepSeek-V4-Flash".to_owned());
+        let codex_home = tempfile::tempdir().unwrap();
+        config.codex_auth_path = codex_home.path().join("auth.json");
+        std::fs::write(
+            &config.codex_auth_path,
+            r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+        )
+        .unwrap();
+        let gateway_url = spawn_gateway_with_config(config).await;
+        let mut body = responses_request();
+        body["model"] = json!("gpt-6-luna");
+        body["client_metadata"] = json!({"x-codex-turn-metadata":json!({"thread_source":"thread_title","turn_trigger":"thread_title"}).to_string()});
+        let response = if websocket {
+            let mut handshake = format!(
+                "{}/v1/responses",
+                gateway_url.replacen("http://", "ws://", 1)
+            )
+            .into_client_request()
+            .unwrap();
+            handshake
+                .headers_mut()
+                .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+            let (mut socket, _) = connect_async(handshake).await.unwrap();
+            body["type"] = json!("response.create");
+            socket
+                .send(WsMessage::Text(body.to_string().into()))
+                .await
+                .unwrap();
+            websocket_response_frames(&mut socket).await.join("\n")
+        } else {
+            reqwest::Client::new()
+                .post(format!("{gateway_url}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        };
+        assert!(response.contains("response.completed"), "{response}");
+        assert!(
+            response.contains("gpt-6-luna"),
+            "client-facing model must be preserved: {response}"
+        );
+        assert_eq!(upstream_requests.lock().unwrap().len(), 1);
+        assert_eq!(
+            upstream_requests.lock().unwrap()[0]["model"],
+            "DeepSeek-V4-Flash"
+        );
+        assert!(
+            official_requests.lock().unwrap().is_empty(),
+            "mapped title must never call official inference"
+        );
+
+        // The identical model slug remains official without the title marker.
+        body.as_object_mut().unwrap().remove("client_metadata");
+        body.as_object_mut().unwrap().remove("type");
+        let response = reqwest::Client::new()
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = response.bytes().await.unwrap();
+        assert_eq!(official_requests.lock().unwrap().len(), 1);
+        assert_eq!(upstream_requests.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
 async fn omits_unsupported_output_limit_from_official_responses() {
     let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
         OfficialWebSocketBehavior::Persistent,
@@ -8458,6 +8539,43 @@ async fn omits_unsupported_output_limit_from_official_responses() {
     let official_requests = official_requests.lock().unwrap();
     assert_eq!(official_requests.len(), 1);
     assert!(official_requests[0].get("max_output_tokens").is_none());
+}
+
+#[tokio::test]
+async fn codex_thread_title_mapping_never_falls_back_when_selected_model_is_missing() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    config.providers[0]
+        .selected_models
+        .push("gpt-missing".to_owned());
+    config.providers[0].codex_thread_title_model = Some("gpt-missing".to_owned());
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut body = responses_request();
+    body["model"] = json!("gpt-6-luna");
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header(
+            "x-codex-turn-metadata",
+            r#"{"turn_trigger":"thread_title"}"#,
+        )
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(official_requests.lock().unwrap().is_empty());
+    assert!(upstream_requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

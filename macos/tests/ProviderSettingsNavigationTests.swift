@@ -27,6 +27,7 @@ struct ProviderSettingsNavigationTests {
         testBaiduBridgeTestAndUpdateArguments()
         testAWSBedrockEndpointArguments()
         testAutoReviewModelArguments()
+        testThreadTitleModelArguments()
         testReorderReloadsPersistedProviderState()
         testOneAPIFieldsStayWithTheirProvider()
         testReadinessPresentationUsesConcreteReasons()
@@ -513,6 +514,35 @@ struct ProviderSettingsNavigationTests {
     }
 
     @MainActor
+    private static func testThreadTitleModelArguments() {
+        var events: [String] = []
+        var loads = 0
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                loads += 1
+                return try providerList(ids: ["custom"], autoReviewModel: "model-1",
+                    codexThreadTitleModel: loads == 2 ? "model-1" : nil)
+            },
+            runHandler: { arguments in
+                events.append(arguments.joined(separator: "|"))
+                return ""
+            }, applyHandler: { _ in }
+        )
+        controller.present()
+        waitUntil { loads == 1 && controller.model.selectedProviderID == "custom" }
+        precondition(!controller.model.auxiliaryModelUpstream)
+        controller.model.codexThreadTitleModel = "model-1"
+        precondition(controller.model.connectionDirty)
+        controller.saveProvider()
+        waitUntil { controller.model.selectedProvider?.codexThreadTitleModel == "model-1" }
+        precondition(events.contains { $0.contains("--codex-thread-title-model|model-1") })
+        controller.model.codexThreadTitleModel = ""
+        controller.saveProvider()
+        waitUntil { events.contains { $0.contains("--clear-codex-thread-title-model") } }
+        controller.window?.close()
+    }
+
+    @MainActor
     private static func reorderReloadsPersistedProviderState() {
         var loadCalls = 0
         var events: [String] = []
@@ -617,6 +647,7 @@ struct ProviderSettingsNavigationTests {
     private static func providerList(
         ids: [String],
         autoReviewModel: String? = nil,
+        codexThreadTitleModel: String? = nil,
         cachedModelCount: Int = 1,
         selectedModelCount: Int? = nil
     ) throws -> ProviderListResponse {
@@ -625,6 +656,7 @@ struct ProviderSettingsNavigationTests {
                 providerJSON(
                     id: $0,
                     autoReviewModel: autoReviewModel,
+                    codexThreadTitleModel: codexThreadTitleModel,
                     cachedModelCount: cachedModelCount,
                     selectedModelCount: selectedModelCount
                 )
@@ -643,6 +675,7 @@ struct ProviderSettingsNavigationTests {
     private static func providerJSON(
         id: String,
         autoReviewModel: String? = nil,
+        codexThreadTitleModel: String? = nil,
         cachedModelCount: Int = 1,
         selectedModelCount: Int? = nil
     ) -> String {
@@ -666,6 +699,8 @@ struct ProviderSettingsNavigationTests {
             : ""
         let autoReview = autoReviewModel
             .map { ", \"auto_review_model\": \"\($0)\"" } ?? ""
+        let titleMapping = codexThreadTitleModel
+            .map { ", \"codex_thread_title_model\": \"\($0)\"" } ?? ""
         let selectedModels = selectedModelCount.map { count in
             (0..<count).map { "\"fixture-model-\($0)\"" }.joined(separator: ",")
         } ?? autoReviewModel.map { "\"\($0)\"" } ?? ""
@@ -680,7 +715,7 @@ struct ProviderSettingsNavigationTests {
           "id": "\(id)",
           "display_name": "\(id)",
           "enabled": true,
-          "auxiliary_model_upstream": false\(autoReview),
+          "auxiliary_model_upstream": false\(autoReview)\(titleMapping),
           "preset_id": "\(preset)",
           "protocol": "\(protocolID)",
           "base_url": "https://example.com",

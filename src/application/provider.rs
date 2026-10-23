@@ -261,7 +261,15 @@ pub fn update_provider_config(
         current == snapshot,
         "provider {id} changed during update; retry"
     );
+    let maps_titles = provider.codex_thread_title_model.is_some();
     *current = provider;
+    if maps_titles {
+        for other in &mut config.providers {
+            if other.id != id {
+                other.codex_thread_title_model = None;
+            }
+        }
+    }
     if let Some(enabled) = auxiliary_model_upstream {
         set_auxiliary_upstream(config, id, enabled)?;
     }
@@ -486,6 +494,39 @@ mod tests {
         assert!(!config.providers[0].auxiliary_model_upstream);
         assert!(config.providers[1].auxiliary_model_upstream);
         assert_eq!(config.gateway_api_key.as_deref(), Some("gateway"));
+    }
+
+    #[test]
+    fn thread_title_mapping_moves_between_providers_and_can_be_cleared() {
+        let mut first = provider("first");
+        let selected = "title-model".to_owned();
+        first.selected_models = vec![selected.clone()];
+        first.cached_models = vec![crate::provider::ProviderModel {
+            id: selected.clone(),
+            ..Default::default()
+        }];
+        first.codex_thread_title_model = Some(selected.clone());
+        let mut second = provider("second");
+        second.selected_models = first.selected_models.clone();
+        second.cached_models = first.cached_models.clone();
+        let mut config = StoredGatewayConfig {
+            providers: vec![first, second.clone()],
+            ..StoredGatewayConfig::default()
+        };
+        let mut updated = second.clone();
+        updated.codex_thread_title_model = Some(selected);
+        update_provider_config(&mut config, "second", &second, updated.clone(), None).unwrap();
+        assert!(config.providers[0].codex_thread_title_model.is_none());
+        assert!(config.providers[1].codex_thread_title_model.is_some());
+        let mut cleared = updated.clone();
+        cleared.codex_thread_title_model = None;
+        update_provider_config(&mut config, "second", &updated, cleared, None).unwrap();
+        assert!(
+            config
+                .providers
+                .iter()
+                .all(|provider| provider.codex_thread_title_model.is_none())
+        );
     }
 
     #[test]

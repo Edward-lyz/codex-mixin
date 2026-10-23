@@ -333,6 +333,14 @@ impl ProviderRegistry {
         providers: Vec<ProviderDefinition>,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
+        ensure!(
+            providers
+                .iter()
+                .filter(|provider| provider.codex_thread_title_model.is_some())
+                .count()
+                <= 1,
+            "only one provider can map Codex thread-title requests"
+        );
         let auxiliary_providers = providers
             .iter()
             .filter(|provider| provider.auxiliary_model_upstream)
@@ -1121,6 +1129,7 @@ mod tests {
             enabled: true,
             auxiliary_model_upstream: false,
             auto_review_model: None,
+            codex_thread_title_model: None,
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,
             base_url: "https://example.test".to_owned(),

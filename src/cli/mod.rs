@@ -584,6 +584,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_code_report,
                 auto_review_model,
                 clear_auto_review_model,
+                codex_thread_title_model,
+                clear_codex_thread_title_model,
             } => {
                 let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
@@ -624,6 +626,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     baidu_code_report,
                     auto_review_model,
                     clear_auto_review_model,
+                    codex_thread_title_model,
+                    clear_codex_thread_title_model,
                 })
                 .await?;
                 report_hook::sync_installation()
