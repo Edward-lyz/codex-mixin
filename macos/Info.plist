@@ -38,11 +38,11 @@
   <key>SUPublicEDKey</key>
   <string>govs3MFvVHshUlHFb2l8en5tKZH7Mz2GnhZLGb//XHQ=</string>
   <key>SUEnableAutomaticChecks</key>
-  <true/>
+  <false/>
   <key>SUAutomaticallyUpdate</key>
-  <true/>
+  <false/>
   <key>SUScheduledCheckInterval</key>
-  <integer>86400</integer>
+  <integer>3600</integer>
   <key>SUVerifyUpdateBeforeExtraction</key>
   <true/>
   <key>NSAppTransportSecurity</key>

@@ -59,6 +59,7 @@ async fn route_responses_ws(
         else {
             return Ok(());
         };
+        let _activity = state.activity.begin();
         if body.get("stream").is_none() {
             body["stream"] = Value::Bool(true);
         }

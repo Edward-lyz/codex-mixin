@@ -47,6 +47,7 @@ quota_support|1|||QuotaSupport.swift ConsoleUsageSupport.swift tests/QuotaSuppor
 settings_panel_presentation|1||Cocoa|ApplicationMenuSupport.swift LiquidGlassSupport.swift SettingsPanel.swift tests/SettingsPanelPresentationTests.swift
 status_refresh_coordinator|0|||RefreshTimerSupport.swift StatusRefreshCoordinator.swift tests/StatusRefreshCoordinatorTests.swift
 update_watchdog|0||Cocoa CryptoKit|UpdateWatchdog.swift AppDataDirectory.swift tests/UpdateWatchdogTests.swift
+silent_update|0|||SilentUpdateSupport.swift tests/SilentUpdateTests.swift
 user_shell_path|0|-sdk @SDK@ -target @ARCH@-apple-macos13.1 -parse-as-library||AppDataDirectory.swift AppOperationLogging.swift UserShellPathSupport.swift tests/UserShellPathTests.swift
 '
 # Tests that do not fit the compile-and-run table; each has a t_<name> function.

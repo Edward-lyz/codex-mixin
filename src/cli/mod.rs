@@ -477,7 +477,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             codex_mode,
             no_start,
         } => setup::run(preset, key, quota_username, codex_mode, no_start).await,
-        Command::Update => update::run().await,
+        Command::Update { check, json } => update::run(check, json).await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
             ProviderCommand::Add {

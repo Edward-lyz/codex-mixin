@@ -13,6 +13,7 @@ pub use crate::upstream::AnthropicByteStream;
 /// `gateway`.
 #[derive(Clone)]
 pub struct AppState {
+    pub(super) activity: Arc<super::activity::RequestActivity>,
     pub(crate) config: Arc<GatewayConfig>,
     pub(crate) providers: Arc<ProviderRegistry>,
     /// Shared upstream transport and auth runtimes (official + DUCX).
@@ -131,6 +132,7 @@ impl AppState {
         ));
         let catalog = Arc::clone(&gateway.catalog);
         Ok(Self {
+            activity: Arc::default(),
             config,
             providers,
             upstream,
