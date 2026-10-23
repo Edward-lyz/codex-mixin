@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
     var consoleContainer: ConsoleContainerController?
+    var lastConsolePage: ConsolePage = .providers
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []

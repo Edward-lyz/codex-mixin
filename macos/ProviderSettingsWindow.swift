@@ -35,6 +35,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
     private var bannerHideWorkItem: DispatchWorkItem?
     private var backgroundRefreshTask: Task<Void, Never>?
+    private var hostedContent: NSHostingController<AnyView>?
+    var onClose: (() -> Void)?
 
     init(
         loadHandler: @escaping LoadHandler,
@@ -117,6 +119,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     func present() {
+        if window?.contentViewController == nil { installContent() }
         showWindow(nil)
         if let window {
             presentPersistentWindow(window)
@@ -170,6 +173,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         stopBackgroundRefresh()
         model.clearSensitiveDrafts()
         benchmarkModel.stopPolling()
+        bannerHideWorkItem?.cancel()
+        bannerHideWorkItem = nil
+        hostedContent?.rootView = AnyView(EmptyView())
+        hostedContent = nil
+        // AppKit keeps closed windows reusable. Drop the console's SwiftUI
+        // graph so a menu-bar-only app does not retain every hidden page.
+        window?.contentViewController = nil
+        onClose?()
     }
 
     private func beginBackgroundRefresh() {
@@ -213,7 +224,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 self?.moveProviders(from: offsets, to: destination)
             }
         )
-        window?.contentViewController = NSHostingController(rootView: rootView)
+        let hosting = NSHostingController(rootView: AnyView(rootView))
+        hostedContent = hosting
+        window?.contentViewController = hosting
     }
 
     func moveProviders(from offsets: IndexSet, to destination: Int) {
