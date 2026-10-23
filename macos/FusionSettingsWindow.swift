@@ -385,10 +385,9 @@ private struct FusionSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .help(modeDescription)
         } header: {
             Text("Fusion 模型编排")
-        } footer: {
-            Text(modeDescription)
         }
     }
 
@@ -410,7 +409,7 @@ private struct FusionSettingsView: View {
         } header: {
             Text("Panel 模型")
         } footer: {
-            Text("已选择 \(model.selectedPanels.count) / 8 个；Panel 会并行执行。")
+            Text("已选择 \(model.selectedPanels.count) / 8 个")
         }
     }
 
@@ -471,10 +470,9 @@ private struct FusionSettingsView: View {
                 Label("添加时段", systemImage: "plus")
             }
             .disabled(model.timeRoutes.count >= 24 || model.options.isEmpty)
+            .help("开始时间包含、结束时间不包含；结束早于开始表示跨午夜。时段不能重叠。")
         } header: {
             Text("时段路由")
-        } footer: {
-            Text("开始时间包含、结束时间不包含；结束早于开始表示跨午夜。时段不能重叠。")
         }
     }
 

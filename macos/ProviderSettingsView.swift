@@ -802,18 +802,12 @@ private struct ProviderDetailForm: View {
         @ViewBuilder control: () -> Control
     ) -> some View {
         HStack(alignment: .center, spacing: 20) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                if let detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text(title)
+                .help(detail ?? "")
             Spacer(minLength: 20)
             control()
         }
-        .frame(minHeight: detail == nil ? 34 : 46)
+        .frame(minHeight: 34)
         .padding(.horizontal, 2)
     }
 

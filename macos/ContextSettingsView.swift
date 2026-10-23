@@ -181,9 +181,7 @@ struct ContextSettingsView: View {
             Section {
                 Toggle(AppLocalization.string("context.enabled"), isOn: $model.draft.enabled)
                     .toggleStyle(.switch)
-                Text(AppLocalization.string("context.restartNote"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .help(AppLocalization.string("context.restartNote"))
             } header: {
                 Text(AppLocalization.string("context.section.settings"))
             }
@@ -329,10 +327,6 @@ struct ContextSettingsView: View {
                 .font(.system(size: 30))
                 .foregroundStyle(.secondary)
             Text(AppLocalization.string("context.empty.title")).font(.headline)
-            Text(AppLocalization.string("context.empty.detail"))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

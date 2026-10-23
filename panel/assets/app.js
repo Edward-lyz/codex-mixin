@@ -8,16 +8,16 @@ const TOAST_MS = 4200;
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const PAGES = [
-  { id: "home", title: "概览", subtitle: "网关状态、用量与额度" },
-  { id: "providers", title: "模型与服务", subtitle: "服务商、模型选择、能力与连接设置" },
-  { id: "usage", title: "用量", subtitle: "每日用量、按 Provider 拆分与每条回复的明细" },
-  { id: "context", title: "上下文", subtitle: "上下文引擎开关、压缩节省量与每会话缓存命中" },
-  { id: "speed", title: "测速", subtitle: "首字延迟与输出速度基准" },
-  { id: "fusion", title: "Fusion", subtitle: "多模型协同与分时路由" },
-  { id: "apps", title: "Agent", subtitle: "把编码 Agent 接入本地网关，查看版本与接入状态" },
-  { id: "advanced", title: "高级", subtitle: "ECH 连接、手动上报与配置备份" },
-  { id: "system", title: "系统", subtitle: "更新、修复与维护" },
-  { id: "logs", title: "日志", subtitle: "服务日志与诊断报告" },
+  { id: "home", title: "概览" },
+  { id: "providers", title: "模型与服务" },
+  { id: "usage", title: "用量" },
+  { id: "context", title: "上下文" },
+  { id: "speed", title: "测速" },
+  { id: "fusion", title: "Fusion" },
+  { id: "apps", title: "Agent" },
+  { id: "advanced", title: "高级" },
+  { id: "system", title: "系统" },
+  { id: "logs", title: "日志" },
 ];
 
 const state = {
@@ -425,7 +425,6 @@ function navigate(pageId, options = {}) {
   });
   document.body.dataset.page = page.id;
   $("#page-title").textContent = page.title;
-  $("#page-subtitle").textContent = page.subtitle;
   document.title = `${page.title} · Codex Mixin`;
   placeIndicator();
   render({ animate: true });
@@ -561,7 +560,7 @@ function card(title, note, body, actions, extraClass = "") {
 }
 
 function emptyState(title, text, action) {
-  return h("div", { class: "empty" }, h("p", { class: "empty-title", text: title }), h("p", { text }), action || null);
+  return h("div", { class: "empty" }, h("p", { class: "empty-title", text: title }), text ? h("p", { text }) : null, action || null);
 }
 
 function field(label, control, hint) {
@@ -654,8 +653,8 @@ RENDERERS.home = () => {
         "div",
         { class: "grid grid-3" },
         metricCard("Providers", counts.total, `${str(counts.healthy, 0)} 健康 · ${str(counts.degraded, 0)} 降级 · ${str(counts.disabled, 0)} 停用`),
-        metricCard("可用模型", (state.snapshot.models || []).length, "可被客户端与 Fusion 选择"),
-        metricCard("Codex 接入", codexModeLabel(state.snapshot.codex_install_mode), "在「Agent」页切换"),
+        metricCard("可用模型", (state.snapshot.models || []).length),
+        metricCard("Codex 接入", codexModeLabel(state.snapshot.codex_install_mode)),
       ),
     ),
     usageCard(),
@@ -677,7 +676,7 @@ function exposureNotice() {
 }
 
 function metricCard(label, value, sub) {
-  return h("div", { class: "card card-tight metric" }, h("span", { class: "metric-label", text: label }), h("span", { class: "metric-value", text: typeof value === "number" ? compact(value) : str(value) }), h("span", { class: "metric-sub", text: sub }));
+  return h("div", { class: "card card-tight metric" }, h("span", { class: "metric-label", text: label }), h("span", { class: "metric-value", text: typeof value === "number" ? compact(value) : str(value) }), sub ? h("span", { class: "metric-sub", text: sub }) : null);
 }
 
 function codexModeLabel(mode) {
@@ -743,7 +742,7 @@ function usageCard() {
     );
   }
   const details = h("button", { class: "btn btn-ghost btn-sm", type: "button", text: "查看明细", onclick: () => navigate("usage") });
-  return card("用量", rows.length > HOME_USAGE_ROWS ? `用量最高的 ${HOME_USAGE_ROWS} 个模型` : "按 Provider 与模型汇总", body, [range, details], "card-flush");
+  return card("用量", rows.length > HOME_USAGE_ROWS ? `用量最高的 ${HOME_USAGE_ROWS} 个模型` : null, body, [range, details], "card-flush");
 }
 
 // ---------- Usage ----------
@@ -1114,7 +1113,7 @@ function quotaCard() {
     state.quotaFresh = false;
     body = h("div", { class: `quota-grid quota-grid-${view}` }, quotaGroups(state.quota).map((group) => quotaTile(group, view, animate)));
   }
-  return card("额度", "按 Provider 汇总，接近上限时以红色提示", body, [toggle, reload]);
+  return card("额度", null, body, [toggle, reload]);
 }
 
 // Generic, read-only rendering of CLI JSON whose shape varies by provider.
@@ -1874,7 +1873,7 @@ RENDERERS.speed = () => {
     }
     runAction(event.submitter, "benchmark_start", { timeout_seconds: timeout, providers: values.providers || [] }, { ok: "测速已开始" });
   });
-  return [card("发起测速", "按目标输出长度测量首字延迟与输出速度", form), benchmarkResults(snapshot)];
+  return [card("发起测速", null, form), benchmarkResults(snapshot)];
 };
 
 function benchmarkResults(snapshot) {
@@ -1958,7 +1957,7 @@ RENDERERS.fusion = () => {
   });
   const routes = (current.time_routes || []).map((route) => h("div", { class: "row" }, h("span", { class: "mono", text: `${minutes(route.start_minute)} – ${minutes(route.end_minute)}` }), h("span", { class: "row-main", text: route.model })));
   return [
-    card(profile ? `fusion/${profile.id}` : "新建 Fusion Profile", "客户端会看到一个以 fusion/ 开头的模型", form),
+    card(profile ? `fusion/${profile.id}` : "新建 Fusion Profile", null, form),
     routes.length ? card("分时路由", "在 CLI 中编辑；保存本页时保留", h("div", { class: "rows" }, routes), null, "card-flush") : null,
   ];
 };
@@ -2336,7 +2335,7 @@ function doctorCard() {
           ),
         ),
       );
-  return card("诊断报告", "doctor --quick", body, [rerun, actionButton("自动修复", "doctor_fix", null, { ok: "修复完成" }, "btn-primary")], "card-flush");
+  return card("诊断报告", null, body, [rerun, actionButton("自动修复", "doctor_fix", null, { ok: "修复完成" }, "btn-primary")], "card-flush");
 }
 
 // ---------- Context ----------
@@ -2381,8 +2380,7 @@ function contextSettingsCard(context) {
       h(
         "div",
         { class: "row-main" },
-        h("div", { class: "row-title", text: "启用上下文引擎" }),
-        h("div", { class: "row-sub is-wrap", text: "长会话归档为原文与摘要视图，模型通过内部工具按需压缩和检索。开关在网关重启后生效。" }),
+        h("div", { class: "row-title", text: "启用上下文引擎", title: "开关在网关重启后生效" }),
       ),
       toggle,
     ),
@@ -2395,7 +2393,7 @@ function contextSettingsCard(context) {
       ),
     ),
   );
-  return card("上下文引擎", context.database_path ? context.database_path : null, body, [restart]);
+  return card("上下文引擎", null, body, [restart]);
 }
 
 function contextMetrics(totals) {
@@ -2403,17 +2401,16 @@ function contextMetrics(totals) {
   return h(
     "div",
     { class: "grid grid-4" },
-    metricCard("会话", totals.sessions || 0, "已有归档的会话数"),
-    metricCard("压缩次数", totals.compressions || 0, "含已升级到更高层的压缩"),
-    metricCard("节省 token", totals.saved_tokens || 0, "原始 token 减去摘要 token"),
-    metricCard("缓存命中", fixed(cache.hit_percent, 1, "%"), cache.hit_percent == null ? "缓存命中率不可用" : "仅统计支持缓存观测的请求"),
+    metricCard("会话", totals.sessions || 0),
+    metricCard("压缩次数", totals.compressions || 0),
+    metricCard("节省 token", totals.saved_tokens || 0),
+    metricCard("缓存命中", fixed(cache.hit_percent, 1, "%")),
   );
 }
 
 function contextSessionsCard(sessions, totals) {
-  const note = "「节省」是原始片段 token 减去摘要 token；「视图」是当前发给上游的压缩视图估算。";
   if (!sessions.length) {
-    return card("会话", note, emptyState("还没有压缩记录", "开启上下文引擎后，长会话出现压缩时这里会显示每个会话的次数、节省量与缓存命中。"));
+    return card("会话", null, emptyState("暂无会话", ""));
   }
   const maxSaved = Math.max(1, ...sessions.map((row) => row.saved_tokens || 0));
   const head = ["会话", "消息", "压缩次数", "节省 token", "视图 token", "缓存命中", "最近活动"].map((label, index) =>
@@ -2426,7 +2423,7 @@ function contextSessionsCard(sessions, totals) {
     return h(
       "tr",
       null,
-      h("td", null, h("div", { class: "row-title", text: row.display }), h("div", { class: "row-sub", text: "修订 " + str(row.revision) })),
+      h("td", { title: `${row.session} · 修订 ${str(row.revision)}` }, h("div", { class: "row-title", text: row.display })),
       h("td", { class: "r", text: compact(row.messages || 0) }),
       h("td", { class: "r", text: compact(row.compressions || 0) }),
       h(
@@ -2463,7 +2460,7 @@ function contextSessionsCard(sessions, totals) {
       h("td", { class: "r", text: compact(cache.turns || 0) + " 轮" }),
     ),
   );
-  return card("会话", note, h("div", { class: "table-wrap" }, h("table", { class: "table" }, h("thead", null, h("tr", null, head)), h("tbody", null, body), foot)), null, "card-flush ctx-sessions");
+  return card("会话", null, h("div", { class: "table-wrap" }, h("table", { class: "table" }, h("thead", null, h("tr", null, head)), h("tbody", null, body), foot)), null, "card-flush ctx-sessions");
 }
 
 RENDERERS.context = () => {
