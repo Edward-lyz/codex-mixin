@@ -10,9 +10,19 @@ struct ProviderSettingsNavigationTests {
     static func main() {
         _ = NSApplication.shared
 
+        if let rawCount = ProcessInfo.processInfo.environment["CODEX_MIXIN_MEMORY_MODEL_COUNT"] {
+            guard let modelCount = Int(rawCount) else {
+                preconditionFailure("CODEX_MIXIN_MEMORY_MODEL_COUNT must be an integer")
+            }
+            testMemoryFixture(modelCount: modelCount)
+            print("Provider settings memory fixture: passed")
+            return
+        }
+
         testHeaderAvoidsToolbarBlur()
         testReloadPreservesSelectionAndDisablesEmptyDetails()
         testBackgroundRefreshStopsWithWindow()
+        testClosingClearsContentAndAllowsReopen()
         testMutationIsBusyAndRestartsInOrder()
         testBaiduBridgeTestAndUpdateArguments()
         testAWSBedrockEndpointArguments()
@@ -99,6 +109,142 @@ struct ProviderSettingsNavigationTests {
         let callsAfterClose = loadCalls
         RunLoop.current.run(until: Date().addingTimeInterval(0.08))
         precondition(loadCalls == callsAfterClose)
+    }
+
+    @MainActor
+    private static func testClosingClearsContentAndAllowsReopen() {
+        var retainedController: ProviderSettingsWindowController? = ProviderSettingsWindowController(
+            loadHandler: {
+                return try providerList(ids: ["custom"])
+            },
+            runHandler: { _ in "" },
+            applyHandler: { _ in }
+        )
+#if !CODEX_MIXIN_MEMORY_BASELINE
+        retainedController?.onClose = { retainedController = nil }
+#endif
+        retainedController?.present()
+        waitUntil { retainedController?.model.providers.count == 1 }
+        retainedController?.window?.close()
+#if CODEX_MIXIN_MEMORY_BASELINE
+        retainedController = nil
+#endif
+        precondition(retainedController == nil, "Closing must release the console's controller owner")
+
+        let reopened = ProviderSettingsWindowController(
+            loadHandler: { try providerList(ids: ["custom"]) },
+            runHandler: { _ in "" },
+            applyHandler: { _ in }
+        )
+        reopened.present()
+        waitUntil {
+            reopened.window?.contentViewController != nil
+                && reopened.model.providers.count == 1
+        }
+        precondition(reopened.model.selectedProviderID == "custom")
+        reopened.window?.close()
+    }
+
+    @MainActor
+    private static func testMemoryFixture(modelCount: Int) {
+        precondition((200...1_000).contains(modelCount), "Memory fixture requires 200–1000 models")
+        NSApp.finishLaunching()
+        let beforeOpen = physicalFootprint()
+        var retainedController: ProviderSettingsWindowController? = ProviderSettingsWindowController(
+            loadHandler: {
+                try providerList(
+                    ids: ["custom"],
+                    cachedModelCount: modelCount,
+                    selectedModelCount: modelCount
+                )
+            },
+            runHandler: { _ in "" },
+            applyHandler: { _ in }
+        )
+        weak let weakController = retainedController
+        weak let weakHostingController: NSViewController? = retainedController?.window?.contentViewController
+#if !CODEX_MIXIN_MEMORY_BASELINE
+        retainedController?.onClose = { retainedController = nil }
+#endif
+        retainedController?.present()
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(10)
+            while true {
+                guard let state = memoryWindowState(
+                    controller: retainedController,
+                    modelCount: modelCount
+                ) else {
+                    precondition(Date() < deadline, "Timed out waiting for 1000 visible model rows")
+                    try! await Task.sleep(nanoseconds: 20_000_000)
+                    continue
+                }
+                let window = state.window
+                try! await Task.sleep(nanoseconds: 500_000_000)
+                let afterOpen = physicalFootprint()
+                print(
+                    "Provider settings open: visible_rows=\(state.visibleRows), "
+                        + "selected_models=\(state.selectedModels), "
+                        + "window_visible=\(window.isVisible), content_bounds=\(state.contentBounds)"
+                )
+                window.close()
+#if CODEX_MIXIN_MEMORY_BASELINE
+                retainedController = nil
+#else
+                precondition(window.contentViewController == nil)
+#endif
+                try! await Task.sleep(nanoseconds: 1_000_000_000)
+                let afterClose = physicalFootprint()
+                print(
+                    "Provider settings memory: models=\(modelCount), baseline=\(beforeOpen), "
+                        + "open=\(afterOpen), close=\(afterClose), "
+                        + "close_delta=\(Int64(afterClose) - Int64(afterOpen)), "
+                        + "controller_alive=\(weakController != nil), "
+                        + "hosting_alive=\(weakHostingController != nil), "
+                        + "content_controller_present=\(window.contentViewController != nil)"
+                )
+                break
+            }
+            NSApp.stop(nil)
+            let event = NSEvent.otherEvent(
+                with: .applicationDefined,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                subtype: 0,
+                data1: 0,
+                data2: 0
+            )!
+            NSApp.postEvent(event, atStart: true)
+        }
+        NSApp.run()
+    }
+
+    @MainActor
+    private static func memoryWindowState(
+        controller: ProviderSettingsWindowController?,
+        modelCount: Int
+    ) -> (window: NSWindow, visibleRows: Int, selectedModels: Int, contentBounds: NSRect)? {
+        guard let controller,
+              let window = controller.window,
+              controller.model.providers.first?.cachedModels.count == modelCount,
+              controller.benchmarkModel.visibleRows.count == modelCount,
+              controller.benchmarkModel.appliedModelCount == modelCount,
+              window.isVisible,
+              let contentView = window.contentView,
+              contentView.bounds.width > 0,
+              contentView.bounds.height > 0 else {
+            return nil
+        }
+        contentView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        return (
+            window,
+            controller.benchmarkModel.visibleRows.count,
+            controller.benchmarkModel.appliedModelCount,
+            contentView.bounds
+        )
     }
 
     @MainActor
@@ -470,10 +616,19 @@ struct ProviderSettingsNavigationTests {
 
     private static func providerList(
         ids: [String],
-        autoReviewModel: String? = nil
+        autoReviewModel: String? = nil,
+        cachedModelCount: Int = 1,
+        selectedModelCount: Int? = nil
     ) throws -> ProviderListResponse {
         let providers = ids
-            .map { providerJSON(id: $0, autoReviewModel: autoReviewModel) }
+            .map {
+                providerJSON(
+                    id: $0,
+                    autoReviewModel: autoReviewModel,
+                    cachedModelCount: cachedModelCount,
+                    selectedModelCount: selectedModelCount
+                )
+            }
             .joined(separator: ",")
         let json = """
             {
@@ -485,7 +640,12 @@ struct ProviderSettingsNavigationTests {
         return try decodeProviderList(json)
     }
 
-    private static func providerJSON(id: String, autoReviewModel: String? = nil) -> String {
+    private static func providerJSON(
+        id: String,
+        autoReviewModel: String? = nil,
+        cachedModelCount: Int = 1,
+        selectedModelCount: Int? = nil
+    ) -> String {
         let isBaidu = id.hasPrefix("baidu-oneapi")
         let isAWSBedrock = id == "aws-bedrock"
         let preset = isBaidu ? "baidu-oneapi" : isAWSBedrock ? "aws-bedrock" : "custom"
@@ -506,7 +666,15 @@ struct ProviderSettingsNavigationTests {
             : ""
         let autoReview = autoReviewModel
             .map { ", \"auto_review_model\": \"\($0)\"" } ?? ""
-        let selectedModels = autoReviewModel.map { "\"\($0)\"" } ?? ""
+        let selectedModels = selectedModelCount.map { count in
+            (0..<count).map { "\"fixture-model-\($0)\"" }.joined(separator: ",")
+        } ?? autoReviewModel.map { "\"\($0)\"" } ?? ""
+        let cachedModels = (0..<cachedModelCount)
+            .map { index in
+                guard cachedModelCount > 1 else { return "{\"id\": \"model-1\"}" }
+                return "{\"id\":\"fixture-model-\(index)\",\"display_name\":\"Fixture Model \(index)\",\"description\":\"Memory fixture model \(index)\"}"
+            }
+            .joined(separator: ",")
         return """
         {
           "id": "\(id)",
@@ -523,10 +691,10 @@ struct ProviderSettingsNavigationTests {
           "selected_models": [\(selectedModels)],
           "new_models": [],
           "unavailable_selected_models": [],
-          "cached_models": [{"id": "model-1"}],
+          "cached_models": [\(cachedModels)],
           "readiness": "healthy",
           "readiness_issues": [],
-          "routable_model_count": 1
+          "routable_model_count": \(cachedModelCount)
         }
         """
     }
@@ -558,6 +726,20 @@ struct ProviderSettingsNavigationTests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.02))
         }
         precondition(predicate(), "Timed out waiting for Provider settings state")
+    }
+
+    private static func physicalFootprint() -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        precondition(result == KERN_SUCCESS, "Unable to read test process physical footprint")
+        return info.phys_footprint
     }
 
     private static func descendantViews<T: NSView>(of type: T.Type, in root: NSView?) -> [T] {
