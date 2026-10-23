@@ -256,13 +256,15 @@ internal static class Program
                 new PropertyCondition(AutomationElement.NameProperty, "刷新"), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
                 ?? throw new InvalidOperationException("Model refresh button missing");
             ((InvokePattern)modelRefresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-            Wait(() => Find(modelsScale, "page-description").Current.Name.Contains("可选 600", StringComparison.Ordinal)
+            Wait(() => modelsScale.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "测试已加入的 600 个模型")) != null
                 && Find(modelsScale, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "manual refresh observes external catalog changes", process);
             var table = Find(modelsScale, "model-table");
             var scroll = (ScrollPattern)table.GetCurrentPattern(ScrollPattern.Pattern);
             scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
             Wait(() => ((ScrollPattern)Find(modelsScale, "model-table").GetCurrentPattern(ScrollPattern.Pattern)).Current.VerticalScrollPercent > 95,
                 "large model table scrolls to the end", process);
+            Wait(() => modelsScale.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-extra-0599")) != null,
+                "refreshed model table contains the last added model", process);
             var modelChecks = 0;
             Wait(() => (modelChecks = table.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count) > 0,
                 "large model table has painted rows", process);
@@ -476,16 +478,6 @@ internal static class Program
     private static AutomationElement Find(AutomationElement root, string id) =>
         root.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, id))
         ?? throw new InvalidOperationException($"Control is missing: {id}");
-
-    private static void Navigate(AutomationElement window, string id, string description, Process process)
-    {
-        var control = Find(window, id);
-        if (control.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selection))
-            ((SelectionItemPattern)selection).Select();
-        else ((InvokePattern)control.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-        Wait(() => Find(window, "page-description").Current.Name == description &&
-            Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"navigate {id}", process);
-    }
 
     private static void AssertName(AutomationElement window, string name)
     {

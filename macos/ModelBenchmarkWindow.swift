@@ -729,6 +729,7 @@ struct ModelBenchmarkRootView: View {
             selectionToolbar
 
             modelTableArea
+            .help(model.statusTitle)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
             .overlay {
@@ -736,8 +737,10 @@ struct ModelBenchmarkRootView: View {
                     .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
             }
 
-            Divider()
-            statusBar
+            if model.isBusy {
+                Divider()
+                statusBar
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
@@ -1231,16 +1234,6 @@ struct ModelBenchmarkRootView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(pendingChangesStatus ?? model.statusTitle)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(model.statusColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
             Spacer()
             if model.determinateProgress != nil {
                 ProgressView(value: model.determinateProgress ?? 0)
@@ -1254,14 +1247,6 @@ struct ModelBenchmarkRootView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private var pendingChangesStatus: String? {
-        if isExternallyBusy {
-            return "正在更新当前服务商配置…"
-        }
-        guard hasExternalDraft || model.selectedProviderDirty else { return nil }
-        return "先应用更改，再测试。测速不会自动保存选择。"
     }
 }
 

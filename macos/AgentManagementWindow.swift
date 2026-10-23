@@ -51,7 +51,6 @@ final class AgentManagementModel: ObservableObject {
     @Published private(set) var status: AgentManagementStatus?
     @Published private(set) var loadError: String?
     @Published private(set) var lastCheckedAt: Date?
-    @Published var expandedAgentIDs: Set<String> = []
     @Published var showsUndetectedAgents = false
 
     private let listHandler: ListHandler
@@ -131,20 +130,8 @@ final class AgentManagementModel: ObservableObject {
         busyAgentIDs.contains(agentID)
     }
 
-    func isExpanded(agentID: String) -> Bool {
-        expandedAgentIDs.contains(agentID)
-    }
-
     func rowPresentation(for entry: AgentEntry) -> AgentRowPresentation {
         agentRowPresentation(for: entry, isBusy: isBusy(agentID: entry.id))
-    }
-
-    func toggleDetails(agentID: String) {
-        if expandedAgentIDs.contains(agentID) {
-            expandedAgentIDs.remove(agentID)
-        } else {
-            expandedAgentIDs.insert(agentID)
-        }
     }
 
     func toggleUndetectedAgents() {
@@ -555,13 +542,14 @@ private struct AgentRowView: View {
 
     var body: some View {
         let presentation = model.rowPresentation(for: entry)
-        let expanded = model.isExpanded(agentID: entry.id)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 AgentLogoView(agentID: entry.id)
                 VStack(alignment: .leading, spacing: 3) {
                     titleLine(presentation)
-                    summaryLine(presentation)
+                    if entry.integration.state != .unsupported {
+                        summaryLine(presentation)
+                    }
                 }
                 Spacer(minLength: 12)
                 updateControl(presentation)
@@ -574,17 +562,6 @@ private struct AgentRowView: View {
                     .accessibilityLabel(connectHelp(presentation))
             }
             .padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .onTapGesture { model.toggleDetails(agentID: entry.id) }
-            .help(expanded
-                ? AppLocalization.string("agentManagement.detailsHide")
-                : AppLocalization.string("agentManagement.details"))
-            if expanded {
-                AgentDetailPanel(entry: entry)
-                    .padding(.leading, agentIconSize + 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
-            }
         }
         .accessibilityElement(children: .contain)
     }
@@ -616,7 +593,9 @@ private struct AgentRowView: View {
             Circle()
                 .fill(statusColor(presentation))
                 .frame(width: 6, height: 6)
-            Text(summaryText(presentation))
+            Text([presentation.statusText, agentIntegrationModeText(entry.integration.mode)]
+                .compactMap { $0 }.filter { !$0.isEmpty }
+                .joined(separator: AppLocalization.string("agentManagement.detailSeparator")))
                 .font(.callout)
                 .foregroundStyle(presentation.statusIsError ? Color.orange : Color.secondary)
                 .lineLimit(1)
@@ -684,6 +663,9 @@ private struct AgentRowView: View {
         if presentation.isConnected {
             return AppLocalization.string("agentManagement.disconnectHelp", entry.name)
         }
+        if entry.integration.state == .unsupported {
+            return entry.integration.detail
+        }
         return AppLocalization.string("agentManagement.connectHelp", entry.name)
     }
 }
@@ -747,46 +729,6 @@ private func agentLogoImage(_ agentID: String) -> NSImage? {
         return image
     }
     return nil
-}
-
-private struct AgentDetailPanel: View {
-    let entry: AgentEntry
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            detailRow("agentManagement.detail.version", entry.cli.version)
-            detailRow("agentManagement.detail.latest", entry.cli.latest)
-            detailRow("agentManagement.detail.via", entry.cli.via)
-            detailRow("agentManagement.detail.path", entry.cli.path)
-            detailRow("agentManagement.detail.command", entry.cli.command)
-            detailRow("agentManagement.detail.appVersion", entry.cli.appVersion)
-            detailRow("agentManagement.detail.mode", agentIntegrationModeText(entry.integration.mode))
-            detailRow("agentManagement.detail.error", entry.integration.error)
-            detailRow("agentManagement.detail.cliError", entry.cli.error)
-            detailRow(
-                "agentManagement.detail.disconnectScope",
-                agentDisconnectScopeText(entry)
-            )
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func detailRow(_ key: String, _ value: String?) -> some View {
-        if let value, !value.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(AppLocalization.string(key))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 96, alignment: .leading)
-                Text(value)
-                    .font(.caption)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
 }
 
 /// Agent management as a console page.

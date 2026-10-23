@@ -71,7 +71,6 @@
         </ScrollViewer>
         <Grid Grid.Row="3" ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBlock x:Name="ApplySummary" Text="配置已同步" Style="{StaticResource Caption}" TextWrapping="Wrap" VerticalAlignment="Center"/>
           <Button x:Name="ApplyChanges" Grid.Column="1" Content="应用更改" Style="{ThemeResource AccentButtonStyle}" Click="OnApplyChanges" AutomationProperties.AutomationId="apply-changes"/>
         </Grid>
       </Grid>

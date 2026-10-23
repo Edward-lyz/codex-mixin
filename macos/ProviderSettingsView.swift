@@ -1033,34 +1033,13 @@ private struct ProviderDetailHeader: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             ProviderLogo(provider: provider, size: 36)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(provider.displayName)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
-                    ProviderStateBadge(provider: provider)
-                }
-                HStack(spacing: 5) {
-                    Text(provider.kind == .official ? "官方服务商 · 只读" : provider.id)
-                        .font(.caption.monospaced())
-                    Text("· 已加入 \(provider.selectedModels.count) / 可选 \(provider.cachedModels.count)")
-                        .font(.caption)
-                    Text("· \(lastRefreshText)")
-                        .font(.caption)
-                }
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(provider.displayName)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                ProviderStateBadge(provider: provider)
             }
-
         }
-    }
-
-    private var lastRefreshText: String {
-        guard let milliseconds = provider.modelsRefreshedAtMilliseconds else {
-            return "尚未刷新"
-        }
-        return "上次刷新 \(formatProviderTimestamp(milliseconds))"
     }
 }
 
