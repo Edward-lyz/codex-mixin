@@ -10,6 +10,7 @@ pub mod dsh;
 pub mod frameworks;
 pub mod opencode;
 pub mod pi;
+pub(crate) mod session_titles;
 
 /// Connection state of one agent integration, shared by every adapter.
 #[derive(Clone, Debug, serde::Serialize)]

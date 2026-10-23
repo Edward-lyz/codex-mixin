@@ -553,6 +553,25 @@ impl Store {
             .context("read archived message")
     }
 
+    pub(super) fn session_preview(&self, key: &str) -> Result<Option<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT item_json FROM messages WHERE session_key = ?1
+             AND json_extract(item_json, '$.role') = 'user' ORDER BY reference",
+            )
+            .context("prepare session preview")?;
+        let mut rows = statement.query([key]).context("query session preview")?;
+        while let Some(row) = rows.next()? {
+            let item: String = row.get(0)?;
+            let item = serde_json::from_str(&item).context("decode session preview message")?;
+            if let Some(preview) = crate::clients::session_titles::request_preview(&item) {
+                return Ok(Some(preview));
+            }
+        }
+        Ok(None)
+    }
+
     /// Aligns stored history with the client-sent items.
     ///
     /// Returns the session row after alignment and whether a new revision was

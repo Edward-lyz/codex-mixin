@@ -628,55 +628,78 @@ impl ContextEngine {
     /// Compression and cache totals per session for the console page.
     pub fn stats(&self, window_tokens: u64, enabled: bool) -> Result<ContextStats> {
         let usage = self.lock()?.session_usage()?;
-        let wanted: HashSet<&str> = usage
-            .iter()
-            .filter_map(|row| {
-                row.codex_thread_id
-                    .as_deref()
-                    .or_else(|| codex_session_id(&row.session))
-            })
-            .collect();
-        let mut titles = HashMap::new();
-        if !wanted.is_empty() {
-            crate::clients::codex::titles::visit_titles(|id, title| {
-                // Older context rows only have the routing UUID. Resolve the
-                // standard Codex namespaces without changing that identity.
-                for candidate in [
-                    id.clone(),
-                    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string(),
-                    uuid::Uuid::new_v5(
-                        &uuid::Uuid::NAMESPACE_URL,
-                        format!("thread-id\0{id}").as_bytes(),
-                    )
-                    .to_string(),
-                    uuid::Uuid::new_v5(
-                        &uuid::Uuid::NAMESPACE_URL,
-                        format!("thread-id\0{id}\0prompt-cache-key\0{id}").as_bytes(),
-                    )
-                    .to_string(),
-                ] {
-                    if wanted.contains(candidate.as_str()) {
-                        titles.insert(candidate, title.clone());
+        let mut displays = HashMap::new();
+        for client in crate::clients::session_titles::TITLE_CLIENTS {
+            let rows: Vec<_> = usage
+                .iter()
+                .filter(|row| {
+                    row.session
+                        .split(SESSION_SEPARATOR)
+                        .next()
+                        .is_some_and(|label| label.eq_ignore_ascii_case(client.display_name()))
+                })
+                .collect();
+            let wanted: HashSet<&str> = rows
+                .iter()
+                .filter_map(|row| {
+                    row.codex_thread_id
+                        .as_deref()
+                        .or_else(|| row.session.split(SESSION_SEPARATOR).nth(1))
+                })
+                .collect();
+            if wanted.is_empty() {
+                continue;
+            }
+            let mut titles = HashMap::new();
+            crate::clients::session_titles::visit_titles(
+                client,
+                |id| {
+                    session_aliases(id)
+                        .iter()
+                        .any(|alias| wanted.contains(alias.as_str()))
+                },
+                |id, title| {
+                    for alias in session_aliases(&id) {
+                        if wanted.contains(alias.as_str()) {
+                            titles.insert(alias, title.clone());
+                        }
                     }
+                },
+            );
+            for row in rows {
+                let id = row
+                    .codex_thread_id
+                    .as_deref()
+                    .or_else(|| row.session.split(SESSION_SEPARATOR).nth(1));
+                if let Some(title) = id.and_then(|id| titles.get(id)) {
+                    displays.insert(row.session.clone(), title.clone());
                 }
-            });
+            }
         }
         let mut sessions = Vec::with_capacity(usage.len());
         for row in usage {
             let status = self.status(&row.session, window_tokens, enabled)?;
+            let title = match displays.remove(&row.session) {
+                Some(title) => Some(title),
+                None => self.lock()?.session_preview(&row.session)?.map(|preview| {
+                    let client = row
+                        .session
+                        .split(SESSION_SEPARATOR)
+                        .next()
+                        .unwrap_or("gateway");
+                    format!("{client} / {preview}")
+                }),
+            };
+            let display = title
+                .map(
+                    |title| match row.session.splitn(3, SESSION_SEPARATOR).nth(2) {
+                        Some(persona) => format!("{title} / {persona}"),
+                        None => title,
+                    },
+                )
+                .unwrap_or_else(|| session_display_name(&row.session));
             sessions.push(SessionStats {
-                display: row
-                    .codex_thread_id
-                    .as_deref()
-                    .or_else(|| codex_session_id(&row.session))
-                    .and_then(|id| titles.get(id))
-                    .map(
-                        |title| match row.session.splitn(3, SESSION_SEPARATOR).nth(2) {
-                            Some(persona) => format!("{title} / {persona}"),
-                            None => title.clone(),
-                        },
-                    )
-                    .unwrap_or_else(|| session_display_name(&row.session)),
+                display,
                 session: row.session,
                 revision: row.revision,
                 updated_at: row.updated_at,
@@ -712,13 +735,22 @@ impl ContextEngine {
     }
 }
 
-fn codex_session_id(session: &str) -> Option<&str> {
-    let mut parts = session.split(SESSION_SEPARATOR);
-    parts
-        .next()
-        .is_some_and(|client| client.eq_ignore_ascii_case("codex"))
-        .then(|| parts.next())
-        .flatten()
+// Resolve historical routing namespaces without changing stored session keys.
+fn session_aliases(id: &str) -> [String; 4] {
+    [
+        id.to_owned(),
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, id.as_bytes()).to_string(),
+        uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!("thread-id\0{id}").as_bytes(),
+        )
+        .to_string(),
+        uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!("thread-id\0{id}\0prompt-cache-key\0{id}").as_bytes(),
+        )
+        .to_string(),
+    ]
 }
 
 fn common_prefix_length(left: &[Value], right: &[Value]) -> usize {
@@ -2355,7 +2387,7 @@ mod tests {
 
         let row = stats.sessions.first().expect("one session");
         assert_eq!(row.session, session);
-        assert_eq!(row.display, "codex / thread-1");
+        assert_eq!(row.display, "codex / please start the task");
         assert_eq!(row.revision, execution.revision);
         assert_eq!(row.compressions, 1);
         assert!(row.view_tokens > 0);
