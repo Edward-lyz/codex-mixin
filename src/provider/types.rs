@@ -192,6 +192,9 @@ pub struct ProviderDefinition {
     /// official model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_review_model: Option<String>,
+    /// Selected model for Codex requests explicitly marked thread_title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_thread_title_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
     pub protocol: ProviderProtocol,
@@ -431,13 +434,28 @@ impl ProviderDefinition {
                 self.id
             );
         }
+        if let Some(model) = self.codex_thread_title_model.as_deref() {
+            ensure!(
+                !model.trim().is_empty()
+                    && self
+                        .selected_models
+                        .iter()
+                        .any(|selected| selected == model),
+                "provider {} thread title model {model} is not one of its selected models",
+                self.id
+            );
+        }
         Ok(())
     }
 
     /// Drop an auto review model the provider no longer offers, so an upstream
     /// model list change cannot invalidate the stored provider.
     pub fn has_configured_credentials(&self) -> bool {
-        self.auth.is_configured() || self.preset_id.as_deref() == Some("agy")
+        self.auth.is_configured()
+            || matches!(
+                self.preset_id.as_deref(),
+                Some("agy" | "agy-business" | "kiro")
+            )
     }
 
     pub fn prune_stale_auto_review_model(&mut self) {

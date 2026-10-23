@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 /// Pages of the console window, in toolbar order.
 enum ConsolePage: Int, CaseIterable {
@@ -86,6 +87,14 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
         // The hidden title still names the window for VoiceOver and Mission Control.
         view.window?.title = "\(AppLocalization.string("console.windowTitle")) · \(page.title)"
         onShow(page)
+    }
+
+    func releaseContent() {
+        // SwiftUI/AppKit may retain closed hosting controllers. Clear their
+        // roots explicitly so hidden tables and observation graphs can go.
+        for controller in pages.values {
+            (controller as? NSHostingController<AnyView>)?.rootView = AnyView(EmptyView())
+        }
     }
 
     @objc private func segmentChanged() {

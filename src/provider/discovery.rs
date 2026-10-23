@@ -86,6 +86,12 @@ pub async fn discover_provider_models(
     if definition.preset_id.as_deref() == Some("agy") {
         return super::agy::discover_models(client, definition, &provider).await;
     }
+    if definition.preset_id.as_deref() == Some("agy-business") {
+        return super::agy_business::discover_models(client, &provider).await;
+    }
+    if definition.preset_id.as_deref() == Some("kiro") {
+        return super::kiro::discover_models(client, &provider).await;
+    }
     match &definition.model_source {
         ProviderModelSource::Static => {
             let mut models = definition.cached_models.clone();

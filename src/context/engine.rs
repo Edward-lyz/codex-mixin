@@ -986,6 +986,7 @@ fn compress(
             bail!("cannot compress protected segment {}", segment.reference);
         }
     }
+    validate_tool_selection(store, session, segments, &covered)?;
     let tier = compression_tier(store, session, &covered)?;
     if tier.as_u8() > settings.max_tier {
         bail!(
@@ -1053,6 +1054,56 @@ fn compress(
         covered_tokens,
         replacement_tokens,
     )
+}
+
+fn validate_tool_selection(
+    store: &Store,
+    session: &str,
+    segments: &[SegmentRow],
+    covered: &[SegmentRow],
+) -> Result<()> {
+    let selected: HashSet<_> = covered
+        .iter()
+        .map(|segment| segment.reference.as_str())
+        .collect();
+    let mut units: HashMap<String, (bool, bool)> = HashMap::new();
+    for segment in segments
+        .iter()
+        .filter(|segment| segment.kind == SegmentKind::Message)
+    {
+        let raw = store
+            .message_json(session, &segment.reference)?
+            .with_context(|| format!("archived message {} is missing", segment.reference))?;
+        let item: Value = serde_json::from_str(&raw).context("decode archived message")?;
+        if !matches!(
+            item.get("type").and_then(Value::as_str),
+            Some(
+                "function_call"
+                    | "function_call_output"
+                    | "custom_tool_call"
+                    | "custom_tool_call_output"
+            )
+        ) {
+            continue;
+        }
+        let call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .context("archived tool item has no call_id")?;
+        let (inside, outside) = units.entry(call_id.to_owned()).or_default();
+        if selected.contains(segment.reference.as_str()) {
+            *inside = true;
+        } else {
+            *outside = true;
+        }
+    }
+    for (call_id, (inside, outside)) in units {
+        // Even old, unprotected tool pairs are one indivisible protocol unit.
+        if inside && outside {
+            bail!("compression would split tool call {call_id} from its output");
+        }
+    }
+    Ok(())
 }
 
 fn covered_segments(segments: &[SegmentRow], arguments: &Value) -> Result<Vec<SegmentRow>> {
@@ -1628,6 +1679,65 @@ mod tests {
             )
             .expect_err("protected range must fail");
         assert!(format!("{error}").contains("cannot compress protected segment"));
+    }
+
+    #[test]
+    fn rejects_compression_that_splits_tool_pairs() {
+        for (call_kind, output_kind) in [
+            ("custom_tool_call", "custom_tool_call_output"),
+            ("function_call", "function_call_output"),
+        ] {
+            for output_only in [false, true] {
+                let engine = engine();
+                let session = session();
+                let items = vec![
+                    message("user", "start"),
+                    message("assistant", &long_body("old", 900)),
+                    json!({"type":call_kind,"call_id":"call-pair","name":"read","input":"read file","arguments":"{}"}),
+                    json!({"type":output_kind,"call_id":"call-pair","output":long_body("file",900)}),
+                    message("assistant", &long_body("answer", 900)),
+                    message("user", "continue"),
+                ];
+                let view = engine.begin_turn(&session, &items, 10_000).unwrap();
+                let before = engine.export(&session).unwrap();
+                let refs: Vec<_> = before["segments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|segment| segment["reference"].as_str().unwrap())
+                    .collect();
+                let (start, end) = if output_only { (3, 4) } else { (1, 2) };
+                let result = engine.execute_tool(&session,view.revision,TOOL_COMPRESS,&json!({"ranges":[{"start":refs[start],"end":refs[end]}],"summary":"Historical work."}),10_000);
+                assert!(
+                    result.is_err(),
+                    "compression must preserve the complete {call_kind}/{output_kind} pair"
+                );
+                assert_eq!(
+                    engine.export(&session).unwrap(),
+                    before,
+                    "rejection must not mutate the archive"
+                );
+                // Covering the complete pair remains legal and reversible.
+                let compressed = engine.execute_tool(&session,view.revision,TOOL_COMPRESS,&json!({"ranges":[{"start":refs[1],"end":refs[4]}],"summary":"Historical work."}),10_000).unwrap();
+                let block_id: Value = serde_json::from_str(&compressed.content).unwrap();
+                engine
+                    .execute_tool(
+                        &session,
+                        compressed.revision,
+                        TOOL_DECOMPRESS,
+                        &json!({"block_id":block_id["block_id"],"apply":true}),
+                        10_000,
+                    )
+                    .unwrap();
+                let restored = engine.begin_turn(&session, &items, 10_000).unwrap();
+                let types: Vec<_> = restored
+                    .items
+                    .iter()
+                    .filter_map(|item| item.get("type").and_then(Value::as_str))
+                    .collect();
+                assert!(types.contains(&call_kind) && types.contains(&output_kind));
+            }
+        }
     }
 
     #[test]

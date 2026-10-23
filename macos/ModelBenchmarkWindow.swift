@@ -1024,7 +1024,7 @@ struct ModelBenchmarkRootView: View {
     }
 
     private var selectedColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("Codex", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue)) { row in
+        TableColumn(AppLocalization.string("provider.includeModel"), sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue)) { row in
             Toggle("", isOn: selectionBinding(row))
                 .labelsHidden()
                 .disabled(
@@ -1032,7 +1032,7 @@ struct ModelBenchmarkRootView: View {
                         || model.isBusy || isExternallyBusy
                 )
         }
-        .width(48)
+        .width(76)
     }
 
     private var modelColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1133,7 +1133,7 @@ struct ModelBenchmarkRootView: View {
         }
         let suffix = suffixes.isEmpty ? "" : " · \(suffixes.joined(separator: " / "))"
         return HStack(spacing: 6) {
-            Text((displayName.map { "\(row.model.id) · \($0)" } ?? row.model.id) + suffix)
+            Text(row.model.id + suffix)
                 .font(.callout.monospaced())
                 .lineLimit(1)
                 .truncationMode(.middle)

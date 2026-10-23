@@ -477,7 +477,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             codex_mode,
             no_start,
         } => setup::run(preset, key, quota_username, codex_mode, no_start).await,
-        Command::Update => update::run().await,
+        Command::Update { check, json } => update::run(check, json).await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
             ProviderCommand::Add {
@@ -584,6 +584,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_code_report,
                 auto_review_model,
                 clear_auto_review_model,
+                codex_thread_title_model,
+                clear_codex_thread_title_model,
             } => {
                 let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
@@ -624,6 +626,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     baidu_code_report,
                     auto_review_model,
                     clear_auto_review_model,
+                    codex_thread_title_model,
+                    clear_codex_thread_title_model,
                 })
                 .await?;
                 report_hook::sync_installation()

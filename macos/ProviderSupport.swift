@@ -205,6 +205,7 @@ struct ProviderView: Decodable {
     let enabled: Bool
     let auxiliaryModelUpstream: Bool
     let autoReviewModel: String?
+    let codexThreadTitleModel: String?
     let presetID: String?
     let protocolID: String
     let baseURL: String
@@ -242,6 +243,7 @@ struct ProviderView: Decodable {
         case enabled
         case auxiliaryModelUpstream = "auxiliary_model_upstream"
         case autoReviewModel = "auto_review_model"
+        case codexThreadTitleModel = "codex_thread_title_model"
         case presetID = "preset_id"
         case protocolID = "protocol"
         case baseURL = "base_url"
@@ -281,6 +283,7 @@ struct ProviderView: Decodable {
         enabled = try values.decode(Bool.self, forKey: .enabled)
         auxiliaryModelUpstream = try values.decode(Bool.self, forKey: .auxiliaryModelUpstream)
         autoReviewModel = try values.decodeIfPresent(String.self, forKey: .autoReviewModel)
+        codexThreadTitleModel = try values.decodeIfPresent(String.self, forKey: .codexThreadTitleModel)
         presetID = try values.decodeIfPresent(String.self, forKey: .presetID)
         protocolID = try values.decode(String.self, forKey: .protocolID)
         baseURL = try values.decode(String.self, forKey: .baseURL)

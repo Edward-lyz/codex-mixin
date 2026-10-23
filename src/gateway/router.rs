@@ -77,6 +77,15 @@ impl<'a> ModelRouter<'a> {
                 upstream_model_id: resolved.upstream_model_id.to_owned(),
             });
         }
+        if model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL_SLUG)
+            && self.providers.providers().iter().any(|provider| {
+                provider.definition().enabled && provider.definition().auto_review_model.is_some()
+            })
+        {
+            return Err(GatewayError::BadRequest(
+                "configured Codex review model is unavailable".to_owned(),
+            ));
+        }
         if let Some(known) = self.providers.resolve_known(model) {
             let reason = if !known.provider.definition().enabled {
                 "provider is disabled"
@@ -180,9 +189,79 @@ fn claude_metadata_session(body: &serde_json::Value) -> Option<String> {
     Some(id.to_string())
 }
 
+pub(super) fn is_codex_thread_title(
+    headers: &axum::http::HeaderMap,
+    body: &serde_json::Value,
+) -> Result<bool, crate::error::GatewayError> {
+    const METADATA_HEADER: &str = "x-codex-turn-metadata";
+    const MAX_METADATA_BYTES: usize = 64 * 1024;
+    let raw = if let Some(value) = body
+        .get("client_metadata")
+        .and_then(|metadata| metadata.get(METADATA_HEADER))
+    {
+        Some(value.as_str().ok_or_else(|| {
+            crate::error::GatewayError::BadRequest(
+                "Codex turn metadata must be a JSON string".to_owned(),
+            )
+        })?)
+    } else {
+        headers
+            .get(METADATA_HEADER)
+            .map(|value| {
+                value.to_str().map_err(|_| {
+                    crate::error::GatewayError::BadRequest(
+                        "Codex turn metadata must be UTF-8".to_owned(),
+                    )
+                })
+            })
+            .transpose()?
+    };
+    let Some(raw) = raw else {
+        return Ok(false);
+    };
+    if raw.len() > MAX_METADATA_BYTES {
+        return Err(crate::error::GatewayError::BadRequest(
+            "Codex turn metadata exceeds 64 KiB".to_owned(),
+        ));
+    }
+    let metadata: serde_json::Value = serde_json::from_str(raw).map_err(|error| {
+        crate::error::GatewayError::BadRequest(format!("invalid Codex turn metadata: {error}"))
+    })?;
+    Ok(["thread_source", "turn_trigger"].iter().any(|field| {
+        metadata.get(*field).and_then(serde_json::Value::as_str) == Some("thread_title")
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_title_detection_uses_explicit_metadata_and_body_precedence() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            r#"{"turn_trigger":"thread_title"}"#.parse().unwrap(),
+        );
+        assert!(is_codex_thread_title(&headers, &serde_json::json!({})).unwrap());
+        assert!(
+            !is_codex_thread_title(
+                &axum::http::HeaderMap::new(),
+                &serde_json::json!({"model":"gpt-6-luna","input":"Generate a title"})
+            )
+            .unwrap()
+        );
+        let ordinary = serde_json::json!({"client_metadata":{"x-codex-turn-metadata":r#"{"turn_trigger":"user"}"#}});
+        assert!(!is_codex_thread_title(&headers, &ordinary).unwrap());
+        assert!(
+            is_codex_thread_title(
+                &headers,
+                &serde_json::json!({"client_metadata":{"x-codex-turn-metadata":"{"}})
+            )
+            .is_err()
+        );
+        assert!(is_codex_thread_title(&headers,&serde_json::json!({"client_metadata":{"x-codex-turn-metadata":"x".repeat(65*1024)}})).is_err());
+    }
     use crate::config::PanelToolsConfig;
     use crate::provider::{ProviderModel, custom_provider};
 
@@ -381,11 +460,12 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_provider_routes_auto_review_and_overrides_official() {
+    fn explicit_review_override_replaces_official_route() {
         let profiles = [];
         let mut provider = custom_provider("provider", "secret");
         provider.base_url = "https://provider.example".to_owned();
-        provider.auxiliary_model_upstream = true;
+        provider.auto_review_model = Some(AUTO_REVIEW_MODEL_SLUG.to_owned());
+        provider.selected_models = vec![AUTO_REVIEW_MODEL_SLUG.to_owned()];
         provider.cached_models = vec![ProviderModel {
             id: AUTO_REVIEW_MODEL_SLUG.to_owned(),
             ..ProviderModel::default()
@@ -402,6 +482,21 @@ mod tests {
                     provider_id: "provider".to_owned(),
                     upstream_model_id: AUTO_REVIEW_MODEL_SLUG.to_owned(),
                 }
+            );
+        }
+    }
+    #[test]
+    fn unavailable_review_override_never_uses_official_route() {
+        let mut provider = custom_provider("provider", "secret");
+        provider.base_url = "https://provider.example".to_owned();
+        provider.auto_review_model = Some("gone".to_owned());
+        provider.selected_models = vec!["gone".to_owned()];
+        let providers = ProviderRegistry::new(vec![provider]).unwrap();
+        for official_enabled in [false, true] {
+            assert!(
+                ModelRouter::new(&[], &providers, official_enabled)
+                    .resolve(AUTO_REVIEW_MODEL_SLUG)
+                    .is_err()
             );
         }
     }

@@ -36,6 +36,8 @@ pub enum ProviderPreset {
     Custom,
     Official,
     Agy,
+    AgyBusiness,
+    Kiro,
     BaiduOneApi,
     OpenRouter,
     DeepSeek,
@@ -44,10 +46,12 @@ pub enum ProviderPreset {
 }
 
 impl ProviderPreset {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::Custom,
         Self::Official,
         Self::Agy,
+        Self::AgyBusiness,
+        Self::Kiro,
         Self::BaiduOneApi,
         Self::OpenRouter,
         Self::DeepSeek,
@@ -60,6 +64,8 @@ impl ProviderPreset {
             "custom" => Ok(Self::Custom),
             "openai" | "official" => Ok(Self::Official),
             "agy" | "antigravity" => Ok(Self::Agy),
+            "agy-business" => Ok(Self::AgyBusiness),
+            "kiro" => Ok(Self::Kiro),
             "baidu-oneapi" => Ok(Self::BaiduOneApi),
             "openrouter" => Ok(Self::OpenRouter),
             "deepseek" => Ok(Self::DeepSeek),
@@ -184,6 +190,7 @@ impl ProviderSpec {
             enabled: true,
             auxiliary_model_upstream: false,
             auto_review_model: None,
+            codex_thread_title_model: None,
             preset_id: Some(self.id.to_owned()),
             protocol: self.protocol,
             base_url: self.base_url.to_owned(),
@@ -215,7 +222,7 @@ impl ProviderSpec {
     }
 }
 
-static SPECS: [ProviderSpec; 8] = [
+static SPECS: [ProviderSpec; 10] = [
     ProviderSpec {
         preset: ProviderPreset::Custom,
         id: "custom",
@@ -274,6 +281,48 @@ static SPECS: [ProviderSpec; 8] = [
         image_generation_path: None,
         model_source: ModelSourceSpec::Static,
         models_dev_provider: Some("google"),
+        quota_url: None,
+        quota_currency: None,
+        quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: true,
+        seed_models: Vec::new,
+        request_policy: ProviderRequestPolicy::default,
+    },
+    ProviderSpec {
+        preset: ProviderPreset::AgyBusiness,
+        id: "agy-business",
+        display_name: "Antigravity Business",
+        description: "Gemini Enterprise license with a Google Cloud project and location",
+        icon: "agy",
+        website_url: Some("https://antigravity.google/docs/enterprise"),
+        protocol: ProviderProtocol::GoogleGemini,
+        base_url: "https://businessaicode.googleapis.com",
+        api_path: "/v1beta",
+        anthropic_version: None,
+        image_generation_path: None,
+        model_source: ModelSourceSpec::Static,
+        models_dev_provider: Some("google"),
+        quota_url: None,
+        quota_currency: None,
+        quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: true,
+        seed_models: Vec::new,
+        request_policy: ProviderRequestPolicy::default,
+    },
+    ProviderSpec {
+        preset: ProviderPreset::Kiro,
+        id: "kiro",
+        display_name: "Kiro",
+        description: "Kiro account with native streaming and model discovery",
+        icon: "kiro",
+        website_url: Some("https://kiro.dev"),
+        protocol: ProviderProtocol::AnthropicMessages,
+        base_url: "https://runtime.us-east-1.kiro.dev",
+        api_path: "/",
+        anthropic_version: None,
+        image_generation_path: None,
+        model_source: ModelSourceSpec::Static,
+        models_dev_provider: None,
         quota_url: None,
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,

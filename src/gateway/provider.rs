@@ -478,7 +478,7 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
                 "provider gemini generate content request failed before receiving a response"
             );
         })?;
-    if upstream.status() == reqwest::StatusCode::UNAUTHORIZED {
+    if upstream.status() == reqwest::StatusCode::UNAUTHORIZED && agy_native.is_some() {
         tracing::warn!(
             provider_id = provider.id(),
             "refreshing agy OAuth token after upstream rejected credentials"

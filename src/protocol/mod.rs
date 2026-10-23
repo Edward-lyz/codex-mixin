@@ -16,6 +16,7 @@ pub(crate) mod chat_compat;
 pub(crate) mod compaction;
 pub mod convert;
 pub mod gemini;
+pub(crate) mod kiro;
 pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;

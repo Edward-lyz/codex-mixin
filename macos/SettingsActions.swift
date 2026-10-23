@@ -23,13 +23,14 @@ extension AppDelegate {
     }
 
     @objc func openConsole() {
-        showConsole(consoleContainer?.currentPage ?? .providers)
+        showConsole(consoleContainer?.currentPage ?? lastConsolePage)
     }
 
     /// The console reuses the provider settings window: its controller keeps
     /// owning draft prompts and close confirmation, while the window content
     /// becomes a page container that adds the agent and usage pages.
     func showConsole(_ page: ConsolePage) {
+        lastConsolePage = page
         ensureProviderSettingsController()
         guard let controller = providerSettingsWindowController,
               let window = controller.window
@@ -64,9 +65,9 @@ extension AppDelegate {
                 pages: [
                     .providers: providerPage,
                     .agents: makeAgentManagementPageController(model: agentModel),
-                    .usage: NSHostingController(rootView: ConsoleUsageView(model: usageModel)),
+                    .usage: NSHostingController(rootView: AnyView(ConsoleUsageView(model: usageModel))),
                     .context: NSHostingController(
-                        rootView: ContextSettingsView(model: contextModel)
+                        rootView: AnyView(ContextSettingsView(model: contextModel))
                     ),
                 ],
                 onShow: { page in
@@ -198,6 +199,13 @@ extension AppDelegate {
                     _ = try await self.runGateway(arguments)
                 }
             )
+            providerSettingsWindowController?.onClose = { [weak self] in
+                guard let self else { return }
+                lastConsolePage = consoleContainer?.currentPage ?? lastConsolePage
+                consoleContainer?.releaseContent()
+                consoleContainer = nil
+                providerSettingsWindowController = nil
+            }
         }
     }
 

@@ -90,6 +90,13 @@ pub fn apply_model_selection(
     provider.selected_models = models;
     provider.new_models.clear();
     provider.prune_stale_auto_review_model();
+    if provider
+        .codex_thread_title_model
+        .as_ref()
+        .is_some_and(|model| !provider.selected_models.contains(model))
+    {
+        provider.codex_thread_title_model = None;
+    }
     provider.validate()?;
     Ok(models_to_probe)
 }
@@ -301,10 +308,17 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
     }
     provider.validate()?;
     let (mode, model_count) = match provider.model_source {
-        ProviderModelSource::Static if provider.preset_id.as_deref() != Some("agy") => (
-            ProviderTestMode::Configuration,
-            provider.cached_models.len(),
-        ),
+        ProviderModelSource::Static
+            if !matches!(
+                provider.preset_id.as_deref(),
+                Some("agy" | "agy-business" | "kiro")
+            ) =>
+        {
+            (
+                ProviderTestMode::Configuration,
+                provider.cached_models.len(),
+            )
+        }
         _ => {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))

@@ -733,7 +733,7 @@ private func agentLogoImage(_ agentID: String) -> NSImage? {
 
 /// Agent management as a console page.
 func makeAgentManagementPageController(model: AgentManagementModel) -> NSViewController {
-    NSHostingController(rootView: AgentManagementView(model: model, embedded: true))
+    NSHostingController(rootView: AnyView(AgentManagementView(model: model, embedded: true)))
 }
 
 final class AgentManagementWindowController: NSWindowController, NSWindowDelegate {

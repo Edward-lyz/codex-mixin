@@ -15,10 +15,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
     var consoleContainer: ConsoleContainerController?
+    var lastConsolePage: ConsolePage = .providers
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []
-    @MainActor var updaterController: SPUStandardUpdaterController?
+    var updater: SPUUpdater?
+    var updateDriver: SilentUpdateDriver?
+    var automaticUpdateTask: Task<Void, Never>?
+    var silentUpdatePolicy = SilentUpdatePolicy()
+    var nextAutomaticUpdateCheck = Date.distantPast
     var updateWatchdogLaunchGate = UpdateWatchdogLaunchGate()
     var isRunning = false
     var serviceBusy = false {
@@ -52,10 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // agent command needs it.
         DispatchQueue.global(qos: .utility).async { _ = userShellPATH }
         applicationIconController.start(application: NSApp)
-        updaterController = SPUStandardUpdaterController(
-            updaterDelegate: self,
-            userDriverDelegate: nil
-        )
+        startUpdater()
         CardIdentityStore.standard.current()
         installApplicationMenu()
         installStatusItem()
@@ -77,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if CommandLine.arguments.contains("--check-updates") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.updaterController?.checkForUpdates(nil)
+                self?.checkForUpdatesFromMenu()
             }
         }
     }
@@ -157,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        automaticUpdateTask?.cancel()
+        automaticUpdateTask = nil
+        updateDriver?.cancelPendingInstall()
         refreshTimer?.stop()
         removeRefreshLifecycleObservers()
     }

@@ -30,6 +30,15 @@ extension AppDelegate {
                 }
                 let currentStatus = try await runGateway(["status", "--json"])
                 let snapshot = try decodeGatewayStatus(currentStatus)
+                let preserveGateway = UserDefaults.standard.bool(forKey: "preserveGatewayOnUpdateRelaunch")
+                UserDefaults.standard.removeObject(forKey: "preserveGatewayOnUpdateRelaunch")
+                if preserveGateway, snapshot.gateway == "running" {
+                    // A request can arrive after the idle check. The standalone
+                    // gateway keeps serving across the menu app replacement.
+                    applyGatewayStatus(currentStatus)
+                    await refreshStatusNow()
+                    return
+                }
                 if snapshot.configured == false {
                     isRunning = false
                     serviceStatus = "等待配置上游 API"

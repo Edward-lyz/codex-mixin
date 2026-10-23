@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MessageRequest {
     pub model: String,
     pub max_tokens: u64,
@@ -11,7 +11,7 @@ pub struct MessageRequest {
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<Vec<ContentBlock>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<Value>,

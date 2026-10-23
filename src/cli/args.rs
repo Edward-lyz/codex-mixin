@@ -89,7 +89,13 @@ pub(super) enum Command {
         command: EchCommand,
     },
     /// Update this CLI from the latest GitHub release and restart the gateway.
-    Update,
+    Update {
+        /// Check release metadata without downloading or installing a release.
+        #[arg(long)]
+        check: bool,
+        #[arg(long, requires = "check")]
+        json: bool,
+    },
     /// Configure model providers and select their models.
     #[command(name = "provider", visible_alias = "providers")]
     Providers {
@@ -709,6 +715,15 @@ pub(super) enum ProviderCommand {
         auto_review_model: Option<String>,
         #[arg(long, conflicts_with = "auto_review_model")]
         clear_auto_review_model: bool,
+        /// Map Codex thread-title requests to a selected upstream model.
+        #[arg(
+            long,
+            value_name = "MODEL",
+            conflicts_with = "clear_codex_thread_title_model"
+        )]
+        codex_thread_title_model: Option<String>,
+        #[arg(long, conflicts_with = "codex_thread_title_model")]
+        clear_codex_thread_title_model: bool,
     },
     /// Enable a provider.
     Enable { id: String },
@@ -780,6 +795,10 @@ pub(super) enum CliProviderPreset {
     Official,
     #[value(name = "agy", alias = "antigravity")]
     Agy,
+    #[value(name = "agy-business")]
+    AgyBusiness,
+    #[value(name = "kiro")]
+    Kiro,
     #[value(name = "baidu-oneapi")]
     BaiduOneApi,
     #[value(name = "openrouter")]
@@ -798,6 +817,8 @@ impl CliProviderPreset {
             Self::Custom => ProviderPreset::Custom,
             Self::Official => ProviderPreset::Official,
             Self::Agy => ProviderPreset::Agy,
+            Self::AgyBusiness => ProviderPreset::AgyBusiness,
+            Self::Kiro => ProviderPreset::Kiro,
             Self::BaiduOneApi => ProviderPreset::BaiduOneApi,
             Self::OpenRouter => ProviderPreset::OpenRouter,
             Self::DeepSeek => ProviderPreset::DeepSeek,
@@ -817,6 +838,8 @@ impl From<ProviderPreset> for CliProviderPreset {
             ProviderPreset::Custom => Self::Custom,
             ProviderPreset::Official => Self::Official,
             ProviderPreset::Agy => Self::Agy,
+            ProviderPreset::AgyBusiness => Self::AgyBusiness,
+            ProviderPreset::Kiro => Self::Kiro,
             ProviderPreset::BaiduOneApi => Self::BaiduOneApi,
             ProviderPreset::OpenRouter => Self::OpenRouter,
             ProviderPreset::DeepSeek => Self::DeepSeek,

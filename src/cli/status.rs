@@ -55,6 +55,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         bind,
         healthz: url,
         health_error,
+        activity,
     } = snapshot;
     if let Some(error) = health_error {
         return print_gateway_unavailable(
@@ -79,6 +80,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                 "log": metadata.as_ref().map(|metadata| metadata.log_file.clone()),
                 "gateway": "running",
                 "gateway_version": gateway_version,
+                "activity": activity,
                 "official_ech": codex_mixin::application::ech::status()?,
                 "bind": bind,
                 "healthz": url,
@@ -135,6 +137,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
 /// Typed view of the local gateway process and its health endpoint, shared
 /// by `status` rendering and service lifecycle decisions.
 pub(super) struct GatewaySnapshot {
+    pub(super) activity: serde_json::Value,
     pub(super) daemon: Option<DaemonMetadata>,
     pub(super) daemon_status: &'static str,
     /// Version reported by the live runtime metadata, if any.
@@ -182,8 +185,15 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         .get(&healthz)
         .send()
         .await;
+    let mut activity = serde_json::Value::Null;
     let health_error = match response {
-        Ok(response) if response.status().is_success() => None,
+        Ok(response) if response.status().is_success() => {
+            match response.json::<serde_json::Value>().await {
+                Ok(report) => activity = report["activity"].clone(),
+                Err(error) => tracing::warn!(%error, "invalid gateway health report"),
+            }
+            None
+        }
         Ok(response) => Some(format!(
             "gateway unhealthy: {healthz} returned {}",
             response.status()
@@ -191,6 +201,7 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         Err(err) => Some(format!("gateway not running at {healthz}: {err}")),
     };
     Ok(GatewaySnapshot {
+        activity,
         daemon: metadata,
         daemon_status,
         running_version: live_runtime.and_then(|runtime| runtime.version),

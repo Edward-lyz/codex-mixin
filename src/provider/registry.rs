@@ -7,9 +7,8 @@ use reqwest::{RequestBuilder, Url};
 
 use super::auth::external::resolve_custom_headers_from_env;
 use super::types::{
-    AUTO_REVIEW_MODEL_ID, BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel,
-    ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    is_auto_review_model_id,
+    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey,
+    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
@@ -333,6 +332,22 @@ impl ProviderRegistry {
         providers: Vec<ProviderDefinition>,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
+        ensure!(
+            providers
+                .iter()
+                .filter(|provider| provider.codex_thread_title_model.is_some())
+                .count()
+                <= 1,
+            "only one provider can map Codex thread-title requests"
+        );
+        ensure!(
+            providers
+                .iter()
+                .filter(|provider| provider.auto_review_model.is_some())
+                .count()
+                <= 1,
+            "only one provider can override Codex review requests"
+        );
         let auxiliary_providers = providers
             .iter()
             .filter(|provider| provider.auxiliary_model_upstream)
@@ -436,36 +451,24 @@ impl ProviderRegistry {
         &'a self,
         upstream_model_id: &str,
     ) -> Option<ResolvedProviderModel<'a>> {
+        if is_auto_review_model_id(upstream_model_id) {
+            let provider = self.providers.iter().find(|provider| {
+                provider.definition.enabled && provider.definition.auto_review_model.is_some()
+            })?;
+            let configured = configured_auto_review_model(&provider.definition)?;
+            let catalog_slug = catalog_model_slug(configured, provider.id());
+            return self
+                .resolve(&catalog_slug)
+                .filter(|resolved| resolved.model.is_some());
+        }
         let provider = self.providers.iter().find(|provider| {
             provider.definition.enabled && provider.definition.auxiliary_model_upstream
         })?;
-        // An explicit auto review model wins: the upstream may host no model
-        // named after Codex's review slug.
-        if is_auto_review_model_id(upstream_model_id)
-            && let Some(configured) = configured_auto_review_model(&provider.definition)
-        {
-            let catalog_slug = catalog_model_slug(configured, provider.id());
-            return self
-                .resolve_known(&catalog_slug)
-                .filter(|resolved| resolved.model.is_some());
-        }
-        if provider.is_baidu_model_source()
-            && upstream_model_id
-                .trim()
-                .eq_ignore_ascii_case(AUTO_REVIEW_MODEL_ID)
-        {
-            return Some(ResolvedProviderModel {
-                catalog_slug: AUTO_REVIEW_MODEL_ID,
-                provider,
-                upstream_model_id: AUTO_REVIEW_MODEL_ID,
-                model: None,
-            });
-        }
-        let model = provider.definition.cached_models.iter().find(|candidate| {
-            candidate.id.eq_ignore_ascii_case(upstream_model_id)
-                || (is_auto_review_model_id(upstream_model_id)
-                    && is_auto_review_model_id(&candidate.id))
-        })?;
+        let model = provider
+            .definition
+            .cached_models
+            .iter()
+            .find(|candidate| candidate.id.eq_ignore_ascii_case(upstream_model_id))?;
         let catalog_slug = catalog_model_slug(&model.id, provider.id());
         self.resolve_known(&catalog_slug)
             .filter(|resolved| resolved.model.is_some())
@@ -599,20 +602,12 @@ pub fn catalog_model_slug(upstream_model_id: &str, provider_id: &str) -> String 
 
 /// Catalog slug Codex must use for guardian auto review.
 ///
-/// The auxiliary upstream owns auto review: an explicit choice wins, and a
-/// selected model already named after Codex's review slug maps automatically.
-/// No auxiliary upstream keeps auto review on the official model and quota.
+/// Only an explicit review override changes Codex's default model and quota.
 pub fn auxiliary_auto_review_slug(providers: &[ProviderDefinition]) -> Option<String> {
     let provider = providers
         .iter()
-        .find(|provider| provider.enabled && provider.auxiliary_model_upstream)?;
-    let model = configured_auto_review_model(provider).or_else(|| {
-        provider
-            .selected_models
-            .iter()
-            .find(|model| is_auto_review_model_id(model))
-            .map(String::as_str)
-    })?;
+        .find(|provider| provider.enabled && provider.auto_review_model.is_some())?;
+    let model = configured_auto_review_model(provider)?;
     Some(catalog_model_slug(model, &provider.id))
 }
 
@@ -752,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_auto_review_uses_baidu_hidden_upstream_model() {
+    fn legacy_auxiliary_switch_does_not_enable_review() {
         let mut provider = baidu_oneapi_provider("baidu", "test-key");
         provider.quota_username = Some("quota-user".to_owned());
         provider.auxiliary_model_upstream = true;
@@ -762,17 +757,16 @@ mod tests {
         }];
         let registry = ProviderRegistry::new(vec![provider]).unwrap();
 
-        let resolved = registry.resolve_auxiliary_model("codex-auto-review");
-
-        let resolved = resolved.unwrap();
-        assert_eq!(resolved.upstream_model_id, "codex-auto-review");
-        assert!(resolved.model.is_none());
+        assert!(
+            registry
+                .resolve_auxiliary_model("codex-auto-review")
+                .is_none()
+        );
     }
 
     #[test]
-    fn explicit_auto_review_model_routes_review_to_the_auxiliary_upstream() {
+    fn review_override_needs_no_auxiliary_switch() {
         let mut provider = test_provider("deepseek");
-        provider.auxiliary_model_upstream = true;
         provider.auto_review_model = Some("deepseek-flash".to_owned());
         provider.selected_models = vec!["deepseek-flash".to_owned()];
         provider.cached_models = vec![ProviderModel {
@@ -793,14 +787,14 @@ mod tests {
     }
 
     #[test]
-    fn auto_review_stays_official_without_an_auxiliary_upstream() {
+    fn review_override_catalog_needs_no_auxiliary_switch() {
         let mut provider = test_provider("deepseek");
         provider.selected_models = vec!["deepseek-flash".to_owned()];
         provider.auto_review_model = Some("deepseek-flash".to_owned());
 
         assert_eq!(
             auxiliary_auto_review_slug(std::slice::from_ref(&provider)),
-            None
+            Some("deepseek-flash-deepseek".to_owned())
         );
     }
 
@@ -1121,6 +1115,7 @@ mod tests {
             enabled: true,
             auxiliary_model_upstream: false,
             auto_review_model: None,
+            codex_thread_title_model: None,
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,
             base_url: "https://example.test".to_owned(),

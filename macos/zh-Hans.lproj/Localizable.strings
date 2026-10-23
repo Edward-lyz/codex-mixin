@@ -216,6 +216,11 @@
 "codexConnect.customOnlyProvider" = "amazon-bedrock / 本地占位（不连接 AWS）";
 "settings.openProviderSetup" = "打开供应商配置说明";
 "settings.localOAuthCredentials" = "新增此预设时会打开浏览器进行 OAuth 授权，无需安装供应商 CLI。";
+"provider.threadTitleMapping" = "Codex 会话命名模型覆盖";
+"provider.threadTitleModel" = "会话命名模型";
+"provider.threadTitleMappingDetail" = "Codex 命名请求使用此服务商的模型；仅一个服务商可开启，普通对话保留原模型。";
+"settings.kiroSessionCredentials" = "请先在本机登录 Kiro。密钥留空时复用该登录会话。";
+"settings.agyBusinessCredentials" = "请在 agy 选择 Business 并配置 Cloud 项目和地区，或配置 authorized_user 类型的应用默认凭据。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
 "quota.resetsAt" = "%@ 重置";
@@ -313,3 +318,8 @@
 "context.validation.protectedTokens" = "保护 token 数必须是正整数。";
 "context.validation.maxInternalRounds" = "内部轮次上限必须在 1 到 10 之间。";
 "context.validation.contextWindowTokens" = "上下文窗口必须是正整数。";
+
+"provider.includeModel" = "是否加入";
+"provider.reviewModelOverride" = "Codex 审查模型覆盖";
+"provider.reviewModel" = "审查模型";
+"provider.reviewModelOverrideDetail" = "独立指定审查模型；关闭时使用默认路由。";

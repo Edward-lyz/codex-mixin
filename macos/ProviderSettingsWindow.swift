@@ -35,6 +35,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
     private var bannerHideWorkItem: DispatchWorkItem?
     private var backgroundRefreshTask: Task<Void, Never>?
+    private var hostedContent: NSHostingController<AnyView>?
+    var onClose: (() -> Void)?
 
     init(
         loadHandler: @escaping LoadHandler,
@@ -117,6 +119,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     func present() {
+        if window?.contentViewController == nil { installContent() }
         showWindow(nil)
         if let window {
             presentPersistentWindow(window)
@@ -170,6 +173,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         stopBackgroundRefresh()
         model.clearSensitiveDrafts()
         benchmarkModel.stopPolling()
+        bannerHideWorkItem?.cancel()
+        bannerHideWorkItem = nil
+        hostedContent?.rootView = AnyView(EmptyView())
+        hostedContent = nil
+        // AppKit keeps closed windows reusable. Drop the console's SwiftUI
+        // graph so a menu-bar-only app does not retain every hidden page.
+        window?.contentViewController = nil
+        onClose?()
     }
 
     private func beginBackgroundRefresh() {
@@ -213,7 +224,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 self?.moveProviders(from: offsets, to: destination)
             }
         )
-        window?.contentViewController = NSHostingController(rootView: rootView)
+        let hosting = NSHostingController(rootView: AnyView(rootView))
+        hostedContent = hosting
+        window?.contentViewController = hosting
     }
 
     func moveProviders(from offsets: IndexSet, to destination: Int) {
@@ -660,10 +673,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     private func providerUpdatePlan(for provider: ProviderView) -> ProviderUpdatePlan? {
-        let auxiliaryModelUpstream = model.auxiliaryModelUpstream
         var update = ["providers", "update", provider.id]
-        update.append("--auxiliary-model-upstream")
-        update.append(auxiliaryModelUpstream ? "true" : "false")
         let autoReviewModel = model.autoReviewModel
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if autoReviewModel.isEmpty {
@@ -673,6 +683,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         } else {
             update.append("--auto-review-model")
             update.append(autoReviewModel)
+        }
+        if model.codexThreadTitleModel.isEmpty {
+            if provider.codexThreadTitleModel != nil {
+                update.append("--clear-codex-thread-title-model")
+            }
+        } else {
+            update.append("--codex-thread-title-model")
+            update.append(model.codexThreadTitleModel)
         }
         if provider.presetID == "aws-bedrock" {
             let region = model.awsRegion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -783,7 +801,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     current: provider.effectiveBaiduAuthBridge,
                     selected: selectedBaiduBridge
                 ) ? selectedBaiduBridge : nil,
-            codexSkillChanged: auxiliaryModelUpstream != provider.auxiliaryModelUpstream
+            codexSkillChanged: false
         )
     }
 

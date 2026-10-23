@@ -12,9 +12,20 @@ pub(super) use codex_mixin::platform::update::release_target as cli_release_targ
 #[cfg(test)]
 pub(super) use codex_mixin::platform::update::replace_executable;
 
-pub(super) async fn run() -> anyhow::Result<()> {
+pub(super) async fn run(check: bool, json: bool) -> anyhow::Result<()> {
     cli_release_target()?;
     let latest = update::latest_version().await?;
+    if check {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"current_version":env!("CARGO_PKG_VERSION"),"latest_version":latest})
+            );
+        } else {
+            println!("Latest release: {latest}");
+        }
+        return Ok(());
+    }
     if latest == env!("CARGO_PKG_VERSION") {
         println!("codex-mixin {latest} is already up to date.");
         return Ok(());

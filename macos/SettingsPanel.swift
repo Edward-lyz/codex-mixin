@@ -21,6 +21,7 @@ struct AddProviderFormValues {
 enum ProviderCredentialMode: String, Decodable {
     case apiKey = "api_key"
     case localOAuth = "local_oauth"
+    case localSession = "local_session"
     case awsSigV4 = "aws_sigv4"
 }
 
@@ -102,6 +103,7 @@ final class AddProviderFormModel: ObservableObject {
     var isBaiduOneAPI: Bool { definition?.quotaUsernameRequired == true }
     var isAWSBedrock: Bool { definition?.authMode == .awsSigV4 }
     var usesLocalOAuth: Bool { definition?.authMode == .localOAuth }
+    var usesLocalSession: Bool { definition?.authMode == .localSession }
     var requiresQuotaCredentials: Bool { definition?.quotaCredentialsRequired == true }
     var credentialURL: URL? { definition?.credentialUrl.flatMap(URL.init(string:)) }
 
@@ -229,6 +231,12 @@ private struct AddProviderFormView: View {
                 }
 
                 Section("凭据") {
+                    if model.usesLocalSession {
+                        Text(AppLocalization.string(model.preset == "kiro"
+                            ? "settings.kiroSessionCredentials" : "settings.agyBusinessCredentials"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     if model.usesLocalOAuth {
                         Text(AppLocalization.string("settings.localOAuthCredentials"))
                             .font(.callout)
@@ -249,7 +257,7 @@ private struct AddProviderFormView: View {
                         SecureField(
                             "API Key",
                             text: $model.apiKey,
-                            prompt: Text(AppLocalization.string(model.usesLocalOAuth
+                            prompt: Text(AppLocalization.string(model.usesLocalSession
                                 ? "settings.optionalAPIKey" : "settings.requiredStoredOnlyByTheLocalRust"))
                         )
                     }

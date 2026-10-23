@@ -78,6 +78,8 @@ pub struct UpdateProviderInput {
     pub baidu_code_report: Option<bool>,
     pub auto_review_model: Option<String>,
     pub clear_auto_review_model: bool,
+    pub codex_thread_title_model: Option<String>,
+    pub clear_codex_thread_title_model: bool,
 }
 
 #[derive(Debug)]
@@ -135,7 +137,10 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
                 && input.aws_region.is_none(),
             "AWS credential options require the aws-bedrock preset without --key"
         );
-        let key = if preset == ProviderPreset::Agy {
+        let key = if matches!(
+            preset,
+            ProviderPreset::Agy | ProviderPreset::AgyBusiness | ProviderPreset::Kiro
+        ) {
             input.key.unwrap_or_default()
         } else {
             required(
@@ -359,6 +364,12 @@ pub fn update_provider_from_input(
     } else if let Some(model) = input.auto_review_model {
         provider.auto_review_model =
             Some(required("auto review model", model).map_err(before_commit)?);
+    }
+    if input.clear_codex_thread_title_model {
+        provider.codex_thread_title_model = None;
+    } else if let Some(model) = input.codex_thread_title_model {
+        provider.codex_thread_title_model =
+            Some(required("Codex thread title model", model).map_err(before_commit)?);
     }
     provider.validate().map_err(before_commit)?;
     let protocol = provider.protocol;

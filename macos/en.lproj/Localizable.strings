@@ -216,6 +216,11 @@
 "codexConnect.customOnlyProvider" = "amazon-bedrock / local placeholder (no AWS)";
 "settings.openProviderSetup" = "Open provider setup";
 "settings.localOAuthCredentials" = "Adding this preset opens browser OAuth. No provider CLI is required.";
+"provider.threadTitleMapping" = "Codex thread title model override";
+"provider.threadTitleModel" = "Thread title model";
+"provider.threadTitleMappingDetail" = "Use this provider for Codex title requests. One provider can own this mapping; ordinary conversations keep their model.";
+"settings.kiroSessionCredentials" = "Sign in to Kiro on this Mac first. Leave the key empty to use that session.";
+"settings.agyBusinessCredentials" = "Select Business in agy and configure its Cloud project and location, or use authorized-user Application Default Credentials.";
 "settings.optionalAPIKey" = "Optional; leave empty to use local OAuth";
 "settings.providerCatalogUnavailable" = "The CLI provider catalog is unavailable. Reopen settings or update the complete app bundle.";
 "quota.resetsAt" = "Resets %@";
@@ -313,3 +318,8 @@
 "context.validation.protectedTokens" = "Protected tokens must be a positive whole number.";
 "context.validation.maxInternalRounds" = "Internal round cap must be between 1 and 10.";
 "context.validation.contextWindowTokens" = "Context window must be a positive whole number.";
+
+"provider.includeModel" = "Include";
+"provider.reviewModelOverride" = "Codex review model override";
+"provider.reviewModel" = "Review model";
+"provider.reviewModelOverrideDetail" = "Choose a review model independently. Turn off to use the default route.";

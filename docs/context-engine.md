@@ -261,3 +261,11 @@ cargo test --locked --lib context::guidance::tests::matches_upstream_nudge_decis
 ```
 
 这些测试验证触发规则和状态演进，不衡量真实模型摘要质量，也不证明完整 kernel 行为等价。
+## 工具调用边界校验
+
+压缩范围必须同时包含 `function_call` / `custom_tool_call` 和对应的
+`function_call_output` / `custom_tool_call_output`。即使两端都不属于最近消息
+保护区，也不能只压缩其中一端。校验失败返回
+`compression would split tool call ... from its output`，不改变归档或 revision。
+模型需要调整范围，完整覆盖调用与返回；整对压缩后仍可通过恢复整个摘要块还原。
+这防止了可见历史中出现孤立工具返回，以及上游的 `No tool call found ...` 错误。
