@@ -53,8 +53,10 @@ impl ProviderCapabilities {
 
     pub fn annotate_config(&self, config: &mut GatewayConfig) {
         for provider in &mut config.providers {
-            if provider.preset_id.as_deref() == Some("agy")
-                && provider.auth.api_key.trim().is_empty()
+            if matches!(
+                provider.preset_id.as_deref(),
+                Some("agy" | "agy-business" | "kiro")
+            ) && provider.auth.api_key.trim().is_empty()
             {
                 continue;
             }
@@ -71,7 +73,11 @@ impl ProviderCapabilities {
     pub fn annotate_provider(&self, provider: &mut ProviderDefinition) {
         // The native CLI owns account switching; its reports have no stable
         // account identifier, so persisted probe results cannot be attributed.
-        if provider.preset_id.as_deref() == Some("agy") && provider.auth.api_key.trim().is_empty() {
+        if matches!(
+            provider.preset_id.as_deref(),
+            Some("agy" | "agy-business" | "kiro")
+        ) && provider.auth.api_key.trim().is_empty()
+        {
             return;
         }
         let Some(record) = self.file.providers.get(&provider.id) else {

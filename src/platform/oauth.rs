@@ -28,11 +28,36 @@ pub(crate) fn official_auth_path() -> PathBuf {
 }
 
 fn agy_auth_paths() -> Vec<PathBuf> {
-    vec![
-        oauth_path("agy"),
+    let mut paths = vec![oauth_path("agy")];
+    paths.extend(agy_external_token_paths());
+    paths
+}
+
+pub(crate) fn agy_external_token_paths() -> [PathBuf; 2] {
+    [
         super::home_dir().join(".gemini/jetski-standalone-oauth-token"),
         super::home_dir().join(".gemini/antigravity-cli/antigravity-oauth-token"),
     ]
+}
+
+pub(crate) fn kiro_auth_path() -> PathBuf {
+    std::env::var_os("CODEX_MIXIN_KIRO_AUTH_FILE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| super::home_dir().join(".aws/sso/cache/kiro-auth-token.json"))
+}
+
+pub(crate) fn agy_settings_path() -> PathBuf {
+    super::home_dir().join(".gemini/antigravity-cli/settings.json")
+}
+
+pub(crate) fn google_adc_path() -> PathBuf {
+    std::env::var_os("GOOGLE_APPLICATION_CREDENTIALS")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            super::home_dir().join(".config/gcloud/application_default_credentials.json")
+        })
 }
 
 pub(crate) fn agy_auth_path() -> Option<PathBuf> {

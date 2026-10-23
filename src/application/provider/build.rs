@@ -135,7 +135,10 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
                 && input.aws_region.is_none(),
             "AWS credential options require the aws-bedrock preset without --key"
         );
-        let key = if preset == ProviderPreset::Agy {
+        let key = if matches!(
+            preset,
+            ProviderPreset::Agy | ProviderPreset::AgyBusiness | ProviderPreset::Kiro
+        ) {
             input.key.unwrap_or_default()
         } else {
             required(

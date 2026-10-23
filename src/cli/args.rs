@@ -786,6 +786,10 @@ pub(super) enum CliProviderPreset {
     Official,
     #[value(name = "agy", alias = "antigravity")]
     Agy,
+    #[value(name = "agy-business")]
+    AgyBusiness,
+    #[value(name = "kiro")]
+    Kiro,
     #[value(name = "baidu-oneapi")]
     BaiduOneApi,
     #[value(name = "openrouter")]
@@ -804,6 +808,8 @@ impl CliProviderPreset {
             Self::Custom => ProviderPreset::Custom,
             Self::Official => ProviderPreset::Official,
             Self::Agy => ProviderPreset::Agy,
+            Self::AgyBusiness => ProviderPreset::AgyBusiness,
+            Self::Kiro => ProviderPreset::Kiro,
             Self::BaiduOneApi => ProviderPreset::BaiduOneApi,
             Self::OpenRouter => ProviderPreset::OpenRouter,
             Self::DeepSeek => ProviderPreset::DeepSeek,
@@ -823,6 +829,8 @@ impl From<ProviderPreset> for CliProviderPreset {
             ProviderPreset::Custom => Self::Custom,
             ProviderPreset::Official => Self::Official,
             ProviderPreset::Agy => Self::Agy,
+            ProviderPreset::AgyBusiness => Self::AgyBusiness,
+            ProviderPreset::Kiro => Self::Kiro,
             ProviderPreset::BaiduOneApi => Self::BaiduOneApi,
             ProviderPreset::OpenRouter => Self::OpenRouter,
             ProviderPreset::DeepSeek => Self::DeepSeek,
