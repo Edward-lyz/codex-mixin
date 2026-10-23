@@ -144,10 +144,49 @@ fn provider_options_are_allowlisted_and_cannot_reference_panel_env() {
         json!({"ducx_executable": "/bin/sh"}),
         json!({"display_name": "@env:HOME"}),
         json!({"clear_key": "yes"}),
+        json!({"auxiliary_model_upstream": true}),
     ] {
         let value = json!({"action": "provider_update", "params": {"id": "p", "options": options}});
         assert!(action(value).invocation().is_err());
     }
+}
+
+#[test]
+fn provider_model_overrides_use_independent_cli_options() {
+    let invocation = action(json!({
+        "action": "provider_update", "params": {"id": "p", "options": {
+            "auto_review_model": "review", "codex_thread_title_model": "title"
+        }}
+    }))
+    .invocation()
+    .unwrap();
+    assert_eq!(
+        invocation.args,
+        [
+            "providers",
+            "update",
+            "p",
+            "--auto-review-model=review",
+            "--codex-thread-title-model=title"
+        ]
+    );
+    let invocation = action(json!({
+        "action": "provider_update", "params": {"id": "p", "options": {
+            "clear_auto_review_model": true, "clear_codex_thread_title_model": true
+        }}
+    }))
+    .invocation()
+    .unwrap();
+    assert_eq!(
+        invocation.args,
+        [
+            "providers",
+            "update",
+            "p",
+            "--clear-auto-review-model",
+            "--clear-codex-thread-title-model"
+        ]
+    );
 }
 
 #[test]

@@ -673,10 +673,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     private func providerUpdatePlan(for provider: ProviderView) -> ProviderUpdatePlan? {
-        let auxiliaryModelUpstream = model.auxiliaryModelUpstream
         var update = ["providers", "update", provider.id]
-        update.append("--auxiliary-model-upstream")
-        update.append(auxiliaryModelUpstream ? "true" : "false")
         let autoReviewModel = model.autoReviewModel
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if autoReviewModel.isEmpty {
@@ -804,7 +801,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     current: provider.effectiveBaiduAuthBridge,
                     selected: selectedBaiduBridge
                 ) ? selectedBaiduBridge : nil,
-            codexSkillChanged: auxiliaryModelUpstream != provider.auxiliaryModelUpstream
+            codexSkillChanged: false
         )
     }
 

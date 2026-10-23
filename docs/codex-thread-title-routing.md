@@ -1,8 +1,8 @@
 # Codex thread title routing
 
-In a configured Provider's advanced options, enable **Codex 重命名模型映射**
-below the auto review model selector, then choose one of that Provider's selected
-models. This setting works independently of the auxiliary upstream switch.
+On macOS, Windows, and Web, in a configured Provider's advanced options, enable **Codex 会话命名模型覆盖**
+below the review override, then choose one of that Provider's selected models.
+The review and session naming overrides work independently.
 Saving a mapping clears the mapping on other Providers. Disable the switch to
 restore normal title routing. A disabled Provider does not route titles.
 
@@ -36,3 +36,8 @@ verify both transports, zero official requests for a mapped title, and unchanged
 ordinary-model routing.
 
 Wire reference: [Codex response metadata](https://github.com/openai/codex/blob/main/codex-rs/core/src/responses_metadata.rs).
+
+**Codex 审查模型覆盖** selects the review model independently. Each override
+has one Provider owner. Clearing an override restores its default route.
+The former auxiliary upstream switch is no longer shown in these interfaces;
+review overrides do not depend on its legacy CLI setting.

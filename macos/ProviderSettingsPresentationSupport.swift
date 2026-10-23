@@ -165,12 +165,6 @@ func autoReviewModelChoices(for provider: ProviderView) -> [String] {
     return provider.selectedModels.filter(availableModels.contains)
 }
 
-func autoReviewModelDetail(auxiliaryModelUpstream: Bool) -> String {
-    guard auxiliaryModelUpstream else {
-        return "需要先开启辅助模型上游；当前自动审查使用官方模型和额度"
-    }
-    return "留空表示自动：上游提供 codex-auto-review 时直接映射，否则请选择一个模型"
-}
 
 func selectedProviderStatus(provider: ProviderView?, providersEmpty: Bool, codexInstallMode: ManagedCodexInstallMode?) -> String {
     guard let provider else {

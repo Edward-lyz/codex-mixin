@@ -405,7 +405,7 @@ struct ProviderSettingsNavigationTests {
         controller.saveProvider()
         waitUntil {
             events.contains {
-                $0 == "run:providers|update|baidu-oneapi|--auxiliary-model-upstream|false|--quota-username|quota-user|--baidu-auth-bridge|ducx_loopback|--baidu-code-report|false|--ducx-executable|/tmp/test-ducx"
+                $0 == "run:providers|update|baidu-oneapi|--quota-username|quota-user|--baidu-auth-bridge|ducx_loopback|--baidu-code-report|false|--ducx-executable|/tmp/test-ducx"
             }
         }
         waitUntil {
@@ -418,7 +418,7 @@ struct ProviderSettingsNavigationTests {
             $0 == "run:providers|test|baidu-oneapi|--json|--baidu-auth-bridge|ducx_loopback|--ducx-executable|/tmp/test-ducx"
         }
         let updateRunIndex = events.firstIndex {
-            $0 == "run:providers|update|baidu-oneapi|--auxiliary-model-upstream|false|--quota-username|quota-user|--baidu-auth-bridge|ducx_loopback|--baidu-code-report|false|--ducx-executable|/tmp/test-ducx"
+            $0 == "run:providers|update|baidu-oneapi|--quota-username|quota-user|--baidu-auth-bridge|ducx_loopback|--baidu-code-report|false|--ducx-executable|/tmp/test-ducx"
         }
         precondition(testRunIndex != nil && updateRunIndex != nil)
         precondition(events.firstIndex(of: "setup:ducx_loopback")! < testRunIndex!)
@@ -470,7 +470,7 @@ struct ProviderSettingsNavigationTests {
         controller.saveProvider()
         waitUntil {
             events.contains(
-                "providers|update|aws-bedrock|--auxiliary-model-upstream|false|--aws-region|\(region)"
+                "providers|update|aws-bedrock|--aws-region|\(region)"
             )
         }
         alertTimer.invalidate()
@@ -502,7 +502,6 @@ struct ProviderSettingsNavigationTests {
         controller.present()
         waitUntil { loadCalls == 1 && controller.model.selectedProviderID == "custom" }
 
-        controller.model.auxiliaryModelUpstream = true
         controller.model.autoReviewModel = "model-1"
         controller.saveProvider()
         waitUntil { events.contains { $0.contains("--auto-review-model|model-1") } }
@@ -530,7 +529,6 @@ struct ProviderSettingsNavigationTests {
         )
         controller.present()
         waitUntil { loads == 1 && controller.model.selectedProviderID == "custom" }
-        precondition(!controller.model.auxiliaryModelUpstream)
         controller.model.codexThreadTitleModel = "model-1"
         precondition(controller.model.connectionDirty)
         controller.saveProvider()

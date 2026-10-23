@@ -77,6 +77,15 @@ impl<'a> ModelRouter<'a> {
                 upstream_model_id: resolved.upstream_model_id.to_owned(),
             });
         }
+        if model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL_SLUG)
+            && self.providers.providers().iter().any(|provider| {
+                provider.definition().enabled && provider.definition().auto_review_model.is_some()
+            })
+        {
+            return Err(GatewayError::BadRequest(
+                "configured Codex review model is unavailable".to_owned(),
+            ));
+        }
         if let Some(known) = self.providers.resolve_known(model) {
             let reason = if !known.provider.definition().enabled {
                 "provider is disabled"
@@ -451,11 +460,12 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_provider_routes_auto_review_and_overrides_official() {
+    fn explicit_review_override_replaces_official_route() {
         let profiles = [];
         let mut provider = custom_provider("provider", "secret");
         provider.base_url = "https://provider.example".to_owned();
-        provider.auxiliary_model_upstream = true;
+        provider.auto_review_model = Some(AUTO_REVIEW_MODEL_SLUG.to_owned());
+        provider.selected_models = vec![AUTO_REVIEW_MODEL_SLUG.to_owned()];
         provider.cached_models = vec![ProviderModel {
             id: AUTO_REVIEW_MODEL_SLUG.to_owned(),
             ..ProviderModel::default()
@@ -472,6 +482,21 @@ mod tests {
                     provider_id: "provider".to_owned(),
                     upstream_model_id: AUTO_REVIEW_MODEL_SLUG.to_owned(),
                 }
+            );
+        }
+    }
+    #[test]
+    fn unavailable_review_override_never_uses_official_route() {
+        let mut provider = custom_provider("provider", "secret");
+        provider.base_url = "https://provider.example".to_owned();
+        provider.auto_review_model = Some("gone".to_owned());
+        provider.selected_models = vec!["gone".to_owned()];
+        let providers = ProviderRegistry::new(vec![provider]).unwrap();
+        for official_enabled in [false, true] {
+            assert!(
+                ModelRouter::new(&[], &providers, official_enabled)
+                    .resolve(AUTO_REVIEW_MODEL_SLUG)
+                    .is_err()
             );
         }
     }
