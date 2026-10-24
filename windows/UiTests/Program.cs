@@ -278,7 +278,16 @@ internal static class Program
             Wait(() => !IsWindowVisible(handle), "close to tray", process);
             using var second = Process.Start(start) ?? throw new InvalidOperationException("Cannot reactivate app");
             Wait(() => IsWindowVisible(handle), "single-instance reactivation", process);
-            if (!second.WaitForExit(15000) || second.ExitCode != 0) throw new InvalidOperationException("Second instance did not redirect cleanly");
+            var secondExited = second.WaitForExit(15000);
+            var secondErrors = secondExited ? second.StandardError.ReadToEnd().Trim() : "";
+            if (!secondExited || second.ExitCode != 0)
+            {
+                if (!secondExited) second.Kill(true);
+                var state = secondExited ? $"exit {second.ExitCode}" : "timeout";
+                throw new InvalidOperationException(
+                    $"Second instance did not redirect cleanly ({state})"
+                    + (string.IsNullOrEmpty(secondErrors) ? "" : $": {secondErrors}"));
+            }
             MoveWindow(handle, desktop.Left + 24, desktop.Top + 24, 960, 600, true);
             Capture(window, Path.Combine(output, "minimum-window.png"));
             Console.WriteLine("PASS close-to-tray, reactivation and provider minimum window");
@@ -365,7 +374,7 @@ internal static class Program
 
     private static AutomationElement OpenWindow(ProcessStartInfo source, Process process, string role, string title)
     {
-        var start = new ProcessStartInfo(source.FileName) { UseShellExecute = false };
+        var start = new ProcessStartInfo(source.FileName) { UseShellExecute = false, RedirectStandardError = true };
         foreach (var variable in source.Environment) start.Environment[variable.Key] = variable.Value;
         start.ArgumentList.Add($"--page={role}");
         using var activation = Process.Start(start) ?? throw new InvalidOperationException("Cannot activate a page");
@@ -377,7 +386,16 @@ internal static class Program
                 new PropertyCondition(AutomationElement.NameProperty, title)));
             return window != null && !window.Current.IsOffscreen;
         }, $"open {title}", process);
-        if (!activation.WaitForExit(15000) || activation.ExitCode != 0) throw new InvalidOperationException("Page activation did not exit cleanly");
+        var exited = activation.WaitForExit(15000);
+        var errors = exited ? activation.StandardError.ReadToEnd().Trim() : "";
+        if (!exited || activation.ExitCode != 0)
+        {
+            if (!exited) activation.Kill(true);
+            var state = exited ? $"exit {activation.ExitCode}" : "timeout";
+            throw new InvalidOperationException(
+                $"Page activation for {role} did not exit cleanly ({state})"
+                + (string.IsNullOrEmpty(errors) ? "" : $": {errors}"));
+        }
         if (role != "overview")
             Wait(() => Find(window!, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"initial load {role}", process);
         return window!;

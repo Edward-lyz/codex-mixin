@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
+using System.Runtime.InteropServices;
 
 namespace CodexMixin;
 
@@ -7,6 +8,9 @@ namespace CodexMixin;
 public partial class App : Application
 {
     private const string ConsoleWindowKey = "console";
+    private const string InstanceKey = "CodexMixin.Windows";
+    private const int CatastrophicFailure = unchecked((int)0x8000FFFF);
+    private const int InstanceRegistrationAttempts = 5;
     private readonly Dictionary<string, MainWindow> windows = [];
     private CliClient? cli;
     private Operations? operations;
@@ -82,7 +86,7 @@ public partial class App : Application
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        var instance = AppInstance.FindOrRegisterForKey("CodexMixin.Windows");
+        var instance = await FindMainInstanceAsync();
         if (!instance.IsCurrent)
         {
             await instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
@@ -107,6 +111,28 @@ public partial class App : Application
         {
             trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{Environment.ProcessId}");
             trayReady.Set();
+        }
+    }
+
+    private static async Task<AppInstance> FindMainInstanceAsync()
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return AppInstance.FindOrRegisterForKey(InstanceKey);
+            }
+            catch (COMException error) when (
+                error.HResult == CatastrophicFailure
+                && attempt + 1 < InstanceRegistrationAttempts)
+            {
+                // Unpackaged AppLifecycle registration intermittently returns
+                // E_UNEXPECTED while short-lived activation processes exit.
+                // Retry only that transient HRESULT for a bounded period.
+                Console.Error.WriteLine(
+                    $"Retrying Windows instance registration after {error.HResult:X8}");
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * (1 << attempt)));
+            }
         }
     }
 }

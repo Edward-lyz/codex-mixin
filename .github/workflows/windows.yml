@@ -32,7 +32,9 @@ jobs:
       matrix:
         shard:
           - unit
-          - integration
+          - integration-a
+          - integration-b
+          - integration-c
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -51,15 +53,16 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      # The two shards together cover the same targets as --all-targets.
-      # Integration binaries are the long pole, so they run beside the lib,
-      # bin, and example harnesses instead of after them.
+      # The unit shard and three integration shards together cover the same
+      # targets as --all-targets. Integration binaries are the long pole, so
+      # they run beside the unit harnesses instead of after them.
       - name: Run unit tests
         if: matrix.shard == 'unit'
         run: cargo test --locked --lib --bins --examples
       - name: Run integration tests
-        if: matrix.shard == 'integration'
-        run: cargo test --locked --tests
+        if: startsWith(matrix.shard, 'integration-')
+        shell: pwsh
+        run: ./scripts/test_windows_integration.ps1 -Shard ${{ matrix.shard }}
   cli:
     if: ${{ !inputs.ui_artifact_run }}
     name: Build Windows CLI
@@ -89,7 +92,7 @@ jobs:
       - name: Check PowerShell syntax
         shell: pwsh
         run: |
-          $scripts = Get-ChildItem -Path windows/scripts -Recurse -Filter *.ps1
+          $scripts = Get-ChildItem -Path scripts, windows/scripts -Recurse -Filter *.ps1
           foreach ($script in $scripts) {
             $tokens = $null
             $errors = $null
@@ -103,9 +106,6 @@ jobs:
       - name: Test CLI adapter
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release
-      - name: Compile Windows UI Automation tests
-        shell: pwsh
-        run: dotnet build windows/UiTests/UiTests.csproj -c Release
       - name: Generate native icons
         shell: pwsh
         run: ./windows/scripts/generate-windows-assets.ps1
@@ -120,12 +120,6 @@ jobs:
           $numericVersion = ($version -split '-', 2)[0]
           dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release `
             -p:Platform=x64 -p:Version=$numericVersion -o windows/build/publish
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-native-dependencies
-          path: windows/CodexMixin/packages.lock.json
-          if-no-files-found: warn
       - uses: actions/upload-artifact@v7
         with:
           name: windows-native-ui
@@ -175,9 +169,14 @@ jobs:
             Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} |
               Where-Object { $_.Message -match 'codex_mixin_ui|Microsoft.UI.Xaml' } |
               Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
-            $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
-            if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
-            dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts/debugger $debugger
+            $dumps = @(Get-ChildItem -LiteralPath $dumpPath -Filter *.dmp -ErrorAction SilentlyContinue)
+            if ($dumps.Count -gt 0) {
+              $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+              if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
+              dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts/debugger $debugger
+            } else {
+              Write-Host 'No native crash dump; preserving the original UI test failure without debugger replay.'
+            }
           }
           exit $testExit
       - uses: actions/upload-artifact@v7
@@ -210,9 +209,16 @@ jobs:
     needs: [rust, cli, native-ui]
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - name: Read package version
+        id: version
+        shell: pwsh
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          $version = [regex]::Match(
+            $cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"'
+          ).Groups[1].Value
+          if (-not $version) { throw 'Cargo package version is missing' }
+          "value=$version" >> $env:GITHUB_OUTPUT
       # Package the CLI built by the cli job instead of rebuilding it.
       - uses: actions/download-artifact@v7
         with:
@@ -231,11 +237,11 @@ jobs:
       - name: Package and optionally sign Windows artifacts
         shell: pwsh
         env:
+          VERSION: ${{ steps.version.outputs.value }}
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          $version = ((cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
-            Where-Object { $_.name -eq 'codex-mixin' } | Select-Object -First 1).version
+          $version = $env:VERSION
           $options = @{
             Output = "dist\release\codex-mixin-$version-windows-x86_64"
             Installer = "dist\release\codex-mixin-$version-windows-x86_64-setup.exe"
@@ -261,8 +267,7 @@ jobs:
       # Fail the job if either executable is missing from the package.
       - shell: pwsh
         run: |
-          $version = ((cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
-            Where-Object { $_.name -eq 'codex-mixin' } | Select-Object -First 1).version
+          $version = "${{ steps.version.outputs.value }}"
           $app = "dist\release\codex-mixin-$version-windows-x86_64"
           if (-not (Test-Path "$app\codex-mixin.exe")) { throw 'codex-mixin.exe missing from package' }
           if (-not (Test-Path "$app\codex_mixin_ui.exe")) { throw 'codex_mixin_ui.exe missing from package' }
