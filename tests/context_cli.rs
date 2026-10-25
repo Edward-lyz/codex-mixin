@@ -99,6 +99,46 @@ fn context_cli_reports_settings_and_empty_stats() {
 }
 
 #[test]
+fn context_save_preserves_commit_state_when_gateway_restart_fails() {
+    use codex_mixin::config::{
+        StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
+    };
+    use codex_mixin::provider::custom_provider;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let config_path = root.join("config.json");
+    save_stored_config_to_path(
+        &config_path,
+        &StoredGatewayConfig {
+            providers: vec![custom_provider("local", "fixture-key")],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // A directory is not valid runtime metadata. The real restart path must
+    // report failure after saving, without touching any user's service.
+    fs::create_dir(root.join("runtime.json")).unwrap();
+    let result = cli(
+        root,
+        &root.join("context.db"),
+        &["context", "config", "set", "--enabled", "true", "--json"],
+    );
+    assert!(!result.status.success());
+    let errors = String::from_utf8(result.stderr).unwrap();
+    let envelope: Value = serde_json::from_str(errors.lines().last().unwrap()).unwrap();
+    assert_eq!(envelope["error"]["committed"], true);
+    assert_eq!(envelope["error"]["stage"], "context gateway restart");
+    assert!(
+        load_stored_config_from_path(&config_path)
+            .unwrap()
+            .unwrap()
+            .context
+            .enabled
+    );
+}
+
+#[test]
 fn context_settings_json_matches_shell_decoders() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("context.db");
@@ -157,6 +197,10 @@ fn context_cli_rejects_bad_settings_without_saving() {
     ));
     assert_eq!(saved["context"]["enabled"], true);
     assert_eq!(saved["context"]["growth_threshold_tokens"], 60000);
+    assert!(
+        !directory.path().join("runtime.json").exists(),
+        "offline settings must not start a gateway"
+    );
 
     let rejected = cli(
         directory.path(),

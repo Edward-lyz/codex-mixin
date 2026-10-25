@@ -142,8 +142,8 @@ internal static class Program
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
                             .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway per-turn usage", process);
                     if (role == "context")
-                        Wait(() => Find(target, "context-enabled") != null && Find(target, "context-save") != null
-                            && Find(target, "context-restart") != null, "context settings controls", process);
+                        Wait(() => Find(target, "context-enabled") != null && Find(target, "context-save") != null,
+                            "context settings controls", process);
                     if (role == "settings" && target.FindFirst(TreeScope.Descendants,
                         new PropertyCondition(AutomationElement.NameProperty, "打开上下文设置")) != null)
                         throw new InvalidOperationException("Settings still has the redundant context entry");

@@ -205,6 +205,108 @@ async fn daemon_upgrade_keeps_bind_mode() {
 }
 
 #[tokio::test]
+async fn context_save_restarts_once_and_unchanged_save_keeps_the_gateway() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut provider = custom_provider("local", "fixture-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.model_source = ProviderModelSource::Static;
+    provider.selected_models = vec!["test-model".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "test-model".to_owned(),
+        ..Default::default()
+    }];
+    save_stored_config_to_path(
+        &root.join("config.json"),
+        &StoredGatewayConfig {
+            providers: vec![provider],
+            official_selected_models: Some(Vec::new()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let _cleanup = DaemonGuard(root);
+    let started = daemon_control(root, &["start", "--daemon", "--bind", "127.0.0.1:0"]).await;
+    assert!(
+        started.status.success(),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let runtime_path = root.join("runtime.json");
+    let before: serde_json::Value =
+        serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+    let starts = || {
+        fs::read_to_string(root.join("gateway.log"))
+            .unwrap()
+            .matches("gateway process starting")
+            .count()
+    };
+    let initial_starts = starts();
+    let arguments = &[
+        "--no-tui",
+        "--json-errors",
+        "context",
+        "config",
+        "set",
+        "--enabled",
+        "true",
+        "--json",
+    ];
+    let saved = daemon_control(root, arguments).await;
+    assert!(
+        saved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&saved.stdout).unwrap();
+    assert_eq!(payload["context"]["enabled"], true);
+    let after: serde_json::Value =
+        serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+    assert_ne!(before["pid"], after["pid"]);
+    assert_eq!(
+        starts(),
+        initial_starts + 1,
+        "one save must start exactly one replacement"
+    );
+    let unchanged = daemon_control(root, arguments).await;
+    assert!(
+        unchanged.status.success(),
+        "{}",
+        String::from_utf8_lossy(&unchanged.stderr)
+    );
+    let same: serde_json::Value =
+        serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+    assert_eq!(after["pid"], same["pid"]);
+    assert_eq!(starts(), initial_starts + 1);
+    let stopped = daemon_control(root, &["stop", "--allow-codex-disconnect"]).await;
+    assert!(stopped.status.success());
+    let offline = daemon_control(
+        root,
+        &[
+            "--no-tui",
+            "--json-errors",
+            "context",
+            "config",
+            "set",
+            "--enabled",
+            "false",
+            "--json",
+        ],
+    )
+    .await;
+    assert!(
+        offline.status.success(),
+        "{}",
+        String::from_utf8_lossy(&offline.stderr)
+    );
+    assert!(
+        !runtime_path.exists(),
+        "saving a stopped gateway must keep it stopped"
+    );
+    assert_eq!(starts(), initial_starts + 1);
+}
+
+#[tokio::test]
 async fn startup_does_not_wait_for_official_catalog_network() {
     let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_address = proxy_listener.local_addr().unwrap();

@@ -43,11 +43,11 @@ public sealed partial class TrayWindow : Window
         AppWindow.IsShownInSwitchers = false;
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
-        NativeShell.HidePopupBorder(WinRT.Interop.WindowNative.GetWindowHandle(this));
         presenter.IsResizable = false;
         presenter.IsMinimizable = false;
         presenter.IsMaximizable = false;
         presenter.IsAlwaysOnTop = true;
+        NativeShell.ConfigurePopupFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
         Activated += (_, args) => { if (!dialogOpen && args.WindowActivationState == WindowActivationState.Deactivated) HidePanel(); };
         Panel.Loaded += (_, _) => FitToContent();
         PanelContent.SizeChanged += (_, _) => FitToContent();
@@ -83,6 +83,7 @@ public sealed partial class TrayWindow : Window
         quotaStyle = QuotaView.Stored();
         RenderQuota();
         AppWindow.Show(); Activate();
+        NativeShell.ConfigurePopupFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
         FitToContent();
         // A previous hide may still be reaping its cancelled query processes.
         await refreshTask;

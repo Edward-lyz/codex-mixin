@@ -274,7 +274,7 @@
 
 "console.page.context" = "Context";
 "context.enabled" = "Enable context engine";
-"context.restartNote" = "Takes effect after the gateway restarts.";
+"context.restartNote" = "Saving changes automatically restarts the running gateway to apply them.";
 "context.section.settings" = "Context engine";
 "context.section.limits" = "Limits";
 "context.section.stats" = "Context statistics";
