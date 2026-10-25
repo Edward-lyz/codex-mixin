@@ -38,16 +38,20 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         throw new FileNotFoundException("找不到 codex-mixin.exe。请使用完整发布包，或先构建 Rust CLI。");
     }
 
-    internal async Task<JsonElement> QueryAsync(string[] args, CancellationToken cancellation)
+    internal async Task<JsonElement> QueryAsync(string[] args, CancellationToken cancellation, TimeSpan? timeout = null)
     {
         // Read-only CLI snapshots must not queue behind network-bound actions.
         // Bound subprocesses, and keep process startup/JSON decoding off the UI thread.
-        await queries.WaitAsync(cancellation).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(90));
+        var entered = false;
         try
         {
+            await queries.WaitAsync(deadline.Token).ConfigureAwait(false);
+            entered = true;
             return await Task.Run(async () =>
             {
-                var output = await ExecuteAsync(args, cancellation, null, null, TimeSpan.FromSeconds(90), readOnly: true);
+                var output = await ExecuteAsync(args, deadline.Token, null, null, null, readOnly: true);
                 try
                 {
                     using var document = JsonDocument.Parse(output);
@@ -57,9 +61,14 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
                 {
                     throw new CliFailure($"{args[0]} 返回了无效 JSON：{error.Message}");
                 }
-            }, cancellation).ConfigureAwait(false);
+            }, deadline.Token).ConfigureAwait(false);
         }
-        finally { queries.Release(); }
+        catch (Exception error) when (deadline.IsCancellationRequested && !cancellation.IsCancellationRequested
+            && error is OperationCanceledException or CliFailure)
+        {
+            throw new CliFailure($"{args[0]} 查询超时，请重试。");
+        }
+        finally { if (entered) queries.Release(); }
     }
 
     internal async Task<string> RunAsync(string[] args, CancellationToken cancellation,

@@ -59,7 +59,7 @@ public partial class App : Application
         if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage" or "context"))
             throw new ArgumentException($"Unknown Windows page: {page}");
         tray?.HidePanel();
-        // Models, agents, and usage share one console window; Fusion and
+        // Models, agents, context, and usage share one console window; Fusion and
         // settings keep their own windows.
         var key = MainWindow.IsConsolePage(page) ? ConsoleWindowKey : page;
         if (!windows.TryGetValue(key, out var target))

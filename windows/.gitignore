@@ -4,5 +4,6 @@
 /assets/*.ico
 /assets/app_icon.png
 /assets/providers/
+/assets/agents/
 *.user
 *.log
