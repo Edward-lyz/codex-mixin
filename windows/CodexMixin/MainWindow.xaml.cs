@@ -1030,8 +1030,9 @@ public sealed partial class MainWindow : Window
         checkVersions.Content = IconLabel("\uE895", "检查版本更新");
         checkVersions.Style = Themed("FlatButton");
         var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));
+        var connectedCount = agents.Count(agent => Json.Text(Json.Field(agent, "integration"), "state") is "managed" or "drift");
         var agentToolbar = new Grid();
-        var agentSummary = new TextBlock { Text = $"已检测到 {detectedCount} 个 Agent · 未检测到 {agents.Length - detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+        var agentSummary = new TextBlock { Text = $"已接入 {connectedCount} 个 Agent · 已检测到 {detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetAutomationId(agentSummary, "agent-summary");
         agentToolbar.Children.Add(agentSummary);
         checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1093,6 +1094,8 @@ public sealed partial class MainWindow : Window
             summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
             var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? $"版本检查失败：{failure}" : null);
             summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
+            if (connected && !Json.Flag(agent, "detected"))
+                summary.Children.Add(new TextBlock { Text = "未检测到安装程序", Style = Themed("Caption"), FontSize = 13 });
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
             var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -1103,7 +1106,7 @@ public sealed partial class MainWindow : Window
                 controls.Children.Add(Button($"更新到 {Json.Text(version, "latest")}", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
             controls.Children.Add(connectSwitch);
             Grid.SetColumn(controls, 1); heading.Children.Add(controls);
-            var rows = Json.Flag(agent, "detected") ? detectedRows : undetected;
+            var rows = connected || Json.Flag(agent, "detected") ? detectedRows : undetected;
             var entry = new Border { Child = heading, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
             // Dividers sit above every row except the first, so the last row has no trailing line.
             if (rows.Children.Count > 0) entry.BorderThickness = new Thickness(0, 1, 0, 0);
@@ -1112,7 +1115,7 @@ public sealed partial class MainWindow : Window
         if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 1120 });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
+            var section = new Expander { Header = $"显示未接入且未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
