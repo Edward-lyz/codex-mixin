@@ -17,6 +17,10 @@ if (args.Contains("--fixture"))
             return 7;
         case "save": Console.WriteLine("saved"); break;
         case "config": Console.Error.WriteLine("apply failed"); return 8;
+        case "quota":
+            File.WriteAllText(flags[1], "started");
+            await Task.Delay(TimeSpan.FromSeconds(120));
+            break;
         case "sleep": await Task.Delay(TimeSpan.FromSeconds(120)); break;
         case "slow-query":
             File.WriteAllText(flags[1], "started");
@@ -72,6 +76,52 @@ async Task<CliFailure> Failure(Func<Task> call)
     throw new InvalidOperationException("Expected an explicit failure");
 }
 
+Check("quota display cache survives restart without persisting credentials or raw data", async () =>
+{
+    var path = Path.Combine(Path.GetTempPath(), $"mixin-display-{Guid.NewGuid():N}", "quota.json");
+    var updated = DateTimeOffset.UtcNow;
+    try
+    {
+        var cache = QuotaDisplayCache.Create(
+            Json.Rows(Parse("""[{"id":"a","display_name":"A","icon":"custom","api_key":"fixture-secret"}]""")),
+            Json.Rows(Parse("""[{"provider_id":"a","quota_id":"weekly","used":51,"limit":100,"raw":{"token":"fixture-secret"}},{"provider_id":"removed","used":90},{"provider_id":"a","error":"fixture-error"}]""")),
+            new() { ["a"] = updated, ["removed"] = updated });
+        await cache.SaveAsync(path, CancellationToken.None);
+        var raw = await File.ReadAllTextAsync(path);
+        Assert(!raw.Contains("fixture-secret", StringComparison.Ordinal) && !raw.Contains("fixture-error", StringComparison.Ordinal), "Cache persisted non-display data");
+        var loaded = await QuotaDisplayCache.LoadAsync(path, CancellationToken.None);
+        Assert(loaded is { Providers.Length: 1, Rows.Length: 1 } && Json.Real(loaded.Rows[0], "used") == 51, "Measured quota did not survive restart");
+        Assert(loaded!.UpdatedAt.Count == 1 && loaded.UpdatedAt["a"] == updated, "Cache lost measured time or retained removed provider");
+        await File.WriteAllTextAsync(path, "{}");
+        try { await QuotaDisplayCache.LoadAsync(path, CancellationToken.None); }
+        catch (InvalidDataException) { return; }
+        throw new InvalidOperationException("Invalid cache was accepted");
+    }
+    finally { if (Directory.Exists(Path.GetDirectoryName(path))) Directory.Delete(Path.GetDirectoryName(path)!, true); }
+});
+Check("background quota leaves both local query slots available", async () =>
+{
+    var marker = Path.Combine(Path.GetTempPath(), $"mixin-quota-{Guid.NewGuid():N}");
+    var localMarker = marker + "-local";
+    using var cancellation = new CancellationTokenSource();
+    var quota = fixture.QueryAsync(["quota", marker], cancellation.Token);
+    var local = fixture.QueryAsync(["slow-query", localMarker], cancellation.Token);
+    try
+    {
+        var started = Stopwatch.StartNew();
+        while ((!File.Exists(marker) || !File.Exists(localMarker)) && started.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
+        Assert(File.Exists(marker) && File.Exists(localMarker), "Remote and local reads did not start");
+        await fixture.QueryAsync(["echo"], CancellationToken.None, TimeSpan.FromSeconds(5));
+        Assert(!quota.IsCompleted && !local.IsCompleted, "Local query interrupted unrelated reads");
+    }
+    finally
+    {
+        cancellation.Cancel();
+        await Failure(() => quota);
+        await Failure(() => local);
+        File.Delete(marker); File.Delete(localMarker);
+    }
+});
 Check("slow quota query does not block a local snapshot", async () =>
 {
     var marker = Path.Combine(Path.GetTempPath(), $"mixin-query-{Guid.NewGuid():N}");

@@ -73,6 +73,20 @@ internal sealed class NativeShell : IDisposable
         Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, borderColorAttribute, ref color, sizeof(uint)));
     }
 
+    internal static Windows.Graphics.RectInt32 ConsoleBounds()
+    {
+        GetCursorPos(out var position);
+        var monitor = MonitorFromPoint(position, 2);
+        var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        Marshal.ThrowExceptionForHR(GetDpiForMonitor(monitor, 0, out var dpi, out _));
+        var scale = dpi / 96.0;
+        var width = Math.Min((int)(1440 * scale), (int)((info.Work.Right - info.Work.Left) * 0.92));
+        var height = Math.Min((int)(960 * scale), (int)((info.Work.Bottom - info.Work.Top) * 0.92));
+        return new Windows.Graphics.RectInt32(info.Work.Left + (info.Work.Right - info.Work.Left - width) / 2,
+            info.Work.Top + (info.Work.Bottom - info.Work.Top - height) / 2, width, height);
+    }
+
     internal static Windows.Graphics.RectInt32 PanelBounds()
     {
         GetCursorPos(out var position);
