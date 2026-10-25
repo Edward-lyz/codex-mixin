@@ -81,6 +81,15 @@ Copy-Item -LiteralPath (Join-Path $repo "macos\assets\agents\ATTRIBUTION.md") -D
 foreach ($asset in Get-ChildItem $agents -Filter '*.svg') {
   $document = New-Object System.Xml.XmlDocument
   $document.Load($asset.FullName)
+  # SVGs such as WorkBuddy use a 64px canvas without a viewBox. Preserve
+  # that coordinate system before normalizing the WinUI display size.
+  if (-not $document.DocumentElement.HasAttribute('viewBox')) {
+    $width = $document.DocumentElement.GetAttribute('width')
+    $height = $document.DocumentElement.GetAttribute('height')
+    if ($width -match '^\d+(\.\d+)?$' -and $height -match '^\d+(\.\d+)?$') {
+      $document.DocumentElement.SetAttribute('viewBox', "0 0 $width $height")
+    } else { throw "SVG has no numeric viewport: $($asset.Name)" }
+  }
   $document.DocumentElement.SetAttribute('width', '32')
   $document.DocumentElement.SetAttribute('height', '32')
   $document.DocumentElement.SetAttribute('color', '#707070')

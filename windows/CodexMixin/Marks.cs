@@ -30,8 +30,9 @@ internal static class Marks
     internal static Image Provider(JsonElement provider, double size = 28)
     {
         var name = Json.Text(provider, "icon");
+        var agy = name == "agy" || Json.OptionalText(provider, "preset_id") == "agy";
         if (!new[] { "aws", "baidu", "custom", "deepseek", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
-        var key = $"providers/{name}.svg";
+        var key = agy ? "agents/agy.svg" : $"providers/{name}.svg";
         if (!sources.TryGetValue(key, out var source))
             sources[key] = source = new SvgImageSource(new Uri($"ms-appx:///Assets/{key}"));
         return new Image { Source = source, Width = size, Height = size };

@@ -55,9 +55,17 @@ internal sealed class NativeShell : IDisposable
 
     internal void Hide() => ShowWindow(window, 0);
 
-    internal static void HidePopupBorder(nint handle)
+    internal static void ConfigurePopupFrame(nint handle)
     {
-        // Windows 11 draws a DWM outline even for a borderless presenter.
+        // WinUI can retain the sizing frame after SetBorderAndTitleBar(false,
+        // false). Remove it after all presenter options have set their styles.
+        const int windowStyle = -16;
+        const long captionAndSizingFrame = 0x00c40000;
+        var style = GetWindowLongPtr(handle, windowStyle);
+        if (SetWindowLongPtr(handle, windowStyle, (nint)(style.ToInt64() & ~captionAndSizingFrame)) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!SetWindowPos(handle, 0, 0, 0, 0, 0, 0x37))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
         const int borderColorAttribute = 34;
         const uint noBorder = 0xfffffffe;
@@ -207,4 +215,7 @@ internal sealed class NativeShell : IDisposable
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, int attribute, ref uint value, int size);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)] private static extern nint GetWindowLongPtr(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
 }

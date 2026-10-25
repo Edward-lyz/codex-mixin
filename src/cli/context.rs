@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use codex_mixin::application::error::OperationError;
 use codex_mixin::config::{
     ContextSettings, load_stored_config, mutate_stored_config, stored_config_path,
 };
@@ -21,7 +22,7 @@ struct ContextUpdate {
     context_window_tokens: Option<String>,
 }
 
-pub(super) fn run(command: ContextCommand) -> Result<()> {
+pub(super) async fn run(command: ContextCommand) -> Result<()> {
     match command {
         ContextCommand::Config { command } => match command {
             ContextConfigCommand::Get { json: json_output } => config_get(json_output),
@@ -37,21 +38,24 @@ pub(super) fn run(command: ContextCommand) -> Result<()> {
                 guidance_only,
                 context_window_tokens,
                 json: json_output,
-            } => config_set(
-                ContextUpdate {
-                    enabled,
-                    growth_threshold_tokens,
-                    pressure_ratio,
-                    urgent_ratio,
-                    protected_messages,
-                    protected_tokens,
-                    max_internal_rounds,
-                    max_tier,
-                    guidance_only,
-                    context_window_tokens,
-                },
-                json_output,
-            ),
+            } => {
+                config_set(
+                    ContextUpdate {
+                        enabled,
+                        growth_threshold_tokens,
+                        pressure_ratio,
+                        urgent_ratio,
+                        protected_messages,
+                        protected_tokens,
+                        max_internal_rounds,
+                        max_tier,
+                        guidance_only,
+                        context_window_tokens,
+                    },
+                    json_output,
+                )
+                .await
+            }
         },
         ContextCommand::Status {
             session,
@@ -102,13 +106,36 @@ fn config_get(json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
-    mutate_stored_config(|stored| {
+async fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
+    let (changed, settings) = mutate_stored_config(|stored| {
+        let previous = stored.context.clone();
         apply_update(&mut stored.context, update)?;
-        Ok(())
+        Ok((previous != stored.context, stored.context.clone()))
     })
     .context("update context settings")?;
-    let settings = stored_settings()?;
+    if changed {
+        // Shells submit one save. Service selection and restart stay in the CLI,
+        // and failures after the persisted write must never imply a rollback.
+        let restarted = async {
+            let runtime = super::runtime::load_runtime_metadata()?;
+            let running = match runtime {
+                Some(runtime) => super::runtime::pid_is_running(runtime.pid)?,
+                None => false,
+            };
+            // Offline configuration remains offline; a live gateway must reload
+            // the persisted engine settings exactly once before success.
+            if running {
+                super::progress_step("Restarting gateway to apply context settings");
+                super::service::restart_managed().await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        restarted.map_err(|source| OperationError::AfterCommit {
+            stage: "context gateway restart",
+            source,
+        })?;
+    }
     if json_output {
         println!(
             "{}",
