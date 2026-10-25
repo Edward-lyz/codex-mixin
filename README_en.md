@@ -106,6 +106,16 @@ The screenshots below show the macOS app during the v0.7.4 release.
   </tr>
 </table>
 
+Native Windows WinUI 3 interface (current development build): check quota from the tray, and manage models, agents, usage, and context in the console.
+
+<p align="center">
+  <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows light-mode tray showing gateway status and quota rings"></a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Models and Services in the Windows console"></a>
+</p>
+
 See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour) for interface details. Models and statistics reflect the state at capture time.
 
 ---
