@@ -55,6 +55,16 @@ internal sealed class NativeShell : IDisposable
 
     internal void Hide() => ShowWindow(window, 0);
 
+    internal static void HidePopupBorder(nint handle)
+    {
+        // Windows 11 draws a DWM outline even for a borderless presenter.
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        const int borderColorAttribute = 34;
+        const uint noBorder = 0xfffffffe;
+        var color = noBorder;
+        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, borderColorAttribute, ref color, sizeof(uint)));
+    }
+
     internal static Windows.Graphics.RectInt32 PanelBounds()
     {
         GetCursorPos(out var position);
@@ -196,4 +206,5 @@ internal sealed class NativeShell : IDisposable
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out Point position);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, int attribute, ref uint value, int size);
 }

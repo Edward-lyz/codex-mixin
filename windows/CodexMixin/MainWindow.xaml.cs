@@ -1357,13 +1357,6 @@ public sealed partial class MainWindow : Window
                 await ChangeAsync("导入配置", ["config", "import", file.Path], apply: true);
         }));
         PageBody.Children.Add(Card("配置备份", "", backup));
-        var context = Row();
-        context.Children.Add(Button("打开上下文设置", () =>
-        {
-            ((App)Microsoft.UI.Xaml.Application.Current).OpenPage("context");
-            return Task.CompletedTask;
-        }));
-        PageBody.Children.Add(Card("上下文引擎", "", context));
         var diagnostics = Row();
         diagnostics.Children.Add(Button("打开日志目录", () => OpenPathAsync(Path.GetDirectoryName(Json.Text(Json.Field(metadata, "paths"), "gateway_log"))!)));
         diagnostics.Children.Add(Button("打开配置目录", () => OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"))));

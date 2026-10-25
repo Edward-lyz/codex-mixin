@@ -144,6 +144,9 @@ internal static class Program
                     if (role == "context")
                         Wait(() => Find(target, "context-enabled") != null && Find(target, "context-save") != null
                             && Find(target, "context-restart") != null, "context settings controls", process);
+                    if (role == "settings" && target.FindFirst(TreeScope.Descendants,
+                        new PropertyCondition(AutomationElement.NameProperty, "打开上下文设置")) != null)
+                        throw new InvalidOperationException("Settings still has the redundant context entry");
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
                     if (role == "agents")
@@ -194,6 +197,10 @@ internal static class Program
                     return popup != null && !popup.Current.IsOffscreen;
                 }, "tray opens while console query is pending", process);
                 var popupHandle = (nint)popup!.Current.NativeWindowHandle;
+                if (string.IsNullOrWhiteSpace(Find(popup, "quota-stamp").Current.Name))
+                    throw new InvalidOperationException("Reopened tray discarded its last measured quota and timestamp");
+                ((InvokePattern)Find(popup, "tray-refresh").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                Wait(() => Find(popup, "panel-status").Current.Name.Contains("正在刷新", StringComparison.Ordinal), "explicit tray refresh bypasses its recent snapshot", process);
                 Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
                     is { Current.IsEnabled: true }, "gateway control becomes usable before network quota completes", process);
                 var popupBounds = popup.Current.BoundingRectangle;
@@ -209,6 +216,8 @@ internal static class Program
                 Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on deactivation during reload", process);
                 PostMessage(trayOwner, 0x8001, 0, 0x202);
                 Wait(() => IsWindowVisible(popupHandle), "tray reopens during slow quota", process);
+                ((InvokePattern)Find(popup, "tray-refresh").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                Wait(() => Find(popup, "panel-status").Current.Name.Contains("正在刷新", StringComparison.Ordinal), "reopened tray starts a new read", process);
                 Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
                     is { Current.IsEnabled: true }, "reopened tray reclaims cancelled query slots", process);
                 PostMessage(popupHandle, 0x6, 1, 0);
@@ -229,7 +238,7 @@ internal static class Program
             var navigationMs = new Dictionary<string, double>();
             for (var navigationPass = 1; navigationPass <= 2; navigationPass++)
             {
-                foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("context", "上下文"), ("usage", "用量明细"), ("providers", "模型与服务") })
+                foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("context", "上下文"), ("providers", "模型与服务") })
                 {
                     var elapsed = Stopwatch.StartNew();
                     Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
