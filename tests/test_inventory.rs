@@ -18,6 +18,8 @@ const WINDOWS_INTEGRATION_RUNNER: &str = "scripts/test_windows_integration.ps1";
 const WINDOWS_INTEGRATION_SHARDS: &str = "tests/windows_integration_shards.txt";
 const WINDOWS_INTEGRATION_SHARD_NAMES: &[&str] =
     &["integration-a", "integration-b", "integration-c"];
+const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+const MULTI_PROVIDER_E2E: &str = "scripts/e2e_multi_provider.sh";
 const CLIENT_AUTH_TESTS: &str = "tests/client_auth_tests.txt";
 const IGNORED_TESTS: &[(&str, &str)] = &[
     ("src/ech.rs", "live_ech_comparison"),
@@ -578,6 +580,12 @@ fn every_test_entry_is_registered_once() {
     assert!(
         windows_workflow.contains(WINDOWS_INTEGRATION_RUNNER),
         "Windows CI must run the manifest-driven integration shards"
+    );
+
+    let ci_workflow = fs::read_to_string(root.join(CI_WORKFLOW)).unwrap();
+    assert!(
+        ci_workflow.contains(&format!("./{MULTI_PROVIDER_E2E}")),
+        "CI must run the multi-provider E2E"
     );
 
     let app = fs::read_to_string(root.join(WINDOWS_APP)).unwrap();
