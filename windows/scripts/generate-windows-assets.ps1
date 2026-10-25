@@ -67,6 +67,7 @@ function New-IcoFile {
 }
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+New-Item -ItemType Directory -Force -Path (Join-Path $repo 'windows\assets') | Out-Null
 # macOS applies its own icon mask. Its source PNG includes an opaque white
 # canvas/plate, which Windows otherwise displays as a square at every size.
 # Remove only edge-connected neutral background; the enclosed terminal glyph
