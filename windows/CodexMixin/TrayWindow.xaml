@@ -3,11 +3,11 @@
  <Border x:Name="Panel" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource SurfaceStrokeColorFlyoutBrush}" Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}">
   <Grid>
    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-   <ScrollViewer VerticalScrollBarVisibility="Auto">
-    <StackPanel Padding="16,14,16,10" Spacing="10">
+   <ScrollViewer x:Name="PanelScroll" VerticalScrollBarVisibility="Auto">
+    <StackPanel x:Name="PanelContent" Padding="16,14,16,10" Spacing="10">
      <Grid ColumnSpacing="12">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Ellipse x:Name="ServiceDot" Width="10" Height="10" Style="{StaticResource DotOff}" VerticalAlignment="Center"/>
+      <Ellipse x:Name="ServiceDot" Width="10" Height="10" Style="{StaticResource DotWarn}" VerticalAlignment="Center"/>
       <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
        <TextBlock x:Name="ServiceTitle" Text="正在读取服务状态" FontSize="15" FontWeight="SemiBold"/>
        <TextBlock x:Name="Endpoint" Text="" Style="{StaticResource Mono}"/>
@@ -21,7 +21,7 @@
      <!-- The provider strip above names the selection, so no provider header repeats it. -->
      <Grid ColumnSpacing="10">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+      <TextBlock x:Name="ProviderTitle" Text="正在读取服务商…" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
       <Border x:Name="QuotaStyleHost" Grid.Column="1" VerticalAlignment="Center"/>
      </Grid>
      <StackPanel x:Name="QuotaBody" Spacing="12"/>
@@ -29,7 +29,7 @@
     </StackPanel>
    </ScrollViewer>
    <Border Grid.Row="1" Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="6">
-    <StackPanel Spacing="0">
+    <StackPanel x:Name="PanelMenu" Spacing="0">
      <!-- Models, agents, and usage are pages of the console window. -->
      <Button Style="{StaticResource MenuRow}" Tag="console" Click="OnOpen" AutomationProperties.Name="打开控制台…">
       <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE737;" FontSize="16"/><TextBlock Text="打开控制台…"/></StackPanel>

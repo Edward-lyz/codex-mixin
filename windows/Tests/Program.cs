@@ -93,6 +93,42 @@ Check("slow quota query does not block a local snapshot", async () =>
         File.Delete(marker);
     }
 });
+Check("query deadline includes waiting for a subprocess slot", async () =>
+{
+    var markers = Enumerable.Range(0, 2).Select(_ => Path.Combine(Path.GetTempPath(), $"mixin-deadline-{Guid.NewGuid():N}")).ToArray();
+    using var cancellation = new CancellationTokenSource();
+    var pending = markers.Select(marker => fixture.QueryAsync(["slow-query", marker], cancellation.Token)).ToArray();
+    try
+    {
+        var started = Stopwatch.StartNew();
+        while (!markers.All(File.Exists) && started.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
+        Assert(markers.All(File.Exists), "Both query slots must be occupied");
+        var elapsed = Stopwatch.StartNew();
+        var error = await Failure(() => fixture.QueryAsync(["echo"], CancellationToken.None, TimeSpan.FromMilliseconds(300)));
+        Assert(error.Message.Contains("超时", StringComparison.Ordinal), "Queue timeout was not reported");
+        Assert(elapsed.Elapsed < TimeSpan.FromSeconds(5), "Queue wait ignored the query deadline");
+        Assert(pending.All(task => !task.IsCompleted), "Queued timeout cancelled unrelated queries");
+    }
+    finally
+    {
+        cancellation.Cancel();
+        foreach (var task in pending) await Failure(() => task);
+        foreach (var marker in markers) File.Delete(marker);
+    }
+    await fixture.QueryAsync(["echo"], CancellationToken.None);
+});
+Check("query deadline terminates a running child and releases its slot", async () =>
+{
+    var marker = Path.Combine(Path.GetTempPath(), $"mixin-running-deadline-{Guid.NewGuid():N}");
+    try
+    {
+        var error = await Failure(() => fixture.QueryAsync(["slow-query", marker], CancellationToken.None, TimeSpan.FromSeconds(3)));
+        Assert(File.Exists(marker), "Timed query never started its child");
+        Assert(error.Message.Contains("超时", StringComparison.Ordinal), "Running timeout was not reported");
+        await fixture.QueryAsync(["echo"], CancellationToken.None);
+    }
+    finally { File.Delete(marker); }
+});
 Check("usage buckets preserve chart values with one scan", () =>
 {
     var rows = Json.Rows(Parse("[{\"provider_id\":\"a\",\"day\":9,\"value\":3,\"tokens\":4},{\"provider_id\":\"b\",\"day\":10,\"value\":5,\"tokens\":9},{\"provider_id\":\"a\",\"day\":10,\"value\":7,\"tokens\":6},{\"provider_id\":\"b\",\"day\":10,\"value\":2,\"tokens\":1},{\"provider_id\":\"c\",\"day\":1,\"value\":99,\"tokens\":100}]"));

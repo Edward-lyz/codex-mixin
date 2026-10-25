@@ -187,7 +187,7 @@ public sealed partial class MainWindow : Window
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
     /// Pages hosted by the single console window, in tab order.
-    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "usage";
+    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "context" or "usage";
 
     private void ApplyPageLayout()
     {

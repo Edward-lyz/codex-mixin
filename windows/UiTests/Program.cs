@@ -194,11 +194,26 @@ internal static class Program
                     return popup != null && !popup.Current.IsOffscreen;
                 }, "tray opens while console query is pending", process);
                 var popupHandle = (nint)popup!.Current.NativeWindowHandle;
+                Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
+                    is { Current.IsEnabled: true }, "gateway control becomes usable before network quota completes", process);
+                var popupBounds = popup.Current.BoundingRectangle;
+                if (popupBounds.Height > popupBounds.Width * 1.8)
+                    throw new InvalidOperationException("Tray kept its maximum-height blank space while quota was pending");
+                if (Find(popup, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Tray claimed quota sync before the held request completed");
+                Capture(popup, Path.Combine(output, "tray-slow-quota.png"));
                 // Hosted runners cannot grant foreground focus to another HWND.
                 // Deliver Windows activation messages through the real WinUI window proc.
                 PostMessage(popupHandle, 0x6, 1, 0); // WM_ACTIVATE / WA_ACTIVE
                 PostMessage(popupHandle, 0x6, 0, trayOwner); // WM_ACTIVATE / WA_INACTIVE
                 Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on deactivation during reload", process);
+                PostMessage(trayOwner, 0x8001, 0, 0x202);
+                Wait(() => IsWindowVisible(popupHandle), "tray reopens during slow quota", process);
+                Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
+                    is { Current.IsEnabled: true }, "reopened tray reclaims cancelled query slots", process);
+                PostMessage(popupHandle, 0x6, 1, 0);
+                PostMessage(popupHandle, 0x6, 0, trayOwner);
+                Wait(() => !IsWindowVisible(popupHandle), "reopened tray dismisses", process);
             }
             finally
             {
@@ -214,7 +229,7 @@ internal static class Program
             var navigationMs = new Dictionary<string, double>();
             for (var navigationPass = 1; navigationPass <= 2; navigationPass++)
             {
-                foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
+                foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("context", "上下文"), ("usage", "用量明细"), ("providers", "模型与服务") })
                 {
                     var elapsed = Stopwatch.StartNew();
                     Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
