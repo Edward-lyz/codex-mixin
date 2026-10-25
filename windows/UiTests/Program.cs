@@ -17,6 +17,8 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length is not (2 or 3)) throw new ArgumentException("Usage: UiTests <UI exe> <artifact directory> [native debugger]");
+        using (var icon = new Bitmap(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[0]))!, "Assets", "app_icon.png")))
+            if (icon.GetPixel(0, 0).A != 0) throw new InvalidOperationException("Windows application icon still has an opaque square background");
         var output = Path.GetFullPath(args[1]);
         Directory.CreateDirectory(output);
         var config = Path.Combine(output, "isolated", "config.json");
@@ -137,6 +139,7 @@ internal static class Program
                         Wait(() => Find(target, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal), "tray CLI load", process);
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
                             .Any(element => element.Current.Name.Contains("81 / 100", StringComparison.Ordinal)), "real CLI quota display", process);
+                        AssertQuotaTextContrast(target, themeIndex == 0);
                     }
                     if (role == "usage")
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
@@ -185,8 +188,10 @@ internal static class Program
             try
             {
                 ((TogglePattern)Find(window, "console-usage-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
-                Wait(() => upstream.QuotaRequested.Task.IsCompleted, "console quota request held in flight", process);
-                // Exercise the real tray notification path while the console is still loading.
+                Wait(() => window.Current.Name == "用量明细" && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "usage loads without a supplier quota dependency", process);
+                if (window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "供应商额度")) != null)
+                    throw new InvalidOperationException("Usage page still contains supplier quotas");
+                // Exercise the real tray notification path while remote quota is held.
                 PostMessage(trayOwner, 0x8001, 0, 0x202);
                 AutomationElement? popup = null;
                 Wait(() =>
@@ -200,6 +205,7 @@ internal static class Program
                 if (string.IsNullOrWhiteSpace(Find(popup, "quota-stamp").Current.Name))
                     throw new InvalidOperationException("Reopened tray discarded its last measured quota and timestamp");
                 ((InvokePattern)Find(popup, "tray-refresh").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                Wait(() => upstream.QuotaRequested.Task.IsCompleted, "explicit tray quota request held in flight", process);
                 Wait(() => Find(popup, "panel-status").Current.Name.Contains("正在刷新", StringComparison.Ordinal), "explicit tray refresh bypasses its recent snapshot", process);
                 Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
                     is { Current.IsEnabled: true }, "gateway control becomes usable before network quota completes", process);
@@ -219,7 +225,7 @@ internal static class Program
                 ((InvokePattern)Find(popup, "tray-refresh").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
                 Wait(() => Find(popup, "panel-status").Current.Name.Contains("正在刷新", StringComparison.Ordinal), "reopened tray starts a new read", process);
                 Wait(() => popup.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "本地网关"))
-                    is { Current.IsEnabled: true }, "reopened tray reclaims cancelled query slots", process);
+                    is { Current.IsEnabled: true }, "reopened tray keeps local controls responsive", process);
                 PostMessage(popupHandle, 0x6, 1, 0);
                 PostMessage(popupHandle, 0x6, 0, trayOwner);
                 Wait(() => !IsWindowVisible(popupHandle), "reopened tray dismisses", process);
@@ -539,6 +545,24 @@ internal static class Program
             Thread.Sleep(200);
         }
         throw new TimeoutException($"Timed out: {label}");
+    }
+
+    private static void AssertQuotaTextContrast(AutomationElement window, bool light)
+    {
+        var bounds = Find(window, "quota-ring-percent").Current.BoundingRectangle;
+        using var image = new Bitmap((int)Math.Ceiling(bounds.Width), (int)Math.Ceiling(bounds.Height));
+        using (var graphics = Graphics.FromImage(image))
+            graphics.CopyFromScreen((int)bounds.Left, (int)bounds.Top, 0, 0, image.Size);
+        var contrasting = 0;
+        for (var y = 0; y < image.Height; y++)
+        for (var x = 0; x < image.Width; x++)
+        {
+            var color = image.GetPixel(x, y);
+            var maximum = Math.Max(color.R, Math.Max(color.G, color.B));
+            var minimum = Math.Min(color.R, Math.Min(color.G, color.B));
+            if (maximum - minimum < 35 && (light ? maximum < 80 : minimum > 200)) contrasting++;
+        }
+        if (contrasting < 3) throw new InvalidOperationException($"Quota percentage has no contrasting text in {(light ? "light" : "dark")} mode");
     }
 
     private static void Capture(AutomationElement window, string path)

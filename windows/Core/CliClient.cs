@@ -17,6 +17,9 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     private static readonly TimeSpan PipeTimeout = TimeSpan.FromSeconds(3);
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim queries = new(2, 2);
+    // Remote quota work has one separate slot so background prefetch cannot
+    // occupy both local snapshot slots (navigation and gateway status).
+    private readonly SemaphoreSlim quotaQueries = new(1, 1);
     private const string QueryWorkerThreads = "2";
 
     internal static CliClient Locate()
@@ -44,10 +47,11 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         // Bound subprocesses, and keep process startup/JSON decoding off the UI thread.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(90));
+        var slots = args.FirstOrDefault() == "quota" ? quotaQueries : queries;
         var entered = false;
         try
         {
-            await queries.WaitAsync(deadline.Token).ConfigureAwait(false);
+            await slots.WaitAsync(deadline.Token).ConfigureAwait(false);
             entered = true;
             return await Task.Run(async () =>
             {
@@ -68,7 +72,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         {
             throw new CliFailure($"{args[0]} 查询超时，请重试。");
         }
-        finally { if (entered) queries.Release(); }
+        finally { if (entered) slots.Release(); }
     }
 
     internal async Task<string> RunAsync(string[] args, CancellationToken cancellation,

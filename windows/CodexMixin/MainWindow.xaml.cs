@@ -77,7 +77,8 @@ public sealed partial class MainWindow : Window
         ProviderList.ContainerContentChanging += RenderProviderRow;
         ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
+        if (IsConsolePage(page)) AppWindow.MoveAndResize(NativeShell.ConsoleBounds());
+        else AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         customTitleBar = AppWindowTitleBar.IsCustomizationSupported();
         if (customTitleBar)
         {
@@ -1176,43 +1177,6 @@ public sealed partial class MainWindow : Window
         grouping.SelectionChanged += (_, _) => RenderCharts();
         PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
-        var quotaBody = new StackPanel { Spacing = 16 };
-        JsonElement[] quotaRows = [];
-        void RenderQuota(QuotaStyle style)
-        {
-            quotaBody.Children.Clear();
-            if (quotaRows.Length == 0) { quotaBody.Children.Add(Text("暂无可查询的供应商额度。")); return; }
-            quotaBody.Children.Add(QuotaView.StyleSwitch(style, RenderQuota));
-            foreach (var group in quotaRows.GroupBy(row => Json.Text(row, "provider_id")))
-            {
-                var section = new StackPanel { Spacing = 8 };
-                var first = group.First();
-                section.Children.Add(new TextBlock { Text = Json.OptionalText(first, "provider_display_name") ?? Json.OptionalText(first, "display_name") ?? group.Key, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-                section.Children.Add(QuotaView.Render(group.ToArray(), style));
-                quotaBody.Children.Add(section);
-            }
-        }
-        var quotaToken = pageRefresh!.Token;
-        async Task LoadQuota()
-        {
-            try
-            {
-                quotaRows = Json.Rows(await Client.QueryAsync(["quota", "--json"], quotaToken));
-                quotaToken.ThrowIfCancellationRequested();
-                RenderQuota(QuotaView.Stored());
-            }
-            catch (OperationCanceledException) when (quotaToken.IsCancellationRequested) { }
-            catch (CliFailure) when (quotaToken.IsCancellationRequested) { }
-            catch (Exception error)
-            {
-                quotaBody.Children.Clear();
-                quotaBody.Children.Add(Text($"额度不可用：{error.Message}"));
-            }
-        }
-        quotaBody.Children.Add(Text("正在查询额度…"));
-        PageBody.Children.Add(Card("供应商额度", "", quotaBody));
-        // Network quota loading must not disable local charts, filters or navigation.
-        _ = LoadQuota();
     }
 
     private async Task FusionAsync(CancellationToken token)
