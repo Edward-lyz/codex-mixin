@@ -15,6 +15,10 @@ public sealed partial class TrayWindow : Window
     private string? providerId;
     private JsonElement[] quotaRows = [];
     private JsonElement[] allQuotaRows = [];
+    private readonly Dictionary<string, DateTimeOffset> quotaUpdatedAt = [];
+    private DateTimeOffset refreshedAt;
+    private long snapshotRevision;
+    private static readonly TimeSpan SnapshotAge = TimeSpan.FromSeconds(30);
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
     private bool changing;
@@ -39,6 +43,7 @@ public sealed partial class TrayWindow : Window
         AppWindow.IsShownInSwitchers = false;
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
+        NativeShell.HidePopupBorder(WinRT.Interop.WindowNative.GetWindowHandle(this));
         presenter.IsResizable = false;
         presenter.IsMinimizable = false;
         presenter.IsMaximizable = false;
@@ -59,6 +64,11 @@ public sealed partial class TrayWindow : Window
         AppWindow.Hide();
     }
     internal void SetTheme(ElementTheme theme) => Panel.RequestedTheme = theme;
+    internal async Task PreloadAsync()
+    {
+        // Reuse the same bounded reads before the user's first tray click.
+        await ReloadAsync();
+    }
 
     internal async void ShowPanel()
     {
@@ -77,6 +87,11 @@ public sealed partial class TrayWindow : Window
         // A previous hide may still be reaping its cancelled query processes.
         await refreshTask;
         if (exiting || changing || !AppWindow.IsVisible) return;
+        if (DateTimeOffset.UtcNow - refreshedAt < SnapshotAge && snapshotRevision == ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision)
+        {
+            RenderQuota();
+            return;
+        }
         await ReloadAsync();
     }
 
@@ -94,17 +109,26 @@ public sealed partial class TrayWindow : Window
         PanelStatus.Text = "正在刷新本地状态与额度…";
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         refreshCancellation = refresh;
+        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        RenderQuota();
         try
         {
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
             // Reserve both query slots for local reads first. Each section renders and
             // fails independently; quota must never disable an already-known gateway.
-            var errors = await Task.WhenAll(StatusAsync(), ProvidersAsync(), QuotaAsync());
+            var statusTask = StatusAsync();
+            var providersTask = ProvidersAsync();
+            var errors = await Task.WhenAll(statusTask, providersTask, QuotaAsync());
             if (refresh.IsCancellationRequested) return;
             var failures = errors.OfType<string>().ToArray();
             PanelStatus.Text = failures.Length == 0
                 ? $"{DateTime.Now:HH:mm:ss} · 配置已同步"
                 : string.Join("\n", failures);
+            if (failures.Length == 0)
+            {
+                refreshedAt = DateTimeOffset.UtcNow;
+                snapshotRevision = revision;
+            }
 
             async Task<string?> StatusAsync()
             {
@@ -151,7 +175,7 @@ public sealed partial class TrayWindow : Window
                         var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
                         ToolTipService.SetToolTip(button, Json.Text(provider, "display_name"));
                         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
-                        button.Click += (_, _) =>
+                        button.Click += async (_, _) =>
                         {
                             providerId = id;
                             foreach (var item in ProviderStrip.Children.OfType<Button>())
@@ -159,6 +183,11 @@ public sealed partial class TrayWindow : Window
                             quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
                             RenderQuota();
                             FitToContent();
+                            // The CLI's provider filter avoids waiting for unrelated
+                            // accounts. Retain each provider's last measured display.
+                            refreshCancellation?.Cancel();
+                            await refreshTask;
+                            if (!exiting && !changing && AppWindow.IsVisible) await ReloadAsync();
                         };
                         ProviderStrip.Children.Add(button);
                     }
@@ -184,19 +213,23 @@ public sealed partial class TrayWindow : Window
             {
                 try
                 {
-                    var snapshot = await client.QueryAsync(["quota", "--json"], refresh.Token, QuotaReadTimeout);
+                    if (await providersTask != null || providerId is not { } selectedId) return null;
+                    var snapshot = await client.QueryAsync(["quota", "--provider", selectedId, "--json"], refresh.Token, QuotaReadTimeout);
                     refresh.Token.ThrowIfCancellationRequested();
-                    allQuotaRows = Json.Rows(snapshot);
+                    var rows = Json.Rows(snapshot);
+                    var quotaError = rows.Select(row => Json.OptionalText(row, "error")).FirstOrDefault(error => error != null);
+                    if (quotaError != null && quotaUpdatedAt.ContainsKey(selectedId))
+                        return $"额度刷新失败，显示上次数据：{quotaError}";
+                    allQuotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") != selectedId).Concat(rows).ToArray();
+                    if (quotaError == null && rows.Length > 0) quotaUpdatedAt[selectedId] = DateTimeOffset.UtcNow;
                     quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
                     RenderQuota();
                     FitToContent();
-                    return null;
+                    return quotaError == null ? null : $"额度读取失败：{quotaError}";
                 }
                 catch (Exception error)
                 {
                     if (refresh.IsCancellationRequested) return null;
-                    allQuotaRows = quotaRows = [];
-                    RenderQuota();
                     return $"额度读取失败：{error.Message}";
                 }
             }
@@ -214,7 +247,11 @@ public sealed partial class TrayWindow : Window
         {
             refreshCancellation = null;
             busy = false;
-            if (!exiting) GatewaySwitch.IsEnabled = serviceKnown && !changing;
+            if (!exiting)
+            {
+                GatewaySwitch.IsEnabled = serviceKnown && !changing;
+                RenderQuota();
+            }
         }
         FitToContent();
     }
@@ -257,13 +294,20 @@ public sealed partial class TrayWindow : Window
     private void RenderQuota()
     {
         QuotaBody.Children.Clear();
+        QuotaStamp.Text = providerId is { } id && quotaUpdatedAt.TryGetValue(id, out var updatedAt)
+            ? $"上次更新 {updatedAt.ToLocalTime():HH:mm:ss}{(busy ? " · 正在刷新" : "")}" : "";
         QuotaStyleHost.Child = quotaRows.Length == 0 ? null : QuotaView.StyleSwitch(quotaStyle, style =>
         {
             quotaStyle = style;
             RenderQuota();
             FitToContent();
         });
-        QuotaBody.Children.Add(quotaRows.Length == 0
+        if (quotaRows.Length == 0 && busy)
+        {
+            QuotaBody.Children.Add(new ProgressBar { IsIndeterminate = AppWindow.IsVisible, Height = 4 });
+            QuotaBody.Children.Add(new TextBlock { Text = "正在读取额度…", Style = Themed("Caption") });
+        }
+        else QuotaBody.Children.Add(quotaRows.Length == 0
             ? new TextBlock { Text = "额度未知", Style = Themed("Caption") }
             : QuotaView.Render(quotaRows, quotaStyle));
     }
@@ -279,6 +323,13 @@ public sealed partial class TrayWindow : Window
         HidePanel(); ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(target);
     }
     private async void OnAutostart(object sender, RoutedEventArgs args) => await ChangeAsync(["service", "autostart", "enable", "--json"]);
+    private async void OnRefreshQuota(object sender, RoutedEventArgs args)
+    {
+        if (changing) return;
+        refreshCancellation?.Cancel();
+        await refreshTask;
+        if (!exiting && AppWindow.IsVisible) await ReloadAsync();
+    }
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
     {

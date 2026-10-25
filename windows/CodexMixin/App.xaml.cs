@@ -107,6 +107,9 @@ public partial class App : Application
         });
         try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
+        // Prime only the compact panel; do not load the hidden console/model editor.
+        tray = new TrayWindow();
+        _ = tray.PreloadAsync();
         if (Environment.GetCommandLineArgs().Contains("--capture-ui"))
         {
             trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{Environment.ProcessId}");
