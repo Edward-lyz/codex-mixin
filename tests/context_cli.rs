@@ -108,10 +108,13 @@ fn context_save_preserves_commit_state_when_gateway_restart_fails() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let config_path = root.join("config.json");
+    let mut provider = custom_provider("local", "fixture-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.model_source = codex_mixin::provider::ProviderModelSource::Static;
     save_stored_config_to_path(
         &config_path,
         &StoredGatewayConfig {
-            providers: vec![custom_provider("local", "fixture-key")],
+            providers: vec![provider],
             ..Default::default()
         },
     )

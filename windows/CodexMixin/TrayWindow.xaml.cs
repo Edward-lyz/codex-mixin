@@ -166,6 +166,9 @@ public sealed partial class TrayWindow : Window
                     var snapshot = await client.QueryAsync(["provider", "list", "--json"], refresh.Token, LocalReadTimeout);
                     refresh.Token.ThrowIfCancellationRequested();
                     providers = Json.Rows(Json.Field(snapshot, "providers"));
+                    var ids = providers.Select(row => Json.Text(row, "id")).ToHashSet(StringComparer.Ordinal);
+                    allQuotaRows = allQuotaRows.Where(row => ids.Contains(Json.Text(row, "provider_id"))).ToArray();
+                    foreach (var removed in quotaUpdatedAt.Keys.Where(id => !ids.Contains(id)).ToArray()) quotaUpdatedAt.Remove(removed);
                     if (!providers.Any(row => Json.Text(row, "id") == providerId))
                         providerId = providers.Length == 0 ? null : Json.Text(providers[0], "id");
                     ProviderStrip.Children.Clear();
