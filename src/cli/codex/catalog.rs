@@ -38,10 +38,9 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let models = state.fetch_models().await?;
     let mut template = if oauth_proxy {
         let account_catalog = tokio::task::spawn_blocking(load_official_account_catalog).await??;
-        load_preferred_official_catalog(
+        load_official_catalog_for_sync(
             OFFICIAL_CATALOG_URL,
             &official_template_cache_path(),
-            load_official_catalog,
             account_catalog.as_ref(),
         )
         .await?
@@ -395,6 +394,29 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     )
 }
 
+// Selection/apply only regenerates the local catalog. The running gateway
+// refreshes the public template separately; do not download it twice per save.
+async fn load_official_catalog_for_sync(
+    source_url: &str,
+    official_cache: &Path,
+    account_catalog: Option<&serde_json::Value>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    if let Some(mut cached) = load_template_catalog(Some(official_cache))? {
+        codex_mixin::catalog::official::validate_catalog(&cached)?;
+        if let Some(account_catalog) = account_catalog {
+            apply_account_speed_tiers(&mut cached, account_catalog)?;
+        }
+        return Ok(Some(cached));
+    }
+    load_preferred_official_catalog(
+        source_url,
+        official_cache,
+        load_official_catalog,
+        account_catalog,
+    )
+    .await
+}
+
 async fn load_preferred_official_catalog(
     source_url: &str,
     official_cache: &Path,
@@ -593,6 +615,70 @@ pub(in crate::cli) fn is_gpt_model(model: &str) -> bool {
 mod account_cache_regressions {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn selection_sync_reuses_public_template_without_contacting_upstream() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = directory.path().join("official-template.json");
+        let template = json!({"models":[{"slug":"gpt-test","context_window":1000}]});
+        fs::write(&cache, serde_json::to_vec(&template).unwrap()).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[{"slug":"gpt-test","additional_speed_tiers":["fast"]}]
+        });
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            load_official_catalog_for_sync(
+                &format!("http://{address}/models"),
+                &cache,
+                Some(&account),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert_eq!(result["models"][0]["context_window"], 1000);
+        assert_eq!(
+            result["models"][0]["additional_speed_tiers"],
+            json!(["fast"])
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), listener.accept())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            load_template_catalog(Some(&cache)).unwrap().unwrap(),
+            template
+        );
+    }
+
+    #[tokio::test]
+    async fn selection_sync_downloads_public_template_when_cache_is_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = directory.path().join("official-template.json");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"models":[{"slug":"public-model"}]}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result =
+            load_official_catalog_for_sync(&format!("http://{address}/models"), &cache, None)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(result["models"][0]["slug"], "public-model");
+        assert!(cache.exists());
+        server.abort();
+    }
 
     #[tokio::test]
     async fn public_template_success_does_not_read_legacy_fallback() {
