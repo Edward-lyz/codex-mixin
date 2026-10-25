@@ -19,6 +19,34 @@ fn models_follow_the_report() {
 }
 
 #[test]
+fn native_token_limits_are_preserved() {
+    let models = parse_models(&json!({"models":{
+        "gemini-3.8-flash-low": {
+            "displayName":"Gemini Flash", "maxTokens":1048576, "maxOutputTokens":65536
+        },
+        "chat_20706": {"maxTokens":16384}
+    }}))
+    .unwrap();
+    let flash = models
+        .iter()
+        .find(|model| model.id == "gemini-3.8-flash-low")
+        .unwrap();
+    assert_eq!(flash.context_window, Some(1_048_576));
+    assert_eq!(flash.max_output_tokens, Some(65_536));
+    let chat = models
+        .iter()
+        .find(|model| model.id == "chat_20706")
+        .unwrap();
+    assert_eq!(chat.context_window, Some(16_384));
+    assert_eq!(chat.max_output_tokens, None);
+    for field in ["maxTokens", "maxOutputTokens"] {
+        let mut report = json!({"models":{"invalid":{}}});
+        report["models"]["invalid"][field] = json!(0);
+        assert!(parse_models(&report).is_err());
+    }
+}
+
+#[test]
 fn malformed_models_fail_closed() {
     for value in [
         json!({}),

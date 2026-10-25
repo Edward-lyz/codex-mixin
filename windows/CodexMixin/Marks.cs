@@ -14,7 +14,7 @@ internal static class Marks
     {
         if (id.Length == 0 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
             throw new InvalidOperationException("CLI 返回了无效 Agent ID。");
-        foreach (var extension in new[] { "svg", "png" })
+        foreach (var extension in new[] { "png", "svg" })
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", "agents", $"{id}.{extension}");
             if (!File.Exists(path)) continue;
@@ -32,9 +32,12 @@ internal static class Marks
         var name = Json.Text(provider, "icon");
         var agy = name == "agy" || Json.OptionalText(provider, "preset_id") == "agy";
         if (!new[] { "aws", "baidu", "custom", "deepseek", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
-        var key = agy ? "agents/agy.svg" : $"providers/{name}.svg";
+        var key = agy ? "agents/agy.png" : $"providers/{name}.svg";
         if (!sources.TryGetValue(key, out var source))
-            sources[key] = source = new SvgImageSource(new Uri($"ms-appx:///Assets/{key}"));
+        {
+            var uri = new Uri($"ms-appx:///Assets/{key}");
+            sources[key] = source = key.EndsWith(".png", StringComparison.Ordinal) ? new BitmapImage(uri) : new SvgImageSource(uri);
+        }
         return new Image { Source = source, Width = size, Height = size };
     }
 }

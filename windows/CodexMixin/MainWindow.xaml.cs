@@ -719,7 +719,8 @@ public sealed partial class MainWindow : Window
                 var value = contexts.GetValueOrDefault(modelId, double.NaN);
                 overridden.Visibility = double.IsNaN(value) ? Visibility.Collapsed : Visibility.Visible;
                 if (double.IsNaN(value)) value = originalContext;
-                contextText.Text = double.IsNaN(value) ? "默认" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+                contextText.Text = double.IsNaN(value) ? "未知" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+                ToolTipService.SetToolTip(contextText, double.IsNaN(value) ? "服务商未提供上下文窗口；可刷新模型目录或手动设置。" : $"{value:N0} tokens");
             }
             ShowContext();
             var contextLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
