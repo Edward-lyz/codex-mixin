@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,8 +18,8 @@ use codex_mixin::web_search::WebSearchCapabilities;
 use super::managed_config::*;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, load_official_catalog, official_template_cache_path,
-    write_official_models_cache,
+    filter_official_catalog, is_official_account_catalog, load_official_account_catalog,
+    load_official_catalog, official_template_cache_path, write_official_models_cache,
 };
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog,
@@ -37,10 +37,12 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     // An explicit empty selection must clear the managed catalog too.
     let models = state.fetch_models().await?;
     let mut template = if oauth_proxy {
+        let account_catalog = tokio::task::spawn_blocking(load_official_account_catalog).await??;
         load_preferred_official_catalog(
             OFFICIAL_CATALOG_URL,
             &official_template_cache_path(),
             load_official_catalog,
+            account_catalog.as_ref(),
         )
         .await?
     } else {
@@ -341,11 +343,18 @@ pub(in crate::cli) async fn load_codex_install_template_online(
     official_models_cache: &Path,
     source_url: &str,
     local_catalog: impl FnOnce() -> anyhow::Result<Option<serde_json::Value>>,
+    account_catalog: Option<&serde_json::Value>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if !codex_oauth_proxy {
         return Ok(None);
     }
-    load_preferred_official_catalog(source_url, official_models_cache, local_catalog).await
+    load_preferred_official_catalog(
+        source_url,
+        official_models_cache,
+        local_catalog,
+        account_catalog,
+    )
+    .await
 }
 
 pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
@@ -364,6 +373,11 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
         .await?;
     let official_cache = official_template_cache_path();
     write_official_models_cache(&official_catalog, &official_cache)?;
+    if let Some(account_catalog) =
+        tokio::task::spawn_blocking(load_official_account_catalog).await??
+    {
+        apply_account_speed_tiers(&mut official_catalog, &account_catalog)?;
+    }
     let gateway_config = GatewayConfig::from_stored_config()?;
     filter_official_catalog(
         &mut official_catalog,
@@ -384,19 +398,23 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
 async fn load_preferred_official_catalog(
     source_url: &str,
     official_cache: &Path,
-    // Injected so tests never read the user's real Codex OAuth model cache.
+    // Legacy fallback stays lazy: an unrelated native cache must not block a
+    // successful public template refresh. The account overlay is loaded separately.
     local_catalog: impl FnOnce() -> anyhow::Result<Option<serde_json::Value>>,
+    account_catalog: Option<&serde_json::Value>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     let cached = load_template_catalog(Some(official_cache))?;
-    match fetch_catalog(source_url, OFFICIAL_CATALOG_TIMEOUT, cached.as_ref()).await {
+    let mut template = match fetch_catalog(source_url, OFFICIAL_CATALOG_TIMEOUT, cached.as_ref())
+        .await
+    {
         Ok(catalog) => {
             write_official_models_cache(&catalog, official_cache)?;
-            Ok(Some(catalog))
+            Some(catalog)
         }
         Err(error) => {
             let fallback = match load_template_catalog(Some(official_cache))? {
                 Some(cached) => Some(cached),
-                None => local_catalog()?,
+                None => local_catalog()?.or_else(|| account_catalog.cloned()),
             };
             let Some(cached) = fallback else {
                 eprintln!(
@@ -407,9 +425,63 @@ async fn load_preferred_official_catalog(
             codex_mixin::catalog::official::validate_catalog(&cached)?;
             tracing::warn!(event = "official_catalog_stale", source_url, error = %error,
                 cache = %official_cache.display(), "public catalog refresh failed; retaining last known Mixin cache");
-            Ok(Some(cached))
+            Some(cached)
+        }
+    };
+    if let (Some(template), Some(account_catalog)) = (&mut template, account_catalog) {
+        apply_account_speed_tiers(template, account_catalog)?;
+    }
+    Ok(template)
+}
+
+fn apply_account_speed_tiers(
+    template: &mut serde_json::Value,
+    account_catalog: &serde_json::Value,
+) -> anyhow::Result<()> {
+    if !is_official_account_catalog(account_catalog) {
+        return Ok(());
+    }
+    let account_models = account_catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("official account catalog has no models array"))?;
+    let account_models = account_models
+        .iter()
+        .filter(|model| !is_managed_catalog_model(model))
+        .filter_map(|model| Some((model.get("slug")?.as_str()?, model)))
+        .collect::<HashMap<_, _>>();
+    let models = template
+        .get_mut("models")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("official template has no models array"))?;
+    for model in models
+        .iter_mut()
+        .filter(|model| !is_managed_catalog_model(model))
+    {
+        let Some(account_model) = model
+            .get("slug")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|slug| account_models.get(slug))
+        else {
+            continue;
+        };
+        let model = model
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("official template model must be an object"))?;
+        // Replace rather than union: an account may lose a tier or explicitly
+        // advertise none. Unrelated public model metadata stays authoritative.
+        for field in ["service_tiers", "additional_speed_tiers"] {
+            match account_model.get(field) {
+                Some(value) => {
+                    model.insert(field.to_owned(), value.clone());
+                }
+                None => {
+                    model.remove(field);
+                }
+            }
         }
     }
+    Ok(())
 }
 
 pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> bool {
@@ -523,6 +595,190 @@ mod account_cache_regressions {
     use serde_json::json;
 
     #[tokio::test]
+    async fn public_template_success_does_not_read_legacy_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"models":[{"slug":"public-model"}]}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let template = load_preferred_official_catalog(
+            &format!("http://{address}/models"),
+            &directory.path().join("official-template.json"),
+            || anyhow::bail!("must not read the unrelated native catalog"),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(template["models"][0]["slug"], "public-model");
+        server.abort();
+    }
+
+    #[test]
+    fn account_speed_tiers_replace_only_matching_official_model_fields() {
+        let mut template = json!({"models":[
+            {"slug":"gpt-test","context_window":1000,
+                "additional_speed_tiers":["fast"],"service_tiers":[{"id":"priority"}]},
+            {"slug":"gpt-test-custom","codex_mixin_managed":true,
+                "additional_speed_tiers":["fast"],"service_tiers":[{"id":"priority"}]},
+            {"slug":"gpt-other","service_tiers":[{"id":"priority"}]}
+        ]});
+        let original = template.clone();
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[
+                {"slug":"gpt-test","context_window":2000,
+                    "additional_speed_tiers":["fast","new-speed"],
+                    "service_tiers":[{"id":"priority"},{"id":"new-speed"}]},
+                {"slug":"gpt-test-custom","service_tiers":[{"id":"new-speed"}]},
+                {"slug":"account-only","service_tiers":[{"id":"new-speed"}]}
+            ]
+        });
+        apply_account_speed_tiers(&mut template, &account).unwrap();
+        assert_eq!(
+            template["models"][0]["service_tiers"],
+            account["models"][0]["service_tiers"]
+        );
+        assert_eq!(
+            template["models"][0]["additional_speed_tiers"],
+            account["models"][0]["additional_speed_tiers"]
+        );
+        assert_eq!(template["models"][0]["context_window"], 1000);
+        assert_eq!(template["models"][1], original["models"][1]);
+        assert_eq!(template["models"][2], original["models"][2]);
+        assert_eq!(template["models"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn account_speed_tier_removals_do_not_keep_previous_entitlements() {
+        for account_model in [
+            json!({"slug":"gpt-test","additional_speed_tiers":["fast"],
+                "service_tiers":[{"id":"priority"}]}),
+            json!({"slug":"gpt-test","additional_speed_tiers":[],"service_tiers":[]}),
+            json!({"slug":"gpt-test"}),
+        ] {
+            let mut template = json!({"models":[{
+                "slug":"gpt-test","additional_speed_tiers":["fast","ultrafast"],
+                "service_tiers":[{"id":"priority"},{"id":"ultrafast"}]
+            }]});
+            let account = json!({
+                "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+                "codex_mixin_account_id":"current-account","models":[account_model]
+            });
+            apply_account_speed_tiers(&mut template, &account).unwrap();
+            for field in ["service_tiers", "additional_speed_tiers"] {
+                assert_eq!(
+                    template["models"][0].get(field),
+                    account["models"][0].get(field)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn public_or_unbound_catalogs_cannot_override_account_speed_tiers() {
+        let template = json!({"models":[{"slug":"gpt-test","service_tiers":[{"id":"priority"}]}]});
+        for (source, account) in [
+            (OFFICIAL_CATALOG_URL, "current-account"),
+            ("https://chatgpt.com/backend-api/codex/models", ""),
+            ("", "current-account"),
+        ] {
+            let mut candidate = template.clone();
+            apply_account_speed_tiers(
+                &mut candidate,
+                &json!({
+                    "codex_mixin_source":source,"codex_mixin_account_id":account,
+                    "models":[{"slug":"gpt-test","service_tiers":[{"id":"ultrafast"}]}]
+                }),
+            )
+            .unwrap();
+            assert_eq!(candidate, template);
+        }
+    }
+
+    #[tokio::test]
+    async fn public_template_failure_retains_legacy_local_catalog_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let template_cache = directory.path().join("official-template.json");
+        let legacy_catalog = json!({
+            "codex_mixin_source":OFFICIAL_CATALOG_URL,
+            "models":[{"slug":"legacy-model","service_tiers":[{"id":"priority"}]}]
+        });
+        let template = load_preferred_official_catalog(
+            "http://127.0.0.1:1/models",
+            &template_cache,
+            || Ok(Some(legacy_catalog.clone())),
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(template, legacy_catalog);
+        assert!(!template_cache.exists());
+    }
+
+    #[tokio::test]
+    async fn public_template_refresh_preserves_account_speed_tiers() {
+        let directory = tempfile::tempdir().unwrap();
+        let template_cache = directory.path().join("official-template.json");
+        let public = json!({"models":[{
+            "slug":"gpt-test",
+            "additional_speed_tiers":["fast"],
+            "service_tiers":[{"id":"priority","name":"Fast"}]
+        }]});
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[{
+                "slug":"gpt-test",
+                "additional_speed_tiers":["fast","ultrafast"],
+                "service_tiers":[{"id":"priority","name":"Fast"},
+                    {"id":"ultrafast","name":"Ultrafast"}]
+            }]
+        });
+        let public_response = public.clone();
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(move || {
+                let response = public_response.clone();
+                async move { axum::Json(response) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        for _ in 0..2 {
+            let merged = load_preferred_official_catalog(
+                &format!("http://{address}/models"),
+                &template_cache,
+                || anyhow::bail!("public success must not read the legacy fallback"),
+                Some(&account),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                merged["models"][0]["service_tiers"],
+                account["models"][0]["service_tiers"]
+            );
+            assert_eq!(
+                merged["models"][0]["additional_speed_tiers"],
+                account["models"][0]["additional_speed_tiers"]
+            );
+            let cached: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&template_cache).unwrap()).unwrap();
+            assert_eq!(cached["models"], public["models"]);
+        }
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn public_template_refresh_keeps_the_account_directory() {
         let directory = tempfile::tempdir().unwrap();
         let account_cache = directory.path().join("official-models.json");
@@ -553,6 +809,7 @@ mod account_cache_regressions {
                 &format!("http://{address}/models"),
                 &template_cache,
                 || Ok(None),
+                None,
             )
             .await
             .unwrap();
