@@ -66,7 +66,7 @@ jobs:
         run: |
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install --yes ripgrep musl-tools
+            sudo apt-get install --yes jq ripgrep musl-tools
           elif [[ "${RUNNER_OS}" == "macOS" ]]; then
             command -v rg >/dev/null || brew install ripgrep
           else
@@ -80,6 +80,9 @@ jobs:
           ./scripts/test_check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
+      - name: Run multi-provider E2E
+        if: runner.os == 'Linux'
+        run: ./scripts/e2e_multi_provider.sh
       - name: Run client auth Clippy
         if: runner.os == 'Linux'
         run: |

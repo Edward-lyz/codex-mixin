@@ -190,7 +190,15 @@ if grep -F -e alpha-secret -e beta-secret \
   echo "secret leaked into a redacted output" >&2
   exit 1
 fi
-[[ "$(stat -f '%Lp' "$CODEX_GATEWAY_CONFIG")" == 600 ]]
+case "$(uname -s)" in
+  Darwin) config_mode="$(stat -f '%Lp' "$CODEX_GATEWAY_CONFIG")" ;;
+  Linux) config_mode="$(stat -c '%a' "$CODEX_GATEWAY_CONFIG")" ;;
+  *)
+    echo "unsupported platform for permission check: $(uname -s)" >&2
+    exit 1
+    ;;
+esac
+[[ "$config_mode" == 600 ]]
 grep -F "gateway configuration loaded from stored config" "$gateway_log" >/dev/null
 grep -F "provider_id=alpha" "$gateway_log" >/dev/null
 grep -F "catalog_slug=shared-alpha" "$gateway_log" >/dev/null
