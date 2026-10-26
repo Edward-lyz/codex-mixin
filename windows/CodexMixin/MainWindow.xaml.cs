@@ -864,7 +864,7 @@ public sealed partial class MainWindow : Window
 
     private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
 
-    internal void SetUpdateInputBlocked(bool blocked) => Root.IsEnabled = !blocked;
+    internal void SetUpdateInputBlocked(bool blocked) => OperationScope.IsEnabled = !blocked;
 
     private void MarkDirty()
     {

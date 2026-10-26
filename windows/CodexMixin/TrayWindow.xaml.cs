@@ -97,7 +97,7 @@ public sealed partial class TrayWindow : Window
         await ReloadAsync();
     }
 
-    internal void SetUpdateInputBlocked(bool blocked) => Panel.IsEnabled = !blocked;
+    internal void SetUpdateInputBlocked(bool blocked) => OperationScope.IsEnabled = !blocked;
 
     internal async void ShowPanel()
     {

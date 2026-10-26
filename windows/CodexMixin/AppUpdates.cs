@@ -84,9 +84,10 @@ internal sealed class AppUpdates(Func<CliClient> client)
             automaticInstall = automatic;
             if (!(await PrepareInstallAsync(lifetime.Token)).Allowed) return;
             var attempts = settings.GetValue("AttemptVersion") as string == Release.Version && settings.GetValue("Attempts") is int count ? count : 0;
+            if (attempts < 0) throw new CliFailure("更新重试计数无效，请检查界面更新设置。");
             if (automatic && attempts >= 3) { Status = "自动更新已重试三次，请点立即更新重试。"; return; }
             settings.SetValue("AttemptVersion", Release.Version);
-            settings.SetValue("Attempts", attempts + 1);
+            settings.SetValue("Attempts", Math.Min(attempts, 2) + 1);
             settings.SetValue("NextCheck", DateTimeOffset.UtcNow.AddHours(Math.Min(4, 1 << Math.Min(attempts, 2))).ToString("O"));
             updater ??= new NativeUpdater(this);
             updating = true;

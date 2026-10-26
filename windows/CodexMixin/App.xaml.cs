@@ -27,6 +27,7 @@ public partial class App : Application
     internal AppUpdates Updates => updates ??= new AppUpdates(() => Client);
     internal ElementTheme Theme => theme;
     internal bool IsUpdating => updates?.Installing == true;
+    internal bool HasVisibleWindows => windows.Values.Any(target => target.AppWindow.IsVisible);
     internal bool HasDraftChanges => windows.Values.Any(target => target.HasDraftChanges);
     internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
     internal void SetTheme(ElementTheme value)

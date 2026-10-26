@@ -77,7 +77,10 @@ try {
             $exitCode = 1
         }
     }
-    if (-not $NoRelaunch -and (Test-Path -LiteralPath $ui)) { Start-Process -FilePath $ui -WorkingDirectory $base | Out-Null }
+    if (-not $NoRelaunch -and (Test-Path -LiteralPath $ui)) {
+        if ($jobData.background) { Start-Process -FilePath $ui -WorkingDirectory $base -ArgumentList '--background' | Out-Null }
+        else { Start-Process -FilePath $ui -WorkingDirectory $base | Out-Null }
+    }
     if ($committed -and $backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Recurse -Force }
     if ($committed) { Remove-Item -LiteralPath $jobData.package -Force }
 }
