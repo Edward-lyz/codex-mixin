@@ -50,7 +50,10 @@ pub(super) async fn messages_body(
         .resolve_native_provider_model(requested_model)?;
     let provider = resolved.provider;
     let upstream_model_id = resolved.upstream_model_id;
-    super::auth::require_ducx_client(&state, provider, &headers)?;
+    state
+        .gateway
+        .require_ducx_client(provider, &headers)
+        .await?;
     let request = normalize_message_request(&body, upstream_model_id)?;
     let routing = stable_oneapi_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);

@@ -71,7 +71,7 @@ pub(crate) async fn stream_provider_response(
     let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
-    executor.require_ducx_client(provider, headers)?;
+    executor.require_ducx_client(provider, headers).await?;
     let ctx = ProviderRequestContext {
         executor,
         provider,

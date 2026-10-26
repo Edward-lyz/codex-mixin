@@ -289,6 +289,23 @@ async fn gateway_auth_obeys_build_feature() {
     }
 
     let provider = state.provider("ducx").unwrap();
+    // Built-in OpenAI sends OAuth but cannot send a managed provider header.
+    for (loopback, token, accepted) in [
+        (true, "oauth-secret", true),
+        (false, "oauth-secret", false),
+        (true, "arbitrary", false),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        if loopback {
+            headers.insert(LOOPBACK_PEER_HEADER, "1".parse().unwrap());
+        }
+        let result = state.gateway.require_ducx_client(provider, &headers).await;
+        assert_eq!(result.is_ok(), accepted || !cfg!(feature = "client-auth"));
+    }
     for (header_name, token, installed_client) in [
         (header::AUTHORIZATION, None, false),
         (header::AUTHORIZATION, Some("Bearer arbitrary"), false),
@@ -310,16 +327,46 @@ async fn gateway_auth_obeys_build_feature() {
         if let Some(token) = token {
             headers.insert(header_name, token.parse().unwrap());
         }
-        for result in [
-            require_ducx_client(&state, provider, &headers),
-            state.gateway.require_ducx_client(provider, &headers),
-        ] {
-            if cfg!(feature = "client-auth") && !installed_client {
-                assert!(matches!(result, Err(GatewayError::Unauthorized)));
-            } else {
-                assert!(result.is_ok());
-            }
+        let result = state.gateway.require_ducx_client(provider, &headers).await;
+        if cfg!(feature = "client-auth") && !installed_client {
+            assert!(matches!(result, Err(GatewayError::Unauthorized)));
+        } else {
+            assert!(result.is_ok());
         }
+    }
+}
+
+#[tokio::test]
+async fn loopback_marker_cannot_be_forged() {
+    use tower::ServiceExt;
+
+    for peer in [None, Some("192.0.2.1:1234"), Some("127.0.0.1:1234")] {
+        let app = Router::new()
+            .route(
+                "/",
+                get(|headers: HeaderMap| async move {
+                    Json(headers.contains_key(LOOPBACK_PEER_HEADER))
+                }),
+            )
+            .layer(axum::middleware::from_fn(mark_loopback_peer));
+        let mut request = axum::http::Request::builder()
+            .uri("/")
+            .header(LOOPBACK_PEER_HEADER, "1")
+            .body(Body::empty())
+            .unwrap();
+        if let Some(peer) = peer {
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                peer.parse::<std::net::SocketAddr>().unwrap(),
+            ));
+        }
+        let response = app.oneshot(request).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 16)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<bool>(&body).unwrap(),
+            peer == Some("127.0.0.1:1234")
+        );
     }
 }
 

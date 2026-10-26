@@ -212,7 +212,7 @@
 "codexConnect.provider" = "Provider";
 "codexConnect.providerPending" = "选择模式后显示";
 "codexConnect.connectButton" = "接入";
-"codexConnect.officialProvider" = "codex-mixin / 官方 OAuth 代理";
+"codexConnect.officialProvider" = "openai / Mixin 官方 OAuth 代理";
 "codexConnect.customOnlyProvider" = "amazon-bedrock / 本地占位（不连接 AWS）";
 "settings.openProviderSetup" = "打开供应商配置说明";
 "settings.localOAuthCredentials" = "新增此预设时会打开浏览器进行 OAuth 授权，无需安装供应商 CLI。";

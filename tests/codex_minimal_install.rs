@@ -14,7 +14,7 @@ async fn install_needs_only_config() {
         let home = root.join("codex");
         fs::create_dir_all(&home).unwrap();
         let config = home.join("config.toml");
-        let original = "# User settings\npersonality = 'precise'\n[model_providers.existing]\nbase_url = 'https://example.test'\n";
+        let original = "# User settings\npersonality = 'precise'\nopenai_base_url = 'https://original.example/v1'\n[model_providers.existing]\nbase_url = 'https://example.test'\n";
         fs::write(&config, original).unwrap();
         fs::write(home.join("models_cache.json"), "not valid JSON").unwrap();
         let sessions = home.join("sessions");
@@ -82,6 +82,16 @@ async fn install_needs_only_config() {
             Some("https://example.test")
         );
         assert_eq!(document["model"].as_str(), Some("test-model-static"));
+        if mode == "--codex-oauth-proxy" {
+            assert_eq!(document["model_provider"].as_str(), Some("openai"));
+            assert_eq!(
+                document["openai_base_url"].as_str(),
+                Some("http://127.0.0.1:8787/v1")
+            );
+            assert!(document["model_providers"].get("openai").is_none());
+        } else {
+            assert!(document.get("openai_base_url").is_none());
+        }
         let catalog = document["model_catalog_json"].as_str().unwrap();
         let catalog: serde_json::Value =
             serde_json::from_slice(&fs::read(catalog).unwrap()).unwrap();
