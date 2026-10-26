@@ -113,6 +113,7 @@ internal sealed class NativeUpdater : IDisposable
                 CreateNoWindow = true,
                 WorkingDirectory = directory
             };
+            start.Environment.Remove("PSModulePath");
             foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(AppContext.BaseDirectory, "install-update.ps1"), "-Job", job }) start.ArgumentList.Add(argument);
             using var helper = Process.Start(start) ?? throw new IOException("无法启动整包更新安装进程。");
             return 1;

@@ -1,4 +1,8 @@
 $ErrorActionPreference = 'Stop'
+# A PowerShell 7 parent can export incompatible module paths to Windows PowerShell.
+$env:PSModulePath = "$PSHOME\Modules"
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -Force
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Archive\Microsoft.PowerShell.Archive.psd1" -Force
 $version = '0.9.4'
 $expected = '6037df37fc263bd1650a1c4949681a9d40ffe991d01f35892a406cb5d103c976'
 $root = Join-Path $PSScriptRoot '..\..'
