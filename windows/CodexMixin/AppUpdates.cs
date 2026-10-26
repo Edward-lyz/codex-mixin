@@ -9,6 +9,8 @@ internal sealed class AppUpdates(Func<CliClient> client)
 {
     private const string SettingsKey = @"Software\CodexMixin\Updates";
     private const long DownloadLimit = 512L * 1024 * 1024;
+    private const int DownloadBufferSize = 64 * 1024;
+    private const int MaxAutomaticAttempts = 3;
     private static readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(15) };
     private readonly CancellationTokenSource lifetime = new();
     private Task active = Task.CompletedTask;
@@ -18,7 +20,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
     internal event Action? Changed;
     internal AppRelease? Release { get; private set; }
     internal bool Busy { get; private set; }
-    internal bool Ready => installerPath != null;
+    internal bool Ready => installerPath is { } path && File.Exists(path);
     internal string Status { get; private set; } = "尚未检查更新。";
     internal bool Automatic { get; private set; } = true;
     internal bool Installed { get; private set; }
@@ -86,9 +88,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
             }
             Status = $"发现 {release.Version}。";
             if (!Installed) { Status += " 请下载便携整包，退出后解压替换整个应用目录。"; return; }
-            if (Ready) { Status += " 安装包已就绪，确认后安装并重启。"; return; }
-            stage = "signature";
-            await VerifyInstallerAsync(Environment.ProcessPath ?? throw new IOException("无法定位当前应用。"), lifetime.Token);
+            stage = "cache";
             var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "updates");
             Directory.CreateDirectory(directory);
             var ready = Path.Combine(directory, $"codex-mixin-{release.Version}-setup.exe");
@@ -97,15 +97,22 @@ internal sealed class AppUpdates(Func<CliClient> client)
                 try { await VerifyInstallerAsync(ready, lifetime.Token); }
                 catch { File.Delete(ready); throw; }
                 installerPath = ready;
+                settings.SetValue("DownloadAttempts", 0);
                 Status = $"{release.Version} 完整安装包已就绪，确认后安装并重启。";
                 return;
             }
             var target = settings.GetValue("DownloadVersion") as string;
             var attempts = target == release.Version && settings.GetValue("DownloadAttempts") is int count ? count : 0;
-            if (automatic && attempts >= 3) { Status += " 自动准备已失败 3 次，请手动重试或打开发布页。"; return; }
+            if (automatic && attempts >= MaxAutomaticAttempts)
+            {
+                Status += $" 自动准备已失败 {MaxAutomaticAttempts} 次，请手动重试或打开发布页。";
+                return;
+            }
             settings.SetValue("DownloadVersion", release.Version);
             settings.SetValue("DownloadAttempts", attempts + 1);
             settings.SetValue("NextCheck", DateTimeOffset.UtcNow.AddHours(Math.Min(4, 1 << Math.Min(attempts, 2))).ToString("O"));
+            stage = "signature";
+            await VerifyInstallerAsync(Environment.ProcessPath ?? throw new IOException("无法定位当前应用。"), lifetime.Token);
             stage = "download";
             Status = $"正在下载 {release.Version} 完整安装包（安装需要确认）…";
             Changed?.Invoke();
@@ -119,9 +126,9 @@ internal sealed class AppUpdates(Func<CliClient> client)
                 if (response.Content.Headers.ContentLength is <= 0 or > DownloadLimit)
                     throw new IOException("安装包大小不符合限制（最大 512 MiB）。");
                 await using (var source = await response.Content.ReadAsStreamAsync(download.Token))
-                await using (var destination = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true))
+                await using (var destination = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, DownloadBufferSize, useAsync: true))
                 {
-                    var buffer = new byte[64 * 1024];
+                    var buffer = new byte[DownloadBufferSize];
                     long received = 0;
                     int bytes;
                     while ((bytes = await source.ReadAsync(buffer, download.Token)) != 0)
