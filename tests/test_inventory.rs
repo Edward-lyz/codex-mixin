@@ -3,6 +3,8 @@
 //! Cargo discovers Rust integration tests automatically, but macOS Swift tests
 //! are selected by `scripts/test_macos.sh` and Windows checks are registered in
 //! a C# runner. A new file can otherwise compile without ever running in CI.
+//! Test scripts have the same risk: a new E2E script is invisible until a
+//! workflow invokes it, so every entry point must be wired or listed as manual.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -18,9 +20,10 @@ const WINDOWS_INTEGRATION_RUNNER: &str = "scripts/test_windows_integration.ps1";
 const WINDOWS_INTEGRATION_SHARDS: &str = "tests/windows_integration_shards.txt";
 const WINDOWS_INTEGRATION_SHARD_NAMES: &[&str] =
     &["integration-a", "integration-b", "integration-c"];
-const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
-const MULTI_PROVIDER_E2E: &str = "scripts/e2e_multi_provider.sh";
 const CLIENT_AUTH_TESTS: &str = "tests/client_auth_tests.txt";
+const SCRIPTS_DIR: &str = "scripts";
+const WORKFLOWS_DIR: &str = ".github/workflows";
+const MANUAL_TEST_SCRIPTS: &str = "tests/manual_test_scripts.txt";
 const IGNORED_TESTS: &[(&str, &str)] = &[
     ("src/ech.rs", "live_ech_comparison"),
     (
@@ -380,6 +383,121 @@ fn client_auth_manifest() -> BTreeSet<(String, String)> {
     expected
 }
 
+fn test_script_names(directory: &Path) -> BTreeSet<String> {
+    fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file())
+        .filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .filter(|name| {
+            ["e2e_", "test_", "evaluate_"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+                && [".sh", ".ps1", ".mjs", ".cjs"]
+                    .iter()
+                    .any(|extension| name.ends_with(extension))
+        })
+        .collect()
+}
+
+/// Commented-out invocations do not run, so they must not satisfy the guard.
+fn source_runs_script(source: &str, name: &str) -> bool {
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .any(|line| line.contains(name))
+}
+
+fn manual_test_scripts(source: &str) -> BTreeMap<String, String> {
+    let mut entries = BTreeMap::new();
+    for line in source.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, reason) = line
+            .split_once('|')
+            .unwrap_or_else(|| panic!("invalid manual test script row: {line}"));
+        let name = name.trim();
+        let name = name
+            .strip_prefix(&format!("{SCRIPTS_DIR}/"))
+            .unwrap_or_else(|| panic!("manual test script must live under {SCRIPTS_DIR}/: {line}"));
+        assert!(
+            entries
+                .insert(name.to_owned(), reason.trim().to_owned())
+                .is_none(),
+            "duplicate manual test script: {name}"
+        );
+    }
+    entries
+}
+
+/// A test entry point runs when a workflow invokes it or another script calls
+/// it. Manual entries must name why the script needs a developer machine, and
+/// must not be a stale exemption for a script CI already runs.
+fn test_script_inventory_errors(
+    scripts: &BTreeSet<String>,
+    workflow_sources: &[String],
+    script_sources: &BTreeMap<String, String>,
+    manual: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for name in scripts {
+        let in_workflow = workflow_sources
+            .iter()
+            .any(|source| source_runs_script(source, name));
+        let in_script = script_sources
+            .iter()
+            .any(|(other, source)| other != name && source_runs_script(source, name));
+        if manual.contains_key(name) {
+            if in_workflow || in_script {
+                errors.push(format!("{name} runs in CI and cannot stay manual-only"));
+            }
+        } else if !in_workflow && !in_script {
+            errors.push(format!(
+                "{name} is neither run by a workflow nor listed in {MANUAL_TEST_SCRIPTS}"
+            ));
+        }
+    }
+    for (name, reason) in manual {
+        if !scripts.contains(name) {
+            errors.push(format!("manual test script {name} does not exist"));
+        }
+        if reason.is_empty() {
+            errors.push(format!("manual test script {name} needs a reason"));
+        }
+    }
+    errors.sort();
+    errors
+}
+
+/// `scripts/<path>` tokens in a workflow. `windows/scripts/<path>` belongs to
+/// another directory and must not be reported as a missing top-level path.
+fn workflow_script_paths(source: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut rest = source;
+    while let Some(index) = rest.find("scripts/") {
+        let preceding = rest[..index].chars().next_back();
+        let candidate = &rest[index..];
+        let end = candidate
+            .find(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.' | '/'))
+            })
+            .unwrap_or(candidate.len());
+        let path = candidate[..end].trim_end_matches('.');
+        if !preceding.is_some_and(|character| {
+            character.is_ascii_alphanumeric() || character == '/' || character == '_'
+        }) {
+            paths.push(path.to_owned());
+        }
+        rest = &candidate[end..];
+    }
+    paths
+}
+
 #[test]
 fn detects_missing_and_duplicate_swift_registrations() {
     let actual = BTreeSet::from(["A.swift".to_owned(), "B.swift".to_owned()]);
@@ -435,6 +553,44 @@ fn detects_missing_and_duplicate_windows_integration_shards() {
         errors
             .iter()
             .any(|error| error == "b.rs is not assigned to a Windows integration shard")
+    );
+}
+
+#[test]
+fn detects_unwired_stale_and_manual_test_scripts() {
+    let scripts = BTreeSet::from(["e2e_orphan.sh".to_owned(), "test_wired.sh".to_owned()]);
+    let workflow_sources = vec!["run: ./scripts/test_wired.sh".to_owned()];
+    let script_sources = BTreeMap::from([
+        ("e2e_orphan.sh".to_owned(), "#!/bin/bash".to_owned()),
+        ("test_wired.sh".to_owned(), "#!/bin/bash".to_owned()),
+    ]);
+    let manual = BTreeMap::from([("e2e_gone.sh".to_owned(), "removed".to_owned())]);
+    let errors =
+        test_script_inventory_errors(&scripts, &workflow_sources, &script_sources, &manual);
+    assert!(errors.iter().any(|error| error
+        == "e2e_orphan.sh is neither run by a workflow nor listed in tests/manual_test_scripts.txt"));
+    assert!(
+        errors
+            .iter()
+            .any(|error| error == "manual test script e2e_gone.sh does not exist")
+    );
+
+    let manual_wired = BTreeMap::from([("test_wired.sh".to_owned(), "obsolete".to_owned())]);
+    let errors =
+        test_script_inventory_errors(&scripts, &workflow_sources, &script_sources, &manual_wired);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error == "test_wired.sh runs in CI and cannot stay manual-only")
+    );
+
+    let commented = vec!["# ./scripts/test_wired.sh".to_owned()];
+    let errors =
+        test_script_inventory_errors(&scripts, &commented, &script_sources, &BTreeMap::new());
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.starts_with("test_wired.sh is neither run by a workflow"))
     );
 }
 
@@ -498,6 +654,47 @@ fn client_auth_tests_are_explicitly_inventoried() {
     assert_eq!(
         actual, expected,
         "client-auth test coverage changed; update tests/client_auth_tests.txt"
+    );
+}
+
+#[test]
+fn test_scripts_are_wired_into_ci_or_listed_as_manual() {
+    let root = repository_root();
+    let scripts_dir = root.join(SCRIPTS_DIR);
+    let scripts = test_script_names(&scripts_dir);
+
+    // Any script may invoke a helper, not only the test entry points.
+    let script_sources = fs::read_dir(&scripts_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file())
+        .filter_map(|path| {
+            let source = fs::read_to_string(&path).ok()?;
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            Some((name, source))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let workflow_sources = fs::read_dir(root.join(WORKFLOWS_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|value| value == "yml"))
+        .map(|path| fs::read_to_string(path).unwrap())
+        .collect::<Vec<_>>();
+
+    let manual = manual_test_scripts(&fs::read_to_string(root.join(MANUAL_TEST_SCRIPTS)).unwrap());
+    let errors =
+        test_script_inventory_errors(&scripts, &workflow_sources, &script_sources, &manual);
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+
+    let missing = workflow_sources
+        .iter()
+        .flat_map(|source| workflow_script_paths(source))
+        .filter(|path| !root.join(path).exists())
+        .collect::<BTreeSet<_>>();
+    assert!(
+        missing.is_empty(),
+        "workflows reference missing scripts: {missing:?}"
     );
 }
 
@@ -580,12 +777,6 @@ fn every_test_entry_is_registered_once() {
     assert!(
         windows_workflow.contains(WINDOWS_INTEGRATION_RUNNER),
         "Windows CI must run the manifest-driven integration shards"
-    );
-
-    let ci_workflow = fs::read_to_string(root.join(CI_WORKFLOW)).unwrap();
-    assert!(
-        ci_workflow.contains(&format!("./{MULTI_PROVIDER_E2E}")),
-        "CI must run the multi-provider E2E"
     );
 
     let app = fs::read_to_string(root.join(WINDOWS_APP)).unwrap();
