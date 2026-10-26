@@ -41,9 +41,10 @@ public sealed partial class MainWindow
 
     private Border ContextSettingsCard(ContextSettings stored)
     {
-        var enabled = new ToggleSwitch
+        var enabled = new CheckBox
         {
-            Header = "上下文引擎", OnContent = "已启用", OffContent = "已停用", IsOn = stored.Enabled
+            Content = "启用上下文引擎",
+            IsChecked = stored.Enabled
         };
         AutomationProperties.SetAutomationId(enabled, "context-enabled");
         var growth = Amount("增长阈值（tokens）", stored.GrowthThresholdTokens, "context-growth-threshold");
@@ -74,7 +75,7 @@ public sealed partial class MainWindow
         {
             var edited = stored with
             {
-                Enabled = enabled.IsOn,
+                Enabled = enabled.IsChecked == true,
                 GrowthThresholdTokens = Whole(growth, "增长阈值"),
                 PressureRatio = FractionValue(pressure, "压力比例"),
                 UrgentRatio = FractionValue(urgent, "紧急比例"),
@@ -85,22 +86,24 @@ public sealed partial class MainWindow
             };
             if (ContextContract.SaveArguments(stored, edited) is not { } arguments)
             {
+                draftDirty = false;
+                ApplyChanges.IsEnabled = false;
+                ShowSummary("未修改");
                 ShowNotice("保存设置", "没有需要保存的更改。", InfoBarSeverity.Informational);
                 return;
             }
             await ChangeAsync("保存并应用设置", arguments);
         }
 
-        var actions = Row();
-        var save = Button("保存设置", SaveAsync, primary: true);
-        AutomationProperties.SetAutomationId(save, "context-save");
-        actions.Children.Add(save);
+        pendingApply = SaveAsync;
+        ApplyChanges.Content = "保存设置";
+        ToolTipService.SetToolTip(ApplyChanges, "保存更改后自动重启运行中的网关并生效。");
+        TrackDraft(enabled);
+        foreach (var field in cells) TrackDraft(field);
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(enabled);
         body.Children.Add(fields);
-        body.Children.Add(actions);
-        ToolTipService.SetToolTip(save, "保存更改后自动重启运行中的网关并生效。");
         return Card("上下文引擎", "", body);
     }
 
@@ -152,7 +155,8 @@ public sealed partial class MainWindow
         var headers = new[] { "会话", "消息", "压缩", "节省", "视图", "命中", "更新" };
         var list = new ListView
         {
-            SelectionMode = ListViewSelectionMode.None, Height = Math.Min(320, 44 + sessions.Length * 52),
+            SelectionMode = ListViewSelectionMode.None,
+            Height = Math.Min(320, 44 + sessions.Length * 52),
             Header = TableHeader(headers),
             ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"],
             ItemContainerStyle = Themed("ModelRowContainer"),
@@ -206,7 +210,9 @@ public sealed partial class MainWindow
         }
         return new Border
         {
-            Child = grid, Padding = new Thickness(16, 8, 16, 8), Style = Themed(divider ? "RowDivider" : "RowPlain"),
+            Child = grid,
+            Padding = new Thickness(16, 8, 16, 8),
+            Style = Themed(divider ? "RowDivider" : "RowPlain"),
             BorderThickness = divider ? new Thickness(0, 1, 0, 0) : new Thickness(0)
         };
     }

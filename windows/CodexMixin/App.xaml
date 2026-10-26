@@ -44,14 +44,6 @@
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
       </Style>
-      <Style x:Key="BarTrack" TargetType="Border">
-        <Setter Property="Background" Value="{ThemeResource ControlStrongStrokeColorDisabledBrush}" />
-        <Setter Property="CornerRadius" Value="4" /><Setter Property="Height" Value="8" />
-      </Style>
-      <Style x:Key="BarFill" TargetType="Border">
-        <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
-        <Setter Property="CornerRadius" Value="4" />
-      </Style>
       <Style x:Key="SuccessBadge" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBackgroundBrush}" />
         <Setter Property="CornerRadius" Value="4" /><Setter Property="Padding" Value="6,1" />
@@ -127,18 +119,6 @@
         <Setter Property="HorizontalAlignment" Value="Stretch" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="Padding" Value="10,6" /><Setter Property="CornerRadius" Value="6" />
-      </Style>
-      <Style x:Key="Segment" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
-        <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="CornerRadius" Value="4" />
-        <Setter Property="Padding" Value="14,4" /><Setter Property="MinWidth" Value="56" />
-      </Style>
-      <Style x:Key="SegmentTrack" TargetType="Border">
-        <Setter Property="Background" Value="{ThemeResource ControlAltFillColorSecondaryBrush}" />
-        <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="2" />
       </Style>
       <Style x:Key="ModelRowContainer" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
         <Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0" />

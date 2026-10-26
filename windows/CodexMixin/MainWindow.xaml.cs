@@ -2,9 +2,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -51,7 +51,7 @@ public sealed partial class MainWindow : Window
     private bool ready;
     private bool selectingProvider;
     private bool interfaceReady;
-    private readonly bool customTitleBar;
+    private bool selectingNavigation;
     private bool busy;
     private bool loadingPage;
     private bool pageLoaded;
@@ -80,8 +80,7 @@ public sealed partial class MainWindow : Window
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         if (IsConsolePage(page)) AppWindow.MoveAndResize(NativeShell.ConsoleBounds());
         else AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
-        customTitleBar = AppWindowTitleBar.IsCustomizationSupported();
-        if (customTitleBar)
+        if (AppWindowTitleBar.IsCustomizationSupported())
         {
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(TitleBar);
@@ -90,9 +89,6 @@ public sealed partial class MainWindow : Window
             Root.ActualThemeChanged += (_, _) =>
                 AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
         }
-        // Without custom title-bar support, keep the tabs as a normal content header.
-        TitleBar.SizeChanged += (_, _) => UpdateTitleInput();
-        ConsoleTabs.SizeChanged += (_, _) => UpdateTitleInput();
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
         // The console window owns the tray icon; Fusion and settings are side windows.
@@ -148,8 +144,6 @@ public sealed partial class MainWindow : Window
     {
         if (exiting || initialized || !Root.IsLoaded || !IsViewVisible) return;
         initialized = true;
-        Root.XamlRoot.Changed += (_, _) => UpdateTitleInput();
-        UpdateTitleInput();
         // Loaded can run inside a synchronous native layout callback.
         // Start CLI work after that callback returns to the message loop.
         if (!DispatcherQueue.TryEnqueue(async () =>
@@ -173,21 +167,6 @@ public sealed partial class MainWindow : Window
         else timer.Stop();
     }
 
-    private void UpdateTitleInput()
-    {
-        if (exiting || !customTitleBar || Root.XamlRoot is not { } root) return;
-        var rectangles = Array.Empty<Windows.Graphics.RectInt32>();
-        if (ConsoleTabs.Visibility == Visibility.Visible && ConsoleTabs.ActualWidth > 0)
-        {
-            var origin = ConsoleTabs.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point(0, 0));
-            var scale = root.RasterizationScale;
-            rectangles = [new Windows.Graphics.RectInt32((int)Math.Round(origin.X * scale), (int)Math.Round(origin.Y * scale),
-                (int)Math.Ceiling(ConsoleTabs.ActualWidth * scale), (int)Math.Ceiling(ConsoleTabs.ActualHeight * scale))];
-        }
-        // Controls inside a custom drag region need an explicit pointer passthrough.
-        InputNonClientPointerSource.GetForWindowId(AppWindow.Id).SetRegionRects(NonClientRegionKind.Passthrough, rectangles);
-    }
-
     internal bool IsChanging => busy && !loadingPage;
     internal bool HasDraftChanges => draftDirty;
     internal bool NotifyUpdate(string version) => shell?.NotifyUpdate(version) == true;
@@ -209,19 +188,18 @@ public sealed partial class MainWindow : Window
             _ => "设置与诊断"
         };
         var console = IsConsolePage(page);
-        // The console tabs already name the page, so the caption stays empty there.
-        WindowCaption.Text = console ? "" : Title;
-        WindowCaption.Visibility = console ? Visibility.Collapsed : Visibility.Visible;
+        TitleBar.Title = console ? "Codex Mixin" : $"Codex Mixin · {Title}";
         ConsoleTabs.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var tab in ConsoleTabButtons.Children.Cast<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
-            tab.IsChecked = (string)tab.Tag == page;
+        selectingNavigation = true;
+        try { if (console) ConsoleTabs.SelectedItem = ConsoleTabs.Items.First(item => (string)item.Tag == page); }
+        finally { selectingNavigation = false; }
         var providers = page == "providers";
         SidebarColumn.Width = new GridLength(providers ? 248 : 0);
         ProviderSidebar.Visibility = providers ? Visibility.Visible : Visibility.Collapsed;
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
         ContentLayer.BorderThickness = providers ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
         ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
-        ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
+        DraftSummary.Visibility = ApplyChanges.Visibility = page is "providers" or "fusion" or "context" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
         PageTitle.Visibility = header;
         UpdateRefreshTimer();
@@ -262,8 +240,10 @@ public sealed partial class MainWindow : Window
         }, readOnly: true);
     }
 
-    private void OnConsoleTab(object sender, RoutedEventArgs args) =>
-        ShowPage((string)((FrameworkElement)sender).Tag);
+    private void OnConsoleTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (ready && !selectingNavigation && sender.SelectedItem?.Tag is string next) ShowPage(next);
+    }
 
     internal void ShowMain()
     {
@@ -346,8 +326,11 @@ public sealed partial class MainWindow : Window
         if (providerId != null && await ConfirmAsync("删除服务商？", "将移除当前服务商及其模型配置。", "删除"))
             await ChangeAsync("删除服务商", ["provider", "remove", providerId], apply: true);
     }
-    private async void OnModelsTab(object sender, RoutedEventArgs args) => await SelectProviderTabAsync(false);
-    private async void OnConnectionTab(object sender, RoutedEventArgs args) => await SelectProviderTabAsync(true);
+    private async void OnProviderTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (!ready || loadingPage || selectingNavigation || sender.SelectedItem == null) return;
+        await SelectProviderTabAsync(sender.SelectedItem == ConnectionTab);
+    }
 
     private async Task SelectProviderTabAsync(bool connection)
     {
@@ -357,8 +340,14 @@ public sealed partial class MainWindow : Window
             UpdateRefreshTimer();
             RenderSelectedProvider();
         }
-        ModelsTab.IsChecked = !connectionSelected;
-        ConnectionTab.IsChecked = connectionSelected;
+        SyncProviderTab();
+    }
+
+    private void SyncProviderTab()
+    {
+        selectingNavigation = true;
+        try { ProviderTabs.SelectedItem = connectionSelected ? ConnectionTab : ModelsTab; }
+        finally { selectingNavigation = false; }
     }
 
     private async void OnApplyChanges(object sender, RoutedEventArgs args)
@@ -418,8 +407,8 @@ public sealed partial class MainWindow : Window
         var succeeded = false;
         busy = true;
         loadingPage = readOnly;
-        // Block input without the disabled look; a refresh should not gray out the window.
-        PageShell.IsHitTestVisible = false;
+        // Disable pointer, keyboard, focus, and automation edits together.
+        PageShell.IsEnabled = false;
         Activity.IsActive = IsViewVisible;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
@@ -467,7 +456,7 @@ public sealed partial class MainWindow : Window
             CancelAction.Visibility = Visibility.Collapsed;
             busy = false;
             loadingPage = false;
-            PageShell.IsHitTestVisible = true;
+            PageShell.IsEnabled = true;
             Activity.IsActive = false;
             Activity.Visibility = Visibility.Collapsed;
         }
@@ -513,6 +502,9 @@ public sealed partial class MainWindow : Window
         pageRefresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         PageBody.Children.Clear();
         draftDirty = false;
+        pendingApply = null;
+        ApplyChanges.IsEnabled = false;
+        ApplyChanges.Content = "应用更改";
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
         ShowSummary("未修改");
         ToolTipService.SetToolTip(PageTitle, null);
@@ -669,7 +661,7 @@ public sealed partial class MainWindow : Window
         var provider = providerRows.GetValueOrDefault(providerId);
         if (provider.ValueKind != JsonValueKind.Object) return;
         PageBody.Children.Clear();
-        ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
+        SyncProviderTab();
         PageTitle.Text = Json.Text(provider, "display_name");
         ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
         ProviderHeaderTile.Visibility = Visibility.Visible;
@@ -681,7 +673,7 @@ public sealed partial class MainWindow : Window
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
             ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():MM/dd HH:mm}" : "";
         ToolTipService.SetToolTip(PageTitle, $"{providerId} · 已加入 {Json.Field(provider, "selected_models").GetArrayLength()} / 可选 {Json.Field(provider, "cached_models").GetArrayLength()}{refreshed} · 配置 {providerSnapshotAt.ToLocalTime():HH:mm:ss}");
-        ApplyChanges.IsEnabled = true;
+        ApplyChanges.IsEnabled = draftDirty;
         try
         {
             if (connectionSelected)
@@ -897,6 +889,11 @@ public sealed partial class MainWindow : Window
 
     private void ShowSummary(string text)
     {
+        if (DraftSummary.Text != text)
+        {
+            DraftSummary.Text = text;
+            FrameworkElementAutomationPeer.FromElement(DraftSummary)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
         ToolTipService.SetToolTip(ApplyChanges, text);
         AutomationProperties.SetHelpText(ApplyChanges, text);
     }
@@ -1018,18 +1015,20 @@ public sealed partial class MainWindow : Window
         };
         string[] overrideModels = provider is { } configured
             ? Json.Strings(Json.Field(configured, "selected_models")) : [];
-        var reviewOverride = new ToggleSwitch { Header = "Codex 审查模型覆盖", IsOn = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var reviewOverride = new CheckBox { Content = "Codex 审查模型覆盖", IsChecked = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
         var reviewModel = Choice("审查模型", overrideModels, provider is { } rm ? Json.OptionalText(rm, "auto_review_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
-        var titleOverride = new ToggleSwitch { Header = "Codex 会话命名模型覆盖", IsOn = provider is { } titleProvider && Json.OptionalText(titleProvider, "codex_thread_title_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var titleOverride = new CheckBox { Content = "Codex 会话命名模型覆盖", IsChecked = provider is { } titleProvider && Json.OptionalText(titleProvider, "codex_thread_title_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
         var titleModel = Choice("会话命名模型", overrideModels, provider is { } tm ? Json.OptionalText(tm, "codex_thread_title_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
         void OverrideFields()
         {
             reviewOverride.Visibility = titleOverride.Visibility = provider == null ? Visibility.Collapsed : Visibility.Visible;
-            reviewModel.Visibility = provider != null && reviewOverride.IsOn ? Visibility.Visible : Visibility.Collapsed;
-            titleModel.Visibility = provider != null && titleOverride.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            reviewModel.Visibility = provider != null && reviewOverride.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+            titleModel.Visibility = provider != null && titleOverride.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         }
-        reviewOverride.Toggled += (_, _) => OverrideFields();
-        titleOverride.Toggled += (_, _) => OverrideFields();
+        reviewOverride.Checked += (_, _) => OverrideFields();
+        reviewOverride.Unchecked += (_, _) => OverrideFields();
+        titleOverride.Checked += (_, _) => OverrideFields();
+        titleOverride.Unchecked += (_, _) => OverrideFields();
         OverrideFields();
         var oauthTimeout = Input("OAuth 授权超时（秒）", Json.Field(catalog, "oauth_timeout_seconds").ToString());
         var oauthHint = Text("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。");
@@ -1131,10 +1130,10 @@ public sealed partial class MainWindow : Window
             }
             if (provider != null)
             {
-                if (reviewOverride.IsOn && reviewModel.SelectedItem is string reviewSelection && !string.IsNullOrEmpty(reviewSelection))
+                if (reviewOverride.IsChecked == true && reviewModel.SelectedItem is string reviewSelection && !string.IsNullOrEmpty(reviewSelection))
                     args.AddRange(["--auto-review-model", reviewSelection]);
                 else args.Add("--clear-auto-review-model");
-                if (titleOverride.IsOn && titleModel.SelectedItem is string titleSelection && !string.IsNullOrEmpty(titleSelection))
+                if (titleOverride.IsChecked == true && titleModel.SelectedItem is string titleSelection && !string.IsNullOrEmpty(titleSelection))
                     args.AddRange(["--codex-thread-title-model", titleSelection]);
                 else args.Add("--clear-codex-thread-title-model");
             }
