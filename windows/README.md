@@ -85,12 +85,14 @@ powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 
 设置与诊断会先呈现界面日志、配置备份与应用更新，再独立读取网关自启和 ECH 状态；单项失败可重试。连接表单、模型与 Fusion 的未应用更改会在切换、刷新或退出前确认，保存失败保留输入。DUCX 可在 OneAPI 连接表单中手动安装 / 登录，下载与终端扫码继续由 CLI 完成。
 
-原生托盘、面板菜单和设置提供完整应用更新入口，默认每小时检查一次。GUI 与 CLI 的版本同时参与比较，避免推荐降级其中一个组件。发现更新后通知用户，由浏览器下载官方完整安装包或 ZIP；检查失败在界面和日志中保留错误，可手动重试。
+原生托盘、面板菜单和设置的“立即更新”会在应用内完成检查、下载、Ed25519 验签、安装与重启；正常流程不打开浏览器。默认每小时自动检查，网关无活动请求且空闲 30 分钟、没有未保存草稿和配置操作时自动推进；正式安装前再次核对状态。每个版本自动重试最多三次，退避 1 / 2 / 4 小时，手动操作可重试。GUI 与 CLI 一起参与版本比较，避免降级其中一个组件。
 
-本 PR 不再维护自建的安装包下载、缓存、签名公钥绑定和 UAC 执行链。安装版由用户完成当前工作后启动官方安装器；便携版退出后替换整个目录。安装器需要管理员权限，会关闭界面与网关，正在处理的请求会中断。安装器进入安装阶段后才移除旧版本，并保留界面自启选择，但尚无失败回滚。
+下载、签名验证和更新进度采用 [WinSparkle 0.9.4](https://winsparkle.org/)，随完整包分发固定版本 DLL 和许可证。构建脚本校验上游固定归档，公钥直接取自项目已有 Sparkle 配置；发布工作流用现有 `SPARKLE_PRIVATE_KEY` 为 Windows 安装包和便携包分别生成签名 appcast，无需新增私钥。第三方源码位于 [WinSparkle v0.9.4](https://github.com/vslavik/winsparkle/tree/v0.9.4)。
+
+下载验证后由独立 helper 等待 GUI 退出，停止原来运行的网关，再安装完整包并恢复网关和 GUI。安装版可能需要系统 UAC 授权，helper 在原用户权限下重新打开应用；便携版在同卷目录暂存后切换，切换失败恢复原目录，保留未知用户文件。安装失败保留日志和错误状态；NSIS 在移除旧版本后发生提取失败时仍无完整回滚，需要重新运行安装器修复。诊断页的官方发布页仅供故障时人工恢复。
 
 控制台与编辑页使用 SDK `SelectorBar`，窗口使用 SDK `TitleBar`，条形额度使用 `ProgressBar`。上下文启用和模型覆盖为保存后生效的 `CheckBox`，统一展示未应用状态并在切换页面前确认。执行操作期间用 `IsEnabled` 同时禁止鼠标、键盘、焦点和自动化编辑。托盘使用 `NOTIFYICON_VERSION_4` 处理键盘选择与上下文菜单，并通过 `Shell_NotifyIconGetRect` 按图标位置和任务栏边缘定位。
 
-系统更新的后续方案是评估 MSIX / App Installer，明确最低 Windows 版本、签名、独立 CLI、网关服务和便携包的分发关系后另行交付；当前 `WindowsPackageType=None` 的安装器不能直接调用这些打包 API。高对比度、文本缩放、多显示器 DPI、Narrator 和 DUCX 扫码仍需 Windows 真机验收。
+当前 `WindowsPackageType=None`，因此采用适配现有 NSIS / ZIP 的 WinSparkle；MSIX / App Installer 的分发迁移另行评估。高对比度、文本缩放、多显示器 DPI、Narrator 和 DUCX 扫码仍需 Windows 真机验收。
 
 本次按用户要求只在本地格式化代码，构建、Rust / adapter / UIA 回归与安装升级验收交由 PR 的 Windows CI；DUCX 下载、扫码和用户网络条件仍需 Windows 真机验收。

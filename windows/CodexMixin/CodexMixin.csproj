@@ -30,10 +30,15 @@
     <!-- Self-contained component payloads avoid the all-features Runtime MSIX. -->
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <Content Include="../build/winsparkle/WinSparkle.dll;../build/winsparkle/WinSparkle.PublicKey.txt;../build/winsparkle/WinSparkle.LICENSE.txt;../build/winsparkle/WinSparkle.Expat.LICENSE.txt" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../scripts/install-update.ps1" Link="install-update.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/*.ico" Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/app_icon.png" Link="Assets/app_icon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/providers/*.svg" Link="Assets/providers/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/agents/*.svg;../assets/agents/*.png" Link="Assets/agents/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/agents/ATTRIBUTION.md" Link="Assets/agents/ATTRIBUTION.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="FetchWinSparkle" BeforeTargets="PrepareForBuild">
+    <Exec Command="powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\fetch-winsparkle.ps1&quot;" />
+  </Target>
 </Project>

@@ -97,6 +97,8 @@ public sealed partial class TrayWindow : Window
         await ReloadAsync();
     }
 
+    internal void SetUpdateInputBlocked(bool blocked) => Panel.IsEnabled = !blocked;
+
     internal async void ShowPanel()
     {
         var bounds = NativeShell.PanelBounds();
@@ -447,7 +449,7 @@ public sealed partial class TrayWindow : Window
     }
     private async Task ChangeAsync(string[] args)
     {
-        if (changing) return;
+        if (changing || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
         changing = true;
         GatewaySwitch.IsEnabled = false;
         refreshCancellation?.Cancel();

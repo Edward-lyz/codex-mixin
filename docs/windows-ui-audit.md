@@ -207,7 +207,7 @@ App 保管生命周期，UI 保管草稿，Operations 保管动作执行，core 
 
 Windows CI 发现 icacls /restore 在移除 SeSecurityPrivilege 后失败，因此撤回该优化，恢复使用 Windows PowerShell / .NET 仅持久化 DACL 的既有实现。保留当前用户、SYSTEM、Administrators 的 FullControl、继承保护及移除额外授权的安全断言，不缓存 ACL 安全结论。定时 Codex catalog 刷新仍在 blocking worker 执行并跳过积压 tick；尚未测得性能收益，也未证明原 BUG 的唯一根因。
 
-二次审查后，更新范围收敛为 GUI 每小时检查完整包版本、通知和浏览器手动下载官方安装包 / ZIP；移除自建下载、缓存、PowerShell 验签、公钥绑定和 UAC 启动链。GUI 与 CLI 共同参与版本比较。安装器仅在进入安装阶段后移除旧版本并保留 GUI 自启；安装会终止网关请求，尚无失败回滚。MSIX / App Installer 需先解决签名、最低 Windows 版本、独立 CLI / 网关服务与便携分发，再单独设计。
+更新流程采用成熟的 WinSparkle 0.9.4：在应用内检查、下载、Ed25519 验签、安装与重启，主路径不跳浏览器。固定 DLL 随包分发，复用现有 Sparkle 公钥和发布私钥，发布阶段分别签名 Windows EXE / ZIP appcast。GUI 每小时调度，自动安装要求无活动请求、网关空闲 30 分钟且没有草稿或配置操作；正式安装前再检查，按版本最多重试三次并退避。手动“立即更新”启动同一完整流程。helper 在 GUI 退出后停网关、安装并恢复原用户下的 GUI / 网关；系统 UAC 保留。便携目录暂存切换失败可恢复，NSIS 安装版仍无提取失败后的完整回滚。
 
 导航与编辑页采用 SDK SelectorBar，标题栏改为 SDK TitleBar，单一比例条采用 ProgressBar；保留含多窗口语义的同心环及文本图例。上下文启用与模型覆盖改为保存后生效的 CheckBox，并接入统一草稿保护。操作期间使用 IsEnabled 禁止键盘与自动化继续编辑；草稿状态使用可见文本和 polite live region。托盘采用 NOTIFYICON_VERSION_4、NIN_SELECT / NIN_KEYSELECT / WM_CONTEXTMENU 和 Shell_NotifyIconGetRect，保留必要的 Win32 薄桥接。高对比度、缩放、多显示器与 Narrator 仍需真机验收。
 

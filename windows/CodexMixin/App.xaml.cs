@@ -26,12 +26,20 @@ public partial class App : Application
     internal Operations Operations => operations ??= new Operations(Client);
     internal AppUpdates Updates => updates ??= new AppUpdates(() => Client);
     internal ElementTheme Theme => theme;
+    internal bool IsUpdating => updates?.Installing == true;
+    internal bool HasDraftChanges => windows.Values.Any(target => target.HasDraftChanges);
     internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
     internal void SetTheme(ElementTheme value)
     {
         theme = value;
         foreach (var target in windows.Values) target.SetTheme(value);
         tray?.SetTheme(value);
+    }
+
+    internal void SetUpdateInputBlocked(bool blocked)
+    {
+        foreach (var target in windows.Values) target.SetUpdateInputBlocked(blocked);
+        tray?.SetUpdateInputBlocked(blocked);
     }
 
     internal async Task<bool> ConfirmDraftsAsync()
@@ -55,7 +63,7 @@ public partial class App : Application
 
     internal void OpenPage(string page, bool show = true)
     {
-        if (exiting) return;
+        if (exiting || IsUpdating) return;
         if (page == "updates")
         {
             OpenPage("settings");
@@ -135,6 +143,7 @@ public partial class App : Application
             trayReady.Set();
         }
         Updates.LoadPreferences();
+        if (Updates.LastInstallFailed) OpenPage("settings");
         Updates.Changed += () =>
         {
             if (Updates.Release is { IsNewer: true } release && notifiedUpdate != release.Version
