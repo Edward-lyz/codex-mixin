@@ -2,7 +2,7 @@
 
 Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程、Runner、插件与补丁已移除。Rust CLI / 本地网关继续负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
-已确认的流程缺口、macOS 行为差异与修复顺序见 [Windows UI 架构审查](../docs/windows-ui-audit.md)；其中建议尚未实现，不代表当前发布能力。
+已确认的流程缺口、macOS 行为差异与修复顺序见 [Windows UI 架构审查](../docs/windows-ui-audit.md)；审查保留问题发生时的基线，末尾记录本次实现范围与尚待 CI / 真机验收的项目。
 
 采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK WinUI 模块固定为 stable `1.8.260803003`，Foundation、InteractiveExperiences 和 Base 沿用 lock file 中同一发行组的版本，避免引入 preview / experimental API。
 
@@ -80,3 +80,13 @@ powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`，并在安装器旁保存 `.metrics.json`，记录展开目录、安装器和便携包的字节数。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 Flutter 或 .NET。
 
 安装/卸载继续保留用户配置；未发布 UI 单独可执行文件，必须使用完整应用目录。签名时覆盖随包发送的 EXE / DLL 与安装器。发布工作流沿用相同打包脚本。
+
+## 更新与恢复
+
+设置与诊断会先呈现界面日志、配置备份与应用更新，再独立读取网关自启和 ECH 状态；单项失败可重试。连接表单、模型与 Fusion 的未应用更改会在切换、刷新或退出前确认，保存失败保留输入。DUCX 可在 OneAPI 连接表单中手动安装 / 登录，下载与终端扫码继续由 CLI 完成。
+
+原生托盘、面板菜单和设置提供完整应用更新入口。默认每小时检查一次：安装版自动准备完整安装包，校验 Windows Authenticode 与当前应用的签名公钥；便携版提供完整 ZIP 下载。GUI 与 CLI 的版本同时参与比较，避免更新时降级其中一个组件。失败记录在界面日志中，自动准备最多重试三次，间隔为 1 / 2 / 4 小时。
+
+安装需要用户确认和 UAC；安装器会关闭界面与网关，正在处理的请求会中断。安装器在进入安装阶段后才移除旧版本，保留界面自启选择，但尚不提供安装失败后的回滚。未签名构建、签名无效或签名公钥更换时不执行下载文件，提供官方发布页以手动安装完整应用包。
+
+本次按用户要求只在本地格式化代码，构建、Rust / adapter / UIA 回归与安装升级验收交由 PR 的 Windows CI；DUCX 下载、扫码和用户网络条件仍需 Windows 真机验收。

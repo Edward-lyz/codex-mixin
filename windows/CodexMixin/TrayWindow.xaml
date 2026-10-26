@@ -51,6 +51,7 @@
      <Button Style="{StaticResource MenuRow}" AutomationProperties.Name="关于">
       <Grid><StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE946;" FontSize="16"/><TextBlock Text="关于"/></StackPanel><FontIcon Glyph="&#xE76C;" FontSize="12" HorizontalAlignment="Right"/></Grid>
       <Button.Flyout><MenuFlyout Placement="RightEdgeAlignedTop">
+       <MenuFlyoutItem Text="检查更新…" Tag="updates" Click="OnOpen"/>
        <MenuFlyoutItem Text="关于与日志…" Tag="settings" Click="OnOpen"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE946;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
       </MenuFlyout></Button.Flyout>
      </Button>
