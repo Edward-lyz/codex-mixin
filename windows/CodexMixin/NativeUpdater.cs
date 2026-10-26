@@ -24,6 +24,7 @@ internal sealed class NativeUpdater : IDisposable
     private bool disposed;
     internal bool Installing { get; private set; }
     private bool gatewayRunning;
+    private bool background;
     private readonly bool installed = IsInstalled();
 
     internal NativeUpdater(AppUpdates owner)
@@ -68,6 +69,7 @@ internal sealed class NativeUpdater : IDisposable
                 var permission = await owner.PrepareInstallAsync(token);
                 token.ThrowIfCancellationRequested();
                 gatewayRunning = permission.Running;
+                background = !((App)Microsoft.UI.Xaml.Application.Current).HasVisibleWindows;
                 Installing = permission.Allowed;
                 ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(permission.Allowed);
                 if (!permission.Allowed) owner.FinishUpdate(owner.Status);
