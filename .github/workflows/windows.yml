@@ -106,6 +106,9 @@ jobs:
       - name: Test CLI adapter
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release
+      - name: Compile UI automation harness
+        shell: pwsh
+        run: dotnet build windows/UiTests/UiTests.csproj -c Release
       - name: Generate native icons
         shell: pwsh
         run: ./windows/scripts/generate-windows-assets.ps1
@@ -159,6 +162,7 @@ jobs:
         run: |
           $dumpPath = Join-Path $env:RUNNER_TEMP 'native-dumps'
           New-Item -ItemType Directory -Force $dumpPath | Out-Null
+          New-Item -ItemType Directory -Force windows/build/ui-test-artifacts | Out-Null
           $key = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\codex_mixin_ui.exe'
           New-Item -Path $key -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpFolder -Value $dumpPath -PropertyType ExpandString -Force | Out-Null
