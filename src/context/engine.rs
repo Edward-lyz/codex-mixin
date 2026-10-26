@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -8,18 +8,13 @@ use serde_json::{Value, json};
 
 use super::checkpoint;
 use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
-use super::store::{LeaseState, SegmentRow, Store, TurnSample};
+use super::store::{SegmentRow, Store, TurnSample};
 use super::tools;
 use super::types::{
     CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SESSION_SEPARATOR,
     SegmentKind, SessionStats, SessionSummary, StatsTotals, Tier, TurnView, estimate_item_tokens,
     estimate_text_tokens, is_context_tool, session_display_name,
 };
-
-/// A turn is serialized against other turns of the same session, so a lease
-/// must outlive one model exchange but not leak after a crash. The TTL only
-/// guards against a holder that died without releasing.
-pub(crate) const LEASE_TTL_SECONDS: i64 = 30 * 60;
 
 /// How long a turn waits for the live holder before it is refused.
 ///
@@ -34,6 +29,9 @@ pub(crate) const LEASE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct ContextEngine {
     store: Mutex<Store>,
+    lease_directory: PathBuf,
+    #[cfg(test)]
+    _temporary_directory: Option<tempfile::TempDir>,
     settings: crate::config::ContextSettings,
     /// Instructions text that owns a raw session key, keyed by that key.
     ///
@@ -45,26 +43,10 @@ pub struct ContextEngine {
     anchors: Mutex<HashMap<String, String>>,
 }
 
-/// Held for the whole turn; the session becomes usable again on drop.
+/// The OS releases the session lock on drop, cancellation, or process exit.
 pub struct Lease {
-    engine: std::sync::Arc<ContextEngine>,
-    session: String,
-    owner: String,
-}
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        match self.engine.lock() {
-            Ok(mut store) => {
-                if let Err(error) = store.release_lease(&self.session, &self.owner) {
-                    tracing::warn!(error = %error, "failed to release context lease");
-                }
-            }
-            Err(error) => {
-                tracing::warn!(error = %error, "failed to lock the context store to release a lease");
-            }
-        }
-    }
+    _file: std::fs::File,
+    _engine: std::sync::Arc<ContextEngine>,
 }
 
 #[derive(Clone, Debug)]
@@ -78,8 +60,15 @@ impl ContextEngine {
     pub fn open(settings: crate::config::ContextSettings, path: &Path) -> Result<Self> {
         settings.validate()?;
         let store = Store::open(path)?;
+        let lease_directory = std::fs::canonicalize(path)
+            .context("resolve context database for session locks")?
+            .with_extension("locks");
+        crate::platform::ensure_owner_only_dir(&lease_directory)?;
         Ok(Self {
             store: Mutex::new(store),
+            lease_directory,
+            #[cfg(test)]
+            _temporary_directory: None,
             settings,
             anchors: Mutex::new(HashMap::new()),
         })
@@ -88,8 +77,11 @@ impl ContextEngine {
     #[cfg(test)]
     pub fn open_in_memory(settings: crate::config::ContextSettings) -> Result<Self> {
         let store = Store::open_in_memory()?;
+        let directory = tempfile::tempdir().context("create context test locks")?;
         Ok(Self {
             store: Mutex::new(store),
+            lease_directory: directory.path().to_owned(),
+            _temporary_directory: Some(directory),
             settings,
             anchors: Mutex::new(HashMap::new()),
         })
@@ -120,17 +112,28 @@ impl ContextEngine {
         self: &std::sync::Arc<Self>,
         session: &str,
     ) -> Result<Option<Lease>> {
-        let owner = uuid::Uuid::new_v4().to_string();
-        let state = self
-            .lock()?
-            .acquire_lease(session, &owner, LEASE_TTL_SECONDS)?;
-        if state == LeaseState::Busy {
-            return Ok(None);
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session.as_bytes());
+        // Keep the inode: unlinking a released lock file can let two open
+        // handles lock different files for the same session. Names contain no
+        // session text, and the files hold no archived content.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.lease_directory.join(format!("{id}.lock")))
+            .context("open context session lock")?;
+        crate::platform::set_owner_only_mode_on(&file)?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(error).context("lock context session");
+            }
         }
         Ok(Some(Lease {
-            engine: std::sync::Arc::clone(self),
-            session: session.to_owned(),
-            owner,
+            _file: file,
+            _engine: std::sync::Arc::clone(self),
         }))
     }
 
@@ -150,7 +153,13 @@ impl ContextEngine {
     ) -> Result<Lease> {
         let deadline = Instant::now() + wait;
         loop {
-            if let Some(lease) = self.try_acquire_lease(session)? {
+            let engine = std::sync::Arc::clone(self);
+            let session = session.to_owned();
+            if let Some(lease) =
+                tokio::task::spawn_blocking(move || engine.try_acquire_lease(&session))
+                    .await
+                    .context("join context session lock acquisition")??
+            {
                 return Ok(lease);
             }
             if Instant::now() >= deadline {
@@ -636,7 +645,14 @@ impl ContextEngine {
                     row.session
                         .split(SESSION_SEPARATOR)
                         .next()
-                        .is_some_and(|label| label.eq_ignore_ascii_case(client.display_name()))
+                        .is_some_and(|label| {
+                            label.eq_ignore_ascii_case(client.display_name())
+                                // Generic routing keeps the archive identity, but may
+                                // still resolve a native client's exact title/alias.
+                                || (label == "gateway"
+                                    && (row.codex_thread_id.is_none()
+                                        || client == crate::gateway_access::GatewayClient::Codex))
+                        })
                 })
                 .collect();
             let wanted: HashSet<&str> = rows
@@ -1822,6 +1838,80 @@ mod tests {
             .execute_tool(&session, view.revision - 1, TOOL_STATUS, &json!({}), 10_000)
             .expect_err("stale revision");
         assert!(format!("{error}").contains("context revision changed"));
+    }
+
+    #[test]
+    fn native_session_lock_ignores_legacy_rows_and_protects_other_engines() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("context.db");
+        let first = std::sync::Arc::new(ContextEngine::open(settings(), &path).unwrap());
+        rusqlite::Connection::open(&path).unwrap().execute(
+            "INSERT INTO leases (session_key, owner, acquired_at, expires_at) VALUES ('legacy-session','dead-owner',0,9223372036854775807)", [],
+        ).unwrap();
+        let lease = first.try_acquire_lease("legacy-session").unwrap().unwrap();
+        let second = std::sync::Arc::new(ContextEngine::open(settings(), &path).unwrap());
+        assert!(
+            second
+                .try_acquire_lease("legacy-session")
+                .unwrap()
+                .is_none(),
+            "opening another engine must not revoke a live native lock"
+        );
+        assert!(
+            second
+                .try_acquire_lease("independent-session")
+                .unwrap()
+                .is_some()
+        );
+        drop(lease);
+        assert!(
+            second
+                .try_acquire_lease("legacy-session")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn crash_releases_session_without_waiting_for_database_expiry() {
+        const CHILD_DB: &str = "MIXIN_CRASH_LEASE_TEST_DB";
+        if let Some(path) = std::env::var_os(CHILD_DB) {
+            let path = std::path::PathBuf::from(path);
+            let engine = std::sync::Arc::new(
+                ContextEngine::open(crate::config::ContextSettings::default(), &path).unwrap(),
+            );
+            let _lease = engine.try_acquire_lease("crash-session").unwrap().unwrap();
+            std::fs::write(path.with_extension("ready"), b"locked").unwrap();
+            loop {
+                std::thread::park();
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("context.db");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "context::engine::tests::crash_releases_session_without_waiting_for_database_expiry", "--nocapture"])
+            .env(CHILD_DB, &path)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !path.with_extension("ready").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let ready = path.with_extension("ready").exists();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(
+            ready,
+            "child must acquire the real session lock before termination"
+        );
+        let engine = std::sync::Arc::new(
+            ContextEngine::open(crate::config::ContextSettings::default(), &path).unwrap(),
+        );
+        assert!(
+            engine.try_acquire_lease("crash-session").unwrap().is_some(),
+            "a dead process must not strand the session for 30 minutes"
+        );
     }
 
     #[test]
