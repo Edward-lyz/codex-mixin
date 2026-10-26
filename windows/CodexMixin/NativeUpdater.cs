@@ -44,6 +44,7 @@ internal sealed class NativeUpdater : IDisposable
         if (!initialized)
         {
             SetDetails("Edward-lyz", "Codex Mixin", AppUpdates.GuiVersion);
+            SetBuildVersion(AppUpdates.GuiVersion);
             SetAutomatic(0); // AppUpdates owns the hourly/idle policy.
             SetFeed($"https://github.com/Edward-lyz/codex-mixin/releases/latest/download/appcast-windows-x86_64{(installed ? "" : "-portable")}.xml");
             var key = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "WinSparkle.PublicKey.txt")).Trim();
@@ -54,7 +55,7 @@ internal sealed class NativeUpdater : IDisposable
         }
     }
 
-    internal void Start() { Initialize(); CheckAndInstall(); }
+    internal void Start(string currentVersion) { Initialize(); SetBuildVersion(currentVersion); CheckAndInstall(); }
 
     private int CanShutdown()
     {
@@ -154,6 +155,7 @@ internal sealed class NativeUpdater : IDisposable
     [DllImport(Library, EntryPoint = "win_sparkle_init", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)] private static extern void Init();
     [DllImport(Library, EntryPoint = "win_sparkle_cleanup", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)] private static extern void Cleanup();
     [DllImport(Library, EntryPoint = "win_sparkle_set_app_details", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, CharSet = CharSet.Unicode)] private static extern void SetDetails(string company, string name, string version);
+    [DllImport(Library, EntryPoint = "win_sparkle_set_app_build_version", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, CharSet = CharSet.Unicode)] private static extern void SetBuildVersion(string version);
     [DllImport(Library, EntryPoint = "win_sparkle_set_appcast_url", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)] private static extern void SetFeed([MarshalAs(UnmanagedType.LPUTF8Str)] string url);
     [DllImport(Library, EntryPoint = "win_sparkle_set_eddsa_public_key", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)] private static extern int SetPublicKey([MarshalAs(UnmanagedType.LPUTF8Str)] string key);
     [DllImport(Library, EntryPoint = "win_sparkle_set_automatic_check_for_updates", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)] private static extern void SetAutomatic(int enabled);

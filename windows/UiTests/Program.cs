@@ -306,8 +306,13 @@ internal static class Program
                 foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("context", "上下文"), ("providers", "模型与服务") })
                 {
                     var elapsed = Stopwatch.StartNew();
-                    Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(SelectionItemPattern.Pattern, out _), $"ready console tab {role}", process);
-                    ((SelectionItemPattern)Find(window, $"console-{role}-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+                    Wait(() =>
+                    {
+                        // Maximization can rebuild peers between separate readiness and selection queries.
+                        var selection = (SelectionItemPattern)Find(window, $"console-{role}-tab").GetCurrentPattern(SelectionItemPattern.Pattern);
+                        selection.Select();
+                        return true;
+                    }, $"select console tab {role}", process);
                     Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
                     navigationMs[$"{role}-{navigationPass}"] = elapsed.Elapsed.TotalMilliseconds;
                     if ((nint)window.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))

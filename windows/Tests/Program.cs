@@ -226,7 +226,8 @@ Check("Windows updates compare GUI and CLI versions before selecting a complete 
     Assert(newer.Portable.AbsoluteUri.EndsWith("/codex-mixin-0.10.0-windows-x86_64.zip", StringComparison.Ordinal), "Portable update selected a CLI-only archive");
     Assert(!Release("1.0.0", "1.0.0", "1.0.0").IsNewer, "Equal version triggered an update");
     Assert(!Release("1.1.0", "1.0.0", "1.1.0").IsNewer, "Update would downgrade the current bundle");
-    Assert(Release("1.0.0", "1.0.1", "1.0.1").IsNewer, "Older bundled CLI was not repaired");
+    var cliRepair = Release("1.0.0", "1.0.1", "1.0.1");
+    Assert(cliRepair.IsNewer && cliRepair.CurrentVersion == "1.0.0", "WinSparkle would skip repair of an older bundled CLI");
     Assert(Release("1.0.1", "1.0.1", "1.0.0").IsNewer, "Older GUI was not repaired");
     await Failure(() => Task.FromResult(Release("1.0.0", "1.0.1", "1.1.0")));
     foreach (var invalid in new[] { "", "1.2", "1.2.3.4", "1.2.3-beta", "v1.2.3", "../1.2.3", "01.2.3", "999999999999.0.0" })

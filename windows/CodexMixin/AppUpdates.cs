@@ -92,7 +92,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
             updater ??= new NativeUpdater(this);
             updating = true;
             Status = $"正在更新到 {Release.Version}：下载和验签由 WinSparkle 处理，完成后自动安装并重启。";
-            updater.Start();
+            updater.Start(Release.CurrentVersion);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { Status = "更新检查已取消。"; }
         catch (Exception error)

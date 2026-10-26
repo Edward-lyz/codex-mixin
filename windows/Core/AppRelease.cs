@@ -7,10 +7,11 @@ internal sealed class AppRelease
     internal const string ReleasesUrl = "https://github.com/Edward-lyz/codex-mixin/releases/latest";
     internal string Version { get; }
     internal bool IsNewer { get; }
+    internal string CurrentVersion { get; }
     internal Uri Installer => new($"https://github.com/Edward-lyz/codex-mixin/releases/download/v{Version}/codex-mixin-{Version}-windows-x86_64-setup.exe");
     internal Uri Portable => new($"https://github.com/Edward-lyz/codex-mixin/releases/download/v{Version}/codex-mixin-{Version}-windows-x86_64.zip");
 
-    private AppRelease(string version, bool isNewer) { Version = version; IsNewer = isNewer; }
+    private AppRelease(string version, string currentVersion, bool isNewer) { Version = version; CurrentVersion = currentVersion; IsNewer = isNewer; }
 
     internal static AppRelease Parse(JsonElement metadata, string guiVersion)
     {
@@ -29,6 +30,6 @@ internal sealed class AppRelease
         var gui = StableVersion(guiVersion);
         if ((cli > latest && gui < latest) || (gui > latest && cli < latest))
             throw new CliFailure("GUI 与 CLI 版本不一致，升级会降级其中一个组件。请从发布页选择完整应用包。");
-        return new AppRelease(latestText, latest >= cli && latest >= gui && (latest > cli || latest > gui));
+        return new AppRelease(latestText, (cli < gui ? cli : gui).ToString(3), latest >= cli && latest >= gui && (latest > cli || latest > gui));
     }
 }
