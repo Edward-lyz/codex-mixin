@@ -91,7 +91,7 @@ internal static class Json
         foreach (var preset in presets)
         {
             Text(preset, "display_name");
-            if (Text(preset, "auth_mode") is not ("api_key" or "local_oauth" or "aws_sigv4"))
+            if (Text(preset, "auth_mode") is not ("api_key" or "local_oauth" or "local_session" or "aws_sigv4"))
                 throw new CliFailure("CLI provider catalog 包含不支持的认证方式。");
             foreach (var key in new[] { "api_key_required", "custom_endpoint", "quota_username_required", "quota_credentials_required" })
                 Flag(preset, key);

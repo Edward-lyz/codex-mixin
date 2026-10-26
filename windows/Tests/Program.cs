@@ -371,6 +371,15 @@ if (realCli is not null)
             var agy = presets.Single(row => Json.Text(row, "id") == "agy");
             Assert(Json.Text(agy, "auth_mode") == "local_oauth" && !Json.Flag(agy, "api_key_required"),
                 "Antigravity must support local OAuth without an API key");
+            foreach (var id in new[] { "kiro", "agy-business" })
+            {
+                var preset = presets.Single(row => Json.Text(row, "id") == id);
+                Assert(Json.Text(preset, "auth_mode") == "local_session" && !Json.Flag(preset, "api_key_required"),
+                    $"{id} must support a local session without an API key");
+            }
+            var invalidAuth = System.Text.Json.Nodes.JsonNode.Parse(metadata.GetRawText())!;
+            invalidAuth["provider_catalog"]!["presets"]![0]!["auth_mode"] = "unsupported";
+            await Failure(() => { Json.Interface(JsonSerializer.SerializeToElement(invalidAuth)); return Task.CompletedTask; });
             Assert(Json.Rows(Json.Field(catalog, "protocols")).Any(row => Json.Text(row, "id") == "google_gemini"),
                 "The CLI must expose the Gemini protocol to the Windows picker");
             var status = await client.QueryAsync(["service", "status", "--json"], CancellationToken.None);
