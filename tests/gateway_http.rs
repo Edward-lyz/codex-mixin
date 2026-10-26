@@ -105,7 +105,7 @@ struct ProtocolRouteState {
 struct FusionMockState {
     requests: Arc<Mutex<Vec<Value>>>,
     failing_models: Arc<Vec<String>>,
-    panel_delay: Duration,
+    panel_barrier: Option<Arc<tokio::sync::Barrier>>,
     active_panels: Arc<AtomicUsize>,
     max_active_panels: Arc<AtomicUsize>,
 }
@@ -371,7 +371,7 @@ async fn spawn_baidu_protocol_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
 }
 
 async fn spawn_fusion_mock_upstream(
-    panel_delay: Duration,
+    panel_barrier: Option<Arc<tokio::sync::Barrier>>,
     failing_models: Vec<&str>,
 ) -> (String, Arc<Mutex<Vec<Value>>>, Arc<AtomicUsize>) {
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -379,7 +379,7 @@ async fn spawn_fusion_mock_upstream(
     let state = FusionMockState {
         requests: requests.clone(),
         failing_models: Arc::new(failing_models.into_iter().map(str::to_owned).collect()),
-        panel_delay,
+        panel_barrier,
         active_panels: Arc::new(AtomicUsize::new(0)),
         max_active_panels: max_active_panels.clone(),
     };
@@ -395,7 +395,9 @@ async fn spawn_fusion_mock_upstream(
                     if is_panel {
                         let active = state.active_panels.fetch_add(1, Ordering::SeqCst) + 1;
                         state.max_active_panels.fetch_max(active, Ordering::SeqCst);
-                        tokio::time::sleep(state.panel_delay).await;
+                        if let Some(barrier) = &state.panel_barrier {
+                            barrier.wait().await;
+                        }
                         state.active_panels.fetch_sub(1, Ordering::SeqCst);
                     }
                     if state.failing_models.contains(&model) {
@@ -4342,8 +4344,9 @@ async fn fusion_can_hide_intermediate_results() {
 
 #[tokio::test]
 async fn fusion_panels_run_concurrently() {
-    let delay = Duration::from_millis(200);
-    let (upstream_url, _, max_active) = spawn_fusion_mock_upstream(delay, Vec::new()).await;
+    // Hold both requests until they meet instead of racing the runner's scheduling.
+    let (upstream_url, requests, max_active) =
+        spawn_fusion_mock_upstream(Some(Arc::new(tokio::sync::Barrier::new(2))), Vec::new()).await;
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![fusion_profile()];
     let gateway_url = spawn_gateway_with_config(config).await;
@@ -4357,8 +4360,20 @@ async fn fusion_panels_run_concurrently() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let _ = response.text().await.unwrap();
+    let body = tokio::time::timeout(Duration::from_secs(15), response.text())
+        .await
+        .expect("Fusion panel requests must overlap")
+        .unwrap();
+    assert!(body.contains("response.completed"), "{body}");
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request["model"] == "judge"),
+        "both panels must succeed before the judge runs"
+    );
 }
 
 #[tokio::test]
@@ -4510,8 +4525,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
 
 #[tokio::test]
 async fn fusion_degrades_on_partial_and_total_panel_failure() {
-    let (upstream_url, requests, _) =
-        spawn_fusion_mock_upstream(Duration::ZERO, vec!["panel-b"]).await;
+    let (upstream_url, requests, _) = spawn_fusion_mock_upstream(None, vec!["panel-b"]).await;
     let mut partial_profile = fusion_profile();
     partial_profile.min_successful = 1;
     let mut config = test_config(upstream_url);
@@ -4537,7 +4551,7 @@ async fn fusion_degrades_on_partial_and_total_panel_failure() {
     );
 
     let (upstream_url, requests, _) =
-        spawn_fusion_mock_upstream(Duration::ZERO, vec!["panel-a", "panel-b"]).await;
+        spawn_fusion_mock_upstream(None, vec!["panel-a", "panel-b"]).await;
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![fusion_profile()];
     let gateway_url = spawn_gateway_with_config(config).await;
