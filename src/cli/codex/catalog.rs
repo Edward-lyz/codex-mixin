@@ -375,7 +375,7 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     if let Some(account_catalog) =
         tokio::task::spawn_blocking(load_official_account_catalog).await??
     {
-        apply_account_speed_tiers(&mut official_catalog, &account_catalog)?;
+        apply_account_model_metadata(&mut official_catalog, &account_catalog)?;
     }
     let gateway_config = GatewayConfig::from_stored_config()?;
     filter_official_catalog(
@@ -404,7 +404,7 @@ async fn load_official_catalog_for_sync(
     if let Some(mut cached) = load_template_catalog(Some(official_cache))? {
         codex_mixin::catalog::official::validate_catalog(&cached)?;
         if let Some(account_catalog) = account_catalog {
-            apply_account_speed_tiers(&mut cached, account_catalog)?;
+            apply_account_model_metadata(&mut cached, account_catalog)?;
         }
         return Ok(Some(cached));
     }
@@ -451,12 +451,12 @@ async fn load_preferred_official_catalog(
         }
     };
     if let (Some(template), Some(account_catalog)) = (&mut template, account_catalog) {
-        apply_account_speed_tiers(template, account_catalog)?;
+        apply_account_model_metadata(template, account_catalog)?;
     }
     Ok(template)
 }
 
-fn apply_account_speed_tiers(
+fn apply_account_model_metadata(
     template: &mut serde_json::Value,
     account_catalog: &serde_json::Value,
 ) -> anyhow::Result<()> {
@@ -490,8 +490,7 @@ fn apply_account_speed_tiers(
         let model = model
             .as_object_mut()
             .ok_or_else(|| anyhow::anyhow!("official template model must be an object"))?;
-        // Replace rather than union: an account may lose a tier or explicitly
-        // advertise none. Unrelated public model metadata stays authoritative.
+        // An account may lose a tier or explicitly advertise none.
         for field in ["service_tiers", "additional_speed_tiers"] {
             match account_model.get(field) {
                 Some(value) => {
@@ -501,6 +500,34 @@ fn apply_account_speed_tiers(
                     model.remove(field);
                 }
             }
+        }
+        // Missing context fields retain the template value; explicit nulls
+        // clear optional limits. Instructions and tools stay with the template.
+        for field in [
+            "context_window",
+            "max_context_window",
+            "auto_compact_token_limit",
+        ] {
+            if let Some(value) = account_model.get(field) {
+                anyhow::ensure!(
+                    value.is_null() || value.as_i64().is_some_and(|limit| limit > 0),
+                    "official account model {field} must be null or a positive 64-bit integer"
+                );
+                model.insert(field.to_owned(), value.clone());
+            }
+        }
+        if let (Some(window), Some(maximum)) = (
+            model
+                .get("context_window")
+                .and_then(serde_json::Value::as_i64),
+            model
+                .get("max_context_window")
+                .and_then(serde_json::Value::as_i64),
+        ) {
+            anyhow::ensure!(
+                window <= maximum,
+                "official account context_window exceeds max_context_window"
+            );
         }
     }
     Ok(())
@@ -627,7 +654,9 @@ mod account_cache_regressions {
         let account = json!({
             "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
             "codex_mixin_account_id":"current-account",
-            "models":[{"slug":"gpt-test","additional_speed_tiers":["fast"]}]
+            "models":[{"slug":"gpt-test","context_window":500000,
+                "max_context_window":872000,"auto_compact_token_limit":null,
+                "additional_speed_tiers":["fast"]}]
         });
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -641,7 +670,12 @@ mod account_cache_regressions {
         .unwrap()
         .unwrap()
         .unwrap();
-        assert_eq!(result["models"][0]["context_window"], 1000);
+        assert_eq!(result["models"][0]["context_window"], 500000);
+        assert_eq!(result["models"][0]["max_context_window"], 872000);
+        assert_eq!(
+            result["models"][0].get("auto_compact_token_limit"),
+            Some(&json!(null))
+        );
         assert_eq!(
             result["models"][0]["additional_speed_tiers"],
             json!(["fast"])
@@ -655,6 +689,12 @@ mod account_cache_regressions {
             load_template_catalog(Some(&cache)).unwrap().unwrap(),
             template
         );
+        let without_account =
+            load_official_catalog_for_sync(&format!("http://{address}/models"), &cache, None)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(without_account, template);
     }
 
     #[tokio::test]
@@ -706,27 +746,31 @@ mod account_cache_regressions {
     }
 
     #[test]
-    fn account_speed_tiers_replace_only_matching_official_model_fields() {
+    fn account_metadata_replaces_only_matching_official_model_fields() {
         let mut template = json!({"models":[
-            {"slug":"gpt-test","context_window":1000,
+            {"slug":"gpt-test","context_window":272000,"max_context_window":872000,
+                "auto_compact_token_limit":250000,"base_instructions":"public instructions",
+                "input_modalities":["text","image"],
                 "additional_speed_tiers":["fast"],"service_tiers":[{"id":"priority"}]},
-            {"slug":"gpt-test-custom","codex_mixin_managed":true,
+            {"slug":"gpt-test-provider","codex_mixin_managed":true,"context_window":1000,
                 "additional_speed_tiers":["fast"],"service_tiers":[{"id":"priority"}]},
-            {"slug":"gpt-other","service_tiers":[{"id":"priority"}]}
+            {"slug":"gpt-other","context_window":272000,"service_tiers":[{"id":"priority"}]}
         ]});
         let original = template.clone();
         let account = json!({
             "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
             "codex_mixin_account_id":"current-account",
             "models":[
-                {"slug":"gpt-test","context_window":2000,
+                {"slug":"gpt-test","context_window":500000,"max_context_window":872000,
+                    "auto_compact_token_limit":null,"base_instructions":"account instructions",
+                    "input_modalities":["text"],
                     "additional_speed_tiers":["fast","new-speed"],
                     "service_tiers":[{"id":"priority"},{"id":"new-speed"}]},
-                {"slug":"gpt-test-custom","service_tiers":[{"id":"new-speed"}]},
-                {"slug":"account-only","service_tiers":[{"id":"new-speed"}]}
+                {"slug":"gpt-test-provider","context_window":500000,"service_tiers":[{"id":"new-speed"}]},
+                {"slug":"account-only","context_window":500000,"service_tiers":[{"id":"new-speed"}]}
             ]
         });
-        apply_account_speed_tiers(&mut template, &account).unwrap();
+        apply_account_model_metadata(&mut template, &account).unwrap();
         assert_eq!(
             template["models"][0]["service_tiers"],
             account["models"][0]["service_tiers"]
@@ -735,10 +779,158 @@ mod account_cache_regressions {
             template["models"][0]["additional_speed_tiers"],
             account["models"][0]["additional_speed_tiers"]
         );
-        assert_eq!(template["models"][0]["context_window"], 1000);
+        for field in [
+            "context_window",
+            "max_context_window",
+            "auto_compact_token_limit",
+        ] {
+            assert_eq!(
+                template["models"][0].get(field),
+                account["models"][0].get(field)
+            );
+        }
+        for field in ["base_instructions", "input_modalities"] {
+            assert_eq!(template["models"][0][field], original["models"][0][field]);
+        }
         assert_eq!(template["models"][1], original["models"][1]);
         assert_eq!(template["models"][2], original["models"][2]);
         assert_eq!(template["models"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn account_context_changes_replace_previous_values() {
+        let mut template = json!({"models":[{
+            "slug":"gpt-test","context_window":272000,"max_context_window":872000,
+            "auto_compact_token_limit":250000
+        }]});
+        for (window, maximum, compact) in [(500000, 872000, 450000), (128000, 256000, 100000)] {
+            let account = json!({
+                "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+                "codex_mixin_account_id":"current-account",
+                "models":[{"slug":"gpt-test","context_window":window,
+                    "max_context_window":maximum,"auto_compact_token_limit":compact}]
+            });
+            apply_account_model_metadata(&mut template, &account).unwrap();
+            assert_eq!(template["models"][0], account["models"][0]);
+        }
+    }
+
+    #[test]
+    fn account_context_omissions_preserve_template_and_nulls_clear_values() {
+        let mut template = json!({"models":[{
+            "slug":"gpt-test","context_window":272000,"max_context_window":872000,
+            "auto_compact_token_limit":250000
+        }]});
+        let mut account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[{"slug":"gpt-test","context_window":500000}]
+        });
+        apply_account_model_metadata(&mut template, &account).unwrap();
+        assert_eq!(template["models"][0]["context_window"], 500000);
+        assert_eq!(template["models"][0]["max_context_window"], 872000);
+        assert_eq!(template["models"][0]["auto_compact_token_limit"], 250000);
+
+        account["models"][0] = json!({"slug":"gpt-test","max_context_window":null,
+            "auto_compact_token_limit":null});
+        apply_account_model_metadata(&mut template, &account).unwrap();
+        assert_eq!(template["models"][0]["context_window"], 500000);
+        for field in ["max_context_window", "auto_compact_token_limit"] {
+            assert_eq!(template["models"][0].get(field), Some(&json!(null)));
+        }
+    }
+
+    #[test]
+    fn invalid_account_context_metadata_is_rejected() {
+        for field in [
+            "context_window",
+            "max_context_window",
+            "auto_compact_token_limit",
+        ] {
+            for invalid in [
+                json!(0),
+                json!(-1),
+                json!("500000"),
+                json!(true),
+                json!(1.5),
+                json!(u64::MAX),
+            ] {
+                let mut template = json!({"models":[{"slug":"gpt-test","context_window":272000}]});
+                let mut account = json!({
+                    "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+                    "codex_mixin_account_id":"current-account","models":[{"slug":"gpt-test"}]
+                });
+                account["models"][0][field] = invalid;
+                let error = apply_account_model_metadata(&mut template, &account).unwrap_err();
+                assert!(error.to_string().contains(field));
+            }
+        }
+        let mut template = json!({"models":[{"slug":"gpt-test","context_window":272000}]});
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[{"slug":"gpt-test","context_window":500000,"max_context_window":272000}]
+        });
+        assert!(apply_account_model_metadata(&mut template, &account).is_err());
+    }
+
+    #[test]
+    fn managed_account_entries_cannot_override_official_metadata() {
+        let mut template = json!({"models":[{"slug":"gpt-test","context_window":272000}]});
+        let original = template.clone();
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[{"slug":"gpt-test","codex_mixin_managed":true,"context_window":500000}]
+        });
+        apply_account_model_metadata(&mut template, &account).unwrap();
+        assert_eq!(template, original);
+    }
+
+    #[test]
+    fn manual_context_override_wins_until_cleared_after_account_refresh() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        let catalog_path = directory.path().join("mixin-models.json");
+        let header = codex_mixin::clients::codex::MANAGED_HEADER;
+        fs::write(&config_path, format!(
+            "{header}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
+            catalog_path.to_string_lossy()
+        )).unwrap();
+        fs::write(&catalog_path, r#"{"models":[]}"#).unwrap();
+        let public = json!({"models":[{
+            "slug":"gpt-test","context_window":272000,"max_context_window":872000
+        }]});
+        let overrides = BTreeMap::from([("gpt-test".to_owned(), 600000)]);
+        for window in [500000, 400000] {
+            let mut template = public.clone();
+            let account = json!({
+                "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+                "codex_mixin_account_id":"current-account",
+                "models":[{"slug":"gpt-test","context_window":window,"max_context_window":872000}]
+            });
+            apply_account_model_metadata(&mut template, &account).unwrap();
+            refresh_managed_codex_catalog_from_official(
+                &config_path,
+                &template,
+                None,
+                None,
+                &overrides,
+            )
+            .unwrap();
+            let catalog = load_template_catalog(Some(&catalog_path)).unwrap().unwrap();
+            assert_eq!(catalog["models"][0]["context_window"], 600000);
+            refresh_managed_codex_catalog_from_official(
+                &config_path,
+                &template,
+                None,
+                None,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+            let restored = load_template_catalog(Some(&catalog_path)).unwrap().unwrap();
+            assert_eq!(restored["models"][0]["context_window"], window);
+        }
     }
 
     #[test]
@@ -757,7 +949,7 @@ mod account_cache_regressions {
                 "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
                 "codex_mixin_account_id":"current-account","models":[account_model]
             });
-            apply_account_speed_tiers(&mut template, &account).unwrap();
+            apply_account_model_metadata(&mut template, &account).unwrap();
             for field in ["service_tiers", "additional_speed_tiers"] {
                 assert_eq!(
                     template["models"][0].get(field),
@@ -768,19 +960,22 @@ mod account_cache_regressions {
     }
 
     #[test]
-    fn public_or_unbound_catalogs_cannot_override_account_speed_tiers() {
-        let template = json!({"models":[{"slug":"gpt-test","service_tiers":[{"id":"priority"}]}]});
+    fn public_or_unbound_catalogs_cannot_override_account_metadata() {
+        let template = json!({"models":[{"slug":"gpt-test","context_window":272000,
+            "service_tiers":[{"id":"priority"}]}]});
         for (source, account) in [
             (OFFICIAL_CATALOG_URL, "current-account"),
             ("https://chatgpt.com/backend-api/codex/models", ""),
             ("", "current-account"),
         ] {
             let mut candidate = template.clone();
-            apply_account_speed_tiers(
+            apply_account_model_metadata(
                 &mut candidate,
                 &json!({
                     "codex_mixin_source":source,"codex_mixin_account_id":account,
-                    "models":[{"slug":"gpt-test","service_tiers":[{"id":"ultrafast"}]}]
+                    "models":[{"slug":"gpt-test","context_window":500000,
+                        "max_context_window":872000,"auto_compact_token_limit":450000,
+                        "service_tiers":[{"id":"ultrafast"}]}]
                 }),
             )
             .unwrap();
@@ -810,11 +1005,17 @@ mod account_cache_regressions {
     }
 
     #[tokio::test]
-    async fn public_template_refresh_preserves_account_speed_tiers() {
+    async fn public_template_refresh_preserves_account_metadata() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
         let directory = tempfile::tempdir().unwrap();
         let template_cache = directory.path().join("official-template.json");
         let public = json!({"models":[{
             "slug":"gpt-test",
+            "context_window":272000,"max_context_window":872000,"auto_compact_token_limit":250000,
             "additional_speed_tiers":["fast"],
             "service_tiers":[{"id":"priority","name":"Fast"}]
         }]});
@@ -823,15 +1024,19 @@ mod account_cache_regressions {
             "codex_mixin_account_id":"current-account",
             "models":[{
                 "slug":"gpt-test",
+                "context_window":500000,"max_context_window":872000,"auto_compact_token_limit":null,
                 "additional_speed_tiers":["fast","ultrafast"],
                 "service_tiers":[{"id":"priority","name":"Fast"},
                     {"id":"ultrafast","name":"Ultrafast"}]
             }]
         });
         let public_response = public.clone();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
         let app = axum::Router::new().route(
             "/models",
             axum::routing::get(move || {
+                count.fetch_add(1, Ordering::SeqCst);
                 let response = public_response.clone();
                 async move { axum::Json(response) }
             }),
@@ -840,9 +1045,10 @@ mod account_cache_regressions {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         for _ in 0..2 {
-            let merged = load_preferred_official_catalog(
-                &format!("http://{address}/models"),
+            let merged = load_codex_install_template_online(
+                true,
                 &template_cache,
+                &format!("http://{address}/models"),
                 || anyhow::bail!("public success must not read the legacy fallback"),
                 Some(&account),
             )
@@ -857,10 +1063,21 @@ mod account_cache_regressions {
                 merged["models"][0]["additional_speed_tiers"],
                 account["models"][0]["additional_speed_tiers"]
             );
+            for field in [
+                "context_window",
+                "max_context_window",
+                "auto_compact_token_limit",
+            ] {
+                assert_eq!(
+                    merged["models"][0].get(field),
+                    account["models"][0].get(field)
+                );
+            }
             let cached: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&template_cache).unwrap()).unwrap();
             assert_eq!(cached["models"], public["models"]);
         }
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
         server.abort();
     }
 

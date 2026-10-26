@@ -1,6 +1,6 @@
 # 官方模型清单
 
-官方 GPT 模型的元数据直接取自 OpenAI Codex 仓库里的 [models.json](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，实际下载地址是：
+官方 GPT 模型的公共模板取自 OpenAI Codex 仓库里的 [models.json](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，实际下载地址是：
 
 ```text
 https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json
@@ -19,14 +19,22 @@ codex-mixin --no-tui provider discover official
 codex-mixin --no-tui provider list --json
 ```
 
-缓存文件是 `~/.codex-mixin/official-models.json`；设置了 `CODEX_GATEWAY_CONFIG` 时，缓存和配置文件放在同一目录。文件里的 `codex_mixin_source` 字段记录清单来源。
+模型发现缓存是 `~/.codex-mixin/official-models.json`，公共模板缓存是 `~/.codex-mixin/official-template.json`；设置了 `CODEX_GATEWAY_CONFIG` 时，缓存和配置文件放在同一目录。文件里的 `codex_mixin_source` 字段记录清单来源。
 
 刷新会保留完整的元数据，包括 context window、reasoning levels、input modalities 和隐藏条目，其中 `visibility=hide` 的模型不会出现在选择器里。选了哪些模型、上下文怎么覆盖，仍由 Mixin 管理。
+
+已登录官方订阅账号时，Codex 托管目录复用现有账号模型发现缓存，将同名官方模型的
+`context_window`、`max_context_window` 和 `auto_compact_token_limit` 与官方账号返回值同步，
+同时保留公共模板的指令和工具定义。这一步只合并本地元数据，不增加网络请求、模型探测
+或 token 消耗；安装、手动同步和后台刷新使用相同规则。自定义 Provider 模型不受影响。
+账号切换或退出后不再使用旧账号缓存；没有匹配的账号元数据时保留公共模板。
+账号未提供的字段保留模板值，显式 `null` 则清除原值；非法数值或窗口超过最大窗口时
+报错，不写入生成的托管目录。
 
 官方模型的 `official_model_contexts` 覆盖同时用于 Codex 和其他托管客户端的
 模型配置，包括 Pi、OpenCode、DSH、Claude Code 和 Claude Desktop。覆盖值必须
 大于 0，且不能超过官方清单的 `max_context_window`；清除覆盖后恢复清单中的
-原始窗口。修改后 Mixin 会同步已安装客户端，运行中的客户端需要重新加载。
+原始窗口（Codex 优先使用当前账号同步后的窗口）。修改后 Mixin 会同步已安装客户端，运行中的客户端需要重新加载。
 Pi、OpenCode 和 DSH 接收精确窗口；Claude Code 使用其 `[1m]` 模型标记，
 Claude Desktop 使用 `supports1m`，只有窗口至少为 1M 时才启用，不能表达任意
 自定义窗口大小。设置窗口不会提高官方服务端实际允许的上限。
