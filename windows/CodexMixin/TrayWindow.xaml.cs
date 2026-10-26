@@ -102,10 +102,7 @@ public sealed partial class TrayWindow : Window
         var bounds = NativeShell.PanelBounds();
         maximumHeight = bounds.Height;
         // Start compact even before XAML has a root; remote reads never size the window.
-        var initialHeight = Math.Min(bounds.Height, bounds.Width);
-        bounds.Y += bounds.Height - initialHeight;
-        bounds.Height = initialHeight;
-        AppWindow.MoveAndResize(bounds);
+        AppWindow.MoveAndResize(NativeShell.PanelBounds(Math.Min(bounds.Height, bounds.Width)));
         // The console may have changed the style since this cached panel last showed.
         quotaStyle = QuotaView.Stored();
         RenderQuota();
@@ -372,9 +369,8 @@ public sealed partial class TrayWindow : Window
             var footer = PanelMenu.DesiredSize.Height + 14;
             PanelScroll.MaxHeight = Math.Max(1, maximumHeight / scale - footer);
             var height = Math.Min(maximumHeight, (int)Math.Ceiling((Math.Min(PanelContent.DesiredSize.Height, PanelScroll.MaxHeight) + footer) * scale));
-            var bottom = AppWindow.Position.Y + AppWindow.Size.Height;
             if (height != AppWindow.Size.Height)
-                AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(AppWindow.Position.X, bottom - height, AppWindow.Size.Width, height));
+                AppWindow.MoveAndResize(NativeShell.PanelBounds(height));
         }
         finally { fitting = false; }
     }

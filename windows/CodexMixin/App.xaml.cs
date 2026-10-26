@@ -37,7 +37,7 @@ public partial class App : Application
     internal async Task<bool> ConfirmDraftsAsync()
     {
         foreach (var target in windows.Values.Where(target => target.HasDraftChanges).ToArray())
-            if (!await target.ConfirmDiscardAsync("退出或安装更新", discard: false)) return false;
+            if (!await target.ConfirmDiscardAsync("退出应用", discard: false)) return false;
         return true;
     }
 

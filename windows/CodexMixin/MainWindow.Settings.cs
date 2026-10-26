@@ -118,8 +118,12 @@ public sealed partial class MainWindow
         AutomationProperties.SetAutomationId(status, "app-update-status");
         var check = Button("检查更新", () => updates.CheckAsync());
         AutomationProperties.SetAutomationId(check, "check-app-updates");
-        var install = Button("安装并重启…", InstallUpdateAsync, primary: true);
-        AutomationProperties.SetAutomationId(install, "install-app-update");
+        var installer = Button("下载完整安装包", async () =>
+        {
+            var uri = updates.Release?.Installer ?? new Uri(AppRelease.ReleasesUrl);
+            if (!await Launcher.LaunchUriAsync(uri)) throw new IOException("无法打开下载地址。");
+        });
+        AutomationProperties.SetAutomationId(installer, "download-app-installer");
         var download = Button("打开完整便携包下载", async () =>
         {
             var uri = updates.Release?.Portable ?? new Uri(AppRelease.ReleasesUrl);
@@ -131,7 +135,7 @@ public sealed partial class MainWindow
         });
         var automatic = new CheckBox
         {
-            Content = "自动检查并准备更新（每小时；安装需要确认）",
+            Content = "自动检查更新（每小时）",
             IsChecked = updates.Automatic
         };
         automatic.Click += (_, _) =>
@@ -144,28 +148,15 @@ public sealed partial class MainWindow
             if (token.IsCancellationRequested) return;
             status.Text = updates.Status;
             check.IsEnabled = !updates.Busy;
-            install.IsEnabled = updates.Ready && !updates.Busy;
-            install.Visibility = updates.Installed ? Visibility.Visible : Visibility.Collapsed;
         }
         updates.Changed += RefreshUpdateState;
         token.Register(() => updates.Changed -= RefreshUpdateState);
         RefreshUpdateState();
         var actions = Row();
-        actions.Children.Add(check); actions.Children.Add(install); actions.Children.Add(download); actions.Children.Add(releases);
+        actions.Children.Add(check); actions.Children.Add(installer); actions.Children.Add(download); actions.Children.Add(releases);
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(status); body.Children.Add(automatic); body.Children.Add(actions);
-        body.Children.Add(Text("安装版会校验 Windows 签名及发布者。未签名构建或发布者密钥变更时，请从官方发布页手动下载完整应用包。便携版需退出后替换整个目录。"));
+        body.Children.Add(Text("下载由浏览器处理。安装前请完成请求并退出应用；安装器需要管理员权限，会关闭网关，尚无失败回滚。便携版需退出后替换整个目录。"));
         return Card("应用更新", $"GUI {AppUpdates.GuiVersion} · 完整应用包包含 GUI、CLI 和运行时", body);
-    }
-
-    private async Task InstallUpdateAsync()
-    {
-        var app = (App)Microsoft.UI.Xaml.Application.Current;
-        if (app.HasPendingChanges) throw new InvalidOperationException("请等待当前配置操作完成后安装更新。");
-        if (!await app.ConfirmDraftsAsync()) return;
-        ShowMain();
-        if (!await ConfirmAsync("安装更新并重启？", "安装器需要管理员权限，并会关闭界面和网关进程。正在执行的请求会中断，请先完成当前工作。", "安装")) return;
-        if (await ExecuteUiAsync("启动应用安装器", token => app.Updates.LaunchInstallerAsync(token)))
-            await app.ExitAllAsync();
     }
 }

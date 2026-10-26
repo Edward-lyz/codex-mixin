@@ -207,6 +207,13 @@ App 保管生命周期，UI 保管草稿，Operations 保管动作执行，core 
 
 Windows CI 发现 icacls /restore 在移除 SeSecurityPrivilege 后失败，因此撤回该优化，恢复使用 Windows PowerShell / .NET 仅持久化 DACL 的既有实现。保留当前用户、SYSTEM、Administrators 的 FullControl、继承保护及移除额外授权的安全断言，不缓存 ACL 安全结论。定时 Codex catalog 刷新仍在 blocking worker 执行并跳过积压 tick；尚未测得性能收益，也未证明原 BUG 的唯一根因。
 
-整包更新由 GUI 管理：每小时检查、受限下载、Windows 签名和同发布者公钥校验、失败退避、安装版 / 便携版分流，以及明确确认后请求 UAC。安装会终止网关请求，尚无失败回滚；未签名应用或签名公钥轮换必须手动下载。安装器移除旧版本的时机改为进入安装阶段，并保留 GUI 自启。
+二次审查后，更新范围收敛为 GUI 每小时检查完整包版本、通知和浏览器手动下载官方安装包 / ZIP；移除自建下载、缓存、PowerShell 验签、公钥绑定和 UAC 启动链。GUI 与 CLI 共同参与版本比较。安装器仅在进入安装阶段后移除旧版本并保留 GUI 自启；安装会终止网关请求，尚无失败回滚。MSIX / App Installer 需先解决签名、最低 Windows 版本、独立 CLI / 网关服务与便携分发，再单独设计。
 
-新增 adapter / UIA / Windows ACL 回归覆盖 stdin EOF、独立查询槽、真实退出码、版本与整包选择、保存失败不报成功、连接草稿取消/放弃、Fusion 关闭确认与 ACL 的重复安全收敛。按用户要求，本地仅格式化；构建、静态门禁与运行验证只在 PR CI 执行。DUCX 真机扫码、安装中断/失败恢复与实际耗时仍需后续验收。
+导航与编辑页采用 SDK SelectorBar，标题栏改为 SDK TitleBar，单一比例条采用 ProgressBar；保留含多窗口语义的同心环及文本图例。上下文启用与模型覆盖改为保存后生效的 CheckBox，并接入统一草稿保护。操作期间使用 IsEnabled 禁止键盘与自动化继续编辑；草稿状态使用可见文本和 polite live region。托盘采用 NOTIFYICON_VERSION_4、NIN_SELECT / NIN_KEYSELECT / WM_CONTEXTMENU 和 Shell_NotifyIconGetRect，保留必要的 Win32 薄桥接。高对比度、缩放、多显示器与 Narrator 仍需真机验收。
+
+本次源码与官方 API 文档核对使用 Microsoft Learn 的 [SelectorBar](https://learn.microsoft.com/en-us/windows/apps/design/controls/selector-bar)、[TitleBar](https://learn.microsoft.com/en-us/windows/apps/design/controls/title-bar)、[Toggle 语义](https://learn.microsoft.com/en-us/windows/apps/design/controls/toggles)、[通知区域协议](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw) 与 [App Installer 更新](https://learn.microsoft.com/en-us/windows/msix/app-installer/auto-update-and-repair--overview)。这些核对不替代编译和交互验收。
+
+新增 adapter / UIA / Windows ACL 回归覆盖 stdin EOF、独立查询槽、真实退出码、版本与整包选择、保存失败不报成功、连接草稿取消/放弃、Fusion 关闭确认与 ACL 的重复安全收敛。本轮 Windows 修复按用户要求在本地仅格式化；Windows 构建、静态门禁与运行验证交由 PR CI 执行。DUCX 真机扫码、安装中断/失败恢复与实际耗时仍需后续验收。
+
+
+会话救援提交 f7f6134 已纳入同一分支：以系统文件锁替代 SQLite 的 30 分钟持久化租约，进程退出后由系统释放，保留同会话轮次串行和短数据库事务；锁文件不能在释放时删除，以免后续持有不同 inode。推理摘要与工具参数增量不再等整轮结束才发送，执行触发事件仍等待内部提交。救援会话已完成两个针对性回归和 macOS 本地 App 构建；这不代表 Windows 验收完成。系统锁与旧版持久化租约互不识别，不支持新旧网关同时共享同一归档库。

@@ -118,11 +118,11 @@ internal static class Program
                 new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))!;
             ((InvokePattern)refreshProviders.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-coder")) != null, "seeded provider editor", process);
-            ((TogglePattern)Find(window, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            ((SelectionItemPattern)Find(window, "provider-connection-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) != null, "connection draft editor", process);
             var originalUrl = ((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
             ((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).SetValue("not-a-url");
-            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            ((SelectionItemPattern)Find(window, "provider-models-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "connection draft confirmation", process);
             ((InvokePattern)Find(window, "CloseButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) == null, "cancelled draft navigation", process);
@@ -131,14 +131,21 @@ internal static class Program
             Wait(() => Find(window, "operation-status").Current.Name.Contains("失败", StringComparison.Ordinal), "invalid URL save failure", process);
             Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == "not-a-url", "Failed save cleared the connection draft");
             Assert(Find(window, "apply-changes").Current.HelpText.Contains("未应用", StringComparison.Ordinal), "Failed save reported success instead of retaining a dirty draft");
-            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            ((SelectionItemPattern)Find(window, "provider-models-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "discard connection draft", process);
             ((InvokePattern)Find(window, "PrimaryButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) == null, "model tab after discard", process);
-            ((TogglePattern)Find(window, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            ((SelectionItemPattern)Find(window, "provider-connection-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) != null, "saved connection after discard", process);
             Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == originalUrl, "Discard did not reload the saved connection");
-            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            ((SelectionItemPattern)Find(window, "provider-models-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+            // A failed operation remains a failed operation until a new read.
+            // Reactivating an already loaded page does not execute another read.
+            ((InvokePattern)refreshProviders.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "refresh after failed save", process);
+            var providersTab = (SelectionItemPattern)Find(window, "console-providers-tab").GetCurrentPattern(SelectionItemPattern.Pattern);
+            providersTab.Select();
+            Assert(providersTab.Current.IsSelected, "Reselecting the current page cleared its selection");
             for (var themeIndex = 0; themeIndex < 2; themeIndex++)
             {
                 var themeName = themeIndex == 0 ? "light" : "dark";
@@ -174,8 +181,25 @@ internal static class Program
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
                             .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway per-turn usage", process);
                     if (role == "context")
-                        Wait(() => Find(target, "context-enabled") != null && Find(target, "context-save") != null,
-                            "context settings controls", process);
+                    {
+                        var enabled = (TogglePattern)Find(target, "context-enabled").GetCurrentPattern(TogglePattern.Pattern);
+                        var savedState = enabled.Current.ToggleState;
+                        enabled.Toggle();
+                        Assert(Find(target, "apply-changes").Current.IsEnabled, "Context draft did not enable Apply");
+                        Assert(Find(target, "draft-summary").Current.Name.Contains("未应用", StringComparison.Ordinal), "Context draft has no visible state");
+                        ((SelectionItemPattern)Find(target, "console-agents-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "context navigation protects draft", process);
+                        ((InvokePattern)Find(target, "CloseButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) == null, "context navigation cancelled", process);
+                        Assert(enabled.Current.ToggleState != savedState, "Cancelling navigation lost context draft");
+                        Wait(() => ((SelectionItemPattern)Find(target, "console-context-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Current.IsSelected, "restored context selection after cancelled navigation", process);
+                        ((SelectionItemPattern)Find(target, "console-agents-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "discard context draft", process);
+                        ((InvokePattern)Find(target, "PrimaryButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        Wait(() => target.Current.Name == "Agent 接入管理" && Find(target, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "context draft discarded", process);
+                        target = OpenWindow(start, process, "context", "上下文");
+                        Assert(((TogglePattern)Find(target, "context-enabled").GetCurrentPattern(TogglePattern.Pattern)).Current.ToggleState == savedState, "Discarded context settings were retained");
+                    }
                     if (role == "settings" && target.FindFirst(TreeScope.Descendants,
                         new PropertyCondition(AutomationElement.NameProperty, "打开上下文设置")) != null)
                         throw new InvalidOperationException("Settings still has the redundant context entry");
@@ -195,11 +219,11 @@ internal static class Program
                     }
                     if (role == "providers")
                     {
-                        ((TogglePattern)Find(target, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                        ((SelectionItemPattern)Find(target, "provider-connection-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
                         Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "连接配置")) != null, "connection tab", process);
                         Capture(target, Path.Combine(output, $"connection-{themeName}.png"));
                         CaptureLower(target, Path.Combine(output, $"connection-lower-{themeName}.png"));
-                        ((TogglePattern)Find(target, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                        ((SelectionItemPattern)Find(target, "provider-models-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
                     }
                     if (role == "fusion")
                     {
@@ -221,12 +245,12 @@ internal static class Program
             upstream.QuotaRelease = releaseQuota;
             try
             {
-                ((TogglePattern)Find(window, "console-usage-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                ((SelectionItemPattern)Find(window, "console-usage-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
                 Wait(() => window.Current.Name == "用量明细" && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "usage loads without a supplier quota dependency", process);
                 if (window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "供应商额度")) != null)
                     throw new InvalidOperationException("Usage page still contains supplier quotas");
                 // Exercise the real tray notification path while remote quota is held.
-                PostMessage(trayOwner, 0x8001, 0, 0x202);
+                PostMessage(trayOwner, 0x8001, 0, 0x10401); // NOTIFYICON_VERSION_4: icon 1, NIN_KEYSELECT
                 AutomationElement? popup = null;
                 Wait(() =>
                 {
@@ -254,7 +278,7 @@ internal static class Program
                 PostMessage(popupHandle, 0x6, 1, 0); // WM_ACTIVATE / WA_ACTIVE
                 PostMessage(popupHandle, 0x6, 0, trayOwner); // WM_ACTIVATE / WA_INACTIVE
                 Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on deactivation during reload", process);
-                PostMessage(trayOwner, 0x8001, 0, 0x202);
+                PostMessage(trayOwner, 0x8001, 0, 0x10401); // NOTIFYICON_VERSION_4: icon 1, NIN_KEYSELECT
                 Wait(() => IsWindowVisible(popupHandle), "tray reopens during slow quota", process);
                 ((InvokePattern)Find(popup, "tray-refresh").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
                 Wait(() => Find(popup, "panel-status").Current.Name.Contains("正在刷新", StringComparison.Ordinal), "reopened tray starts a new read", process);
@@ -281,8 +305,8 @@ internal static class Program
                 foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("context", "上下文"), ("providers", "模型与服务") })
                 {
                     var elapsed = Stopwatch.StartNew();
-                    Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
-                    ((TogglePattern)Find(window, $"console-{role}-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                    Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(SelectionItemPattern.Pattern, out _), $"ready console tab {role}", process);
+                    ((SelectionItemPattern)Find(window, $"console-{role}-tab").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
                     Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
                     navigationMs[$"{role}-{navigationPass}"] = elapsed.Elapsed.TotalMilliseconds;
                     if ((nint)window.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))

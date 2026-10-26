@@ -3,7 +3,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Microsoft.Win32;
@@ -55,22 +54,24 @@ internal static class QuotaView
         key.SetValue(PreferenceName, style == QuotaStyle.Bar ? "bar" : "ring");
     }
 
-    internal static Border StyleSwitch(QuotaStyle current, Action<QuotaStyle> changed)
+    internal static SelectorBar StyleSwitch(QuotaStyle current, Action<QuotaStyle> changed)
     {
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        var selector = new SelectorBar { VerticalAlignment = VerticalAlignment.Center };
         foreach (var (style, label) in new[] { (QuotaStyle.Ring, "圆环"), (QuotaStyle.Bar, "条形") })
         {
-            var button = new ToggleButton { Style = Themed("Segment"), Content = label, IsChecked = style == current, FontSize = 12, Padding = new Thickness(10, 2, 10, 2) };
-            AutomationProperties.SetName(button, $"额度{label}展示");
-            button.Click += (_, _) =>
-            {
-                foreach (var other in buttons.Children.Cast<ToggleButton>()) other.IsChecked = other == button;
-                Store(style);
-                changed(style);
-            };
-            buttons.Children.Add(button);
+            var option = new SelectorBarItem { Text = label, Tag = (int)style };
+            AutomationProperties.SetName(option, $"额度{label}展示");
+            selector.Items.Add(option);
+            if (style == current) selector.SelectedItem = option;
         }
-        return new Border { Style = Themed("SegmentTrack"), Child = buttons, VerticalAlignment = VerticalAlignment.Center };
+        selector.SelectionChanged += (_, _) =>
+        {
+            if (selector.SelectedItem?.Tag is not int selected) return;
+            var style = (QuotaStyle)selected;
+            Store(style);
+            changed(style);
+        };
+        return selector;
     }
 
     /// <summary>Renders the quota windows of one provider.</summary>
@@ -97,7 +98,10 @@ internal static class QuotaView
         var currency = percent ? "" : Json.OptionalText(row, "currency") ?? "";
         var label = Json.OptionalText(row, "quota_id") switch
         {
-            "five_hour" => "5 小时", "weekly" => "每周", "monthly" => "每月", "balance" => "余额",
+            "five_hour" => "5 小时",
+            "weekly" => "每周",
+            "monthly" => "每月",
+            "balance" => "余额",
             _ => Json.OptionalText(row, "label") ?? Json.OptionalText(row, "quota_id") ?? "额度",
         };
         if (Json.OptionalText(row, "error") is { } error) return new Entry(label, "查询失败", null, error, null);
@@ -124,8 +128,6 @@ internal static class QuotaView
     internal static Brush RingBrush(int index) => index < RingBrushes.Length
         ? RingBrushes[index]
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
-
-    private static Brush Resource(string key) => (Brush)Microsoft.UI.Xaml.Application.Current.Resources[key];
 
     private static bool Warning(Entry entry) => entry.Ratio >= WarningRatio;
 
@@ -160,7 +162,9 @@ internal static class QuotaView
                 figure.Segments.Add(new ArcSegment
                 {
                     Point = new Point(center + radius * Math.Sin(angle), center - radius * Math.Cos(angle)),
-                    Size = new Size(radius, radius), IsLargeArc = angle > Math.PI, SweepDirection = SweepDirection.Clockwise,
+                    Size = new Size(radius, radius),
+                    IsLargeArc = angle > Math.PI,
+                    SweepDirection = SweepDirection.Clockwise,
                 });
                 var geometry = new PathGeometry();
                 geometry.Figures.Add(figure);
@@ -212,7 +216,7 @@ internal static class QuotaView
             Grid.SetColumn(value, 1); heading.Children.Add(value);
             var row = new StackPanel { Spacing = 6 };
             row.Children.Add(heading);
-            if (entry.Ratio is { } ratio) row.Children.Add(Bar(Math.Clamp(ratio, 0, 1), Resource(Warning(entry) ? "SystemFillColorCriticalBrush" : "AccentFillColorDefaultBrush")));
+            if (entry.Ratio is { } ratio) row.Children.Add(Bar(entry, ratio));
             body.Children.Add(row);
         }
         return body;
@@ -226,16 +230,18 @@ internal static class QuotaView
         return block;
     }
 
-    // Star columns size the fill without waiting for a layout pass.
-    private static Grid Bar(double fraction, Brush fill)
+    private static ProgressBar Bar(Entry entry, double ratio)
     {
-        var bar = new Grid { Height = 8 };
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(fraction, 0.0001), GridUnitType.Star) });
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(1 - fraction, 0.0001), GridUnitType.Star) });
-        var track = new Border { Style = Themed("BarTrack") };
-        Grid.SetColumnSpan(track, 2);
-        bar.Children.Add(track);
-        if (fraction > 0) bar.Children.Add(new Border { Style = Themed("BarFill"), Background = fill });
+        var bar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Value = Math.Clamp(ratio, 0, 1) * 100,
+            IsIndeterminate = false,
+            ShowError = Warning(entry),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(bar, $"{entry.Label}已用比例");
         return bar;
     }
 

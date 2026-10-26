@@ -8,6 +8,9 @@ internal sealed class NativeShell : IDisposable
 {
     private const uint TrayMessage = 0x8001;
     private const uint NotifyId = 1;
+    private const uint NotifyIconVersion = 4;
+    private static readonly Guid TrayGuid = new("3d00e42d-5ac5-49f9-b8bf-eabec79ad9f1");
+    private enum TaskbarEdge { Left, Right, Top, Bottom }
     private readonly nint window;
     private readonly SubclassProc procedure;
     private readonly Action<string> command;
@@ -37,7 +40,8 @@ internal sealed class NativeShell : IDisposable
         Size = (uint)Marshal.SizeOf<NotifyIconData>(),
         Window = window,
         Id = NotifyId,
-        Flags = 1 | 2 | 4,
+        Flags = 1 | 2 | 4 | 0x20 | 0x80, // Include GUID identity and the v4 tooltip.
+        Guid = TrayGuid,
         Callback = TrayMessage,
         Icon = icon,
         Tip = "Codex Mixin",
@@ -50,6 +54,13 @@ internal sealed class NativeShell : IDisposable
         var value = IconData();
         if (!ShellNotifyIcon(0, ref value))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建系统托盘图标。");
+        value.Version = NotifyIconVersion;
+        if (!ShellNotifyIcon(4, ref value)) // NIM_SETVERSION after every NIM_ADD.
+        {
+            var error = Marshal.GetLastWin32Error();
+            ShellNotifyIcon(2, ref value);
+            throw new Win32Exception(error, "无法启用系统托盘交互协议。");
+        }
     }
 
     internal void Show()
@@ -62,9 +73,9 @@ internal sealed class NativeShell : IDisposable
     internal bool NotifyUpdate(string version)
     {
         var notification = IconData();
-        notification.Flags = 0x10; // NIF_INFO
+        notification.Flags = 0x10 | 0x20; // NIF_INFO
         notification.InfoTitle = "Codex Mixin 有可用更新";
-        notification.Info = $"发现 {version}，单击查看完整应用包的准备与安装状态。";
+        notification.Info = $"发现 {version}，单击查看版本并下载完整应用包。";
         notification.InfoFlags = 1;
         return ShellNotifyIcon(1, ref notification);
     }
@@ -103,20 +114,56 @@ internal sealed class NativeShell : IDisposable
             info.Work.Top + (info.Work.Bottom - info.Work.Top - height) / 2, width, height);
     }
 
-    internal static Windows.Graphics.RectInt32 PanelBounds()
+    private static Rect TrayAnchor()
     {
-        GetCursorPos(out var position);
+        var identifier = new NotifyIconIdentifier
+        {
+            Size = (uint)Marshal.SizeOf<NotifyIconIdentifier>(),
+            Window = 0,
+            Id = 0,
+            Guid = TrayGuid
+        };
+        if (ShellNotifyIconGetRect(ref identifier, out var bounds) == 0) return bounds;
+        // Explorer may hide the icon in its overflow menu. Use the invocation
+        // point until the Shell can supply its rectangle again.
+        if (!GetCursorPos(out var cursor)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return new Rect { Left = cursor.X, Right = cursor.X, Top = cursor.Y, Bottom = cursor.Y };
+    }
+
+    internal static Windows.Graphics.RectInt32 PanelBounds(int? requestedHeight = null)
+    {
+        var anchor = TrayAnchor();
+        var position = new Point { X = (anchor.Left + anchor.Right) / 2, Y = (anchor.Top + anchor.Bottom) / 2 };
         var monitor = MonitorFromPoint(position, 2);
         var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
         if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        // AppWindow bounds are physical pixels; the panel layout is designed in 96-DPI units.
-        var result = GetDpiForMonitor(monitor, 0, out var dpi, out _);
-        if (result != 0) throw new Win32Exception(result);
-        var scale = dpi / 96.0;
-        var margin = (int)(8 * scale);
-        var width = Math.Min((int)(360 * scale), info.Work.Right - info.Work.Left - 2 * margin);
-        var height = Math.Min((int)(720 * scale), info.Work.Bottom - info.Work.Top - 2 * margin);
-        return new Windows.Graphics.RectInt32(Math.Clamp(position.X - width / 2, info.Work.Left + margin, info.Work.Right - width - margin), info.Work.Bottom - height - margin, width, height);
+        // AppWindow bounds are physical pixels, while the layout uses 96-DPI units.
+        Marshal.ThrowExceptionForHR(GetDpiForMonitor(monitor, 0, out var dpi, out _));
+        var margin = (int)(8 * dpi / 96.0);
+        var width = Math.Min((int)(360 * dpi / 96.0), info.Work.Right - info.Work.Left - 2 * margin);
+        var height = Math.Min(requestedHeight ?? int.MaxValue, Math.Min((int)(720 * dpi / 96.0), info.Work.Bottom - info.Work.Top - 2 * margin));
+        var edge = new[]
+        {
+            (Distance: Math.Abs(position.X - info.Work.Left), Edge: TaskbarEdge.Left),
+            (Distance: Math.Abs(position.X - info.Work.Right), Edge: TaskbarEdge.Right),
+            (Distance: Math.Abs(position.Y - info.Work.Top), Edge: TaskbarEdge.Top),
+            (Distance: Math.Abs(position.Y - info.Work.Bottom), Edge: TaskbarEdge.Bottom)
+        }.MinBy(candidate => candidate.Distance).Edge;
+        var x = edge switch
+        {
+            TaskbarEdge.Left => info.Work.Left + margin,
+            TaskbarEdge.Right => info.Work.Right - width - margin,
+            _ => position.X - width / 2
+        };
+        var y = edge switch
+        {
+            TaskbarEdge.Top => info.Work.Top + margin,
+            TaskbarEdge.Bottom => info.Work.Bottom - height - margin,
+            _ => position.Y - height / 2
+        };
+        return new Windows.Graphics.RectInt32(
+            Math.Clamp(x, info.Work.Left + margin, info.Work.Right - width - margin),
+            Math.Clamp(y, info.Work.Top + margin, info.Work.Bottom - height - margin), width, height);
     }
 
     private nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam, nuint id, nuint reference)
@@ -136,15 +183,16 @@ internal sealed class NativeShell : IDisposable
         }
         if (message == TrayMessage)
         {
-            if ((uint)lParam is 0x202 or 0x203) command("overview");
-            if ((uint)lParam == 0x205) ShowMenu();
-            if ((uint)lParam == 0x405) command("updates"); // NIN_BALLOONUSERCLICK
+            var notification = unchecked((uint)lParam.ToInt64()) & 0xffff;
+            if (notification is 0x400 or 0x401) command("overview"); // NIN_SELECT / NIN_KEYSELECT
+            if (notification == 0x7b) ShowMenu(wParam); // WM_CONTEXTMENU
+            if (notification == 0x405) command("updates"); // NIN_BALLOONUSERCLICK
             return 0;
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
     }
 
-    private void ShowMenu()
+    private void ShowMenu(nuint coordinates)
     {
         var menu = CreatePopupMenu();
         if (menu == 0) { command("tray-error"); return; }
@@ -159,7 +207,16 @@ internal sealed class NativeShell : IDisposable
             AppendMenu(menu, 0, 5, "退出应用");
             AppendMenu(menu, 0, 7, "Fusion 设置…");
             AppendMenu(menu, 0, 8, "上下文设置…");
-            GetCursorPos(out var position);
+            var position = new Point
+            {
+                X = unchecked((short)(coordinates & 0xffff)),
+                Y = unchecked((short)((coordinates >> 16) & 0xffff))
+            };
+            if (position.X == -1 && position.Y == -1)
+            {
+                var anchor = TrayAnchor();
+                position = new Point { X = (anchor.Left + anchor.Right) / 2, Y = anchor.Bottom };
+            }
             SetForegroundWindow(window);
             var selected = TrackPopupMenu(menu, 0x100 | 0x2, position.X, position.Y, 0, window, 0);
             PostMessage(window, 0, 0, 0);
@@ -217,6 +274,8 @@ internal sealed class NativeShell : IDisposable
     private struct MonitorInfo { internal uint Size; internal Rect Monitor; internal Rect Work; internal uint Flags; }
     [StructLayout(LayoutKind.Sequential)]
     private struct MinMaxInfo { internal Point Reserved; internal Point MaxSize; internal Point MaxPosition; internal Point MinTrack; internal Point MaxTrack; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NotifyIconIdentifier { internal uint Size; internal nint Window; internal uint Id; internal Guid Guid; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NotifyIconData
     {
@@ -239,6 +298,8 @@ internal sealed class NativeShell : IDisposable
     [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShellNotifyIcon(uint message, ref NotifyIconData value);
+    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconGetRect")]
+    private static extern int ShellNotifyIconGetRect(ref NotifyIconIdentifier identifier, out Rect bounds);
     [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint LoadImage(nint instance, string name, uint type, int width, int height, uint flags);
     [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyIcon(nint icon);
