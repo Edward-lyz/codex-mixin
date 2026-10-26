@@ -76,7 +76,8 @@ fn restrict_windows_acl(path: &Path, directory: bool) -> anyhow::Result<()> {
     let name = path
         .file_name()
         .context("private ACL path has no name")?
-        .to_string_lossy();
+        .to_str()
+        .context("private ACL path is not valid Unicode")?;
     anyhow::ensure!(
         !name.contains(['\r', '\n']),
         "private ACL path contains a line break"
