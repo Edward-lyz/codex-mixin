@@ -55,6 +55,38 @@ internal sealed class NativeShell : IDisposable
 
     internal void Hide() => ShowWindow(window, 0);
 
+    internal static void ConfigurePopupFrame(nint handle)
+    {
+        // WinUI can retain the sizing frame after SetBorderAndTitleBar(false,
+        // false). Remove it after all presenter options have set their styles.
+        const int windowStyle = -16;
+        const long captionAndSizingFrame = 0x00c40000;
+        var style = GetWindowLongPtr(handle, windowStyle);
+        if (SetWindowLongPtr(handle, windowStyle, (nint)(style.ToInt64() & ~captionAndSizingFrame)) == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!SetWindowPos(handle, 0, 0, 0, 0, 0, 0x37))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        const int borderColorAttribute = 34;
+        const uint noBorder = 0xfffffffe;
+        var color = noBorder;
+        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, borderColorAttribute, ref color, sizeof(uint)));
+    }
+
+    internal static Windows.Graphics.RectInt32 ConsoleBounds()
+    {
+        GetCursorPos(out var position);
+        var monitor = MonitorFromPoint(position, 2);
+        var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        Marshal.ThrowExceptionForHR(GetDpiForMonitor(monitor, 0, out var dpi, out _));
+        var scale = dpi / 96.0;
+        var width = Math.Min((int)(1440 * scale), (int)((info.Work.Right - info.Work.Left) * 0.92));
+        var height = Math.Min((int)(960 * scale), (int)((info.Work.Bottom - info.Work.Top) * 0.92));
+        return new Windows.Graphics.RectInt32(info.Work.Left + (info.Work.Right - info.Work.Left - width) / 2,
+            info.Work.Top + (info.Work.Bottom - info.Work.Top - height) / 2, width, height);
+    }
+
     internal static Windows.Graphics.RectInt32 PanelBounds()
     {
         GetCursorPos(out var position);
@@ -196,4 +228,8 @@ internal sealed class NativeShell : IDisposable
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out Point position);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, int attribute, ref uint value, int size);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)] private static extern nint GetWindowLongPtr(nint window, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
 }

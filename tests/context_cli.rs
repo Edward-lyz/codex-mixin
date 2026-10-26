@@ -1,5 +1,7 @@
 //! CLI contract of the context console page: settings and statistics JSON.
 
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 use std::process::Output;
 
@@ -97,6 +99,49 @@ fn context_cli_reports_settings_and_empty_stats() {
 }
 
 #[test]
+fn context_save_preserves_commit_state_when_gateway_restart_fails() {
+    use codex_mixin::config::{
+        StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
+    };
+    use codex_mixin::provider::custom_provider;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let config_path = root.join("config.json");
+    let mut provider = custom_provider("local", "fixture-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.model_source = codex_mixin::provider::ProviderModelSource::Static;
+    save_stored_config_to_path(
+        &config_path,
+        &StoredGatewayConfig {
+            providers: vec![provider],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    // A directory is not valid runtime metadata. The real restart path must
+    // report failure after saving, without touching any user's service.
+    fs::create_dir(root.join("runtime.json")).unwrap();
+    let result = cli(
+        root,
+        &root.join("context.db"),
+        &["context", "config", "set", "--enabled", "true", "--json"],
+    );
+    assert!(!result.status.success());
+    let errors = String::from_utf8(result.stderr).unwrap();
+    let envelope: Value = serde_json::from_str(errors.lines().last().unwrap()).unwrap();
+    assert_eq!(envelope["error"]["committed"], true);
+    assert_eq!(envelope["error"]["stage"], "context gateway restart");
+    assert!(
+        load_stored_config_from_path(&config_path)
+            .unwrap()
+            .unwrap()
+            .context
+            .enabled
+    );
+}
+
+#[test]
 fn context_settings_json_matches_shell_decoders() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("context.db");
@@ -155,6 +200,10 @@ fn context_cli_rejects_bad_settings_without_saving() {
     ));
     assert_eq!(saved["context"]["enabled"], true);
     assert_eq!(saved["context"]["growth_threshold_tokens"], 60000);
+    assert!(
+        !directory.path().join("runtime.json").exists(),
+        "offline settings must not start a gateway"
+    );
 
     let rejected = cli(
         directory.path(),
@@ -401,5 +450,47 @@ fn stats_client_titles_rename() {
             .unwrap()
             .iter()
             .any(|row| row["display"] == "Renamed DSH task")
+    );
+}
+
+#[test]
+fn stats_keep_previews_when_client_title_stores_are_corrupt() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let dsh = directory.path().join("home/.dsh/storages");
+    let claude = directory.path().join("home/.claude/projects/workspace");
+    fs::create_dir_all(&dsh).unwrap();
+    fs::create_dir_all(&claude).unwrap();
+    // A corrupted client store must not hide the usage rows.
+    fs::write(dsh.join("session_projcache.json"), "{not json").unwrap();
+    fs::write(claude.join("sessions-index.json"), "{not json").unwrap();
+    let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
+    for client in ["DSH", "Claude"] {
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, client.as_bytes());
+        engine
+            .begin_turn(
+                &format!("{client}{SESSION_SEPARATOR}{id}"),
+                &[message("user", "Recover this session")],
+                10_000,
+            )
+            .unwrap();
+    }
+    let stats = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    let displays = stats["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["display"].as_str().unwrap().to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        displays,
+        BTreeSet::from([
+            "Claude / Recover this session".to_owned(),
+            "DSH / Recover this session".to_owned()
+        ])
     );
 }

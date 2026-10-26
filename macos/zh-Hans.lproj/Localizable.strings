@@ -279,7 +279,7 @@
 
 "console.page.context" = "上下文";
 "context.enabled" = "启用上下文引擎";
-"context.restartNote" = "网关重启后生效。";
+"context.restartNote" = "保存更改后自动重启运行中的网关并生效。";
 "context.section.settings" = "上下文引擎";
 "context.section.limits" = "限制";
 "context.section.stats" = "上下文统计";

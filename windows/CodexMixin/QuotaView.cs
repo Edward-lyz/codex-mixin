@@ -172,7 +172,8 @@ internal static class QuotaView
         // The center shows the tightest window, the one that runs out first.
         if (entries.Where(entry => entry.Ratio != null).MaxBy(entry => entry.Ratio) is { Ratio: { } ratio } tightest)
         {
-            var label = new TextBlock { Text = Percent(ratio), Foreground = Warning(tightest) ? Resource("SystemFillColorCriticalBrush") : Resource("TextFillColorPrimaryBrush"), FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Width = RingDiameter, TextAlignment = TextAlignment.Center };
+            var label = new TextBlock { Text = Percent(ratio), Style = Themed(Warning(tightest) ? "QuotaPercentCritical" : "QuotaPercent"), FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Width = RingDiameter, TextAlignment = TextAlignment.Center };
+            AutomationProperties.SetAutomationId(label, "quota-ring-percent");
             Canvas.SetTop(label, center - 13);
             canvas.Children.Add(label);
         }
@@ -190,7 +191,7 @@ internal static class QuotaView
         var label = new TextBlock { Text = entry.Label, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         Grid.SetColumn(label, 1); heading.Children.Add(label);
         var percent = new TextBlock { Text = entry.Ratio is { } ratio ? Percent(ratio) : "—", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
-        if (Warning(entry)) percent.Foreground = Resource("SystemFillColorCriticalBrush");
+        percent.Style = Themed(Warning(entry) ? "QuotaPercentCritical" : "QuotaPercent");
         Grid.SetColumn(percent, 2); heading.Children.Add(percent);
         var row = new StackPanel { Spacing = 1 };
         row.Children.Add(heading);

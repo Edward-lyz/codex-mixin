@@ -2374,7 +2374,6 @@ function contextSettingsCard(context) {
     await runAction(null, "context_configure", { enabled }, { ok: enabled ? "已开启上下文引擎" : "已关闭上下文引擎" });
     await loadContext();
   });
-  const restart = actionButton("重启网关", "service_restart", null, { ok: "网关已重启" }, "btn-ghost");
   const rows = [
     ["增长阈值", settings.growth_threshold_tokens ? compact(settings.growth_threshold_tokens) + " tokens" : "\u2014"],
     ["压力 / 紧急阈值", fixed((settings.pressure_ratio ?? 0) * 100, 0, "%") + " / " + fixed((settings.urgent_ratio ?? 0) * 100, 0, "%")],
@@ -2391,7 +2390,7 @@ function contextSettingsCard(context) {
       h(
         "div",
         { class: "row-main" },
-        h("div", { class: "row-title", text: "启用上下文引擎", title: "开关在网关重启后生效" }),
+        h("div", { class: "row-title", text: "启用上下文引擎", title: "保存更改后自动重启运行中的网关并生效" }),
       ),
       toggle,
     ),
@@ -2404,7 +2403,7 @@ function contextSettingsCard(context) {
       ),
     ),
   );
-  return card("上下文引擎", null, body, [restart]);
+  return card("上下文引擎", null, body);
 }
 
 function contextMetrics(totals) {

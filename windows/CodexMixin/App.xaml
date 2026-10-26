@@ -78,6 +78,12 @@
       <Style x:Key="MonoPrimary" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
       </Style>
+      <Style x:Key="QuotaPercent" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+      </Style>
+      <Style x:Key="QuotaPercentCritical" TargetType="TextBlock" BasedOn="{StaticResource QuotaPercent}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+      </Style>
       <Style x:Key="MonoSuccess" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
         <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessBrush}" />
       </Style>

@@ -12,7 +12,9 @@ use super::managed_auth::*;
 use super::managed_config::*;
 use super::restore_imagegen_skill;
 use crate::cli::metadata::load_model_metadata_resolver;
-use crate::cli::official_models::{filter_official_catalog, official_template_cache_path};
+use crate::cli::official_models::{
+    filter_official_catalog, load_official_account_catalog, official_template_cache_path,
+};
 use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::application::provider::normalize_base_url;
 use codex_mixin::catalog::apply_auto_review_override;
@@ -117,11 +119,17 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
+    let account_catalog = if codex_oauth_proxy {
+        tokio::task::spawn_blocking(load_official_account_catalog).await??
+    } else {
+        None
+    };
     let mut template = load_codex_install_template_online(
         codex_oauth_proxy,
         &official_template_cache_path(),
         codex_mixin::catalog::official::OFFICIAL_CATALOG_URL,
         || Ok(None),
+        account_catalog.as_ref(),
     )
     .await?;
     if let Some(template) = &mut template {

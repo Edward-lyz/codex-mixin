@@ -15,10 +15,10 @@ use crate::cli::refresh_default_managed_codex_catalog;
 pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
     let changes = discover_models_with_output(id, false).await?;
     if id == OFFICIAL_PROVIDER_ID {
-        if !changes.added.is_empty() || !changes.removed.is_empty() {
-            refresh_default_managed_codex_catalog().await?;
-            crate::cli::sync_installed_client_models()?;
-        }
+        // Account-only metadata such as speed tiers is not represented by
+        // ProviderModel, so it can change without a model-list delta.
+        refresh_default_managed_codex_catalog().await?;
+        crate::cli::sync_installed_client_models()?;
         return Ok(());
     }
     if !changes.auto_selected.is_empty() {

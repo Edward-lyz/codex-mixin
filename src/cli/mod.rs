@@ -828,7 +828,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ),
         },
         Command::Info { json } => status(json).await,
-        Command::Context { command } => context::run(command),
+        Command::Context { command } => context::run(command).await,
         Command::Ech { command } => ech::run(command).await,
         Command::Fusion { command } => match command {
             FusionCommand::Models { json } => fusion_config::model_options(json),

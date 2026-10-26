@@ -106,6 +106,16 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
   </tr>
 </table>
 
+Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控制台管理模型与服务、Agent 接入、用量明细和上下文。
+
+<p align="center">
+  <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows 浅色模式托盘，显示网关状态与额度圆环"></a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows 控制台的模型与服务页面"></a>
+</p>
+
 界面说明见 Wiki 的 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。截图中的模型和统计值仅反映采集时状态。
 
 ---

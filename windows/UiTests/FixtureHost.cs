@@ -85,8 +85,17 @@ internal sealed class FixtureHost : IDisposable
                 var bytes = Encoding.UTF8.GetBytes(response);
                 context.Response.ContentType = contentType;
                 context.Response.ContentLength64 = bytes.Length;
-                await context.Response.OutputStream.WriteAsync(bytes, lifetime.Token);
-                context.Response.Close();
+                try
+                {
+                    await context.Response.OutputStream.WriteAsync(bytes, lifetime.Token);
+                    context.Response.Close();
+                }
+                catch (HttpListenerException error) when (error.NativeErrorCode is 64 or 995 or 1229)
+                {
+                    // Explicit refresh cancels the held quota child process. A
+                    // disconnected quota client must not terminate the fixture.
+                    context.Response.Abort();
+                }
             }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }

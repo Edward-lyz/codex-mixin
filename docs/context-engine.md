@@ -25,7 +25,10 @@ codex-mixin context config get --json
 | `max_tier` | 允许产生的最高压缩层级（1-3），用于消融实验 | 3 |
 | `guidance_only` | 只注入压缩指引、不注入压缩工具（仅消融实验） | `false` |
 
-CLI 只改配置，不启动网关：`codex-mixin context config set --growth-threshold-tokens 40000`。
+CLI 保存实际改动后自动重启正在运行的网关一次，例如
+`codex-mixin context config set --growth-threshold-tokens 40000`。
+未改动的设置不重启；已停止的网关保持停止。保存成功但重启失败时，CLI 返回非零退出码，
+`--json-errors` 的错误标记 `committed: true` 与 `stage: "context gateway restart"`，设置不会回滚。
 窗口参数接受 `none`（清除）与正整数（0 报错）。消融实验用
 `--enabled false`、`--guidance-only true`、`--max-tier 1` 和默认配置四组区分
 原有流程、仅指引、仅 T1 与完整三级压缩；`max_tier` 超限时压缩失败并返回
@@ -155,7 +158,8 @@ checkpoint 绑定会话与 revision：
 Web 控制面板的「上下文」页把开关与统计放在一起：顶部开关直接调用
 `context config set`，其余卡片展示会话数、压缩次数、节省 token 与缓存命中，
 下方表格按会话列出消息数、压缩次数、节省量、当前视图 token 与缓存命中率。
-开关与其他设置只在网关重启后生效，页面提供「重启网关」。
+Windows、macOS 与 Web 使用同一保存流程：CLI 保存后自动重启运行中的网关使设置生效，
+无需再单独点击重启；无改动时不重启，网关原本停止时仅保存。
 
 数据来自 `context stats --json`（同一份数据也可在终端查看）：
 

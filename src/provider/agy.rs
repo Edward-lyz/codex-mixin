@@ -155,9 +155,9 @@ struct ModelEntry {
     id: Option<String>,
     #[serde(default, alias = "displayName")]
     label: Option<String>,
-    #[serde(default, alias = "inputTokenLimit")]
+    #[serde(default, alias = "inputTokenLimit", alias = "maxTokens")]
     context_window: Option<u64>,
-    #[serde(default, alias = "outputTokenLimit")]
+    #[serde(default, alias = "outputTokenLimit", alias = "maxOutputTokens")]
     max_output_tokens: Option<u64>,
     #[serde(default, alias = "supportsImages")]
     supports_image: Option<bool>,

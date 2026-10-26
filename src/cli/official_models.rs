@@ -13,6 +13,7 @@ use codex_mixin::catalog::official::{
 use codex_mixin::platform::write_atomic_if_changed;
 
 pub(super) const OFFICIAL_PROVIDER_ID: &str = "official";
+const OFFICIAL_ACCOUNT_CATALOG_URL: &str = "https://chatgpt.com/backend-api/codex/models";
 const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";
 const OFFICIAL_TEMPLATE_CACHE_FILE: &str = "official-template.json";
 
@@ -28,27 +29,51 @@ pub(super) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
         Some(catalog) => Some(catalog),
         None => load_template_catalog(None)?,
     };
+    catalog_for_current_account(catalog, || {
+        codex_mixin::provider::official_account_id(
+            &super::codex::codex_home_path().join("auth.json"),
+        )
+    })
+}
+
+fn catalog_for_current_account(
+    catalog: Option<Value>,
+    current_account: impl FnOnce() -> anyhow::Result<Option<String>>,
+) -> anyhow::Result<Option<Value>> {
     if let Some(account) = catalog
         .as_ref()
         .and_then(|catalog| catalog.get("codex_mixin_account_id"))
         .and_then(Value::as_str)
-        && codex_mixin::provider::official_account_id(
-            &super::codex::codex_home_path().join("auth.json"),
-        )?
-        .as_deref()
-            != Some(account)
+        && current_account()?.as_deref() != Some(account)
     {
         return Ok(None);
     }
     Ok(catalog)
 }
 
+pub(super) fn load_official_account_catalog() -> anyhow::Result<Option<Value>> {
+    let catalog = load_template_catalog(Some(&official_models_cache_path()))?
+        .filter(is_official_account_catalog);
+    catalog_for_current_account(catalog, || {
+        codex_mixin::provider::official_account_id(
+            &super::codex::codex_home_path().join("auth.json"),
+        )
+    })
+}
+
+pub(super) fn is_official_account_catalog(catalog: &Value) -> bool {
+    catalog.get("codex_mixin_source").and_then(Value::as_str) == Some(OFFICIAL_ACCOUNT_CATALOG_URL)
+        && catalog
+            .get("codex_mixin_account_id")
+            .and_then(Value::as_str)
+            .is_some_and(|account| !account.is_empty())
+}
+
 pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
     let auth = super::codex::codex_home_path().join("auth.json");
     if codex_mixin::provider::official_auth_available(&auth)? {
         let mut catalog = codex_mixin::provider::fetch_official_resource(&auth, true).await?;
-        catalog["codex_mixin_source"] =
-            serde_json::json!("https://chatgpt.com/backend-api/codex/models");
+        catalog["codex_mixin_source"] = serde_json::json!(OFFICIAL_ACCOUNT_CATALOG_URL);
         return write_official_models_cache(&catalog, &official_models_cache_path());
     }
     refresh_official_models_to_path(OFFICIAL_CATALOG_URL, &official_models_cache_path()).await
@@ -240,6 +265,44 @@ fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderM
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn account_catalog_requires_matching_account_and_api_source() {
+        let catalog = serde_json::json!({
+            "codex_mixin_source":super::OFFICIAL_ACCOUNT_CATALOG_URL,
+            "codex_mixin_account_id":"current-account",
+            "models":[{"slug":"gpt-test","service_tiers":[{"id":"ultrafast"}]}]
+        });
+        let current = super::catalog_for_current_account(Some(catalog.clone()), || {
+            Ok(Some("current-account".to_owned()))
+        })
+        .unwrap()
+        .filter(super::is_official_account_catalog);
+        assert_eq!(current, Some(catalog.clone()));
+        for account in [None, Some("different-account".to_owned())] {
+            assert!(
+                super::catalog_for_current_account(Some(catalog.clone()), || Ok(account))
+                    .unwrap()
+                    .filter(super::is_official_account_catalog)
+                    .is_none()
+            );
+        }
+        for (source, account) in [
+            (super::OFFICIAL_CATALOG_URL, "current-account"),
+            (super::OFFICIAL_ACCOUNT_CATALOG_URL, ""),
+        ] {
+            let mut invalid = catalog.clone();
+            invalid["codex_mixin_source"] = serde_json::json!(source);
+            invalid["codex_mixin_account_id"] = serde_json::json!(account);
+            assert!(!super::is_official_account_catalog(&invalid));
+        }
+        let mut unbound = catalog;
+        unbound
+            .as_object_mut()
+            .unwrap()
+            .remove("codex_mixin_account_id");
+        assert!(!super::is_official_account_catalog(&unbound));
+    }
+
     #[test]
     fn different_catalog_sources_are_not_model_retirements() {
         use serde_json::json;

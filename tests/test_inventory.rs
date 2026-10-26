@@ -11,6 +11,15 @@ use std::path::{Path, PathBuf};
 const MACOS_TEST_DIR: &str = "macos/tests";
 const MACOS_RUNNER: &str = "scripts/test_macos.sh";
 const WINDOWS_RUNNER: &str = "windows/Tests/Program.cs";
+const WINDOWS_UI_RUNNER: &str = "windows/UiTests/Program.cs";
+const WINDOWS_APP: &str = "windows/CodexMixin/App.xaml.cs";
+const WINDOWS_WORKFLOW: &str = ".github/workflows/windows.yml";
+const WINDOWS_INTEGRATION_RUNNER: &str = "scripts/test_windows_integration.ps1";
+const WINDOWS_INTEGRATION_SHARDS: &str = "tests/windows_integration_shards.txt";
+const WINDOWS_INTEGRATION_SHARD_NAMES: &[&str] =
+    &["integration-a", "integration-b", "integration-c"];
+const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+const MULTI_PROVIDER_E2E: &str = "scripts/e2e_multi_provider.sh";
 const CLIENT_AUTH_TESTS: &str = "tests/client_auth_tests.txt";
 const IGNORED_TESTS: &[(&str, &str)] = &[
     ("src/ech.rs", "live_ech_comparison"),
@@ -141,6 +150,102 @@ fn csharp_check_names(source: &str) -> Vec<String> {
         }
     }
     names
+}
+
+fn windows_integration_shard_rows(source: &str) -> Vec<(String, String)> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let fields = line.split('|').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 2, "invalid Windows shard row: {line}");
+            (fields[0].to_owned(), fields[1].to_owned())
+        })
+        .collect()
+}
+
+fn windows_integration_shard_errors(
+    actual: &BTreeSet<String>,
+    rows: &[(String, String)],
+) -> Vec<String> {
+    let mut counts = BTreeMap::new();
+    let mut errors = Vec::new();
+    for (shard, name) in rows {
+        if !WINDOWS_INTEGRATION_SHARD_NAMES.contains(&shard.as_str()) {
+            errors.push(format!("unknown Windows integration shard: {shard}"));
+        }
+        if !name.ends_with(".rs") || name.contains('/') || name.contains('\\') {
+            errors.push(format!("invalid Windows integration test file: {name}"));
+        }
+        if !actual.contains(name) {
+            errors.push(format!("{name} is assigned to a shard but does not exist"));
+        }
+        *counts.entry(name.clone()).or_insert(0) += 1;
+    }
+    for name in actual {
+        match counts.get(name).copied().unwrap_or(0) {
+            0 => errors.push(format!(
+                "{name} is not assigned to a Windows integration shard"
+            )),
+            1 => {}
+            count => errors.push(format!(
+                "{name} is assigned to {count} Windows integration shards"
+            )),
+        }
+    }
+    for shard in WINDOWS_INTEGRATION_SHARD_NAMES {
+        if !rows.iter().any(|(name, _)| name.as_str() == *shard) {
+            errors.push(format!("{shard} has no tests"));
+        }
+    }
+    errors.sort();
+    errors
+}
+
+/// Page roles `App.OpenPage` accepts. `overview` is handled by an earlier
+/// branch because it reopens the tray panel instead of a console window.
+fn windows_page_roles(source: &str) -> BTreeSet<String> {
+    let marker = "page is not (";
+    let start = source
+        .find(marker)
+        .expect("App.OpenPage must validate its page argument")
+        + marker.len();
+    let end = source[start..]
+        .find(')')
+        .expect("App.OpenPage page list must be terminated")
+        + start;
+    let mut roles = source[start..end]
+        .split(" or ")
+        .map(|role| role.trim().trim_matches('"').to_owned())
+        .collect::<BTreeSet<_>>();
+    assert!(roles.insert("overview".to_owned()));
+    roles
+}
+
+/// Page roles visited by the Windows native UI automation gallery.
+fn windows_ui_page_roles(source: &str) -> BTreeSet<String> {
+    let start = source
+        .find("Pages =")
+        .expect("Windows UI tests must declare a Pages table")
+        + "Pages =".len();
+    let end = source[start..]
+        .find("];")
+        .expect("Windows UI test Pages table must be terminated")
+        + start;
+    let mut roles = BTreeSet::new();
+    for line in source[start..end].lines() {
+        let line = line.trim();
+        let Some(role) = line.strip_prefix("(\"") else {
+            continue;
+        };
+        let role = role
+            .split('"')
+            .next()
+            .expect("Windows UI page role must be quoted");
+        roles.insert(role.to_owned());
+    }
+    roles
 }
 
 fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
@@ -293,6 +398,47 @@ fn detects_missing_and_duplicate_swift_registrations() {
 }
 
 #[test]
+fn detects_an_unvisited_windows_page() {
+    let app = r#"if (page is not ("providers" or "agents")) throw new ArgumentException();"#;
+    let runner = r#"Pages =
+    [
+        ("providers", "模型与服务", "models"),
+    ];"#;
+    assert_eq!(
+        windows_page_roles(app),
+        BTreeSet::from([
+            "agents".to_owned(),
+            "overview".to_owned(),
+            "providers".to_owned()
+        ])
+    );
+    assert_eq!(
+        windows_ui_page_roles(runner),
+        BTreeSet::from(["providers".to_owned()])
+    );
+}
+
+#[test]
+fn detects_missing_and_duplicate_windows_integration_shards() {
+    let actual = BTreeSet::from(["a.rs".to_owned(), "b.rs".to_owned()]);
+    let rows = vec![
+        ("integration-a".to_owned(), "a.rs".to_owned()),
+        ("integration-a".to_owned(), "a.rs".to_owned()),
+    ];
+    let errors = windows_integration_shard_errors(&actual, &rows);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error == "a.rs is assigned to 2 Windows integration shards")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error == "b.rs is not assigned to a Windows integration shard")
+    );
+}
+
+#[test]
 fn ignored_rust_tests_are_allowlisted() {
     let root = repository_root();
     let mut files = Vec::new();
@@ -414,6 +560,42 @@ fn every_test_entry_is_registered_once() {
     assert!(windows_errors.is_empty(), "{}", windows_errors.join("\n"));
 
     let integration_tests = files_with_extension(&root.join("tests"), "rs");
+    let integration_manifest = fs::read_to_string(root.join(WINDOWS_INTEGRATION_SHARDS)).unwrap();
+    let integration_rows = windows_integration_shard_rows(&integration_manifest);
+    let shard_errors = windows_integration_shard_errors(&integration_tests, &integration_rows);
+    assert!(shard_errors.is_empty(), "{}", shard_errors.join("\n"));
+
+    let integration_runner = fs::read_to_string(root.join(WINDOWS_INTEGRATION_RUNNER)).unwrap();
+    assert!(
+        integration_runner.contains(WINDOWS_INTEGRATION_SHARDS),
+        "Windows integration runner must use the guarded shard manifest"
+    );
+    let windows_workflow = fs::read_to_string(root.join(WINDOWS_WORKFLOW)).unwrap();
+    for shard in WINDOWS_INTEGRATION_SHARD_NAMES {
+        assert!(
+            windows_workflow.contains(&format!("- {shard}")),
+            "Windows CI matrix is missing {shard}"
+        );
+    }
+    assert!(
+        windows_workflow.contains(WINDOWS_INTEGRATION_RUNNER),
+        "Windows CI must run the manifest-driven integration shards"
+    );
+
+    let ci_workflow = fs::read_to_string(root.join(CI_WORKFLOW)).unwrap();
+    assert!(
+        ci_workflow.contains(&format!("./{MULTI_PROVIDER_E2E}")),
+        "CI must run the multi-provider E2E"
+    );
+
+    let app = fs::read_to_string(root.join(WINDOWS_APP)).unwrap();
+    let ui_tests = fs::read_to_string(root.join(WINDOWS_UI_RUNNER)).unwrap();
+    assert_eq!(
+        windows_ui_page_roles(&ui_tests),
+        windows_page_roles(&app),
+        "Windows UI automation must visit every page App.OpenPage accepts"
+    );
+
     for name in integration_tests {
         let source = fs::read_to_string(root.join("tests").join(&name)).unwrap();
         assert!(

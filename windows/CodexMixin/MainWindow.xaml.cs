@@ -77,7 +77,8 @@ public sealed partial class MainWindow : Window
         ProviderList.ContainerContentChanging += RenderProviderRow;
         ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
+        if (IsConsolePage(page)) AppWindow.MoveAndResize(NativeShell.ConsoleBounds());
+        else AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         customTitleBar = AppWindowTitleBar.IsCustomizationSupported();
         if (customTitleBar)
         {
@@ -187,7 +188,7 @@ public sealed partial class MainWindow : Window
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
     /// Pages hosted by the single console window, in tab order.
-    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "usage";
+    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "context" or "usage";
 
     private void ApplyPageLayout()
     {
@@ -714,7 +715,8 @@ public sealed partial class MainWindow : Window
                 var value = contexts.GetValueOrDefault(modelId, double.NaN);
                 overridden.Visibility = double.IsNaN(value) ? Visibility.Collapsed : Visibility.Visible;
                 if (double.IsNaN(value)) value = originalContext;
-                contextText.Text = double.IsNaN(value) ? "默认" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+                contextText.Text = double.IsNaN(value) ? "未知" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+                ToolTipService.SetToolTip(contextText, double.IsNaN(value) ? "服务商未提供上下文窗口；可刷新模型目录或手动设置。" : $"{value:N0} tokens");
             }
             ShowContext();
             var contextLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
@@ -1044,8 +1046,9 @@ public sealed partial class MainWindow : Window
         checkVersions.Content = IconLabel("\uE895", "检查版本更新");
         checkVersions.Style = Themed("FlatButton");
         var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));
+        var connectedCount = agents.Count(agent => Json.Text(Json.Field(agent, "integration"), "state") is "managed" or "drift");
         var agentToolbar = new Grid();
-        var agentSummary = new TextBlock { Text = $"已检测到 {detectedCount} 个 Agent · 未检测到 {agents.Length - detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+        var agentSummary = new TextBlock { Text = $"已接入 {connectedCount} 个 Agent · 已检测到 {detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetAutomationId(agentSummary, "agent-summary");
         agentToolbar.Children.Add(agentSummary);
         checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1107,6 +1110,8 @@ public sealed partial class MainWindow : Window
             summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
             var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? $"版本检查失败：{failure}" : null);
             summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
+            if (connected && !Json.Flag(agent, "detected"))
+                summary.Children.Add(new TextBlock { Text = "未检测到安装程序", Style = Themed("Caption"), FontSize = 13 });
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
             var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -1117,7 +1122,7 @@ public sealed partial class MainWindow : Window
                 controls.Children.Add(Button($"更新到 {Json.Text(version, "latest")}", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
             controls.Children.Add(connectSwitch);
             Grid.SetColumn(controls, 1); heading.Children.Add(controls);
-            var rows = Json.Flag(agent, "detected") ? detectedRows : undetected;
+            var rows = connected || Json.Flag(agent, "detected") ? detectedRows : undetected;
             var entry = new Border { Child = heading, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
             // Dividers sit above every row except the first, so the last row has no trailing line.
             if (rows.Children.Count > 0) entry.BorderThickness = new Thickness(0, 1, 0, 0);
@@ -1126,7 +1131,7 @@ public sealed partial class MainWindow : Window
         if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 1120 });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
+            var section = new Expander { Header = $"显示未接入且未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
@@ -1191,43 +1196,6 @@ public sealed partial class MainWindow : Window
         grouping.SelectionChanged += (_, _) => RenderCharts();
         PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
-        var quotaBody = new StackPanel { Spacing = 16 };
-        JsonElement[] quotaRows = [];
-        void RenderQuota(QuotaStyle style)
-        {
-            quotaBody.Children.Clear();
-            if (quotaRows.Length == 0) { quotaBody.Children.Add(Text("暂无可查询的供应商额度。")); return; }
-            quotaBody.Children.Add(QuotaView.StyleSwitch(style, RenderQuota));
-            foreach (var group in quotaRows.GroupBy(row => Json.Text(row, "provider_id")))
-            {
-                var section = new StackPanel { Spacing = 8 };
-                var first = group.First();
-                section.Children.Add(new TextBlock { Text = Json.OptionalText(first, "provider_display_name") ?? Json.OptionalText(first, "display_name") ?? group.Key, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-                section.Children.Add(QuotaView.Render(group.ToArray(), style));
-                quotaBody.Children.Add(section);
-            }
-        }
-        var quotaToken = pageRefresh!.Token;
-        async Task LoadQuota()
-        {
-            try
-            {
-                quotaRows = Json.Rows(await Client.QueryAsync(["quota", "--json"], quotaToken));
-                quotaToken.ThrowIfCancellationRequested();
-                RenderQuota(QuotaView.Stored());
-            }
-            catch (OperationCanceledException) when (quotaToken.IsCancellationRequested) { }
-            catch (CliFailure) when (quotaToken.IsCancellationRequested) { }
-            catch (Exception error)
-            {
-                quotaBody.Children.Clear();
-                quotaBody.Children.Add(Text($"额度不可用：{error.Message}"));
-            }
-        }
-        quotaBody.Children.Add(Text("正在查询额度…"));
-        PageBody.Children.Add(Card("供应商额度", "", quotaBody));
-        // Network quota loading must not disable local charts, filters or navigation.
-        _ = LoadQuota();
     }
 
     private async Task FusionAsync(CancellationToken token)
@@ -1373,13 +1341,6 @@ public sealed partial class MainWindow : Window
                 await ChangeAsync("导入配置", ["config", "import", file.Path], apply: true);
         }));
         PageBody.Children.Add(Card("配置备份", "", backup));
-        var context = Row();
-        context.Children.Add(Button("打开上下文设置", () =>
-        {
-            ((App)Microsoft.UI.Xaml.Application.Current).OpenPage("context");
-            return Task.CompletedTask;
-        }));
-        PageBody.Children.Add(Card("上下文引擎", "", context));
         var diagnostics = Row();
         diagnostics.Children.Add(Button("打开日志目录", () => OpenPathAsync(Path.GetDirectoryName(Json.Text(Json.Field(metadata, "paths"), "gateway_log"))!)));
         diagnostics.Children.Add(Button("打开配置目录", () => OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"))));

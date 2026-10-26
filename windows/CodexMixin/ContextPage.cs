@@ -88,22 +88,19 @@ public sealed partial class MainWindow
                 ShowNotice("保存设置", "没有需要保存的更改。", InfoBarSeverity.Informational);
                 return;
             }
-            await ChangeAsync("保存设置", arguments);
+            await ChangeAsync("保存并应用设置", arguments);
         }
 
         var actions = Row();
         var save = Button("保存设置", SaveAsync, primary: true);
         AutomationProperties.SetAutomationId(save, "context-save");
-        var restart = Button("重启网关", () => ChangeAsync("重启网关", ["service", "restart", "--managed", "--json"]));
-        AutomationProperties.SetAutomationId(restart, "context-restart");
         actions.Children.Add(save);
-        actions.Children.Add(restart);
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(enabled);
         body.Children.Add(fields);
         body.Children.Add(actions);
-        ToolTipService.SetToolTip(save, "重启网关后生效。");
+        ToolTipService.SetToolTip(save, "保存更改后自动重启运行中的网关并生效。");
         return Card("上下文引擎", "", body);
     }
 

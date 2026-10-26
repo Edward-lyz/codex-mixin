@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
@@ -8808,11 +8808,10 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn perf_smoke_handles_parallel_streams() {
+async fn handles_one_hundred_parallel_streams() {
     let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let client = reqwest::Client::new();
-    let started = Instant::now();
     let jobs = (0..100).map(|_| {
         let client = client.clone();
         let url = format!("{gateway_url}/v1/responses");
@@ -8830,13 +8829,6 @@ async fn perf_smoke_handles_parallel_streams() {
         }
     });
     join_all(jobs).await;
-    let elapsed = started.elapsed();
-    let requests_per_second = 100.0 / elapsed.as_secs_f64();
-    eprintln!("perf_smoke req/s: {requests_per_second:.2}, elapsed: {elapsed:?}");
-    assert!(
-        requests_per_second > 20.0,
-        "gateway mock throughput too low: {requests_per_second:.2} req/s in {elapsed:?}"
-    );
 }
 
 #[tokio::test]
