@@ -1,7 +1,7 @@
 <Window x:Class="CodexMixin.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
- <ContentControl x:Name="OperationScope" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+ <ContentControl x:Name="OperationScope" IsTabStop="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
   <Grid x:Name="Root" Background="Transparent">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TitleBar x:Name="TitleBar" Title="Codex Mixin">

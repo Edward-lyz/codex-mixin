@@ -24,9 +24,17 @@ try {
         $old = Get-Process -Id $jobData.pid -ErrorAction SilentlyContinue
         if ($old) { $old | Wait-Process -Timeout 30 -ErrorAction Stop }
     }
+    if (@(Get-Process -Name 'codex_mixin_ui' -ErrorAction SilentlyContinue).Count -ne 0) {
+        throw 'Another application session is running; update deferred to preserve its work.'
+    }
     if ($jobData.gatewayRunning) {
-        & $cli --no-tui --json-errors service stop --managed --json 2>&1 | Out-File -LiteralPath $log -Append
+        # The readiness callback already checked for active requests. This is
+        # a temporary update stop; finally restores the same gateway afterward.
+        & $cli --no-tui --json-errors service stop --managed --allow-codex-disconnect --json 2>&1 | Out-File -LiteralPath $log -Append
         if ($LASTEXITCODE -ne 0) { throw "Stopping gateway failed (exit $LASTEXITCODE)." }
+    }
+    if (@(Get-Process -Name 'codex-mixin' -ErrorAction SilentlyContinue).Count -ne 0) {
+        throw 'Other CLI processes are running; update deferred to preserve their work.'
     }
     if ($jobData.installed) {
         # NSIS parses the entire remainder after /D as an unquoted directory.

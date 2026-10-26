@@ -179,9 +179,8 @@ jobs:
           <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
           <title>Codex Mixin for Windows</title>
           <item><title>Codex Mixin $RELEASE_VERSION</title>
-          <sparkle:version>$RELEASE_VERSION</sparkle:version>
           <sparkle:minimumSystemVersion>10.0.17763</sparkle:minimumSystemVersion>
-          <enclosure url="https://github.com/Edward-lyz/codex-mixin/releases/download/$RELEASE_TAG/$payload" sparkle:os="windows-x64" $signature type="application/octet-stream" />
+          <enclosure url="https://github.com/Edward-lyz/codex-mixin/releases/download/$RELEASE_TAG/$payload" sparkle:os="windows-x64" sparkle:version="$RELEASE_VERSION" sparkle:shortVersionString="$RELEASE_VERSION" $signature type="application/octet-stream" />
           </item></channel></rss>
           EOF
             xmllint --noout "dist/release/$feed"
