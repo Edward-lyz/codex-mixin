@@ -31,81 +31,59 @@ pub fn restrict_owner_only_dir(path: &Path) -> anyhow::Result<()> {
 #[cfg(windows)]
 fn restrict_windows_acl(path: &Path, directory: bool) -> anyhow::Result<()> {
     use anyhow::Context;
-    use std::io::Write;
-    use std::process::Command;
-    use std::sync::OnceLock;
-
-    // icacls restores a complete DACL in one native operation. Unlike /grant,
-    // this removes unrelated explicit grants without launching PowerShell on
-    // every config read. Never cache ACL application: permissions can change.
-    static USER_SID: OnceLock<Result<String, String>> = OnceLock::new();
-    let system = std::env::var_os("SystemRoot")
-        .map(std::path::PathBuf::from)
-        .context("SystemRoot is missing for private Windows ACLs")?
-        .join("System32");
-    let owner = USER_SID
-        .get_or_init(|| {
-            let mut command = Command::new(system.join("whoami.exe"));
-            command.args(["/user", "/fo", "csv", "/nh"]);
-            super::prepare_background_command(&mut command);
-            let output = command
-                .output()
-                .map_err(|error| format!("query Windows user SID: {error}"))?;
-            if !output.status.success() {
-                return Err(format!(
-                    "query Windows user SID exited with {}",
-                    output.status
-                ));
-            }
-            String::from_utf8_lossy(&output.stdout)
-                .split(',')
-                .map(|value| value.trim().trim_matches('"'))
-                .find(|value| {
-                    value.starts_with("S-1-")
-                        && value
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || byte == b'-' || byte == b'S')
-                })
-                .map(str::to_owned)
-                .ok_or_else(|| "Windows user query returned no valid SID".to_owned())
-        })
-        .as_ref()
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let path = std::path::absolute(path).context("resolve private ACL path")?;
-    let parent = path.parent().context("private ACL path has no parent")?;
-    let name = path
-        .file_name()
-        .context("private ACL path has no name")?
-        .to_str()
-        .context("private ACL path is not valid Unicode")?;
-    anyhow::ensure!(
-        !name.contains(['\r', '\n']),
-        "private ACL path contains a line break"
-    );
-    let inheritance = if directory { "OICI" } else { "" };
-    let descriptor = format!(
-        "{name}\r\nD:P(A;{inheritance};FA;;;{owner})(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;BA)\r\n"
-    );
-    // The restore format is UTF-16LE with a BOM, including non-ASCII names.
-    let mut restore = tempfile::NamedTempFile::new().context("create private ACL restore file")?;
-    restore.write_all(&[0xff, 0xfe])?;
-    for unit in descriptor.encode_utf16() {
-        restore.write_all(&unit.to_le_bytes())?;
-    }
-    restore.flush()?;
-    let mut command = Command::new(system.join("icacls.exe"));
+    use std::process::{Command, Stdio};
+    // A fresh DACL removes explicit grants too; disabling inheritance alone
+    // leaves an existing Everyone/Users rule able to read private credentials.
+    const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$directory = $env:CODEX_MIXIN_ACL_DIRECTORY -eq 'true'
+if ($directory) {
+    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+    $inheritance = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+} else {
+    $acl = [System.Security.AccessControl.FileSecurity]::new()
+    $inheritance = [Security.AccessControl.InheritanceFlags]::None
+}
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($value in @($owner.Value, 'S-1-5-18', 'S-1-5-32-544')) {
+    $sid = [System.Security.Principal.SecurityIdentifier]::new($value)
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
+}
+# Set-Acl and icacls /restore can require SeSecurityPrivilege
+# for the untouched SACL. Persist only the DACL changes made above.
+if ($directory) {
+    ([System.IO.DirectoryInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
+} else {
+    ([System.IO.FileInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
+}
+"#;
+    let mut command = Command::new(super::system_powershell()?);
     command
-        .arg(parent)
-        .arg("/restore")
-        .arg(restore.path())
-        .arg("/q");
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            SCRIPT,
+        ])
+        // PowerShell 7's inherited module path can select incompatible modules
+        // in Windows PowerShell 5.1. Let the child build its native module path.
+        .env_remove("PSModulePath")
+        .env("CODEX_MIXIN_ACL_PATH", path)
+        .env(
+            "CODEX_MIXIN_ACL_DIRECTORY",
+            if directory { "true" } else { "false" },
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
     super::prepare_background_command(&mut command);
-    let output = command.output().context("restore private Windows DACL")?;
+    let output = command.output().context("replace private Windows ACL")?;
     anyhow::ensure!(
         output.status.success(),
-        "private Windows ACL replacement failed for {}: {} {}",
+        "private Windows ACL replacement failed for {}: {}",
         path.display(),
-        String::from_utf8_lossy(&output.stdout).trim(),
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())

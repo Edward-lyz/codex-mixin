@@ -125,6 +125,7 @@ internal static class Program
             ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
             Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "connection draft confirmation", process);
             ((InvokePattern)Find(window, "CloseButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) == null, "cancelled draft navigation", process);
             Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == "not-a-url", "Cancelled navigation lost the connection draft");
             ((InvokePattern)Find(window, "apply-changes").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
             Wait(() => Find(window, "operation-status").Current.Name.Contains("失败", StringComparison.Ordinal), "invalid URL save failure", process);
@@ -566,6 +567,11 @@ internal static class Program
     private static AutomationElement Find(AutomationElement root, string id) =>
         root.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, id))
         ?? throw new InvalidOperationException($"Control is missing: {id}");
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
 
     private static void AssertName(AutomationElement window, string name)
     {

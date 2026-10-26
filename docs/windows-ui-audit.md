@@ -205,8 +205,8 @@ App 保管生命周期，UI 保管草稿，Operations 保管动作执行，core 
 
 上述审查是修复前的历史基线。本次实现覆盖保存成功/失败状态、连接与 Fusion 草稿保护、GUI 子进程 stdin 隔离、DUCX 显式安装登录入口、独立诊断与更新控件、查询排队/执行/退出码日志、托盘本地状态与远端额度的刷新分离。
 
-Windows 私有 ACL 改为每次使用原生 icacls 替换完整 DACL，保留当前用户、SYSTEM、Administrators 的 FullControl 与继承保护；不缓存 ACL 安全结论。定时 Codex catalog 刷新移入 blocking worker，并跳过积压 tick。这是待 Windows CI 验证的实现，不代表已经证明原 BUG 的唯一根因或测得性能收益。
+Windows CI 发现 icacls /restore 在移除 SeSecurityPrivilege 后失败，因此撤回该优化，恢复使用 Windows PowerShell / .NET 仅持久化 DACL 的既有实现。保留当前用户、SYSTEM、Administrators 的 FullControl、继承保护及移除额外授权的安全断言，不缓存 ACL 安全结论。定时 Codex catalog 刷新仍在 blocking worker 执行并跳过积压 tick；尚未测得性能收益，也未证明原 BUG 的唯一根因。
 
 整包更新由 GUI 管理：每小时检查、受限下载、Windows 签名和同发布者公钥校验、失败退避、安装版 / 便携版分流，以及明确确认后请求 UAC。安装会终止网关请求，尚无失败回滚；未签名应用或签名公钥轮换必须手动下载。安装器移除旧版本的时机改为进入安装阶段，并保留 GUI 自启。
 
-新增 adapter / UIA / Windows ACL 回归覆盖 stdin EOF、独立查询槽、真实退出码、版本与整包选择、保存失败不报成功、连接草稿取消/放弃、Fusion 关闭确认与原生 ACL 的重复安全收敛。按用户要求，本地仅格式化；构建、静态门禁与运行验证只在 PR CI 执行。DUCX 真机扫码、安装中断/失败恢复与实际耗时仍需后续验收。
+新增 adapter / UIA / Windows ACL 回归覆盖 stdin EOF、独立查询槽、真实退出码、版本与整包选择、保存失败不报成功、连接草稿取消/放弃、Fusion 关闭确认与 ACL 的重复安全收敛。按用户要求，本地仅格式化；构建、静态门禁与运行验证只在 PR CI 执行。DUCX 真机扫码、安装中断/失败恢复与实际耗时仍需后续验收。
