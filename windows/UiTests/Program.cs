@@ -112,10 +112,38 @@ internal static class Program
             cli.RunAsync(["service", "start", "--bind", new Uri(gateway).Authority, "--json"], CancellationToken.None, timeout: TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
             gatewayStarted = true;
             SeedTraffic(gateway, modelIds).GetAwaiter().GetResult();
+            window = OpenWindow(start, process, "providers", "模型与服务");
+            var refreshProviders = window.FindFirst(TreeScope.Descendants, new AndCondition(
+                new PropertyCondition(AutomationElement.NameProperty, "刷新"),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))!;
+            ((InvokePattern)refreshProviders.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-coder")) != null, "seeded provider editor", process);
+            ((TogglePattern)Find(window, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) != null, "connection draft editor", process);
+            var originalUrl = ((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value;
+            ((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).SetValue("not-a-url");
+            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "connection draft confirmation", process);
+            ((InvokePattern)Find(window, "CloseButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == "not-a-url", "Cancelled navigation lost the connection draft");
+            ((InvokePattern)Find(window, "apply-changes").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => Find(window, "operation-status").Current.Name.Contains("失败", StringComparison.Ordinal), "invalid URL save failure", process);
+            Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == "not-a-url", "Failed save cleared the connection draft");
+            Assert(Find(window, "apply-changes").Current.HelpText.Contains("未应用", StringComparison.Ordinal), "Failed save reported success instead of retaining a dirty draft");
+            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "discard connection draft", process);
+            ((InvokePattern)Find(window, "PrimaryButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) == null, "model tab after discard", process);
+            ((TogglePattern)Find(window, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+            Wait(() => window.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "provider-base-url")) != null, "saved connection after discard", process);
+            Assert(((ValuePattern)Find(window, "provider-base-url").GetCurrentPattern(ValuePattern.Pattern)).Current.Value == originalUrl, "Discard did not reload the saved connection");
+            ((TogglePattern)Find(window, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
             for (var themeIndex = 0; themeIndex < 2; themeIndex++)
             {
                 var themeName = themeIndex == 0 ? "light" : "dark";
                 var settings = OpenWindow(start, process, "settings", "设置与诊断");
+                Assert(Find(settings, "open-gui-logs").Current.IsEnabled && Find(settings, "check-app-updates").Current.IsEnabled,
+                    "Recovery and update controls are not available independently of CLI settings queries");
                 SelectTheme(settings, themeIndex == 0 ? "浅色" : "深色");
                 foreach (var (role, title, filename) in Pages)
                 {
@@ -178,6 +206,11 @@ internal static class Program
                         Capture(target, Path.Combine(output, $"fusion-time-{themeName}.png"));
                         CaptureLower(target, Path.Combine(output, $"fusion-time-lower-{themeName}.png"));
                         SelectCombo(target, "fusion-mode", "多模型编排");
+                        var fusionHandle = (nint)target.Current.NativeWindowHandle;
+                        ((WindowPattern)target.GetCurrentPattern(WindowPattern.Pattern)).Close();
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "放弃更改")) != null, "Fusion close protects its draft", process);
+                        ((InvokePattern)Find(target, "PrimaryButton").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        Wait(() => !IsWindowVisible(fusionHandle), "Fusion closes after explicit discard", process);
                     }
                 }
             }
@@ -473,8 +506,13 @@ internal static class Program
         if (ids.Length < 2) throw new InvalidOperationException("Demo configuration did not expose model options");
         var profile = JsonSerializer.Serialize(new
         {
-            id = "ci-demo", panel_models = ids.Take(3).ToArray(), judge_model = ids[0], final_model = ids[1],
-            min_successful = 1, timeout_ms = 300000, max_completion_tokens = 2048,
+            id = "ci-demo",
+            panel_models = ids.Take(3).ToArray(),
+            judge_model = ids[0],
+            final_model = ids[1],
+            min_successful = 1,
+            timeout_ms = 300000,
+            max_completion_tokens = 2048,
             show_intermediate_results = true,
             panel_tools = new { enabled = true, max_rounds = 16, max_calls_per_model = 64 }
         });
@@ -487,25 +525,27 @@ internal static class Program
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "ci-gateway-fixture");
         for (var repetition = 0; repetition < repetitions; repetition++)
-        foreach (var model in modelIds.Take(2))
-        {
-            // Codex calls the Responses endpoint with a session header; the gateway
-            // records provider usage only for requests that carry a session.
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"{gateway}/v1/responses")
+            foreach (var model in modelIds.Take(2))
             {
-                Content = JsonContent.Create(new
+                // Codex calls the Responses endpoint with a session header; the gateway
+                // records provider usage only for requests that carry a session.
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{gateway}/v1/responses")
                 {
-                    model, stream = true, instructions = "UI screenshot fixture",
-                    input = new[] { new { type = "message", role = "user", content = new[] { new { type = "input_text", text = "say hi" } } } }
-                })
-            };
-            request.Headers.Add("session-id", $"ui-fixture-{model}-{Guid.NewGuid():N}");
-            using var response = await client.SendAsync(request);
-            // Reading the whole stream lets the gateway finish and record the request.
-            var body = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode || !body.Contains("response.completed", StringComparison.Ordinal))
-                throw new InvalidOperationException($"Demo gateway request failed: {response.StatusCode}: {body}");
-        }
+                    Content = JsonContent.Create(new
+                    {
+                        model,
+                        stream = true,
+                        instructions = "UI screenshot fixture",
+                        input = new[] { new { type = "message", role = "user", content = new[] { new { type = "input_text", text = "say hi" } } } }
+                    })
+                };
+                request.Headers.Add("session-id", $"ui-fixture-{model}-{Guid.NewGuid():N}");
+                using var response = await client.SendAsync(request);
+                // Reading the whole stream lets the gateway finish and record the request.
+                var body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode || !body.Contains("response.completed", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"Demo gateway request failed: {response.StatusCode}: {body}");
+            }
     }
 
     private static void WriteGallery(string output)
@@ -555,13 +595,13 @@ internal static class Program
             graphics.CopyFromScreen((int)bounds.Left, (int)bounds.Top, 0, 0, image.Size);
         var contrasting = 0;
         for (var y = 0; y < image.Height; y++)
-        for (var x = 0; x < image.Width; x++)
-        {
-            var color = image.GetPixel(x, y);
-            var maximum = Math.Max(color.R, Math.Max(color.G, color.B));
-            var minimum = Math.Min(color.R, Math.Min(color.G, color.B));
-            if (maximum - minimum < 35 && (light ? maximum < 80 : minimum > 200)) contrasting++;
-        }
+            for (var x = 0; x < image.Width; x++)
+            {
+                var color = image.GetPixel(x, y);
+                var maximum = Math.Max(color.R, Math.Max(color.G, color.B));
+                var minimum = Math.Min(color.R, Math.Min(color.G, color.B));
+                if (maximum - minimum < 35 && (light ? maximum < 80 : minimum > 200)) contrasting++;
+            }
         if (contrasting < 3) throw new InvalidOperationException($"Quota percentage has no contrasting text in {(light ? "light" : "dark")} mode");
     }
 

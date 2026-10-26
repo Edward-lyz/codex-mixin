@@ -10,6 +10,13 @@ if (args.Contains("--fixture"))
         case "echo":
             Console.Write(JsonSerializer.Serialize(new { args = flags, secret = Environment.GetEnvironmentVariable("CM_TEST_SECRET"), worker_threads = Environment.GetEnvironmentVariable("TOKIO_WORKER_THREADS") }));
             break;
+        case "stdin":
+            Console.Write(JsonSerializer.Serialize(new { redirected = Console.IsInputRedirected, eof = Console.In.ReadToEnd() == "" }));
+            break;
+        case "update":
+            File.WriteAllText(flags[1], "started");
+            await Task.Delay(TimeSpan.FromSeconds(120));
+            break;
         case "bad-json": Console.Write("not JSON"); break;
         case "error":
             Console.Error.WriteLine("diagnostic line");
@@ -44,7 +51,8 @@ if (args.Contains("--fixture"))
         case "daemon":
             // Like `service start`: a detached child keeps the inherited output pipes open.
             Process.Start(new ProcessStartInfo(Environment.ProcessPath!,
-                [typeof(CliClient).Assembly.Location, "--fixture", "--json-errors", "hold"]) { UseShellExecute = false });
+                [typeof(CliClient).Assembly.Location, "--fixture", "--json-errors", "hold"])
+            { UseShellExecute = false });
             Console.Write("{\"started\":true}");
             break;
         case "hold": await Task.Delay(TimeSpan.FromSeconds(15)); break;
@@ -179,6 +187,51 @@ Check("query deadline terminates a running child and releases its slot", async (
     }
     finally { File.Delete(marker); }
 });
+Check("GUI commands receive redirected stdin at EOF", async () =>
+{
+    var stdin = await fixture.QueryAsync(["stdin"], CancellationToken.None);
+    Assert(Json.Flag(stdin, "redirected") && Json.Flag(stdin, "eof"), "GUI CLI inherited terminal input instead of using the visible-login path");
+});
+Check("quota and update requests leave a local query slot available", async () =>
+{
+    var markers = Enumerable.Range(0, 3).Select(_ => Path.Combine(Path.GetTempPath(), $"mixin-independent-{Guid.NewGuid():N}")).ToArray();
+    using var cancellation = new CancellationTokenSource();
+    var pending = new[]
+    {
+        fixture.QueryAsync(["quota", markers[0]], cancellation.Token),
+        fixture.QueryAsync(["update", markers[1]], cancellation.Token),
+        fixture.QueryAsync(["slow-query", markers[2]], cancellation.Token)
+    };
+    try
+    {
+        var started = Stopwatch.StartNew();
+        while (!markers.All(File.Exists) && started.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
+        Assert(markers.All(File.Exists), "Independent remote/local requests did not start");
+        var local = await fixture.QueryAsync(["echo"], CancellationToken.None, TimeSpan.FromSeconds(5));
+        Assert(Json.Strings(Json.Field(local, "args")).SequenceEqual(new[] { "echo" }), "Remote update/quota work blocked the local snapshot");
+    }
+    finally
+    {
+        cancellation.Cancel();
+        foreach (var task in pending) await Failure(() => task);
+        foreach (var marker in markers) File.Delete(marker);
+    }
+});
+Check("Windows updates compare GUI and CLI versions before selecting a complete bundle", async () =>
+{
+    AppRelease Release(string current, string latest, string gui) => AppRelease.Parse(Parse(JsonSerializer.Serialize(
+        new { current_version = current, latest_version = latest })), gui);
+    var newer = Release("0.9.9", "0.10.0", "0.9.9");
+    Assert(newer.IsNewer && newer.Installer.AbsoluteUri.EndsWith("/v0.10.0/codex-mixin-0.10.0-windows-x86_64-setup.exe", StringComparison.Ordinal), "Update did not select the complete installer");
+    Assert(newer.Portable.AbsoluteUri.EndsWith("/codex-mixin-0.10.0-windows-x86_64.zip", StringComparison.Ordinal), "Portable update selected a CLI-only archive");
+    Assert(!Release("1.0.0", "1.0.0", "1.0.0").IsNewer, "Equal version triggered an update");
+    Assert(!Release("1.1.0", "1.0.0", "1.1.0").IsNewer, "Update would downgrade the current bundle");
+    Assert(Release("1.0.0", "1.0.1", "1.0.1").IsNewer, "Older bundled CLI was not repaired");
+    Assert(Release("1.0.1", "1.0.1", "1.0.0").IsNewer, "Older GUI was not repaired");
+    await Failure(() => Task.FromResult(Release("1.0.0", "1.0.1", "1.1.0")));
+    foreach (var invalid in new[] { "", "1.2", "1.2.3.4", "1.2.3-beta", "v1.2.3", "../1.2.3", "01.2.3", "999999999999.0.0" })
+        await Failure(() => Task.FromResult(Release("1.0.0", invalid, "1.0.0")));
+});
 Check("usage buckets preserve chart values with one scan", () =>
 {
     var rows = Json.Rows(Parse("[{\"provider_id\":\"a\",\"day\":9,\"value\":3,\"tokens\":4},{\"provider_id\":\"b\",\"day\":10,\"value\":5,\"tokens\":9},{\"provider_id\":\"a\",\"day\":10,\"value\":7,\"tokens\":6},{\"provider_id\":\"b\",\"day\":10,\"value\":2,\"tokens\":1},{\"provider_id\":\"c\",\"day\":1,\"value\":99,\"tokens\":100}]"));
@@ -249,11 +302,13 @@ Check("structured errors preserve commit and stage", async () =>
     var error = await Failure(() => fixture.RunAsync(["error"], CancellationToken.None));
     Assert(error.Committed == true && error.Stage == "client sync", "Commit state was lost");
     Assert(error.Message == "saved but sync failed", "Structured message was lost");
+    Assert(error.ExitCode == 7, "Actual CLI exit code was lost");
 });
 Check("apply failure is reported after commit", async () =>
 {
     var error = await Failure(() => new Operations(fixture).ChangeAsync(["save"], CancellationToken.None, apply: true));
     Assert(error.Committed == true && error.Stage == "config apply", "Apply failure claimed rollback");
+    Assert(error.ExitCode == 8, "Apply failure lost its actual exit code");
 });
 Check("timeout kills the process and frees the queue", async () =>
 {

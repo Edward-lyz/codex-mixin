@@ -273,6 +273,9 @@ jobs:
           if (-not (Test-Path "$app\codex_mixin_ui.exe")) { throw 'codex_mixin_ui.exe missing from package' }
           if (-not (Test-Path "dist\release\codex-mixin-$version-windows-x86_64-setup.exe")) { throw 'Windows installer missing from package' }
           if (-not (Test-Path "dist\release\codex-mixin-$version-windows-x86_64.zip")) { throw 'Windows portable archive missing from package' }
+      - name: Test complete installer upgrade and startup preservation
+        shell: pwsh
+        run: ./windows/scripts/test-installer-upgrade.ps1 -Installer "dist/release/codex-mixin-${{ steps.version.outputs.value }}-windows-x86_64-setup.exe"
       - uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-windows

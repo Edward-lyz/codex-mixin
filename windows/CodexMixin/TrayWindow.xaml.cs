@@ -35,6 +35,11 @@ public sealed partial class TrayWindow : Window
     private bool fitQueued;
     private CancellationTokenSource? refreshCancellation;
     private Task refreshTask = Task.CompletedTask;
+    private Task statusRefreshTask = Task.CompletedTask;
+    private CancellationTokenSource? statusCancellation;
+    private readonly HashSet<string> quotaPending = [];
+    private readonly Dictionary<string, string> quotaFailures = [];
+    private string? quotaProvider;
     private static readonly TimeSpan LocalReadTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan QuotaReadTimeout = TimeSpan.FromSeconds(20);
 
@@ -120,7 +125,13 @@ public sealed partial class TrayWindow : Window
 
     private Task ReloadAsync()
     {
-        if (busy || changing || exiting) return refreshTask;
+        if (changing || exiting) return refreshTask;
+        if (busy)
+        {
+            if (statusRefreshTask.IsCompleted) statusRefreshTask = RefreshStatusOnlyAsync();
+            return statusRefreshTask;
+        }
+        if (!statusRefreshTask.IsCompleted) return statusRefreshTask;
         refreshTask = RefreshAsync();
         return refreshTask;
     }
@@ -139,7 +150,8 @@ public sealed partial class TrayWindow : Window
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
             // Reserve both query slots for local reads first. Each section renders and
             // fails independently; quota must never disable an already-known gateway.
-            var statusTask = StatusAsync();
+            var statusTask = ReadStatusAsync(refresh.Token);
+            statusRefreshTask = statusTask;
             var providersTask = ProvidersAsync();
             var errors = await Task.WhenAll(statusTask, providersTask, QuotaAsync());
             if (refresh.IsCancellationRequested) return;
@@ -151,34 +163,6 @@ public sealed partial class TrayWindow : Window
             {
                 refreshedAt = DateTimeOffset.UtcNow;
                 snapshotRevision = revision;
-            }
-
-            async Task<string?> StatusAsync()
-            {
-                try
-                {
-                    var status = await client.QueryAsync(["service", "status", "--json"], refresh.Token, LocalReadTimeout);
-                    refresh.Token.ThrowIfCancellationRequested();
-                    ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
-                    serviceKnown = true;
-                    var running = Json.OptionalText(status, "gateway") == "running";
-                    Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
-                    ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
-                    settingState = true; GatewaySwitch.IsOn = running; settingState = false;
-                    GatewaySwitch.IsEnabled = !changing;
-                    FitToContent();
-                    return null;
-                }
-                catch (Exception error)
-                {
-                    if (refresh.IsCancellationRequested) return null;
-                    serviceKnown = false;
-                    GatewaySwitch.IsEnabled = false;
-                    ServiceTitle.Text = "本地服务 · 状态未知";
-                    Endpoint.Text = "请重新打开面板重试";
-                    ServiceDot.Style = Themed("DotWarn");
-                    return $"状态读取失败：{error.Message}";
-                }
             }
 
             async Task<string?> ProvidersAsync()
@@ -208,14 +192,22 @@ public sealed partial class TrayWindow : Window
             {
                 try
                 {
-                    if (await providersTask != null) return null;
+                    if (await providersTask != null)
+                    {
+                        if (providerId != null) quotaFailures[providerId] = "服务商读取失败，未查询额度。请刷新重试。";
+                        return null;
+                    }
                     var errors = new List<string>();
+                    quotaPending.UnionWith(providers.Where(row => Json.Flag(row, "enabled")).Select(row => Json.Text(row, "id")));
+                    RenderQuota();
                     // Selected provider first; each result updates independently.
                     // Only one remote subprocess is active, with local reads in
                     // separate CLI slots so quota cannot hold up navigation.
                     foreach (var provider in providers.Where(row => Json.Flag(row, "enabled")).OrderByDescending(row => Json.Text(row, "id") == providerId))
                     {
                         var selectedId = Json.Text(provider, "id");
+                        quotaProvider = selectedId;
+                        RenderQuota();
                         try
                         {
                             var snapshot = await client.QueryAsync(["quota", "--provider", selectedId, "--json"], refresh.Token, QuotaReadTimeout);
@@ -225,13 +217,20 @@ public sealed partial class TrayWindow : Window
                             if (quotaError == null || !quotaUpdatedAt.ContainsKey(selectedId))
                                 allQuotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") != selectedId).Concat(rows).ToArray();
                             if (quotaError == null && rows.Length > 0) quotaUpdatedAt[selectedId] = DateTimeOffset.UtcNow;
-                            if (quotaError != null) errors.Add($"{Json.Text(provider, "display_name")}：{quotaError}");
+                            if (quotaError != null)
+                            {
+                                quotaFailures[selectedId] = quotaError;
+                                errors.Add($"{Json.Text(provider, "display_name")}：{quotaError}");
+                            }
+                            else quotaFailures.Remove(selectedId);
                         }
                         catch (Exception error)
                         {
                             if (refresh.IsCancellationRequested) return null;
+                            quotaFailures[selectedId] = error.Message;
                             errors.Add($"{Json.Text(provider, "display_name")}：{error.Message}");
                         }
+                        finally { quotaPending.Remove(selectedId); }
                         quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
                         RenderQuota();
                         FitToContent();
@@ -243,6 +242,7 @@ public sealed partial class TrayWindow : Window
                     if (refresh.IsCancellationRequested) return null;
                     return $"额度读取失败：{error.Message}";
                 }
+                finally { quotaPending.Clear(); quotaProvider = null; RenderQuota(); }
             }
         }
         catch (Exception error)
@@ -271,6 +271,46 @@ public sealed partial class TrayWindow : Window
             }
         }
         FitToContent();
+    }
+
+    private async Task RefreshStatusOnlyAsync()
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, refreshCancellation?.Token ?? lifetime.Token);
+        statusCancellation = cancellation;
+        try
+        {
+            if (await ReadStatusAsync(cancellation.Token) is { } error && !cancellation.IsCancellationRequested)
+                PanelStatus.Text = error;
+        }
+        finally { statusCancellation = null; }
+    }
+
+    private async Task<string?> ReadStatusAsync(CancellationToken token)
+    {
+        try
+        {
+            var status = await ((App)Microsoft.UI.Xaml.Application.Current).Client.QueryAsync(["service", "status", "--json"], token, LocalReadTimeout);
+            token.ThrowIfCancellationRequested();
+            ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
+            serviceKnown = true;
+            var running = Json.OptionalText(status, "gateway") == "running";
+            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
+            ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
+            settingState = true; GatewaySwitch.IsOn = running; settingState = false;
+            GatewaySwitch.IsEnabled = !changing;
+            FitToContent();
+            return null;
+        }
+        catch (Exception error)
+        {
+            if (token.IsCancellationRequested) return null;
+            serviceKnown = false;
+            GatewaySwitch.IsEnabled = false;
+            ServiceTitle.Text = "本地服务 · 状态未知";
+            Endpoint.Text = "请重新打开面板重试";
+            ServiceDot.Style = Themed("DotWarn");
+            return $"状态读取失败：{error.Message}";
+        }
     }
 
     private void RenderProviders()
@@ -345,20 +385,20 @@ public sealed partial class TrayWindow : Window
     {
         QuotaBody.Children.Clear();
         QuotaStamp.Text = providerId is { } id && quotaUpdatedAt.TryGetValue(id, out var updatedAt)
-            ? $"上次更新 {updatedAt.ToLocalTime():HH:mm:ss}{(busy ? " · 正在刷新" : "")}" : "";
+            ? $"上次更新 {updatedAt.ToLocalTime():HH:mm:ss}{(quotaPending.Contains(id) ? " · 正在刷新" : "")}" : "";
         QuotaStyleHost.Child = quotaRows.Length == 0 ? null : QuotaView.StyleSwitch(quotaStyle, style =>
         {
             quotaStyle = style;
             RenderQuota();
             FitToContent();
         });
-        if (quotaRows.Length == 0 && busy)
+        if (quotaRows.Length == 0 && providerId != null && quotaPending.Contains(providerId))
         {
             QuotaBody.Children.Add(new ProgressBar { IsIndeterminate = AppWindow.IsVisible, Height = 4 });
-            QuotaBody.Children.Add(new TextBlock { Text = "正在读取额度…", Style = Themed("Caption") });
+            QuotaBody.Children.Add(new TextBlock { Text = quotaProvider == providerId ? "正在读取额度…" : "正在排队查询额度…", Style = Themed("Caption") });
         }
         else QuotaBody.Children.Add(quotaRows.Length == 0
-            ? new TextBlock { Text = "额度未知", Style = Themed("Caption") }
+            ? new TextBlock { Text = providerId != null && quotaFailures.TryGetValue(providerId, out var error) ? $"额度读取失败：{error}" : "额度未知", TextWrapping = TextWrapping.Wrap, Style = Themed("Caption") }
             : QuotaView.Render(quotaRows, quotaStyle));
     }
 
@@ -377,24 +417,35 @@ public sealed partial class TrayWindow : Window
     {
         if (changing) return;
         refreshCancellation?.Cancel();
-        await refreshTask;
+        statusCancellation?.Cancel();
+        await Task.WhenAll(refreshTask, statusRefreshTask);
         if (!exiting && AppWindow.IsVisible) await ReloadAsync();
     }
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
     {
         if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
+        dialogOpen = true;
+        try
+        {
+            if (!await ((App)Microsoft.UI.Xaml.Application.Current).ConfirmDraftsAsync()) return;
+        }
+        finally { dialogOpen = false; }
+        ShowPanel();
         var dialog = new ContentDialog
         {
             Title = "退出 Codex Mixin？",
             Content = "退出界面后，本地网关会继续按 CLI 的服务设置运行。",
-            PrimaryButtonText = "退出", CloseButtonText = "取消", XamlRoot = Panel.XamlRoot, RequestedTheme = Panel.ActualTheme
+            PrimaryButtonText = "退出",
+            CloseButtonText = "取消",
+            XamlRoot = Panel.XamlRoot,
+            RequestedTheme = Panel.ActualTheme
         };
         dialogOpen = true;
         try
         {
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
+            await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync();
         }
         finally { dialogOpen = false; }
     }
@@ -404,7 +455,8 @@ public sealed partial class TrayWindow : Window
         changing = true;
         GatewaySwitch.IsEnabled = false;
         refreshCancellation?.Cancel();
-        await refreshTask;
+        statusCancellation?.Cancel();
+        await Task.WhenAll(refreshTask, statusRefreshTask);
         string? failure = null;
         try
         {

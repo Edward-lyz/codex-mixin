@@ -4,11 +4,12 @@ using System.Text.Json;
 
 namespace CodexMixin;
 
-internal sealed class CliFailure(string message, bool? committed = null, string? stage = null)
+internal sealed class CliFailure(string message, bool? committed = null, string? stage = null, int? exitCode = null)
     : Exception(message)
 {
     internal bool? Committed { get; } = committed;
     internal string? Stage { get; } = stage;
+    internal int? ExitCode { get; } = exitCode;
 }
 
 internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix = null)
@@ -20,6 +21,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     // Remote quota work has one separate slot so background prefetch cannot
     // occupy both local snapshot slots (navigation and gateway status).
     private readonly SemaphoreSlim quotaQueries = new(1, 1);
+    private readonly SemaphoreSlim updateQueries = new(1, 1);
     private const string QueryWorkerThreads = "2";
 
     internal static CliClient Locate()
@@ -47,15 +49,30 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         // Bound subprocesses, and keep process startup/JSON decoding off the UI thread.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(90));
-        var slots = args.FirstOrDefault() == "quota" ? quotaQueries : queries;
+        var family = args.FirstOrDefault() switch
+        {
+            "service" => "service",
+            "provider" => "provider",
+            "quota" => "quota",
+            "interface" => "interface",
+            "update" => "update",
+            _ => "other"
+        };
+        var slots = family switch { "quota" => quotaQueries, "update" => updateQueries, _ => queries };
+        var elapsed = Stopwatch.StartNew();
+        long? queued = null;
+        int? exitCode = null;
+        var outcome = "failed";
         var entered = false;
         try
         {
             await slots.WaitAsync(deadline.Token).ConfigureAwait(false);
             entered = true;
-            return await Task.Run(async () =>
+            queued = elapsed.ElapsedMilliseconds;
+            var snapshot = await Task.Run(async () =>
             {
                 var output = await ExecuteAsync(args, deadline.Token, null, null, null, readOnly: true);
+                exitCode = 0;
                 try
                 {
                     using var document = JsonDocument.Parse(output);
@@ -66,13 +83,31 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
                     throw new CliFailure($"{args[0]} 返回了无效 JSON：{error.Message}");
                 }
             }, deadline.Token).ConfigureAwait(false);
+            outcome = "ok";
+            return snapshot;
         }
         catch (Exception error) when (deadline.IsCancellationRequested && !cancellation.IsCancellationRequested
             && error is OperationCanceledException or CliFailure)
         {
+            outcome = "timeout";
             throw new CliFailure($"{args[0]} 查询超时，请重试。");
         }
-        finally { if (entered) slots.Release(); }
+        catch (CliFailure error)
+        {
+            exitCode = error.ExitCode ?? exitCode;
+            outcome = cancellation.IsCancellationRequested ? "cancelled" : "failed";
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "cancelled";
+            throw;
+        }
+        finally
+        {
+            if (entered) slots.Release();
+            await Diagnostics.RecordAsync("queries", $"{DateTimeOffset.UtcNow:O} query={family} queue_ms={queued ?? elapsed.ElapsedMilliseconds} command_ms={(queued.HasValue ? elapsed.ElapsedMilliseconds - queued.Value : null)} total_ms={elapsed.ElapsedMilliseconds} outcome={outcome} exit_code={exitCode}").ConfigureAwait(false);
+        }
     }
 
     internal async Task<string> RunAsync(string[] args, CancellationToken cancellation,
@@ -89,9 +124,13 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     {
         var start = new ProcessStartInfo(executable)
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(executable))!
         };
         // Tokio otherwise starts one worker per logical CPU for every short-lived query.
@@ -109,6 +148,9 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         deadline.CancelAfter(timeout ?? TimeSpan.FromMinutes(20));
         using var process = new Process { StartInfo = start };
         if (!process.Start()) throw new CliFailure("无法启动 Rust CLI。");
+        // GUI callers must never inherit a terminal input handle. DUCX uses
+        // this distinction to open its visible QR login window.
+        process.StandardInput.Close();
         using var pipes = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var stdout = ReadAsync(process.StandardOutput, null, secrets, pipes.Token, deadline.Token);
         var stderr = ReadAsync(process.StandardError, progress, secrets, pipes.Token, deadline.Token);
@@ -204,10 +246,10 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
                 var committed = error.TryGetProperty("committed", out var flag) &&
                     flag.ValueKind is JsonValueKind.True or JsonValueKind.False ? flag.GetBoolean() : (bool?)null;
                 var stage = Json.OptionalText(error, "stage");
-                return new CliFailure(Json.Text(error, "message"), committed, stage);
+                return new CliFailure(Json.Text(error, "message"), committed, stage, exitCode);
             }
             catch (JsonException) { /* Non-JSON diagnostic lines precede the structured error. */ }
         }
-        return new CliFailure($"CLI 退出码 {exitCode}：{(string.IsNullOrWhiteSpace(errors) ? output : errors).Trim()}");
+        return new CliFailure($"CLI 退出码 {exitCode}：{(string.IsNullOrWhiteSpace(errors) ? output : errors).Trim()}", exitCode: exitCode);
     }
 }

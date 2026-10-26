@@ -1,6 +1,6 @@
 ; Codex Mixin - standard Windows installer (NSIS / MUI2).
-; Installs under Program Files. Any previous install is uninstalled first, using
-; the location recorded in the uninstall registry key. Built by
+; Installs under Program Files. A previous install is removed only after the
+; user starts the install section. Built by
 ; scripts/package-windows.ps1.
 Unicode true
 ; Compress the self-contained runtimes together so shared data is encoded once.
@@ -24,6 +24,7 @@ SetCompressorDictSize 32
 !define UI_EXE "codex_mixin_ui.exe"
 !define CLI_EXE "codex-mixin.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMixin"
+Var PreviousStartup
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -35,7 +36,7 @@ OutFile "${OUTFILE}"
 !else
   RequestExecutionLevel admin
 !endif
-; Fixed install location. A prior install is removed in .onInit via its recorded
+; Fixed install location. A prior install is removed in Install via its recorded
 ; uninstaller, so we always land here regardless of where it used to live.
 InstallDir "$PROGRAMFILES64\${APPNAME}"
 ShowInstDetails show
@@ -75,6 +76,10 @@ Function .onInit
   SetErrorLevel 0
   Quit
 !endif
+  ReadRegStr $PreviousStartup HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "CodexMixin"
+FunctionEnd
+
+Function RemovePrevious
   ; Remove any previous install first. Its actual location was recorded in the
   ; uninstall registry key at install time, so this cleans up old versions that
   ; lived elsewhere even though we now install under Program Files. Run the old
@@ -85,7 +90,16 @@ Function .onInit
   ${If} $0 != ""
   ${AndIf} ${FileExists} "$0\uninstall.exe"
     ClearErrors
-    ExecWait '"$0\uninstall.exe" /S _?=$0'
+    ExecWait '"$0\uninstall.exe" /S _?=$0' $1
+    ${If} ${Errors}
+      Abort "Failed to start the previous uninstaller."
+    ${EndIf}
+    ${If} $1 != 0
+      Abort "Previous uninstall failed (exit $1)."
+    ${EndIf}
+    ${If} ${FileExists} "$0\${UI_EXE}"
+      Abort "Previous application files could not be removed."
+    ${EndIf}
     Delete "$0\uninstall.exe"
     RMDir "$0"
   ${EndIf}
@@ -98,14 +112,23 @@ Function StopRunning
 FunctionEnd
 
 Section "Install"
+  Call RemovePrevious
   Call StopRunning
   SetOutPath "$INSTDIR"
+  ClearErrors
   File /r "${STAGING}\*.*"
+  ${If} ${Errors}
+    Abort "Failed to extract the complete application package."
+  ${EndIf}
 
   ClearErrors
   ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\update-user-path.ps1" -InstallRoot "$INSTDIR"' $0
   ${If} $0 != 0
     Abort "Failed to add Codex Mixin to the current user PATH (exit $0)."
+  ${EndIf}
+
+  ${If} $PreviousStartup != ""
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "CodexMixin" '$\"$INSTDIR\${UI_EXE}$\" --background'
   ${EndIf}
 
   CreateShortCut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\${UI_EXE}" "" "$INSTDIR\${UI_EXE}" 0

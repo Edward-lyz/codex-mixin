@@ -34,9 +34,15 @@ internal sealed class NativeShell : IDisposable
 
     private NotifyIconData IconData() => new()
     {
-        Size = (uint)Marshal.SizeOf<NotifyIconData>(), Window = window, Id = NotifyId,
-        Flags = 1 | 2 | 4, Callback = TrayMessage, Icon = icon, Tip = "Codex Mixin",
-        Info = "", InfoTitle = ""
+        Size = (uint)Marshal.SizeOf<NotifyIconData>(),
+        Window = window,
+        Id = NotifyId,
+        Flags = 1 | 2 | 4,
+        Callback = TrayMessage,
+        Icon = icon,
+        Tip = "Codex Mixin",
+        Info = "",
+        InfoTitle = ""
     };
 
     private void AddIcon()
@@ -51,6 +57,16 @@ internal sealed class NativeShell : IDisposable
         // SW_RESTORE also unmaximizes a visible window. Only restore minimized windows.
         ShowWindow(window, IsIconic(window) ? 9 : 5);
         SetForegroundWindow(window);
+    }
+
+    internal bool NotifyUpdate(string version)
+    {
+        var notification = IconData();
+        notification.Flags = 0x10; // NIF_INFO
+        notification.InfoTitle = "Codex Mixin 有可用更新";
+        notification.Info = $"发现 {version}，单击查看完整应用包的准备与安装状态。";
+        notification.InfoFlags = 1;
+        return ShellNotifyIcon(1, ref notification);
     }
 
     internal void Hide() => ShowWindow(window, 0);
@@ -122,6 +138,7 @@ internal sealed class NativeShell : IDisposable
         {
             if ((uint)lParam is 0x202 or 0x203) command("overview");
             if ((uint)lParam == 0x205) ShowMenu();
+            if ((uint)lParam == 0x405) command("updates"); // NIN_BALLOONUSERCLICK
             return 0;
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
@@ -138,6 +155,7 @@ internal sealed class NativeShell : IDisposable
             AppendMenu(menu, 0, 3, "停止网关");
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 4, "设置");
+            AppendMenu(menu, 0, 9, "检查更新…");
             AppendMenu(menu, 0, 5, "退出应用");
             AppendMenu(menu, 0, 7, "Fusion 设置…");
             AppendMenu(menu, 0, 8, "上下文设置…");
@@ -147,7 +165,14 @@ internal sealed class NativeShell : IDisposable
             PostMessage(window, 0, 0, 0);
             if (selected != 0) command(selected switch
             {
-                1 => "console", 2 => "start", 3 => "stop", 4 => "settings", 7 => "fusion", 8 => "context", _ => "exit"
+                1 => "console",
+                2 => "start",
+                3 => "stop",
+                4 => "settings",
+                7 => "fusion",
+                8 => "context",
+                9 => "updates",
+                _ => "exit"
             });
         }
         finally { DestroyMenu(menu); }
@@ -204,32 +229,35 @@ internal sealed class NativeShell : IDisposable
         internal uint InfoFlags; internal Guid Guid; internal nint BalloonIcon;
     }
     private delegate nint SubclassProc(nint window, uint message, nuint wParam, nint lParam, nuint id, nuint reference);
-    [DllImport("comctl32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    [DllImport("comctl32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetWindowSubclass(nint window, SubclassProc procedure, nuint id, nuint reference);
-    [DllImport("comctl32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+    [DllImport("comctl32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool RemoveWindowSubclass(nint window, SubclassProc procedure, nuint id);
     [DllImport("comctl32.dll")] private static extern nint DefSubclassProc(nint window, uint message, nuint wParam, nint lParam);
-    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShellNotifyIcon(uint message, ref NotifyIconData value);
     [DllImport("user32.dll", EntryPoint = "LoadImageW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern nint LoadImage(nint instance, string name, uint type, int width, int height, uint flags);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyIcon(nint icon);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyIcon(nint icon);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint window);
     [DllImport("user32.dll")] private static extern nint MonitorFromPoint(Point point, uint flags);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int type, out uint dpiX, out uint dpiY);
-    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(nint window);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsIconic(nint window);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
     [DllImport("user32.dll")] private static extern nint CreatePopupMenu();
-    [DllImport("user32.dll", EntryPoint = "AppendMenuW", CharSet = CharSet.Unicode)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool AppendMenu(nint menu, uint flags, nuint id, string text);
+    [DllImport("user32.dll", EntryPoint = "AppendMenuW", CharSet = CharSet.Unicode)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool AppendMenu(nint menu, uint flags, nuint id, string text);
     [DllImport("user32.dll")] private static extern uint TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint window, nint rect);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out Point position);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
-    [DllImport("user32.dll", EntryPoint = "PostMessageW")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out Point position);
+    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
+    [DllImport("user32.dll", EntryPoint = "PostMessageW")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, int attribute, ref uint value, int size);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)] private static extern nint GetWindowLongPtr(nint window, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
-    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
 }

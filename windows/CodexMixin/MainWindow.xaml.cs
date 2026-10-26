@@ -47,6 +47,7 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, (TextBlock Ttft, TextBlock Tps)> timingCells = [];
     private readonly Dictionary<string, JsonElement> timings = [];
     private bool draftDirty;
+    private bool applyingDraft;
     private bool ready;
     private bool selectingProvider;
     private bool interfaceReady;
@@ -97,9 +98,13 @@ public sealed partial class MainWindow : Window
         // The console window owns the tray icon; Fusion and settings are side windows.
         try { if (IsConsolePage(page)) shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
-        AppWindow.Closing += (_, args) =>
+        AppWindow.Closing += async (_, args) =>
         {
-            if (!exiting && shell != null) { args.Cancel = true; shell.Hide(); }
+            if (exiting) return;
+            if (shell != null) { args.Cancel = true; shell.Hide(); return; }
+            if (!draftDirty) return;
+            args.Cancel = true;
+            if (await ConfirmDiscardAsync("关闭窗口")) Shutdown();
         };
         Closed += (_, _) =>
         {
@@ -152,7 +157,7 @@ public sealed partial class MainWindow : Window
             ready = true;
             await ExecuteUiAsync("连接 CLI", async token =>
             {
-                await ConnectCliAsync(token);
+                if (page != "settings") await ConnectCliAsync(token);
                 await LoadPageAsync(token);
             }, readOnly: true);
             UpdateRefreshTimer();
@@ -184,6 +189,8 @@ public sealed partial class MainWindow : Window
     }
 
     internal bool IsChanging => busy && !loadingPage;
+    internal bool HasDraftChanges => draftDirty;
+    internal bool NotifyUpdate(string version) => shell?.NotifyUpdate(version) == true;
     internal void Shutdown() { exiting = true; Close(); }
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
@@ -194,8 +201,12 @@ public sealed partial class MainWindow : Window
     {
         Title = page switch
         {
-            "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
-            "usage" => "用量明细", "context" => "上下文", _ => "设置与诊断"
+            "providers" => "模型与服务",
+            "agents" => "Agent 接入管理",
+            "fusion" => "Fusion 设置",
+            "usage" => "用量明细",
+            "context" => "上下文",
+            _ => "设置与诊断"
         };
         var console = IsConsolePage(page);
         // The console tabs already name the page, so the caption stays empty there.
@@ -232,8 +243,7 @@ public sealed partial class MainWindow : Window
         if (next == page && pageLoaded) return;
         // The draft dictionaries cache every provider's editor; only MarkDirty
         // means the user changed something that is not applied yet.
-        if (page == "providers" && draftDirty
-            && !await ConfirmAsync("放弃未应用的更改？", "切换页面会丢弃尚未应用的服务商与模型更改。", "放弃并切换"))
+        if (!await ConfirmDiscardAsync("切换页面"))
         {
             ApplyPageLayout();
             return;
@@ -245,7 +255,7 @@ public sealed partial class MainWindow : Window
         ProviderList.ItemsSource = null; providerRows.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
-        if (ready && !interfaceReady) { await ReloadAsync(); return; }
+        if (ready && !interfaceReady && page != "settings") { await ReloadAsync(); return; }
         if (ready) await ExecuteUiAsync("切换页面", async token =>
         {
             await LoadPageAsync(token);
@@ -280,7 +290,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "context" or "settings" ? command : "overview");
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
     });
 
     private async Task ExitAsync()
@@ -292,34 +302,74 @@ public sealed partial class MainWindow : Window
             return;
         }
         // A never-shown tray-only window has no XamlRoot for a ContentDialog.
-        if (!initialized) { ((App)Microsoft.UI.Xaml.Application.Current).ExitAll(); return; }
+        if (!await ((App)Microsoft.UI.Xaml.Application.Current).ConfirmDraftsAsync()) return;
+        if (!initialized) { await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync(); return; }
         if (await ConfirmAsync("退出 Codex Mixin？", "退出界面后，本地网关会继续按 CLI 的服务设置运行。", "退出"))
         {
             exiting = true;
-            ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
+            await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync();
         }
     }
 
-    private void OnProviderSelected(object sender, SelectionChangedEventArgs args)
+    private async void OnProviderSelected(object sender, SelectionChangedEventArgs args)
     {
         if (!ready || selectingProvider || ProviderList.SelectedItem is not string id) return;
+        if (draftDirty)
+        {
+            selectingProvider = true;
+            ProviderList.SelectedItem = providerId;
+            try
+            {
+                if (!await ConfirmDiscardAsync("切换服务商")) return;
+                ProviderList.SelectedItem = id;
+                connectionDrafts.Clear(); modelDrafts.Clear();
+            }
+            finally { selectingProvider = false; }
+        }
         providerId = id;
         RenderSelectedProvider();
     }
 
-    private async void OnAddProvider(object sender, RoutedEventArgs args) => await AddProviderAsync();
+    private async void OnAddProvider(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            var hadDraft = draftDirty;
+            if (!await ConfirmDiscardAsync("新增服务商")) return;
+            if (hadDraft) await ReloadAsync();
+            await AddProviderAsync();
+        }
+        catch (Exception error) { ShowNotice("新增服务商失败", error.Message, InfoBarSeverity.Error); }
+    }
     private async void OnRemoveProvider(object sender, RoutedEventArgs args)
     {
         if (providerId != null && await ConfirmAsync("删除服务商？", "将移除当前服务商及其模型配置。", "删除"))
             await ChangeAsync("删除服务商", ["provider", "remove", providerId], apply: true);
     }
-    private void OnModelsTab(object sender, RoutedEventArgs args) { connectionSelected = false; UpdateRefreshTimer(); RenderSelectedProvider(); }
-    private void OnConnectionTab(object sender, RoutedEventArgs args) { connectionSelected = true; UpdateRefreshTimer(); RenderSelectedProvider(); }
+    private async void OnModelsTab(object sender, RoutedEventArgs args) => await SelectProviderTabAsync(false);
+    private async void OnConnectionTab(object sender, RoutedEventArgs args) => await SelectProviderTabAsync(true);
+
+    private async Task SelectProviderTabAsync(bool connection)
+    {
+        if (connection != connectionSelected && await ConfirmDiscardAsync("切换编辑页"))
+        {
+            connectionSelected = connection;
+            UpdateRefreshTimer();
+            RenderSelectedProvider();
+        }
+        ModelsTab.IsChecked = !connectionSelected;
+        ConnectionTab.IsChecked = connectionSelected;
+    }
+
     private async void OnApplyChanges(object sender, RoutedEventArgs args)
     {
+        if (busy || applyingDraft) return;
+        applyingDraft = true;
         try { if (pendingApply != null) await pendingApply(); }
         catch (Exception error) { ShowNotice("应用更改失败", error.Message, InfoBarSeverity.Error); }
+        finally { applyingDraft = false; }
     }
+
     private void OnOpenPage(object sender, RoutedEventArgs args) =>
         ((App)Microsoft.UI.Xaml.Application.Current).OpenPage((string)((MenuFlyoutItem)sender).Tag);
 
@@ -338,16 +388,34 @@ public sealed partial class MainWindow : Window
         interfaceReady = true;
     }
 
-    private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
+    private async Task ReloadAsync()
     {
-        await ConnectCliAsync(token, refresh: true);
-        agentSnapshot = null; providerSnapshot = null; benchmarkSnapshot = null;
-        await LoadPageAsync(token);
-    }, readOnly: true);
+        if (!await ConfirmDiscardAsync("刷新页面")) return;
+        await ExecuteUiAsync("刷新", async token =>
+        {
+            if (page != "settings") await ConnectCliAsync(token, refresh: true);
+            agentSnapshot = null; providerSnapshot = null; benchmarkSnapshot = null;
+            await LoadPageAsync(token);
+        }, readOnly: true);
+    }
 
-    private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
+    internal async Task<bool> ConfirmDiscardAsync(string action, bool discard = true)
     {
-        if (busy || exiting) return;
+        if (!draftDirty) return true;
+        ShowMain();
+        if (!await ConfirmAsync("放弃未应用的更改？", $"{action}会丢弃尚未保存的更改。", "放弃更改")) return false;
+        if (discard)
+        {
+            draftDirty = false;
+            connectionDrafts.Clear(); modelDrafts.Clear();
+        }
+        return true;
+    }
+
+    private async Task<bool> ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
+    {
+        if (busy || exiting) return false;
+        var succeeded = false;
         busy = true;
         loadingPage = readOnly;
         // Block input without the disabled look; a refresh should not gray out the window.
@@ -361,6 +429,8 @@ public sealed partial class MainWindow : Window
         try
         {
             await work(cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            succeeded = true;
             if (!exiting) StatusText.Text = $"{label}完成 · {DateTime.Now:HH:mm:ss}";
         }
         catch (Exception error) when (readOnly && queuedPage != null && cancellation.IsCancellationRequested
@@ -370,7 +440,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            if (exiting) return;
+            if (exiting) return false;
             var title = error is CliFailure { Committed: true } ? "配置已保存，后续操作失败" : $"{label}失败";
             StatusText.Text = title;
             ShowNotice(title, error.Message, InfoBarSeverity.Error);
@@ -406,26 +476,34 @@ public sealed partial class MainWindow : Window
             queuedPage = null;
             ShowPage(next);
         }
+        return succeeded;
     }
 
-    private Task ChangeAsync(string label, string[] args, bool apply = false,
-        IReadOnlyDictionary<string, string>? secrets = null) => ExecuteUiAsync(label, async token =>
+    private async Task<bool> ChangeAsync(string label, string[] args, bool apply = false,
+        IReadOnlyDictionary<string, string>? secrets = null)
+    {
+        if (busy || exiting || !applyingDraft && !await ConfirmDiscardAsync(label)) return false;
+        return await ExecuteUiAsync(label, async token =>
     {
         await ConnectCliAsync(token);
         var service = operations ?? throw new InvalidOperationException("CLI 尚未连接，请先刷新。");
         var progress = new Progress<string>(message => StatusText.Text = message);
         var output = await service.ChangeAsync(args, token, secrets, progress, apply);
+        draftDirty = false;
+        if (apply) ShowSummary("配置已同步");
         ShowNotice(label, string.IsNullOrWhiteSpace(output) ? "操作完成。" : output.Trim(), InfoBarSeverity.Success);
         // A tray-only startup has not loaded the console; do not build a hidden model page.
         if (!initialized) return;
-        try { await LoadPageAsync(token); }
+        try { await LoadPageAsync(token); if (apply) ShowSummary("配置已同步"); }
         catch (Exception error)
         {
+            ShowSummary("配置已保存，状态刷新失败");
             ShowNotice($"{label}完成，状态刷新失败", error.Message, InfoBarSeverity.Warning);
             PageBody.Children.Clear();
             PageBody.Children.Add(Card("状态刷新失败", "操作已执行，请刷新确认最新状态。", Text(error.Message)));
         }
     });
+    }
 
     private async Task LoadPageAsync(CancellationToken token)
     {
@@ -436,7 +514,7 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Clear();
         draftDirty = false;
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
-        ShowSummary("配置已同步");
+        ShowSummary("未修改");
         ToolTipService.SetToolTip(PageTitle, null);
         PageTitle.Text = page switch
         {
@@ -756,7 +834,10 @@ public sealed partial class MainWindow : Window
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = new Border
             {
-                Child = row, Style = Themed(modelIndex % 2 == 0 ? "RowStripe" : "RowPlain"), Padding = new Thickness(12, 0, 12, 0), Height = 34
+                Child = row,
+                Style = Themed(modelIndex % 2 == 0 ? "RowStripe" : "RowPlain"),
+                Padding = new Thickness(12, 0, 12, 0),
+                Height = 34
             };
             args.Handled = true;
         };
@@ -791,9 +872,34 @@ public sealed partial class MainWindow : Window
 
     private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
 
-    private void MarkDirty() { draftDirty = true; ShowSummary("还有未应用的更改"); ApplyChanges.IsEnabled = true; }
+    private void MarkDirty()
+    {
+        if (loadingPage) return;
+        draftDirty = true;
+        ShowSummary("还有未应用的更改");
+        ApplyChanges.IsEnabled = true;
+    }
 
-    private void ShowSummary(string text) { ToolTipService.SetToolTip(ApplyChanges, text); }
+    private void TrackDraft(FrameworkElement control)
+    {
+        switch (control)
+        {
+            case TextBox box: box.TextChanged += (_, _) => MarkDirty(); break;
+            case PasswordBox box: box.PasswordChanged += (_, _) => MarkDirty(); break;
+            case ComboBox picker: picker.SelectionChanged += (_, _) => MarkDirty(); break;
+            case NumberBox number: number.ValueChanged += (_, _) => MarkDirty(); break;
+            case ToggleSwitch toggle: toggle.Toggled += (_, _) => MarkDirty(); break;
+            case CheckBox check:
+                check.Checked += (_, _) => MarkDirty(); check.Unchecked += (_, _) => MarkDirty(); break;
+            case TimePicker time: time.TimeChanged += (_, _) => MarkDirty(); break;
+        }
+    }
+
+    private void ShowSummary(string text)
+    {
+        ToolTipService.SetToolTip(ApplyChanges, text);
+        AutomationProperties.SetHelpText(ApplyChanges, text);
+    }
 
     private static string Milliseconds(double value) => value < 1000 ? $"{value:0} ms" : $"{value / 1000:0.##} s";
 
@@ -888,6 +994,7 @@ public sealed partial class MainWindow : Window
         id.IsEnabled = provider == null;
         var name = Input("显示名称", provider is { } n ? Json.Text(n, "display_name") : "");
         var url = Input("Base URL（预设可留空）", provider is { } u ? Json.Text(u, "base_url") : "");
+        AutomationProperties.SetAutomationId(url, "provider-base-url");
         var website = Input("供应商网站（可选）", provider is { } site ? Json.OptionalText(site, "website_url") ?? "" : "");
         var imagePath = Input("图像生成路径（可选）", provider is { } image ? Json.OptionalText(image, "image_generation_path") ?? "" : "");
         var apiPath = Input("API 路径（custom，可选）", provider is { } api ? Json.OptionalText(api, "api_path") ?? "" : "");
@@ -903,8 +1010,12 @@ public sealed partial class MainWindow : Window
         var region = Input("AWS Region", provider is { } r ? Json.OptionalText(r, "aws_region") ?? Json.Text(catalog, "default_aws_region") : Json.Text(catalog, "default_aws_region"));
         var bridge = Choice("OneAPI 认证桥接", ["disabled", "ducx_loopback"],
             provider is { } b ? Json.OptionalText(b, "baidu_auth_bridge") ?? "disabled" : "disabled");
-        var report = new CheckBox { Content = "OneAPI 代码上报", IsChecked = provider is { } br &&
-            Json.Field(br, "baidu_code_report").ValueKind == JsonValueKind.True };
+        var report = new CheckBox
+        {
+            Content = "OneAPI 代码上报",
+            IsChecked = provider is { } br &&
+            Json.Field(br, "baidu_code_report").ValueKind == JsonValueKind.True
+        };
         string[] overrideModels = provider is { } configured
             ? Json.Strings(Json.Field(configured, "selected_models")) : [];
         var reviewOverride = new ToggleSwitch { Header = "Codex 审查模型覆盖", IsOn = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
@@ -934,7 +1045,8 @@ public sealed partial class MainWindow : Window
             oauthTimeout.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
             oauthHint.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
             id.Visibility = oauth && !Json.Flag(definition, "allow_multiple") ? Visibility.Collapsed : Visibility.Visible;
-            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : "API Key（可选；留空使用本地 OAuth）";
+            var localSession = Json.Text(definition, "auth_mode") == "local_session";
+            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : localSession ? "API Key（可选；留空使用原生客户端登录状态）" : "API Key（可选；留空使用本地 OAuth）";
             key.Visibility = aws || oauth ? Visibility.Collapsed : Visibility.Visible;
             foreach (var element in new FrameworkElement[] { name, url, website, imagePath })
                 element.Visibility = oauth ? Visibility.Collapsed : Visibility.Visible;
@@ -944,7 +1056,33 @@ public sealed partial class MainWindow : Window
             protocol.Visibility = Json.Flag(definition, "custom_endpoint") ? Visibility.Visible : Visibility.Collapsed;
             apiPath.Visibility = protocol.Visibility;
         }
-        preset.SelectionChanged += (_, _) => Fields(); Fields();
+        var ducxHint = Text("DUCX 使用独立副本。保存时自动下载；需要登录时会打开终端显示二维码，请在终端完成扫码。关闭终端或取消后可重新登录。");
+        var setupDucx = Button("安装 / 登录 DUCX…", async () =>
+        {
+            await ExecuteUiAsync("准备 DUCX，请在弹出的终端扫码", async token =>
+            {
+                var output = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(
+                    ["connect", "ducx", "--json"], token, progress: new Progress<string>(message => StatusText.Text = message));
+                using var document = JsonDocument.Parse(output);
+                var executable = Json.Text(document.RootElement, "executable");
+                if (!Path.IsPathFullyQualified(executable)) throw new CliFailure("DUCX 返回的路径必须是绝对路径。");
+                ShowNotice("DUCX 已就绪", "扫码登录已完成，可以保存服务商配置。", InfoBarSeverity.Success);
+            });
+        });
+        AutomationProperties.SetAutomationId(setupDucx, "ducx-login");
+        form.Children.Add(ducxHint);
+        if (inline) form.Children.Add(setupDucx);
+        void BridgeFields()
+        {
+            var visible = bridge.Visibility == Visibility.Visible && (string)bridge.SelectedItem == "ducx_loopback";
+            ducxHint.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            setupDucx.Visibility = ducxHint.Visibility;
+        }
+        bridge.SelectionChanged += (_, _) => BridgeFields();
+        preset.SelectionChanged += (_, _) => { Fields(); BridgeFields(); }; Fields(); BridgeFields();
+        AutomationProperties.SetAutomationId(bridge, "provider-auth-bridge");
+        if (inline)
+            foreach (var control in form.Children.OfType<FrameworkElement>()) TrackDraft(control);
         if (!inline)
         {
             var dialog = Dialog(provider == null ? "新增服务商" : "连接配置", new ScrollViewer { Content = form, MaxHeight = 480 });
@@ -953,55 +1091,55 @@ public sealed partial class MainWindow : Window
         }
         async Task Save()
         {
-        var args = new List<string> { "provider", provider == null ? "add" : "update" };
-        if (provider == null) args.AddRange(["--preset", (string)preset.SelectedItem]);
-        if (id.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(id.Text))
-        {
-            if (provider == null) args.Add("--id");
-            args.Add(id.Text.Trim());
-        }
-        var secrets = new Dictionary<string, string>();
-        void Secret(string flag, PasswordBox box, string variable)
-        {
-            if (box.Password.Length == 0) return;
-            secrets[variable] = box.Password; args.AddRange([flag, $"@env:{variable}"]); box.Password = "";
-        }
-        foreach (var (flag, box) in new[] { ("--display-name", name), ("--base-url", url), ("--website-url", website), ("--image-generation-path", imagePath) })
-            if (box.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
-        var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
-        if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
-        if (Json.Flag(definition, "custom_endpoint") && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
-        if (Json.Text(definition, "auth_mode") == "aws_sigv4")
-        {
-            Secret("--aws-access-key-id", accessKey, "CM_AWS_ID");
-            Secret("--aws-secret-access-key", secretKey, "CM_AWS_SECRET");
-            Secret("--aws-session-token", session, "CM_AWS_SESSION");
-            args.AddRange(["--aws-region", region.Text.Trim()]);
-        }
-        else if (key.Visibility == Visibility.Visible) Secret("--key", key, "CM_API_KEY");
-        if (oauthTimeout.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(oauthTimeout.Text))
-            args.AddRange(["--oauth-timeout-seconds", oauthTimeout.Text.Trim()]);
-        if (Json.Flag(definition, "quota_username_required"))
-        {
-            if (!string.IsNullOrWhiteSpace(username.Text)) args.AddRange(["--quota-username", username.Text.Trim()]);
-            args.AddRange(["--baidu-auth-bridge", (string)bridge.SelectedItem, "--baidu-code-report", report.IsChecked == true ? "true" : "false"]);
-        }
-        if (Json.Flag(definition, "quota_credentials_required"))
-        {
-            if (!string.IsNullOrWhiteSpace(workspace.Text)) args.AddRange(["--quota-workspace-id", workspace.Text.Trim()]);
-            Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");
-        }
-        if (provider != null)
-        {
-            if (reviewOverride.IsOn && reviewModel.SelectedItem is string reviewSelection && !string.IsNullOrEmpty(reviewSelection))
-                args.AddRange(["--auto-review-model", reviewSelection]);
-            else args.Add("--clear-auto-review-model");
-            if (titleOverride.IsOn && titleModel.SelectedItem is string titleSelection && !string.IsNullOrEmpty(titleSelection))
-                args.AddRange(["--codex-thread-title-model", titleSelection]);
-            else args.Add("--clear-codex-thread-title-model");
-        }
-        try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ShowSummary("配置已同步"); }
-        finally { secrets.Clear(); }
+            var args = new List<string> { "provider", provider == null ? "add" : "update" };
+            if (provider == null) args.AddRange(["--preset", (string)preset.SelectedItem]);
+            if (id.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(id.Text))
+            {
+                if (provider == null) args.Add("--id");
+                args.Add(id.Text.Trim());
+            }
+            var secrets = new Dictionary<string, string>();
+            void Secret(string flag, PasswordBox box, string variable)
+            {
+                if (box.Password.Length == 0) return;
+                secrets[variable] = box.Password; args.AddRange([flag, $"@env:{variable}"]);
+            }
+            foreach (var (flag, box) in new[] { ("--display-name", name), ("--base-url", url), ("--website-url", website), ("--image-generation-path", imagePath) })
+                if (box.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
+            var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
+            if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
+            if (Json.Flag(definition, "custom_endpoint") && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
+            if (Json.Text(definition, "auth_mode") == "aws_sigv4")
+            {
+                Secret("--aws-access-key-id", accessKey, "CM_AWS_ID");
+                Secret("--aws-secret-access-key", secretKey, "CM_AWS_SECRET");
+                Secret("--aws-session-token", session, "CM_AWS_SESSION");
+                args.AddRange(["--aws-region", region.Text.Trim()]);
+            }
+            else if (key.Visibility == Visibility.Visible) Secret("--key", key, "CM_API_KEY");
+            if (oauthTimeout.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(oauthTimeout.Text))
+                args.AddRange(["--oauth-timeout-seconds", oauthTimeout.Text.Trim()]);
+            if (Json.Flag(definition, "quota_username_required"))
+            {
+                if (!string.IsNullOrWhiteSpace(username.Text)) args.AddRange(["--quota-username", username.Text.Trim()]);
+                args.AddRange(["--baidu-auth-bridge", (string)bridge.SelectedItem, "--baidu-code-report", report.IsChecked == true ? "true" : "false"]);
+            }
+            if (Json.Flag(definition, "quota_credentials_required"))
+            {
+                if (!string.IsNullOrWhiteSpace(workspace.Text)) args.AddRange(["--quota-workspace-id", workspace.Text.Trim()]);
+                Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");
+            }
+            if (provider != null)
+            {
+                if (reviewOverride.IsOn && reviewModel.SelectedItem is string reviewSelection && !string.IsNullOrEmpty(reviewSelection))
+                    args.AddRange(["--auto-review-model", reviewSelection]);
+                else args.Add("--clear-auto-review-model");
+                if (titleOverride.IsOn && titleModel.SelectedItem is string titleSelection && !string.IsNullOrEmpty(titleSelection))
+                    args.AddRange(["--codex-thread-title-model", titleSelection]);
+                else args.Add("--clear-codex-thread-title-model");
+            }
+            try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); }
+            finally { secrets.Clear(); }
         }
         if (inline && provider is { } connection)
         {
@@ -1063,8 +1201,12 @@ public sealed partial class MainWindow : Window
             var state = Json.Text(integration, "state");
             var stateLabel = state switch
             {
-                "managed" => "已接入", "unmanaged" => "未接入", "drift" => "配置已改变",
-                "error" => "检测失败", "unsupported" => "暂不支持接入", _ => $"未知状态：{state}"
+                "managed" => "已接入",
+                "unmanaged" => "未接入",
+                "drift" => "配置已改变",
+                "error" => "检测失败",
+                "unsupported" => "暂不支持接入",
+                _ => $"未知状态：{state}"
             };
             var version = Json.Field(agent, "cli");
             var connected = state is "managed" or "drift";
@@ -1228,6 +1370,7 @@ public sealed partial class MainWindow : Window
             if (filtering) return;
             foreach (string id in args.RemovedItems) selected.Remove(id);
             foreach (string id in args.AddedItems) selected.Add(id);
+            MarkDirty();
         };
         RestoreSelection();
         var search = Input("搜索 Panel 模型", "");
@@ -1258,7 +1401,8 @@ public sealed partial class MainWindow : Window
             var times = Row(); times.Children.Add(begin); times.Children.Add(finish);
             row.Children.Add(times); row.Children.Add(picker);
             var route = (begin, finish, picker); routes.Add(route);
-            row.Children.Add(Button("移除此时段", () => { routes.Remove(route); schedule.Children.Remove(row); return Task.CompletedTask; }));
+            row.Children.Add(Button("移除此时段", () => { routes.Remove(route); schedule.Children.Remove(row); MarkDirty(); return Task.CompletedTask; }));
+            TrackDraft(begin); TrackDraft(finish); TrackDraft(picker);
             schedule.Children.Add(row);
         }
         if (saved)
@@ -1267,7 +1411,7 @@ public sealed partial class MainWindow : Window
         var scheduleBody = new StackPanel { Spacing = 16 };
         scheduleBody.Children.Add(Text("按本地时间切换模型；未覆盖的时段使用默认模型。"));
         scheduleBody.Children.Add(schedule);
-        scheduleBody.Children.Add(Button("添加时段", () => { AddRoute(540, 1080, ids[0]); return Task.CompletedTask; }));
+        scheduleBody.Children.Add(Button("添加时段", () => { AddRoute(540, 1080, ids[0]); MarkDirty(); return Task.CompletedTask; }));
         void SelectMode() { orchestration.Visibility = mode.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed; scheduleBody.Visibility = mode.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed; }
         mode.SelectionChanged += (_, _) => SelectMode(); SelectMode();
         var form = new StackPanel { Spacing = 16 };
@@ -1292,61 +1436,10 @@ public sealed partial class MainWindow : Window
             if (saved) arguments.AddRange(["--replace-id", Json.Text(profile, "id")]);
             await ChangeAsync("保存 Fusion", arguments.ToArray(), apply: true);
         };
+        foreach (var control in new FrameworkElement[] { profileId, mode, judge, final, minimum, timeout, intermediate, tools }) TrackDraft(control);
         ApplyChanges.Content = "保存并重启网关";
         if (saved) form.Children.Add(Button("停用 Fusion", async () => { if (await ConfirmAsync("停用 Fusion？", "将移除当前组合模型配置。", "停用")) await ChangeAsync("停用 Fusion", ["fusion", "delete", "--id", Json.Text(profile, "id")], apply: true); }));
         PageBody.Children.Add(Card("Fusion 模型编排", "", form));
-    }
-
-    private async Task SettingsAsync(CancellationToken token)
-    {
-        var theme = Choice("外观", ["跟随系统", "浅色", "深色"], Root.RequestedTheme switch { ElementTheme.Light => "浅色", ElementTheme.Dark => "深色", _ => "跟随系统" });
-        AutomationProperties.SetAutomationId(theme, "theme-picker");
-        theme.SelectionChanged += (_, _) => ((App)Microsoft.UI.Xaml.Application.Current).SetTheme(theme.SelectedIndex switch { 1 => ElementTheme.Light, 2 => ElementTheme.Dark, _ => ElementTheme.Default });
-        var startup = new CheckBox { Content = "登录 Windows 时启动界面", IsChecked = NativeShell.StartupEnabled(), IsEnabled = !NativeShell.StartupBlocked() };
-        startup.Click += (_, _) =>
-        {
-            try { NativeShell.SetStartup(startup.IsChecked == true); }
-            catch (Exception error) { startup.IsChecked = NativeShell.StartupEnabled(); ShowNotice("启动设置失败", error.Message, InfoBarSeverity.Error); }
-        };
-        var appearance = new StackPanel { Spacing = 16 }; appearance.Children.Add(theme); appearance.Children.Add(startup);
-        appearance.Children.Add(Text(NativeShell.StartupBlocked() ? "启动项已被 Windows 禁用，请在系统「启动应用」中调整。" : "界面登录启动与网关自启分别管理。"));
-        PageBody.Children.Add(Card("外观与启动", "", appearance));
-        var autostart = await Client.QueryAsync(["service", "autostart", "status", "--json"], token);
-        var serviceButtons = Row();
-        serviceButtons.Children.Add(Button("启用网关自启", () => ChangeAsync("启用网关自启", ["service", "autostart", "enable", "--json"])));
-        serviceButtons.Children.Add(Button("关闭网关自启", () => ChangeAsync("关闭网关自启", ["service", "autostart", "disable", "--json"])));
-        PageBody.Children.Add(Card("网关自启", Json.Flag(autostart, "enabled") ? "已启用" : "已关闭", serviceButtons));
-        var ech = await Client.QueryAsync(["ech", "status", "--json"], token);
-        var network = Row();
-        network.Children.Add(Button("检测 ECH", () => ChangeAsync("检测 ECH", ["ech", "test", "--json"])));
-        network.Children.Add(Button("启用 ECH", () => ChangeAsync("启用 ECH", ["ech", "enable"])));
-        network.Children.Add(Button("关闭 ECH", () => ChangeAsync("关闭 ECH", ["ech", "disable"])));
-        PageBody.Children.Add(Card("官方连接 · ECH", $"{(Json.Flag(ech, "enabled") ? "已启用" : "已关闭")} · {Json.OptionalText(ech, "fallback_reason") ?? "未发生连接回退"}", network));
-        var backup = Row();
-        backup.Children.Add(Button("导出配置", async () =>
-        {
-            if (!await ConfirmAsync("导出包含凭据的备份？", "Base64 不是加密。备份包含供应商密钥，请保存到安全位置。", "选择保存位置")) return;
-            var picker = new FileSavePicker { SuggestedFileName = "codex-mixin-config" };
-            picker.FileTypeChoices.Add("Codex Mixin backup", new List<string> { ".b64" });
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
-            if (file != null) await ChangeAsync("导出配置", ["config", "export", file.Path]);
-        }));
-        backup.Children.Add(Button("导入配置", async () =>
-        {
-            var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".b64");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSingleFileAsync();
-            if (file != null && await ConfirmAsync("替换当前配置？", "导入会替换现有供应商与密钥，并应用到已接入的客户端。", "导入"))
-                await ChangeAsync("导入配置", ["config", "import", file.Path], apply: true);
-        }));
-        PageBody.Children.Add(Card("配置备份", "", backup));
-        var diagnostics = Row();
-        diagnostics.Children.Add(Button("打开日志目录", () => OpenPathAsync(Path.GetDirectoryName(Json.Text(Json.Field(metadata, "paths"), "gateway_log"))!)));
-        diagnostics.Children.Add(Button("打开配置目录", () => OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"))));
-        diagnostics.Children.Add(Button("运行诊断", () => ChangeAsync("诊断", ["doctor", "--json"])));
-        diagnostics.Children.Add(Button("重放上报", () => ChangeAsync("重放上报", ["report-replay"])));
-        PageBody.Children.Add(Card("关于与诊断", $"Codex Mixin · CLI {Json.Text(metadata, "version")} · WinUI 3 / Windows App SDK", diagnostics));
     }
 
     private static Task OpenPathAsync(string path)
@@ -1386,16 +1479,23 @@ public sealed partial class MainWindow : Window
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, TextWrapping = TextWrapping.Wrap });
         if (!string.IsNullOrWhiteSpace(description))
-            body.Children.Add(new TextBlock { Text = description,
-                Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
+            body.Children.Add(new TextBlock
+            {
+                Text = description,
+                Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"]
+            });
         if (content != null) body.Children.Add(content);
         return new Border { Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["Card"], Child = body };
     }
 
     private ContentDialog Dialog(string title, UIElement content) => new()
     {
-        Title = title, Content = content, CloseButtonText = "取消", XamlRoot = Root.XamlRoot,
-        RequestedTheme = Root.ActualTheme, DefaultButton = ContentDialogButton.Primary
+        Title = title,
+        Content = content,
+        CloseButtonText = "取消",
+        XamlRoot = Root.XamlRoot,
+        RequestedTheme = Root.ActualTheme,
+        DefaultButton = ContentDialogButton.Primary
     };
 
     private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)

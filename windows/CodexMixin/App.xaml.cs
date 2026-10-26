@@ -14,13 +14,17 @@ public partial class App : Application
     private readonly Dictionary<string, MainWindow> windows = [];
     private CliClient? cli;
     private Operations? operations;
+    private AppUpdates? updates;
+    private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(1) };
     private TrayWindow? tray;
     private EventWaitHandle? trayReady;
     private bool exiting;
+    private string? notifiedUpdate;
     private ElementTheme theme = ElementTheme.Default;
 
     internal CliClient Client => cli ??= CliClient.Locate();
     internal Operations Operations => operations ??= new Operations(Client);
+    internal AppUpdates Updates => updates ??= new AppUpdates(() => Client);
     internal ElementTheme Theme => theme;
     internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
     internal void SetTheme(ElementTheme value)
@@ -30,10 +34,19 @@ public partial class App : Application
         tray?.SetTheme(value);
     }
 
-    internal void ExitAll()
+    internal async Task<bool> ConfirmDraftsAsync()
+    {
+        foreach (var target in windows.Values.Where(target => target.HasDraftChanges).ToArray())
+            if (!await target.ConfirmDiscardAsync("退出或安装更新", discard: false)) return false;
+        return true;
+    }
+
+    internal async Task ExitAllAsync()
     {
         if (exiting) return;
         exiting = true;
+        updateTimer.Stop();
+        if (updates != null) await updates.StopAsync();
         trayReady?.Dispose();
         tray?.Shutdown();
         foreach (var target in windows.Values.ToArray()) target.Shutdown();
@@ -43,6 +56,12 @@ public partial class App : Application
     internal void OpenPage(string page, bool show = true)
     {
         if (exiting) return;
+        if (page == "updates")
+        {
+            OpenPage("settings");
+            _ = Updates.CheckAsync();
+            return;
+        }
         if (page == "overview")
         {
             tray ??= new TrayWindow();
@@ -114,6 +133,20 @@ public partial class App : Application
         {
             trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{Environment.ProcessId}");
             trayReady.Set();
+        }
+        Updates.LoadPreferences();
+        Updates.Changed += () =>
+        {
+            if (Updates.Release is { IsNewer: true } release && notifiedUpdate != release.Version
+                && windows.TryGetValue(ConsoleWindowKey, out var console) && console.NotifyUpdate(release.Version))
+                notifiedUpdate = release.Version;
+        };
+        // Capture runs exercise the real UI/CLI without contacting GitHub.
+        if (!Environment.GetCommandLineArgs().Contains("--capture-ui"))
+        {
+            updateTimer.Tick += async (_, _) => await Updates.CheckAsync(automatic: true);
+            updateTimer.Start();
+            _ = Updates.CheckAsync(automatic: true);
         }
     }
 
