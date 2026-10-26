@@ -881,7 +881,27 @@ public sealed partial class MainWindow : Window
             case TextBox box: box.TextChanged += (_, _) => MarkDirty(); break;
             case PasswordBox box: box.PasswordChanged += (_, _) => MarkDirty(); break;
             case ComboBox picker: picker.SelectionChanged += (_, _) => MarkDirty(); break;
-            case NumberBox number: number.ValueChanged += (_, _) => MarkDirty(); break;
+            case NumberBox number:
+                number.ValueChanged += (_, _) => MarkDirty();
+                var textTracked = false;
+                number.Loaded += (_, _) =>
+                {
+                    if (textTracked) return;
+                    var descendants = new Queue<DependencyObject>();
+                    descendants.Enqueue(number);
+                    while (descendants.TryDequeue(out var element))
+                    {
+                        if (element is TextBox input)
+                        {
+                            input.TextChanged += (_, _) => MarkDirty();
+                            textTracked = true;
+                            break;
+                        }
+                        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
+                            descendants.Enqueue(VisualTreeHelper.GetChild(element, index));
+                    }
+                };
+                break;
             case ToggleSwitch toggle: toggle.Toggled += (_, _) => MarkDirty(); break;
             case CheckBox check:
                 check.Checked += (_, _) => MarkDirty(); check.Unchecked += (_, _) => MarkDirty(); break;

@@ -1,5 +1,9 @@
 param([Parameter(Mandatory=$true)][string]$Job, [switch]$NoRelaunch)
 $ErrorActionPreference = 'Stop'
+# A PowerShell 7 parent can export incompatible module paths to Windows PowerShell.
+$env:PSModulePath = "$PSHOME\Modules"
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -Force
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Archive\Microsoft.PowerShell.Archive.psd1" -Force
 $jobPath = [IO.Path]::GetFullPath($Job)
 $work = Split-Path -Parent $jobPath
 $log = Join-Path $work 'install.log'
