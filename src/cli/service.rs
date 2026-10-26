@@ -795,6 +795,7 @@ pub(super) async fn start(
     let capabilities_config_path = config_path.clone();
     let refresh_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(CODEX_CATALOG_REFRESH_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         interval.tick().await;
         loop {
             interval.tick().await;
@@ -803,21 +804,27 @@ pub(super) async fn start(
                 "periodic",
                 "capability_cache",
             );
-            let refresh_result = GatewayConfig::from_stored_config()
-                .and_then(|current| {
-                    let capabilities = WebSearchCapabilities::from_default_path(&current)?;
-                    Ok((
-                        capabilities.supported_model_ids(),
-                        codex_mixin::provider::auxiliary_auto_review_slug(&current.providers),
-                    ))
-                })
-                .and_then(|(supported_models, auto_review_slug)| {
-                    refresh_managed_codex_catalog_with_capabilities(
-                        &capabilities_config_path,
-                        Some(&supported_models),
-                        auto_review_slug.as_deref(),
-                    )
-                });
+            let catalog_path = capabilities_config_path.clone();
+            let refresh_result = tokio::task::spawn_blocking(move || {
+                GatewayConfig::from_stored_config()
+                    .and_then(|current| {
+                        let capabilities = WebSearchCapabilities::from_default_path(&current)?;
+                        Ok((
+                            capabilities.supported_model_ids(),
+                            codex_mixin::provider::auxiliary_auto_review_slug(&current.providers),
+                        ))
+                    })
+                    .and_then(|(supported_models, auto_review_slug)| {
+                        refresh_managed_codex_catalog_with_capabilities(
+                            &catalog_path,
+                            Some(&supported_models),
+                            auto_review_slug.as_deref(),
+                        )
+                    })
+            })
+            .await
+            .context("join periodic Codex catalog refresh")
+            .and_then(|result| result);
             match refresh_result {
                 Ok(changed) => log_codex_catalog_refresh(
                     &capabilities_config_path,
