@@ -158,7 +158,7 @@ trust_level = "trusted"
     )
     .unwrap();
 
-    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(doc["model_provider"].as_str(), Some("openai"));
     assert_eq!(doc["web_search"].as_str(), Some("disabled"));
     assert_eq!(
         doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
@@ -427,7 +427,7 @@ base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
     )
     .unwrap();
 
-    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(doc["model_provider"].as_str(), Some("openai"));
     assert_eq!(doc["forced_login_method"].as_str(), Some("chatgpt"));
     assert_eq!(
         doc["model_providers"]["amazon-bedrock"]["base_url"].as_str(),
@@ -757,7 +757,7 @@ wire_api = "responses"
     )
     .unwrap();
 
-    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(doc["model_provider"].as_str(), Some("openai"));
     assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
     assert_eq!(
         doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
@@ -811,7 +811,7 @@ custom_field = "stale"
 }
 
 #[test]
-fn oauth_proxy_install_writes_codex_mixin_provider_without_default_model() {
+fn oauth_proxy_install_keeps_openai_without_default_model() {
     let mut doc = "model = \"gpt-5.5\"\n".parse::<DocumentMut>().unwrap();
     let catalog_path = PathBuf::from("/tmp/mixin-models.json");
 
@@ -826,7 +826,7 @@ fn oauth_proxy_install_writes_codex_mixin_provider_without_default_model() {
     )
     .unwrap();
 
-    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(doc["model_provider"].as_str(), Some("openai"));
     assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
     assert_eq!(
         doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
@@ -1224,6 +1224,45 @@ fn syncs_dynamic_gateway_port_to_managed_custom_provider() {
         doc["model_providers"]["other"]["base_url"].as_str(),
         Some("https://example.test/v1")
     );
+}
+
+#[test]
+fn service_sync_migrates_official_provider_and_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let catalog_path = dir.path().join("models.json");
+    fs::write(&config_path, format!(
+        "{MANAGED_CONFIG_HEADER}\nmodel_provider = 'codex-mixin'\nmodel = 'gpt-6-astra'\nmodel_catalog_json = {:?}\n[model_providers.codex-mixin]\nbase_url = 'http://127.0.0.1:8787/v1'\nrequires_openai_auth = true\nsupports_websockets = true\n",
+        catalog_path.to_string_lossy()
+    )).unwrap();
+    for port in [8787, 18787] {
+        let bind = format!("127.0.0.1:{port}").parse().unwrap();
+        assert!(sync_managed_codex_gateway_base_url(&config_path, bind).unwrap());
+        assert!(!sync_managed_codex_gateway_base_url(&config_path, bind).unwrap());
+        let raw = fs::read_to_string(&config_path).unwrap();
+        let doc = raw.parse::<DocumentMut>().unwrap();
+        assert_eq!(doc["model_provider"].as_str(), Some("openai"));
+        assert_eq!(doc["model"].as_str(), Some("gpt-6-astra"));
+        assert_eq!(
+            doc["openai_base_url"].as_str(),
+            Some(format!("http://127.0.0.1:{port}/v1").as_str())
+        );
+        assert_eq!(
+            managed_catalog_settings(&config_path).unwrap(),
+            Some((true, catalog_path.clone()))
+        );
+        fs::write(
+            &config_path,
+            raw.lines()
+                .filter(|line| !line.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        assert!(is_managed_config(
+            &fs::read_to_string(&config_path).unwrap()
+        ));
+    }
 }
 
 #[test]

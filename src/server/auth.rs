@@ -3,7 +3,8 @@ use super::*;
 /// Internal marker set by [`mark_loopback_peer`] for connections whose TCP
 /// peer is loopback. Inbound copies are always stripped, so clients cannot
 /// forge it; requests served without connection info never carry it.
-pub(super) const LOOPBACK_PEER_HEADER: &str = "x-codex-mixin-internal-loopback-peer";
+pub(super) use crate::gateway_access::LOOPBACK_PEER_HEADER;
+use crate::gateway_access::bearer_token;
 
 pub(super) async fn mark_loopback_peer(
     mut request: axum::extract::Request,
@@ -22,14 +23,6 @@ pub(super) async fn mark_loopback_peer(
         );
     }
     next.run(request).await
-}
-
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
 }
 
 pub(super) async fn check_gateway_auth(
@@ -64,40 +57,11 @@ pub(super) async fn check_gateway_auth(
     }
     // Codex OAuth passthrough is only for clients on this host, even when
     // the gateway listens on all interfaces.
-    if !state.config.accept_codex_oauth || !headers.contains_key(LOOPBACK_PEER_HEADER) {
-        return Err(GatewayError::Unauthorized);
-    }
-    let (authorization, _) = state
-        .upstream
-        .official_auth()
-        .await
-        .map_err(|_| GatewayError::Unauthorized)?;
-    let oauth_token = authorization
-        .to_str()
-        .ok()
-        .and_then(|authorization| authorization.strip_prefix("Bearer "))
-        .ok_or(GatewayError::Unauthorized)?;
-    if bool::from(actual.as_bytes().ct_eq(oauth_token.as_bytes())) {
+    if state.gateway.accepts_codex_oauth(headers).await {
         Ok(())
     } else {
         Err(GatewayError::Unauthorized)
     }
-}
-
-pub(crate) fn require_ducx_client(
-    state: &AppState,
-    provider: &ProviderRuntime,
-    headers: &HeaderMap,
-) -> Result<(), GatewayError> {
-    if !cfg!(feature = "client-auth") || !provider.uses_ducx_loopback() {
-        return Ok(());
-    }
-    state
-        .config
-        .gateway_client_keys
-        .authenticate(headers)
-        .map(|_| ())
-        .ok_or(GatewayError::Unauthorized)
 }
 
 pub(super) use crate::gateway::stable_oneapi_routing;

@@ -140,12 +140,14 @@ pub(super) fn check_codex_integration(
             .and_then(Item::as_bool)
             .unwrap_or(false);
 
-    match (
+    let base_url = if effective_provider == Some(codex_mixin::clients::codex::provider_id(true)) {
+        doc.get("openai_base_url").and_then(Item::as_str)
+    } else {
         provider_table
             .and_then(|table| table.get("base_url"))
-            .and_then(Item::as_str),
-        live,
-    ) {
+            .and_then(Item::as_str)
+    };
+    match (base_url, live) {
         (Some(base_url), Some(live)) => {
             let expected = format!("http://{}/v1", live.bind);
             if base_url == expected {

@@ -20,29 +20,36 @@ pub fn document_is_managed(raw: &str) -> bool {
     if raw.contains(MANAGED_MARKER) {
         return true;
     }
-    // Codex rewrites `config.toml` on run and drops leading comments, which
-    // erases MANAGED_HEADER. Fall back to a structural check so install/uninstall
-    // keep recognizing our config afterwards: the active `model_provider` points
-    // at one of our own provider ids and that provider table is present. Only our
-    // dedicated ids are matched (never the reserved `amazon-bedrock`) so a user's
-    // real provider is never misdetected as managed.
-    document_has_managed_structure(raw)
+    // Codex can strip comments. Recognize only Mixin-owned provider tables;
+    // an ordinary OpenAI proxy configuration must never be claimed as managed.
+    raw.parse::<DocumentMut>()
+        .is_ok_and(|document| document_has_managed_structure(&document))
 }
 
-fn document_has_managed_structure(raw: &str) -> bool {
-    let Ok(document) = raw.parse::<DocumentMut>() else {
-        return false;
-    };
+fn document_has_managed_structure(document: &DocumentMut) -> bool {
     let Some(active) = document.get("model_provider").and_then(Item::as_str) else {
         return false;
     };
-    if active != CUSTOM_ONLY_PROVIDER && active != crate::CODEX_MIXIN_PROVIDER {
+    let provider_table = if active == provider_id(true)
+        && document
+            .get("openai_base_url")
+            .and_then(Item::as_str)
+            .is_some()
+        && document
+            .get("model_catalog_json")
+            .and_then(Item::as_str)
+            .is_some()
+    {
+        crate::CODEX_MIXIN_PROVIDER
+    } else if active == CUSTOM_ONLY_PROVIDER || active == crate::CODEX_MIXIN_PROVIDER {
+        active
+    } else {
         return false;
-    }
+    };
     document
         .get("model_providers")
         .and_then(Item::as_table)
-        .is_some_and(|providers| providers.contains_key(active))
+        .is_some_and(|providers| providers.contains_key(provider_table))
 }
 
 pub fn serialize(document: &DocumentMut) -> String {
@@ -74,6 +81,11 @@ pub fn upsert(
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
     let provider_id = provider_id(codex_oauth_proxy);
+    if codex_oauth_proxy {
+        // Desktop suggestions require the built-in OpenAI identity. Codex
+        // ignores model_providers.openai; its supported endpoint override is here.
+        document["openai_base_url"] = value(base_url);
+    }
     if !codex_oauth_proxy {
         if document
             .get("desktop")
@@ -87,6 +99,7 @@ pub fn upsert(
         // Custom-only mode authenticates through the managed Bedrock placeholder.
         // A retained ChatGPT/API policy makes Codex ignore that auth document.
         document.remove("forced_login_method");
+        document.remove("openai_base_url");
     }
     document["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
     document["model_provider"] = value(provider_id);
@@ -117,13 +130,20 @@ pub fn upsert(
         provider["requires_openai_auth"] = value(true);
         provider["supports_websockets"] = value(true);
     }
-    providers.insert(provider_id, Item::Table(provider));
+    // In official mode this inactive table retains Mixin ownership and key
+    // metadata across Codex comment rewrites; it does not override OpenAI.
+    let provider_table = if codex_oauth_proxy {
+        crate::CODEX_MIXIN_PROVIDER
+    } else {
+        provider_id
+    };
+    providers.insert(provider_table, Item::Table(provider));
     Ok(())
 }
 
 pub fn provider_id(codex_oauth_proxy: bool) -> &'static str {
     if codex_oauth_proxy {
-        crate::CODEX_MIXIN_PROVIDER
+        "openai"
     } else {
         CUSTOM_ONLY_PROVIDER
     }
@@ -161,8 +181,12 @@ pub fn sync_client_key(config_path: &Path, client_key: &str) -> anyhow::Result<(
     Ok(())
 }
 
+/// Return the Mixin-owned table id, which is inactive with built-in OpenAI.
 pub fn managed_provider_id(document: &DocumentMut) -> anyhow::Result<&str> {
     if let Some(provider_id) = document.get("model_provider").and_then(Item::as_str) {
+        if provider_id == self::provider_id(true) && document_has_managed_structure(document) {
+            return Ok(crate::CODEX_MIXIN_PROVIDER);
+        }
         if provider_id == crate::CODEX_MIXIN_PROVIDER
             || provider_id == CUSTOM_ONLY_PROVIDER
             || provider_id == LEGACY_CUSTOM_ONLY_PROVIDER
@@ -234,6 +258,100 @@ mod tests {
                 assert_eq!(document["desktop"]["other"].as_bool(), Some(true));
             }
         }
+    }
+
+    #[test]
+    fn official_install_keeps_suggestion_provider() {
+        let mut document = DocumentMut::new();
+        upsert(
+            &mut document,
+            Some("gpt-6-astra"),
+            Path::new("models.json"),
+            "http://127.0.0.1:8787/v1",
+            "live",
+            Some("fixture-key"),
+            true,
+        )
+        .unwrap();
+        // Desktop suggestions reject any provider id other than openai.
+        assert_eq!(document["model_provider"].as_str(), Some("openai"));
+        assert_eq!(
+            document["openai_base_url"].as_str(),
+            Some("http://127.0.0.1:8787/v1")
+        );
+        assert!(document["model_providers"].get("openai").is_none());
+        assert!(document_is_managed(&document.to_string()));
+        assert_eq!(
+            managed_provider_id(&document).unwrap(),
+            crate::CODEX_MIXIN_PROVIDER
+        );
+    }
+
+    #[test]
+    fn official_proxy_preserves_user_openai_table_and_rotates_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        let mut document = "[model_providers.openai]\nhttp_headers = { user = 'keep' }\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        upsert(
+            &mut document,
+            None,
+            Path::new("models.json"),
+            "http://127.0.0.1:8787/v1",
+            "live",
+            Some("old-key"),
+            true,
+        )
+        .unwrap();
+        std::fs::write(&config_path, document.to_string()).unwrap();
+        assert!(is_managed(&config_path).unwrap());
+        sync_client_key(&config_path, "new-key").unwrap();
+        let document = std::fs::read_to_string(&config_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        assert_eq!(
+            document["model_providers"]["openai"]["http_headers"]["user"].as_str(),
+            Some("keep")
+        );
+        assert_eq!(
+            document["model_providers"][crate::CODEX_MIXIN_PROVIDER]["http_headers"]
+                [crate::gateway_access::CODEX_CLIENT_KEY_HEADER]
+                .as_str(),
+            Some("new-key")
+        );
+    }
+
+    #[test]
+    fn custom_reconnect_clears_official_endpoint_override() {
+        let mut document = DocumentMut::new();
+        for official in [true, false, true] {
+            upsert(
+                &mut document,
+                None,
+                Path::new("models.json"),
+                "http://127.0.0.1:8787/v1",
+                "live",
+                Some("fixture-key"),
+                official,
+            )
+            .unwrap();
+            assert_eq!(document.get("openai_base_url").is_some(), official);
+            assert_eq!(
+                document["model_provider"].as_str(),
+                Some(provider_id(official))
+            );
+            assert!(document_is_managed(&document.to_string()));
+        }
+    }
+
+    #[test]
+    fn plain_openai_proxy_is_not_managed() {
+        let document = "model_provider = 'openai'\nopenai_base_url = 'http://127.0.0.1:8787/v1'\nmodel_catalog_json = 'models.json'\n"
+            .parse::<DocumentMut>().unwrap();
+        assert!(!document_is_managed(&document.to_string()));
+        assert!(managed_provider_id(&document).is_err());
     }
 
     #[test]

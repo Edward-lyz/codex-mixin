@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
 pub const CODEX_CLIENT_KEY_HEADER: &str = "x-codex-mixin-client-key";
+// Set only by the inbound adapter after stripping client-supplied copies.
+pub(crate) const LOOPBACK_PEER_HEADER: &str = "x-codex-mixin-internal-loopback-peer";
+
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|value| value.to_str().ok())
+        })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GatewayClient {

@@ -230,8 +230,22 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
         })?;
     let base_url = format!("http://{}/v1", codex_mixin::config::client_address(bind));
     if provider.get("base_url").and_then(Item::as_str) != Some(base_url.as_str()) {
-        provider["base_url"] = value(base_url);
+        provider["base_url"] = value(&base_url);
         changed = true;
+    }
+    let official = provider_id == codex_mixin::CODEX_MIXIN_PROVIDER
+        && provider.get("supports_websockets").and_then(Item::as_bool) == Some(true);
+    if official {
+        if doc.get("openai_base_url").and_then(Item::as_str) != Some(base_url.as_str()) {
+            doc["openai_base_url"] = value(base_url);
+            changed = true;
+        }
+        if doc.get("model_provider").and_then(Item::as_str)
+            != Some(codex_mixin::clients::codex::provider_id(true))
+        {
+            doc["model_provider"] = value(codex_mixin::clients::codex::provider_id(true));
+            changed = true;
+        }
     }
     if !changed {
         return Ok(false);

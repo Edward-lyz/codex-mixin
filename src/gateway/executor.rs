@@ -231,7 +231,27 @@ impl GatewayExecutor {
             .then(|| self.image_routes.for_provider(provider.id()))
     }
 
-    pub(crate) fn require_ducx_client(
+    pub(crate) async fn accepts_codex_oauth(&self, headers: &HeaderMap) -> bool {
+        use crate::gateway_access::{LOOPBACK_PEER_HEADER, bearer_token};
+        use subtle::ConstantTimeEq;
+
+        if !self.config.accept_codex_oauth || !headers.contains_key(LOOPBACK_PEER_HEADER) {
+            return false;
+        }
+        let Some(actual) = bearer_token(headers) else {
+            return false;
+        };
+        let Ok((authorization, _)) = self.upstream.official_auth().await else {
+            return false;
+        };
+        authorization
+            .to_str()
+            .ok()
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|expected| bool::from(actual.as_bytes().ct_eq(expected.as_bytes())))
+    }
+
+    pub(crate) async fn require_ducx_client(
         &self,
         provider: &ProviderRuntime,
         headers: &HeaderMap,
@@ -239,11 +259,16 @@ impl GatewayExecutor {
         if !cfg!(feature = "client-auth") || !provider.uses_ducx_loopback() {
             return Ok(());
         }
-        self.config
+        if self
+            .config
             .gateway_client_keys
             .authenticate(headers)
-            .map(|_| ())
-            .ok_or(GatewayError::Unauthorized)
+            .is_some()
+            || self.accepts_codex_oauth(headers).await
+        {
+            return Ok(());
+        }
+        Err(GatewayError::Unauthorized)
     }
 
     pub(crate) async fn stream(

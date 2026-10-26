@@ -212,7 +212,7 @@
 "codexConnect.provider" = "Provider";
 "codexConnect.providerPending" = "Shown after you pick a mode";
 "codexConnect.connectButton" = "Connect";
-"codexConnect.officialProvider" = "codex-mixin / official OAuth proxy";
+"codexConnect.officialProvider" = "openai / Mixin OAuth proxy";
 "codexConnect.customOnlyProvider" = "amazon-bedrock / local placeholder (no AWS)";
 "settings.openProviderSetup" = "Open provider setup";
 "settings.localOAuthCredentials" = "Adding this preset opens browser OAuth. No provider CLI is required.";
