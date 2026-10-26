@@ -257,6 +257,8 @@ fn preview_text(text: &str) -> Option<String> {
             "<external_codex_apps_open_page",
             "<system-reminder>",
             "[Request interrupted by user",
+            "You are a helpful assistant.",
+            "# Files mentioned by the user:",
         ]
         .iter()
         .any(|prefix| text.starts_with(prefix))

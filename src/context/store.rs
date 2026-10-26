@@ -114,13 +114,6 @@ pub(crate) struct HistoryEntry {
     pub fingerprint: String,
 }
 
-/// Whether the lease query left the session free for this turn.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum LeaseState {
-    Acquired,
-    Busy,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct SegmentRow {
     pub position: i64,
@@ -397,61 +390,6 @@ impl Store {
             .optional()
             .context("read context session")?
             .context("context session disappeared")
-    }
-
-    /// Takes the per-session execution lease for one turn.
-    ///
-    /// A different live holder reports `Busy` instead of interleaving two
-    /// views of the same session. Contention is a normal result here: the
-    /// caller waits for the holder and only refuses the turn when the wait
-    /// runs out, so one session's auxiliary request cannot fail the turn that
-    /// owns it.
-    pub fn acquire_lease(
-        &mut self,
-        key: &str,
-        owner: &str,
-        ttl_seconds: i64,
-    ) -> Result<LeaseState> {
-        let now = unix_now();
-        let expires_at = now.saturating_add(ttl_seconds);
-        let transaction = self
-            .connection
-            .transaction()
-            .context("begin context lease")?;
-        let holder: Option<String> = transaction
-            .query_row(
-                "SELECT owner FROM leases WHERE session_key = ?1 AND expires_at > ?2",
-                params![key, now],
-                |row| row.get(0),
-            )
-            .optional()
-            .context("read context lease")?;
-        if holder.is_some_and(|holder| holder != owner) {
-            return Ok(LeaseState::Busy);
-        }
-        transaction
-            .execute(
-                "INSERT INTO leases (session_key, owner, acquired_at, expires_at)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(session_key) DO UPDATE SET
-                   owner = excluded.owner,
-                   acquired_at = excluded.acquired_at,
-                   expires_at = excluded.expires_at",
-                params![key, owner, now, expires_at],
-            )
-            .context("write context lease")?;
-        transaction.commit().context("commit context lease")?;
-        Ok(LeaseState::Acquired)
-    }
-
-    pub fn release_lease(&mut self, key: &str, owner: &str) -> Result<()> {
-        self.connection
-            .execute(
-                "DELETE FROM leases WHERE session_key = ?1 AND owner = ?2",
-                params![key, owner],
-            )
-            .context("release context lease")?;
-        Ok(())
     }
 
     /// Records the client-visible output of a completed response so a later

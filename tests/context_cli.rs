@@ -299,7 +299,7 @@ fn context_stats_use_codex_title_without_changing_session_identity() {
          INSERT INTO threads VALUES ('thread-title', 'Continue Codex thread task', NULL);",
         )
         .unwrap();
-    let sessions: Vec<String> = [
+    let mut sessions: Vec<String> = [
         "thread-title".to_owned(),
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"thread-title").to_string(),
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"thread-id\0thread-title").to_string(),
@@ -313,6 +313,14 @@ fn context_stats_use_codex_title_without_changing_session_identity() {
     .into_iter()
     .map(|id| format!("Codex{SESSION_SEPARATOR}{id}"))
     .collect();
+    sessions.extend([
+        format!("gateway{SESSION_SEPARATOR}thread-title"),
+        format!(
+            "gateway{SESSION_SEPARATOR}{}",
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"thread-title")
+        ),
+        format!("gateway{SESSION_SEPARATOR}opaque-routing-id"),
+    ]);
     let engine = ContextEngine::open(ContextSettings::default(), &database).unwrap();
     for session in &sessions {
         engine
@@ -323,6 +331,10 @@ fn context_stats_use_codex_title_without_changing_session_identity() {
     rusqlite::Connection::open(&database).unwrap().execute(
         "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens, codex_thread_id)
          VALUES (?1, 1, 100, 0, 1, 'thread-title')", [&sessions[4]],
+    ).unwrap();
+    rusqlite::Connection::open(&database).unwrap().execute(
+        "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens, codex_thread_id)
+         VALUES (?1, 2, 100, 0, 1, 'thread-title')", [&sessions[7]],
     ).unwrap();
     let stats = successful(cli(
         directory.path(),
@@ -359,6 +371,14 @@ fn stats_preview_missing_titles() {
             &session,
             &[
                 message("developer", "Internal tools"),
+                message(
+                    "user",
+                    "You are a helpful assistant. You will receive instructions.",
+                ),
+                message(
+                    "user",
+                    "# Files mentioned by the user:\nImage attachment: true",
+                ),
                 message(
                     "user",
                     "# AGENTS.md instructions for workspace\n<INSTRUCTIONS>rules</INSTRUCTIONS>",

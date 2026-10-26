@@ -10030,6 +10030,7 @@ async fn context_stream_before_done() {
             async move {
                 let stream = async_stream::stream! {
                     yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"review-stream\"}}\n\n"));
+                    yield Ok(bytes::Bytes::from_static(b"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"rs_progress\"}}\n\nevent: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"output_index\":0,\"item_id\":\"rs_progress\",\"delta\":\"Working on the request\"}\n\nevent: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_progress\",\"call_id\":\"call_progress\",\"name\":\"shell\",\"arguments\":\"\"}}\n\nevent: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"item_id\":\"fc_progress\",\"delta\":\"{}\"}\n\n"));
                     gate.notified().await;
                     yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"review-stream\",\"status\":\"completed\",\"output\":[]}}\n\n"));
                 };
@@ -10054,7 +10055,16 @@ async fn context_stream_before_done() {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            response.bytes_stream().next().await.unwrap().unwrap()
+            let mut stream = response.bytes_stream();
+            let mut progress = Vec::new();
+            while !String::from_utf8_lossy(&progress)
+                .contains("response.function_call_arguments.delta")
+            {
+                progress.extend_from_slice(&stream.next().await.unwrap().unwrap());
+            }
+            assert!(String::from_utf8_lossy(&progress).contains("Working on the request"));
+            assert!(!String::from_utf8_lossy(&progress).contains("response.completed"));
+            progress
         })
         .await;
         assert!(
