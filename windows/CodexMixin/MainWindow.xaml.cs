@@ -352,7 +352,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnApplyChanges(object sender, RoutedEventArgs args)
     {
-        if (busy || applyingDraft) return;
+        if (busy || applyingDraft || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
         applyingDraft = true;
         try { if (pendingApply != null) await pendingApply(); }
         catch (Exception error) { ShowNotice("应用更改失败", error.Message, InfoBarSeverity.Error); }
@@ -403,7 +403,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
     {
-        if (busy || exiting) return false;
+        if (busy || exiting || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return false;
         var succeeded = false;
         busy = true;
         loadingPage = readOnly;
@@ -864,9 +864,11 @@ public sealed partial class MainWindow : Window
 
     private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
 
+    internal void SetUpdateInputBlocked(bool blocked) => Root.IsEnabled = !blocked;
+
     private void MarkDirty()
     {
-        if (loadingPage) return;
+        if (loadingPage || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
         draftDirty = true;
         ShowSummary("还有未应用的更改");
         ApplyChanges.IsEnabled = true;

@@ -152,6 +152,7 @@ internal static class Program
                 var settings = OpenWindow(start, process, "settings", "设置与诊断");
                 Assert(Find(settings, "open-gui-logs").Current.IsEnabled && Find(settings, "check-app-updates").Current.IsEnabled,
                     "Recovery and update controls are not available independently of CLI settings queries");
+                Assert(!Find(settings, "app-update-status").Current.Name.Contains("初始化失败", StringComparison.Ordinal), "WinSparkle did not initialize with the bundled signing key");
                 SelectTheme(settings, themeIndex == 0 ? "浅色" : "深色");
                 foreach (var (role, title, filename) in Pages)
                 {

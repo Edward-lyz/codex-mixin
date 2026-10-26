@@ -152,6 +152,40 @@ jobs:
               "$appcast_root/appcast.xml"
           done
           cp "$appcast_root/appcast.xml" dist/release/appcast.xml
+      - name: Generate signed Windows update feeds
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          sparkle_dir="$(./scripts/fetch_sparkle.sh)"
+          for variant in installer portable; do
+            if [[ "$variant" == installer ]]; then
+              payload="codex-mixin-$RELEASE_VERSION-windows-x86_64-setup.exe"
+              feed="appcast-windows-x86_64.xml"
+            else
+              payload="codex-mixin-$RELEASE_VERSION-windows-x86_64.zip"
+              feed="appcast-windows-x86_64-portable.xml"
+            fi
+            test -s "dist/release/$payload"
+            # The same Ed25519 key already used for macOS signs the exact
+            # Windows artifact. Private material stays on stdin, never argv.
+            signature="$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/sign_update" --ed-key-file - "dist/release/$payload")"
+            [[ "$signature" == *'sparkle:edSignature='* ]]
+            cat > "dist/release/$feed" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
+          <title>Codex Mixin for Windows</title>
+          <item><title>Codex Mixin $RELEASE_VERSION</title>
+          <sparkle:version>$RELEASE_VERSION</sparkle:version>
+          <sparkle:minimumSystemVersion>10.0.17763</sparkle:minimumSystemVersion>
+          <enclosure url="https://github.com/Edward-lyz/codex-mixin/releases/download/$RELEASE_TAG/$payload" sparkle:os="windows-x64" $signature type="application/octet-stream" />
+          </item></channel></rss>
+          EOF
+            xmllint --noout "dist/release/$feed"
+          done
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:

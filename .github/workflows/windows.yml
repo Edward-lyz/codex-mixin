@@ -103,6 +103,9 @@ jobs:
               throw "PowerShell syntax check failed: $($script.FullName)"
             }
           }
+      - name: Test portable automatic replacement
+        shell: pwsh
+        run: ./windows/scripts/test-portable-update.ps1
       - name: Test CLI adapter
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release

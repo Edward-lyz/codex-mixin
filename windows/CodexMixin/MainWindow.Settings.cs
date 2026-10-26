@@ -116,26 +116,15 @@ public sealed partial class MainWindow
     {
         var status = Text(updates.Status);
         AutomationProperties.SetAutomationId(status, "app-update-status");
-        var check = Button("检查更新", () => updates.CheckAsync());
+        var check = Button("立即更新", () => updates.CheckAsync());
         AutomationProperties.SetAutomationId(check, "check-app-updates");
-        var installer = Button("下载完整安装包", async () =>
-        {
-            var uri = updates.Release?.Installer ?? new Uri(AppRelease.ReleasesUrl);
-            if (!await Launcher.LaunchUriAsync(uri)) throw new IOException("无法打开下载地址。");
-        });
-        AutomationProperties.SetAutomationId(installer, "download-app-installer");
-        var download = Button("打开完整便携包下载", async () =>
-        {
-            var uri = updates.Release?.Portable ?? new Uri(AppRelease.ReleasesUrl);
-            if (!await Launcher.LaunchUriAsync(uri)) throw new IOException("无法打开下载地址。");
-        });
         var releases = Button("官方发布页", async () =>
         {
             if (!await Launcher.LaunchUriAsync(new Uri(AppRelease.ReleasesUrl))) throw new IOException("无法打开发布页。");
         });
         var automatic = new CheckBox
         {
-            Content = "自动检查更新（每小时）",
+            Content = "自动更新（每小时检查；网关空闲 30 分钟后安装）",
             IsChecked = updates.Automatic
         };
         automatic.Click += (_, _) =>
@@ -153,10 +142,10 @@ public sealed partial class MainWindow
         token.Register(() => updates.Changed -= RefreshUpdateState);
         RefreshUpdateState();
         var actions = Row();
-        actions.Children.Add(check); actions.Children.Add(installer); actions.Children.Add(download); actions.Children.Add(releases);
+        actions.Children.Add(check); actions.Children.Add(releases);
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(status); body.Children.Add(automatic); body.Children.Add(actions);
-        body.Children.Add(Text("下载由浏览器处理。安装前请完成请求并退出应用；安装器需要管理员权限，会关闭网关，尚无失败回滚。便携版需退出后替换整个目录。"));
+        body.Children.Add(Text("应用会自动下载、验证签名、安装并重新打开；网关原先运行时也会恢复。安装版可能出现系统 UAC 授权提示。请求进行中或草稿未保存时暂缓安装。"));
         return Card("应用更新", $"GUI {AppUpdates.GuiVersion} · 完整应用包包含 GUI、CLI 和运行时", body);
     }
 }
