@@ -54,11 +54,15 @@ pub(super) async fn messages_body(
         .gateway
         .require_ducx_client(provider, &headers)
         .await?;
-    let request = normalize_message_request(&body, upstream_model_id)?;
+    let native_protocol =
+        provider.protocol_for_model(upstream_model_id) == ProviderProtocol::AnthropicMessages;
+    let mut normalized_body = body.clone();
+    let native_passthrough = native_protocol && native_passthrough_body(&mut normalized_body);
+    let request = normalize_message_request(&normalized_body, upstream_model_id)?;
     let routing = stable_oneapi_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);
     let client_beta = client_anthropic_beta(&headers);
-    if provider.protocol_for_model(upstream_model_id) != ProviderProtocol::AnthropicMessages {
+    if !native_protocol {
         let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
             &request,
             requested_model,
@@ -80,7 +84,43 @@ pub(super) async fn messages_body(
         )
         .await;
     }
+    if routing.is_some()
+        && !native_passthrough
+        && state
+            .gateway
+            .context_engine()
+            .is_some_and(|engine| engine.is_enabled())
+    {
+        let responses_body =
+            crate::protocol::anthropic_compat::native_message_request_to_responses(
+                &request,
+                &body,
+                requested_model,
+            )?;
+        let mut plan = RequestPlan::provider(
+            resolved.catalog_slug.to_owned(),
+            provider.id().to_owned(),
+            upstream_model_id.to_owned(),
+            responses_body,
+            routing,
+            Some(requested_model.to_owned()),
+        )?;
+        plan.native_messages = Some((request, body.clone()));
+        return responses_compatible_message(
+            &state,
+            &headers,
+            requested_model,
+            stream_requested,
+            plan,
+        )
+        .await;
+    }
     let hash_key = routing.map(|routing| routing.hash_key);
+    let passthrough_body = native_passthrough.then(|| {
+        let mut raw = body.clone();
+        raw["model"] = json!(upstream_model_id);
+        raw
+    });
     let first = state
         .upstream
         .anthropic_stream_with_web_search_retry(
@@ -88,6 +128,7 @@ pub(super) async fn messages_body(
             request,
             hash_key.as_deref(),
             client_beta.as_deref(),
+            passthrough_body,
         )
         .await;
     let upstream = match first {
@@ -110,7 +151,17 @@ pub(super) async fn messages_body(
                 saved_image_bytes = stats.saved_bytes,
                 "retrying Anthropic Messages request after 413 with aggressively compressed images"
             );
-            let fallback_request = normalize_message_request(&fallback_body, upstream_model_id)?;
+            let mut fallback_normalized = fallback_body.clone();
+            if native_passthrough {
+                native_passthrough_body(&mut fallback_normalized);
+            }
+            let fallback_request =
+                normalize_message_request(&fallback_normalized, upstream_model_id)?;
+            let passthrough_body = native_passthrough.then(|| {
+                let mut raw = fallback_body;
+                raw["model"] = json!(upstream_model_id);
+                raw
+            });
             state
                 .upstream
                 .anthropic_stream_with_web_search_retry(
@@ -118,6 +169,7 @@ pub(super) async fn messages_body(
                     fallback_request,
                     hash_key.as_deref(),
                     client_beta.as_deref(),
+                    passthrough_body,
                 )
                 .await?
         }
@@ -140,6 +192,53 @@ pub(super) async fn messages_body(
         .map_err(|err| GatewayError::Other(err.into()))
 }
 
+// Native server tools and opaque blocks cannot be represented in the shared
+// Responses loop. Keep their original JSON for passthrough; placeholders only
+// let the existing transport inspect routing and hosted-tool settings.
+fn native_passthrough_body(body: &mut Value) -> bool {
+    let mut passthrough = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| !matches!(kind, "custom" | "function"))
+            })
+        });
+    if let Some(blocks) = body.get_mut("system").and_then(Value::as_array_mut) {
+        for block in blocks {
+            if block.get("type").and_then(Value::as_str) != Some("text") {
+                passthrough = true;
+                *block = json!({"type":"text","text":""});
+            }
+        }
+    }
+    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages {
+            if let Some(blocks) = message.get_mut("content").and_then(Value::as_array_mut) {
+                for block in blocks {
+                    if !matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some(
+                            "text"
+                                | "image"
+                                | "thinking"
+                                | "redacted_thinking"
+                                | "tool_use"
+                                | "tool_result"
+                        )
+                    ) {
+                        passthrough = true;
+                        *block = json!({"type":"text","text":""});
+                    }
+                }
+            }
+        }
+    }
+    passthrough
+}
+
 async fn responses_compatible_message(
     state: &AppState,
     headers: &HeaderMap,
@@ -147,11 +246,13 @@ async fn responses_compatible_message(
     stream_requested: bool,
     plan: RequestPlan,
 ) -> Result<Response, GatewayError> {
+    let native = plan.native_messages.is_some();
     let upstream = state.gateway.stream(plan, headers).await?;
     if stream_requested {
         let stream = crate::protocol::anthropic_compat::responses_to_anthropic_stream(
             upstream,
             requested_model.to_owned(),
+            native,
         );
         return Response::builder()
             .status(StatusCode::OK)

@@ -20,6 +20,7 @@ pub(crate) struct RequestPlan {
     pub(crate) target: UpstreamTarget,
     pub(crate) body: Value,
     pub(crate) downstream_model: Option<String>,
+    pub(crate) native_messages: Option<(crate::anthropic::MessageRequest, Value)>,
 }
 
 impl RequestPlan {
@@ -52,6 +53,7 @@ impl RequestPlan {
             target,
             body,
             downstream_model,
+            native_messages: None,
         })
     }
 
@@ -64,6 +66,7 @@ impl RequestPlan {
             target: UpstreamTarget::Official,
             body,
             downstream_model,
+            native_messages: None,
         })
     }
 
@@ -85,6 +88,7 @@ impl RequestPlan {
             },
             body,
             downstream_model,
+            native_messages: None,
         })
     }
 }

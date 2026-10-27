@@ -14,6 +14,52 @@ pub(crate) fn message_request_to_responses(
     request: &MessageRequest,
     downstream_model: &str,
 ) -> Result<Value, GatewayError> {
+    message_request_to_responses_inner(request, downstream_model, false)
+}
+
+pub(crate) fn native_message_request_to_responses(
+    request: &MessageRequest,
+    raw: &Value,
+    downstream_model: &str,
+) -> Result<Value, GatewayError> {
+    let mut request = request.clone();
+    request.tools.clear();
+    request.tool_choice = None;
+    let mut body = message_request_to_responses_inner(&request, downstream_model, true)?;
+    let mut input = Vec::new();
+    let mut single = request.clone();
+    single.messages.clear();
+    single.system = None;
+    for (message_index, message) in request.messages.iter().enumerate() {
+        let raw_content = raw.pointer(&format!("/messages/{message_index}/content"));
+        for (block_index, block) in message.content.iter().enumerate() {
+            single.messages = vec![crate::anthropic::Message {
+                role: message.role.clone(),
+                content: vec![block.clone()],
+            }];
+            let converted = message_request_to_responses_inner(&single, downstream_model, true)?;
+            let raw_block = match raw_content {
+                Some(Value::Array(blocks)) => blocks.get(block_index).cloned(),
+                Some(Value::String(text)) => Some(json!({"type":"text","text":text})),
+                _ => None,
+            };
+            for mut item in converted["input"].as_array().cloned().unwrap_or_default() {
+                if let Some(raw_block) = raw_block.clone() {
+                    item["__mixin_native_block"] = raw_block;
+                }
+                input.push(item);
+            }
+        }
+    }
+    body["input"] = Value::Array(input);
+    Ok(body)
+}
+
+fn message_request_to_responses_inner(
+    request: &MessageRequest,
+    downstream_model: &str,
+    preserve_thinking: bool,
+) -> Result<Value, GatewayError> {
     let mut input = Vec::new();
     for message in &request.messages {
         let mut parts = Vec::new();
@@ -81,6 +127,30 @@ pub(crate) fn message_request_to_responses(
                 }
                 // Provider-native reasoning state is opaque to a different protocol.
                 // It is not user content, so omit it when the mapped backend changes.
+                ContentBlock::Thinking {
+                    thinking,
+                    signature: Some(signature),
+                } if preserve_thinking => {
+                    if !parts.is_empty() {
+                        input.push(json!({"type":"message","role":message.role,"content":std::mem::take(&mut parts)}));
+                    }
+                    input.push(json!({"type":"reasoning","summary":[],"encrypted_content":super::convert::encode_anthropic_thinking(thinking, signature)}));
+                }
+                ContentBlock::Thinking {
+                    thinking,
+                    signature: None,
+                } if preserve_thinking => {
+                    if !parts.is_empty() {
+                        input.push(json!({"type":"message","role":message.role,"content":std::mem::take(&mut parts)}));
+                    }
+                    input.push(json!({"type":"reasoning","summary":[],"encrypted_content":super::convert::encode_anthropic_unsigned_thinking(thinking)}));
+                }
+                ContentBlock::RedactedThinking { data } if preserve_thinking => {
+                    if !parts.is_empty() {
+                        input.push(json!({"type":"message","role":message.role,"content":std::mem::take(&mut parts)}));
+                    }
+                    input.push(json!({"type":"reasoning","summary":[],"encrypted_content":super::convert::encode_anthropic_redacted_thinking(data)}));
+                }
                 ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
             }
         }
@@ -263,6 +333,7 @@ fn anthropic_tool_choice(choice: &Value) -> Result<(Value, Option<bool>), Gatewa
 enum ActiveBlockKind {
     Text { received_delta: bool },
     Tool { received_arguments: bool },
+    Thinking { received_delta: bool },
 }
 
 #[derive(Debug)]
@@ -283,10 +354,12 @@ struct AnthropicStreamState {
     input_tokens: u64,
     output_tokens: u64,
     used_tool: bool,
+    native: bool,
+    native_usage: Option<Value>,
 }
 
 impl AnthropicStreamState {
-    fn new(model: String) -> Self {
+    fn new(model: String, native: bool) -> Self {
         Self {
             model,
             message_id: format!("msg_{}", uuid::Uuid::new_v4().simple()),
@@ -298,6 +371,8 @@ impl AnthropicStreamState {
             input_tokens: 0,
             output_tokens: 0,
             used_tool: false,
+            native,
+            native_usage: None,
         }
     }
 
@@ -334,7 +409,7 @@ impl AnthropicStreamState {
                     "model":self.model,
                     "stop_reason":Value::Null,
                     "stop_sequence":Value::Null,
-                    "usage":{"input_tokens":self.input_tokens,"output_tokens":0}
+                    "usage":self.native_usage.clone().unwrap_or_else(|| json!({"input_tokens":self.input_tokens,"output_tokens":0}))
                 }
             }),
         )]
@@ -400,6 +475,24 @@ impl AnthropicStreamState {
         events
     }
 
+    fn start_thinking(&mut self, key: String) -> Vec<Bytes> {
+        let mut events = self.ensure_started();
+        if self.completed_keys.contains(&key) || self.blocks.iter().any(|block| block.key == key) {
+            return events;
+        }
+        let index = self.next_index;
+        self.next_index += 1;
+        self.blocks.push(ActiveBlock {
+            key,
+            index,
+            kind: ActiveBlockKind::Thinking {
+                received_delta: false,
+            },
+        });
+        events.push(anthropic_event("content_block_start", json!({"type":"content_block_start","index":index,"content_block":{"type":"thinking","thinking":""}})));
+        events
+    }
+
     fn tool_delta(&mut self, key: String, arguments: &str) -> Vec<Bytes> {
         let Some(block) = self.blocks.iter_mut().find(|block| block.key == key) else {
             return Vec::new();
@@ -448,7 +541,12 @@ impl AnthropicStreamState {
                 json!({"type":"content_block_stop","index":index}),
             )
         }));
-        let stop_reason = stop_reason.unwrap_or(if self.used_tool {
+        let native_delta = response.and_then(|response| response.pointer("/__mixin_native/delta"));
+        let native_stop = native_delta
+            .and_then(|delta| delta.get("stop_reason"))
+            .and_then(Value::as_str)
+            .filter(|reason| *reason != "tool_use" || self.used_tool);
+        let stop_reason = stop_reason.or(native_stop).unwrap_or(if self.used_tool {
             "tool_use"
         } else {
             "end_turn"
@@ -457,8 +555,8 @@ impl AnthropicStreamState {
             "message_delta",
             json!({
                 "type":"message_delta",
-                "delta":{"stop_reason":stop_reason,"stop_sequence":Value::Null},
-                "usage":{"output_tokens":self.output_tokens}
+                "delta":{"stop_reason":stop_reason,"stop_sequence":native_delta.and_then(|delta| delta.get("stop_sequence")).cloned().unwrap_or(Value::Null)},
+                "usage":response.and_then(|response| response.pointer("/__mixin_native/usage")).cloned().unwrap_or_else(|| json!({"output_tokens":self.output_tokens}))
             }),
         ));
         events.push(anthropic_event(
@@ -477,9 +575,10 @@ fn anthropic_event(event: &str, payload: Value) -> Bytes {
 pub(crate) fn responses_to_anthropic_stream(
     upstream: ResponseStream,
     downstream_model: String,
+    native: bool,
 ) -> BoxStream<'static, Result<Bytes, Infallible>> {
     async_stream::stream! {
-        let mut state = AnthropicStreamState::new(downstream_model);
+        let mut state = AnthropicStreamState::new(downstream_model, native);
         let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
@@ -541,6 +640,19 @@ fn handle_responses_event(
             if let Some(response) = payload.get("response") {
                 state.update_response(response);
             }
+            if state.native {
+                Vec::new()
+            } else {
+                state.ensure_started()
+            }
+        }
+        "response.native_message_start" => {
+            if !state.started {
+                if let Some(id) = payload.pointer("/message/id").and_then(Value::as_str) {
+                    state.message_id = id.to_owned();
+                }
+                state.native_usage = payload.pointer("/message/usage").cloned();
+            }
             state.ensure_started()
         }
         "response.content_part.added" => {
@@ -554,6 +666,17 @@ fn handle_responses_event(
             let key = response_item_key(payload, None);
             let text = payload.get("delta").and_then(Value::as_str).unwrap_or("");
             state.text_delta(key, text)
+        }
+        "response.reasoning_summary_text.delta" => {
+            let key = response_item_key(payload, None);
+            let mut events = state.start_thinking(key.clone());
+            if let Some(block) = state.blocks.iter_mut().find(|block| block.key == key) {
+                if let ActiveBlockKind::Thinking { received_delta } = &mut block.kind {
+                    *received_delta = true;
+                }
+                events.push(anthropic_event("content_block_delta", json!({"type":"content_block_delta","index":block.index,"delta":{"type":"thinking_delta","thinking":payload.get("delta").and_then(Value::as_str).unwrap_or("")}})));
+            }
+            events
         }
         "response.output_text.done" => {
             let key = response_item_key(payload, None);
@@ -642,6 +765,68 @@ fn handle_output_item(
 ) -> Vec<Bytes> {
     let key = response_item_key(envelope, Some(item));
     match item.get("type").and_then(Value::as_str) {
+        Some("reasoning") if done => {
+            let native = item
+                .get("encrypted_content")
+                .and_then(Value::as_str)
+                .and_then(|value| value.strip_prefix("codex-mixin:anthropic-thinking:v1:"))
+                .and_then(|value| serde_json::from_str::<Value>(value).ok());
+            match native
+                .as_ref()
+                .and_then(|block| block.get("type"))
+                .and_then(Value::as_str)
+            {
+                Some("redacted_thinking") => {
+                    if state.completed_keys.contains(&key) {
+                        return Vec::new();
+                    }
+                    let mut events = state.ensure_started();
+                    let index = state.next_index;
+                    state.next_index += 1;
+                    state.completed_keys.insert(key);
+                    events.push(anthropic_event(
+                        "content_block_start",
+                        json!({"type":"content_block_start","index":index,"content_block":native}),
+                    ));
+                    events.push(anthropic_event(
+                        "content_block_stop",
+                        json!({"type":"content_block_stop","index":index}),
+                    ));
+                    events
+                }
+                _ => {
+                    let mut events = state.start_thinking(key.clone());
+                    if let Some(block) = state.blocks.iter().find(|block| block.key == key)
+                        && matches!(
+                            block.kind,
+                            ActiveBlockKind::Thinking {
+                                received_delta: false
+                            }
+                        )
+                    {
+                        let text = native
+                            .as_ref()
+                            .and_then(|block| block.get("thinking"))
+                            .and_then(Value::as_str)
+                            .or_else(|| item.pointer("/summary/0/text").and_then(Value::as_str))
+                            .unwrap_or("");
+                        if !text.is_empty() {
+                            events.push(anthropic_event("content_block_delta", json!({"type":"content_block_delta","index":block.index,"delta":{"type":"thinking_delta","thinking":text}})));
+                        }
+                    }
+                    if let Some(signature) = native
+                        .as_ref()
+                        .and_then(|block| block.get("signature"))
+                        .and_then(Value::as_str)
+                        && let Some(block) = state.blocks.iter().find(|block| block.key == key)
+                    {
+                        events.push(anthropic_event("content_block_delta", json!({"type":"content_block_delta","index":block.index,"delta":{"type":"signature_delta","signature":signature}})));
+                    }
+                    events.extend(state.finish_block(&key));
+                    events
+                }
+            }
+        }
         Some("message") if done => {
             let text = item
                 .get("content")
@@ -733,6 +918,18 @@ pub(crate) fn collected_to_anthropic_message(
     let mut used_tool = false;
     for item in collected.output {
         match item.get("type").and_then(Value::as_str) {
+            Some("reasoning") => {
+                if let Some(block) = item
+                    .get("encrypted_content")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.strip_prefix("codex-mixin:anthropic-thinking:v1:"))
+                    .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                {
+                    content.push(block);
+                } else if let Some(text) = item.pointer("/summary/0/text").and_then(Value::as_str) {
+                    content.push(json!({"type":"thinking","thinking":text}));
+                }
+            }
             Some("message") => {
                 for part in item
                     .get("content")
@@ -775,8 +972,15 @@ pub(crate) fn collected_to_anthropic_message(
             _ => {}
         }
     }
+    let native = collected.response.get("__mixin_native");
+    let native_stop = native
+        .and_then(|native| native.pointer("/delta/stop_reason"))
+        .and_then(Value::as_str)
+        .filter(|reason| *reason != "tool_use" || used_tool);
     let stop_reason = if used_tool {
         "tool_use"
+    } else if let Some(reason) = native_stop {
+        reason
     } else if collected
         .response
         .pointer("/incomplete_details/reason")
@@ -788,17 +992,17 @@ pub(crate) fn collected_to_anthropic_message(
         "end_turn"
     };
     Ok(json!({
-        "id":collected.response.get("id").and_then(Value::as_str).unwrap_or("msg_unknown"),
+        "id":native.and_then(|native| native.get("id")).and_then(Value::as_str).or_else(|| collected.response.get("id").and_then(Value::as_str)).unwrap_or("msg_unknown"),
         "type":"message",
         "role":"assistant",
         "model":downstream_model,
         "content":content,
         "stop_reason":stop_reason,
-        "stop_sequence":Value::Null,
-        "usage":{
+        "stop_sequence":native.and_then(|native| native.pointer("/delta/stop_sequence")).cloned().unwrap_or(Value::Null),
+        "usage":native.and_then(|native| native.get("usage")).cloned().unwrap_or_else(|| json!({
             "input_tokens":collected.usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
             "output_tokens":collected.usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0)
-        }
+        }))
     }))
 }
 
@@ -811,7 +1015,7 @@ mod tests {
             Bytes::copy_from_slice(source.as_bytes()),
         )])
         .boxed();
-        let mut mapped = responses_to_anthropic_stream(upstream, "mapped-model".to_owned());
+        let mut mapped = responses_to_anthropic_stream(upstream, "mapped-model".to_owned(), false);
         let mut output = Vec::new();
         while let Some(chunk) = mapped.next().await {
             output.extend_from_slice(&chunk.unwrap());

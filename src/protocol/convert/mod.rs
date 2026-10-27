@@ -14,10 +14,12 @@ mod tools;
 
 pub(crate) use content::{
     agent_message_text, encode_anthropic_redacted_thinking, encode_anthropic_thinking,
-    encode_baidu_unsigned_thinking, is_gateway_thinking,
+    encode_anthropic_unsigned_thinking, encode_baidu_unsigned_thinking, is_gateway_thinking,
 };
-pub(crate) use request::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 pub use request::{ConvertedRequest, responses_to_anthropic};
+pub(crate) use request::{
+    native_messages_body, responses_to_anthropic_with_model_reasoning_and_thinking_kind,
+};
 pub use tool_map::ToolNameMap;
 pub use tools::sanitize_tool_name;
 pub(crate) use tools::{WebSearchTool, collect_active_tools, custom_tool_description};

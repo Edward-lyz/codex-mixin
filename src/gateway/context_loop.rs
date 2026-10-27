@@ -154,6 +154,7 @@ impl ContextRun {
             &self.engine,
             !self.guidance_only,
             &note,
+            plan.native_messages.is_some(),
         );
         let (first, _) = executor.send_round(first_plan, &headers).await?;
         let cache_metrics_available = match &plan.target {
@@ -188,6 +189,7 @@ impl ContextRun {
                             &self.engine,
                             !self.guidance_only,
                             &note,
+                            plan.native_messages.is_some(),
                         );
                         let mut round_plan = plan.clone();
                         round_plan.body = body;
@@ -666,6 +668,7 @@ fn compose_body(
     engine: &ContextEngine,
     inject_tools: bool,
     note: &str,
+    native_messages: bool,
 ) -> Value {
     let mut body = template.clone();
     let mut input: Vec<Value> = base.to_vec();
@@ -676,7 +679,7 @@ fn compose_body(
     if !note.is_empty() {
         input.push(json!({
             "type": "message",
-            "role": "developer",
+            "role": if native_messages { "user" } else { "developer" },
             "content": [{"type": "input_text", "text": format!("<context_state>\n{note}</context_state>")}],
         }));
     }
@@ -900,7 +903,7 @@ mod tests {
             "tools": [{"type": "function", "name": "shell", "parameters": {}}],
         });
         let base = vec![user("compressed view")];
-        let body = compose_body(&template, &base, &[], &engine, true, "view at 10%");
+        let body = compose_body(&template, &base, &[], &engine, true, "view at 10%", false);
         let input = body["input"].as_array().expect("input array");
         assert_eq!(input[0], user("compressed view"));
         assert_eq!(input.len(), 2);
@@ -934,7 +937,7 @@ mod tests {
     fn replaces_client_tools_that_shadow_internal_names() {
         let engine = engine();
         let template = json!({"tools": [{"type": "function", "name": "mixin_context_status"}]});
-        let body = compose_body(&template, &[], &[], &engine, true, "view at 10%");
+        let body = compose_body(&template, &[], &[], &engine, true, "view at 10%", false);
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 4);
     }
@@ -943,7 +946,7 @@ mod tests {
     fn guidance_only_keeps_the_guidance_without_internal_tools() {
         let engine = engine();
         let template = json!({"tools": [{"type": "function", "name": "shell"}]});
-        let body = compose_body(&template, &[], &[], &engine, false, "view at 10%");
+        let body = compose_body(&template, &[], &[], &engine, false, "view at 10%", false);
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "shell");

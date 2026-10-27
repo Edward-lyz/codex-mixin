@@ -3,10 +3,12 @@ use super::*;
 use crate::protocol::compaction::{self, SecretSource};
 
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
+const ANTHROPIC_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:anthropic-unsigned-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
 
 pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
     encrypted_content.starts_with(ANTHROPIC_THINKING_PREFIX)
+        || encrypted_content.starts_with(ANTHROPIC_UNSIGNED_THINKING_PREFIX)
         || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
 }
 
@@ -260,6 +262,26 @@ fn append_anthropic_reasoning(
             role: "assistant".to_owned(),
             content: vec![block],
         });
+    } else if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_UNSIGNED_THINKING_PREFIX)
+    {
+        let block: ContentBlock = serde_json::from_str(payload).map_err(|_| {
+            GatewayError::BadRequest("invalid Anthropic unsigned thinking payload".to_owned())
+        })?;
+        if !matches!(
+            block,
+            ContentBlock::Thinking {
+                signature: None,
+                ..
+            }
+        ) {
+            return Err(GatewayError::BadRequest(
+                "invalid Anthropic unsigned thinking payload".to_owned(),
+            ));
+        }
+        messages.push(Message {
+            role: "assistant".to_owned(),
+            content: vec![block],
+        });
     } else if let (Some(payload), Some(model)) = (
         encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX),
         replay_model.filter(|model| model.ends_with("-baidu-oneapi")),
@@ -293,6 +315,11 @@ pub(crate) fn encode_anthropic_thinking(thinking: &str, signature: &str) -> Stri
     })
     .expect("Anthropic thinking block is serializable");
     format!("{ANTHROPIC_THINKING_PREFIX}{payload}")
+}
+
+pub(crate) fn encode_anthropic_unsigned_thinking(thinking: &str) -> String {
+    let payload = json!({"type":"thinking","thinking":thinking}).to_string();
+    format!("{ANTHROPIC_UNSIGNED_THINKING_PREFIX}{payload}")
 }
 
 pub(crate) fn encode_baidu_unsigned_thinking(model: &str, thinking: &str) -> String {
