@@ -13,8 +13,6 @@ use std::path::{Path, PathBuf};
 const MACOS_TEST_DIR: &str = "macos/tests";
 const MACOS_RUNNER: &str = "scripts/test_macos.sh";
 const WINDOWS_RUNNER: &str = "windows/Tests/Program.cs";
-const WINDOWS_UI_RUNNER: &str = "windows/UiTests/Program.cs";
-const WINDOWS_APP: &str = "windows/CodexMixin/App.xaml.cs";
 const WINDOWS_WORKFLOW: &str = ".github/workflows/windows.yml";
 const WINDOWS_INTEGRATION_RUNNER: &str = "scripts/test_windows_integration.ps1";
 const WINDOWS_INTEGRATION_SHARDS: &str = "tests/windows_integration_shards.txt";
@@ -204,51 +202,6 @@ fn windows_integration_shard_errors(
     }
     errors.sort();
     errors
-}
-
-/// Page roles `App.OpenPage` accepts. `overview` is handled by an earlier
-/// branch because it reopens the tray panel instead of a console window.
-fn windows_page_roles(source: &str) -> BTreeSet<String> {
-    let marker = "page is not (";
-    let start = source
-        .find(marker)
-        .expect("App.OpenPage must validate its page argument")
-        + marker.len();
-    let end = source[start..]
-        .find(')')
-        .expect("App.OpenPage page list must be terminated")
-        + start;
-    let mut roles = source[start..end]
-        .split(" or ")
-        .map(|role| role.trim().trim_matches('"').to_owned())
-        .collect::<BTreeSet<_>>();
-    assert!(roles.insert("overview".to_owned()));
-    roles
-}
-
-/// Page roles visited by the Windows native UI automation gallery.
-fn windows_ui_page_roles(source: &str) -> BTreeSet<String> {
-    let start = source
-        .find("Pages =")
-        .expect("Windows UI tests must declare a Pages table")
-        + "Pages =".len();
-    let end = source[start..]
-        .find("];")
-        .expect("Windows UI test Pages table must be terminated")
-        + start;
-    let mut roles = BTreeSet::new();
-    for line in source[start..end].lines() {
-        let line = line.trim();
-        let Some(role) = line.strip_prefix("(\"") else {
-            continue;
-        };
-        let role = role
-            .split('"')
-            .next()
-            .expect("Windows UI page role must be quoted");
-        roles.insert(role.to_owned());
-    }
-    roles
 }
 
 fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
@@ -516,27 +469,6 @@ fn detects_missing_and_duplicate_swift_registrations() {
 }
 
 #[test]
-fn detects_an_unvisited_windows_page() {
-    let app = r#"if (page is not ("providers" or "agents")) throw new ArgumentException();"#;
-    let runner = r#"Pages =
-    [
-        ("providers", "模型与服务", "models"),
-    ];"#;
-    assert_eq!(
-        windows_page_roles(app),
-        BTreeSet::from([
-            "agents".to_owned(),
-            "overview".to_owned(),
-            "providers".to_owned()
-        ])
-    );
-    assert_eq!(
-        windows_ui_page_roles(runner),
-        BTreeSet::from(["providers".to_owned()])
-    );
-}
-
-#[test]
 fn detects_missing_and_duplicate_windows_integration_shards() {
     let actual = BTreeSet::from(["a.rs".to_owned(), "b.rs".to_owned()]);
     let rows = vec![
@@ -777,14 +709,6 @@ fn every_test_entry_is_registered_once() {
     assert!(
         windows_workflow.contains(WINDOWS_INTEGRATION_RUNNER),
         "Windows CI must run the manifest-driven integration shards"
-    );
-
-    let app = fs::read_to_string(root.join(WINDOWS_APP)).unwrap();
-    let ui_tests = fs::read_to_string(root.join(WINDOWS_UI_RUNNER)).unwrap();
-    assert_eq!(
-        windows_ui_page_roles(&ui_tests),
-        windows_page_roles(&app),
-        "Windows UI automation must visit every page App.OpenPage accepts"
     );
 
     for name in integration_tests {

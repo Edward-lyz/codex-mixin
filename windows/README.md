@@ -48,10 +48,9 @@ CLI 进程启动和 JSON 解析在后台线程执行。未显式配置 `TOKIO_WO
 | `CodexMixin/` | WinUI 原生窗口、页面与 Windows 平台壳 |
 | `Core/` | CLI 进程、严格 JSON 契约与保存后应用配置 |
 | `Tests/` | 子进程边界、凭据、超时、取消、结构化错误与真实 CLI 契约 |
-| `UiTests/` | Windows UI Automation 导航、主题、托盘恢复与截图 |
 | `scripts/` | 图标生成、自包含发布、NSIS、安装与卸载 |
 
-开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Visual Studio 的 WinUI 开发工具和 Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。WinUI 的 XAML 编译器和 UI 测试必须在 Windows 执行。
+开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Visual Studio 的 WinUI 开发工具和 Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。WinUI 的 XAML 编译器必须在 Windows 执行。
 
 命令行编译可使用 Visual Studio 2022 Build Tools 的「使用 C++ 的桌面开发」工作负载，包含 MSVC x64/x86、Windows SDK 和 CMake。仅安装 .NET 运行时不能编译界面；仅安装 Rust 也缺少链接所需的 `kernel32.lib`。安装完成后重新打开终端，在 x64 Developer PowerShell 中构建 CLI，再使用 .NET SDK 构建界面。
 
@@ -65,11 +64,9 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 ## CI 验证与发布
 
-`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布、Windows UI Automation 测试，最后生成安装器和便携包。本次迁移按用户要求不在本机运行测试。
+`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布，最后生成安装器和便携包。本次迁移按用户要求不在本机运行测试。
 
-每次成功的 UI 测试都截图托盘主面板、模型与服务、连接设置、Agent、上下文、Fusion 两种模式与设置的浅色和深色版本，并保存首次启动、空状态、停止状态与窄窗口截图。供应商与 Fusion 的已配置画面使用经真实 CLI 导入的隔离 CI fixture，凭据为虚构值，不连接外部模型服务。失败时也尝试保存现场截图与错误文本。
-
-在 GitHub Actions 的 Windows run 页面下载 `windows-native-ui-evidence` artifact，解压后在 macOS 浏览器打开 `index.html`，即可查看全部页面；点击缩略图可查看原始 PNG。artifact 保留 14 天，包含截图、图集、错误文本和 `resources.json`，不上传配置目录。规模回归使用真实网关记录 500 条回复，并由 CLI 导入 600 个模型，检查用量、Fusion 和滚动模型表的控件数随可见行而非总数据增长。资源记录包含显示/隐藏时私有内存、隐藏时 working set，以及超过刷新周期的 35 秒空闲 CPU 采样；导航耗时包含 UI Automation 调用与 200 ms 轮询开销，用于同类 runner 比较，不等同于输入到呈现帧的延迟。它是单次 runner 数据，不代表用户硬件上的能耗或与 macOS 的对比结论。
+界面通过人工操作验收；仓库不维护 UI 自动化、截图或视觉回归测试，详见根级 `AGENTS.md`。
 
 一键打包仍从仓库根执行：
 

@@ -60,17 +60,12 @@ public sealed partial class MainWindow : Window
     private bool dialogOpen;
     private bool initialized;
     private bool refreshingTimings;
-    private readonly EventWaitHandle? captureReady;
 
     public MainWindow() : this("providers") { }
 
     internal MainWindow(string page)
     {
         this.page = page;
-        // HWND creation precedes XAML loading. CI waits for real initialization
-        // before asking WinUI to construct its automation peers.
-        if (IsConsolePage(page) && Environment.GetCommandLineArgs().Contains("--capture-ui"))
-            captureReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{Environment.ProcessId}");
         InitializeComponent();
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         ProviderList.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
@@ -110,7 +105,6 @@ public sealed partial class MainWindow : Window
             pageRefresh?.Cancel();
             pageRefresh?.Dispose();
             shell?.Dispose();
-            captureReady?.Dispose();
         };
         Root.Loaded += (_, _) => InitializeView();
         AppWindow.Changed += (_, args) =>
@@ -155,7 +149,6 @@ public sealed partial class MainWindow : Window
                 await LoadPageAsync(token);
             }, readOnly: true);
             UpdateRefreshTimer();
-            if (!exiting) captureReady?.Set();
         })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
     }
 

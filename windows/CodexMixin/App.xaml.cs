@@ -17,7 +17,6 @@ public partial class App : Application
     private AppUpdates? updates;
     private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(1) };
     private TrayWindow? tray;
-    private EventWaitHandle? trayReady;
     private bool exiting;
     private string? notifiedUpdate;
     private ElementTheme theme = ElementTheme.Default;
@@ -56,7 +55,6 @@ public partial class App : Application
         exiting = true;
         updateTimer.Stop();
         if (updates != null) await updates.StopAsync();
-        trayReady?.Dispose();
         tray?.Shutdown();
         foreach (var target in windows.Values.ToArray()) target.Shutdown();
         Exit();
@@ -138,11 +136,6 @@ public partial class App : Application
         // Prime only the compact panel; do not load the hidden console/model editor.
         tray = new TrayWindow();
         _ = tray.PreloadAsync();
-        if (Environment.GetCommandLineArgs().Contains("--capture-ui"))
-        {
-            trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{Environment.ProcessId}");
-            trayReady.Set();
-        }
         Updates.LoadPreferences();
         if (Updates.LastInstallFailed) OpenPage("settings");
         Updates.Changed += () =>
@@ -151,13 +144,9 @@ public partial class App : Application
                 && windows.TryGetValue(ConsoleWindowKey, out var console) && console.NotifyUpdate(release.Version))
                 notifiedUpdate = release.Version;
         };
-        // Capture runs exercise the real UI/CLI without contacting GitHub.
-        if (!Environment.GetCommandLineArgs().Contains("--capture-ui"))
-        {
-            updateTimer.Tick += async (_, _) => await Updates.CheckAsync(automatic: true);
-            updateTimer.Start();
-            _ = Updates.CheckAsync(automatic: true);
-        }
+        updateTimer.Tick += async (_, _) => await Updates.CheckAsync(automatic: true);
+        updateTimer.Start();
+        _ = Updates.CheckAsync(automatic: true);
     }
 
     private static async Task<AppInstance> FindMainInstanceAsync()

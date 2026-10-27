@@ -2,15 +2,6 @@ name: Windows
 
 on:
   workflow_dispatch:
-    inputs:
-      ui_artifact_run:
-        description: 'Re-run UI tests with native UI and CLI artifacts from this Windows run ID'
-        required: false
-        type: string
-      cli_artifact_run:
-        description: 'Optional CLI artifact run ID when re-running native UI artifacts'
-        required: false
-        type: string
   pull_request:
   push:
     branches: [main]
@@ -19,12 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}-${{ inputs.ui_artifact_run }}
+  group: windows-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   rust:
-    if: ${{ !inputs.ui_artifact_run }}
     name: Rust tests (${{ matrix.shard }})
     runs-on: windows-latest
     strategy:
@@ -64,7 +54,6 @@ jobs:
         shell: pwsh
         run: ./scripts/test_windows_integration.ps1 -Shard ${{ matrix.shard }}
   cli:
-    if: ${{ !inputs.ui_artifact_run }}
     name: Build Windows CLI
     runs-on: windows-latest
     steps:
@@ -81,7 +70,6 @@ jobs:
           if-no-files-found: error
 
   native:
-    if: ${{ !inputs.ui_artifact_run }}
     name: WinUI 3 build and adapter tests
     runs-on: windows-latest
     steps:
@@ -109,9 +97,6 @@ jobs:
       - name: Test CLI adapter
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release
-      - name: Compile UI automation harness
-        shell: pwsh
-        run: dotnet build windows/UiTests/UiTests.csproj -c Release
       - name: Generate native icons
         shell: pwsh
         run: ./windows/scripts/generate-windows-assets.ps1
@@ -132,11 +117,10 @@ jobs:
           path: windows/build/publish
           if-no-files-found: error
 
-  native-ui:
-    if: ${{ always() && (inputs.ui_artifact_run || (needs.cli.result == 'success' && needs.native.result == 'success')) }}
-    name: Windows native UI and real CLI tests
+  cli-contracts:
+    name: Real CLI contract tests
     runs-on: windows-latest
-    needs: [cli, native]
+    needs: [cli]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -146,74 +130,13 @@ jobs:
         with:
           name: windows-cli
           path: target/release
-          run-id: ${{ inputs.cli_artifact_run || inputs.ui_artifact_run || github.run_id }}
-          github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v7
-        with:
-          name: windows-native-ui
-          path: windows/build/publish
-          run-id: ${{ inputs.ui_artifact_run || github.run_id }}
-          github-token: ${{ github.token }}
       - name: Test real Rust CLI contracts
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli-only target/release/codex-mixin.exe
-      - name: Stage real CLI alongside UI
-        shell: pwsh
-        run: Copy-Item target/release/codex-mixin.exe windows/build/publish/
-      - name: Test native navigation, themes, tray and activation
-        shell: pwsh
-        run: |
-          $dumpPath = Join-Path $env:RUNNER_TEMP 'native-dumps'
-          New-Item -ItemType Directory -Force $dumpPath | Out-Null
-          New-Item -ItemType Directory -Force windows/build/ui-test-artifacts | Out-Null
-          $key = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\codex_mixin_ui.exe'
-          New-Item -Path $key -Force | Out-Null
-          New-ItemProperty -Path $key -Name DumpFolder -Value $dumpPath -PropertyType ExpandString -Force | Out-Null
-          New-ItemProperty -Path $key -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
-          dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts
-          $testExit = $LASTEXITCODE
-          if ($testExit -ne 0) {
-            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} |
-              Where-Object { $_.Message -match 'codex_mixin_ui|Microsoft.UI.Xaml' } |
-              Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
-            $dumps = @(Get-ChildItem -LiteralPath $dumpPath -Filter *.dmp -ErrorAction SilentlyContinue)
-            if ($dumps.Count -gt 0) {
-              $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
-              if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
-              dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts/debugger $debugger
-            } else {
-              Write-Host 'No native crash dump; preserving the original UI test failure without debugger replay.'
-            }
-          }
-          exit $testExit
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: windows-native-crash-dumps
-          path: ${{ runner.temp }}/native-dumps/*.dmp
-          retention-days: 3
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: windows-native-ui-evidence
-          path: |
-            windows/build/ui-test-artifacts/*.png
-            windows/build/ui-test-artifacts/resources.json
-            windows/build/ui-test-artifacts/index.html
-            windows/build/ui-test-artifacts/failure.txt
-            windows/build/ui-test-artifacts/native-errors.txt
-            windows/build/ui-test-artifacts/native-events.txt
-            windows/build/ui-test-artifacts/native-debugger.txt
-            windows/build/ui-test-artifacts/debugger/failure.txt
-            windows/build/ui-test-artifacts/debugger/native-debugger.txt
-          retention-days: 14
-          if-no-files-found: warn
 
   package:
-    if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
-    needs: [rust, cli, native-ui]
+    needs: [rust, cli, native, cli-contracts]
     steps:
       - uses: actions/checkout@v5
       - name: Read package version

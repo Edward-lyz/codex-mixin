@@ -21,7 +21,7 @@ public sealed partial class TrayWindow : Window
     private static readonly TimeSpan SnapshotAge = TimeSpan.FromSeconds(10);
     private readonly DispatcherTimer timer = new() { Interval = SnapshotAge };
     private readonly string cachePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin",
-        Environment.GetCommandLineArgs().Contains("--capture-ui") ? "quota-display-ui-test.json" : "quota-display.json");
+        "quota-display.json");
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
     private bool preloadComplete;
