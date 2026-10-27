@@ -36,6 +36,7 @@ pub(crate) struct ProviderResponseRequest<'a> {
     pub(crate) routing: Option<&'a UpstreamRouting>,
     pub(crate) downstream_model: Option<&'a str>,
     pub(crate) headers: &'a axum::http::HeaderMap,
+    pub(crate) native_messages: Option<&'a (crate::anthropic::MessageRequest, Value)>,
 }
 
 struct ProviderRequestContext<'a> {
@@ -48,6 +49,8 @@ struct ProviderRequestContext<'a> {
     body: &'a Value,
     advertised_thinking: Option<bool>,
     web_search_enabled: bool,
+    native_messages: Option<&'a (crate::anthropic::MessageRequest, Value)>,
+    headers: &'a axum::http::HeaderMap,
 }
 
 pub(crate) async fn stream_provider_response(
@@ -62,6 +65,7 @@ pub(crate) async fn stream_provider_response(
         routing,
         downstream_model,
         headers,
+        native_messages,
     } = request;
     let provider = executor
         .providers
@@ -82,6 +86,8 @@ pub(crate) async fn stream_provider_response(
         body,
         advertised_thinking,
         web_search_enabled,
+        native_messages,
+        headers,
     };
     match protocol {
         ProviderProtocol::AnthropicMessages => stream_anthropic_messages(ctx).await,
@@ -104,8 +110,13 @@ async fn stream_anthropic_messages(
         body,
         advertised_thinking,
         web_search_enabled,
+        native_messages,
+        headers,
     } = ctx;
-    let downstream_body = response_metadata_request(body, downstream_model);
+    let mut downstream_body = response_metadata_request(body, downstream_model);
+    if native_messages.is_some() {
+        downstream_body["__mixin_native_messages"] = Value::Bool(true);
+    }
     let auto_thinking_kind =
         anthropic_thinking_kind_with_advertised(upstream_model_id, advertised_thinking);
     let reasoning = upstream_reasoning(body, advertised_thinking);
@@ -114,7 +125,11 @@ async fn stream_anthropic_messages(
             body,
             Some(upstream_model_id),
             reasoning.as_ref(),
-            executor.config.thinking_mode,
+            if native_messages.is_some() {
+                crate::config::ThinkingMode::Off
+            } else {
+                executor.config.thinking_mode
+            },
             default_max_tokens,
             web_search_enabled.then_some(WebSearchTool {
                 tool_type: &executor.config.web_search_tool_type,
@@ -124,7 +139,24 @@ async fn stream_anthropic_messages(
             auto_thinking_kind,
             &compaction_secret,
         )?;
-        if provider.uses_session_affinity()
+        if let Some((native, _)) = native_messages {
+            converted.request.thinking = native.thinking.clone();
+            converted.request.output_config = native.output_config.clone();
+            converted.request.speed = native.speed.clone();
+            converted.request.metadata = native.metadata.clone();
+            converted.request.tool_choice = native.tool_choice.clone();
+            let mut tools = native.tools.clone();
+            tools.retain(|tool| {
+                !tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(crate::context::types::is_context_tool)
+            });
+            tools.extend(converted.request.tools);
+            converted.request.tools = tools;
+        }
+        if native_messages.is_none()
+            && provider.uses_session_affinity()
             && let Some(routing) = routing
         {
             // OneAPI's Anthropic-to-OpenAI conversion accepts only an
@@ -138,13 +170,35 @@ async fn stream_anthropic_messages(
     };
     let send = |converted: crate::protocol::convert::ConvertedRequest| async move {
         let shape = CacheShape::from_anthropic(&converted.request);
+        let native_body = native_messages
+            .map(|(_, original)| {
+                crate::protocol::convert::native_messages_body(
+                    body,
+                    &converted.request,
+                    original,
+                    &compaction_secret,
+                )
+            })
+            .transpose()?;
         let upstream = executor
             .upstream
             .anthropic_stream_with_web_search_retry(
                 provider,
                 converted.request,
                 routing.map(|routing| routing.hash_key.as_str()),
-                None,
+                native_messages
+                    .and_then(|_| {
+                        let values = headers
+                            .get_all("anthropic-beta")
+                            .iter()
+                            .filter_map(|v| v.to_str().ok())
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty())
+                            .collect::<Vec<_>>();
+                        (!values.is_empty()).then(|| values.join(","))
+                    })
+                    .as_deref(),
+                native_body,
             )
             .await?;
         Ok::<_, GatewayError>((upstream, shape, converted.tool_names))

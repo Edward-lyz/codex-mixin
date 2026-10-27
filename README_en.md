@@ -73,20 +73,9 @@ The Web panel listens on all interfaces on a random port from 8000 to 9000 and r
 
 ---
 
-## Entry Points
-
-| Entry | Main use |
-| --- | --- |
-| macOS menu bar / Windows tray | Gateway controls, quota, and console access; advanced menus for Fusion and backups |
-| Desktop console | Models & Services, Agents, and Usage |
-| Web control panel | Models & Services, Agents, Usage, Fusion, and advanced settings in a browser; suitable for Linux and remote machines |
-| CLI | Scripts, automation, and diagnostics; see [CLI Reference](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference) |
-
----
-
 ## Interface
 
-The screenshots below show the macOS app during the v0.7.4 release.
+The screenshots below show the macOS app.
 
 <p align="center">
   <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="Models and Services in the macOS console"></a><br>
@@ -106,7 +95,7 @@ The screenshots below show the macOS app during the v0.7.4 release.
   </tr>
 </table>
 
-Native Windows WinUI 3 interface (current development build): check quota from the tray, and manage models, agents, usage, and context in the console.
+Native Windows WinUI 3 interface: check quota from the tray, and manage models, agents, usage, and context in the console.
 
 <p align="center">
   <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows light-mode tray showing gateway status and quota rings"></a>
@@ -120,9 +109,11 @@ See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-To
 
 ---
 
-## Features
+## Core Features
 
-**Segmented context engine.** Keep long tasks moving with automatic, incremental replacement of completed history by tiered summaries. Stable prefixes support prompt-cache reuse, while an independent archive keeps original details searchable and restorable. No manual compaction is needed. Disabled by default; see the [setup guide and diagram](docs/wiki/Context-Engine.md) (Chinese).
+**[NEW] Context engine.** Keep long tasks moving while compressing context: the original Billion Context algorithm is integrated into Mixin to incrementally compress and replace history during inference, maintaining a cache hit rate above 90% while fitting 1B tokens of content into a 1M-token context window.
+
+<img src="docs/assets/context-engine-comparison.svg" alt="Context compaction mechanism comparison" style="zoom:50%;" />
 
 **Works with official Codex.** Custom models join the Codex model catalog under their own names and appear next to the official models. The official catalog comes from OpenAI. Connecting and disconnecting do not change the Codex session database or account state.
 
@@ -133,8 +124,6 @@ See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-To
 **Usage and quota.** View daily and per-reply Tokens, cache hit ratio, reasoning usage, returned model, time to first token, and output speed. The latest 5000 replies are kept locally. Provider quota supports rings or bars, with red indicators above 90% used.
 
 **Model fusion.** One model ID can run a primary model and helper models, and a judge model reviews the results. One model ID can also route to different providers at different times of day.
-
-**Claude Desktop.** Connect [Claude Desktop](https://claude.com/download) on the Agents page to use selected gateway models in its Code tab while keeping Claude.ai sign-in. Disconnect to restore the original configuration.
 
 **Configuration backup.** Use the advanced menus to export or import providers, models, and Fusion settings for recovery or migration. Backups contain API keys. Base64 is encoding, so protect the backup as a credential.
 
@@ -341,84 +330,6 @@ The catalog lists 50 AI coding agents. In the default build, 38 of them can be c
     <td width="20%" align="center"></td>
   </tr>
 </table>
-
-### Integration Unavailable (12)
-
-The following 12 tools store their configuration behind OS keychain encryption, process-level injection, closed authentication protocols, or private in-app runtime APIs. Codex Mixin does not write gateway configuration for them:
-
-<table>
-  <tr>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
-      <sub>Gemini CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
-      <sub>agy</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
-      <sub>Aside</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cursor-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor CLI logo"><img src="docs/assets/agents/cursor-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor CLI logo"><br>
-      <sub>Cursor CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cursor-local-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor logo"><img src="docs/assets/agents/cursor-local-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor logo"><br>
-      <sub>Cursor</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/zed-light.svg#gh-light-mode-only" width="36" height="36" alt="Zed logo"><img src="docs/assets/agents/zed-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Zed logo"><br>
-      <sub>Zed</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/copilot-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot CLI logo"><img src="docs/assets/agents/copilot-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot CLI logo"><br>
-      <sub>Copilot CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/devin-light.svg#gh-light-mode-only" width="36" height="36" alt="Devin logo"><img src="docs/assets/agents/devin-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Devin logo"><br>
-      <sub>Devin</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
-      <sub>Muse</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
-      <sub>Hanako</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
-      <sub>Alma</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
-      <sub>Cindy</sub>
-    </td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
-  </tr>
-</table>
-
-> Connect or restore configurations on the Agent page of the console, or run CLI commands: `codex-mixin agent connect <id>` and `codex-mixin agent disconnect <id>`. For technical boundaries, schemas, and contract details, see [Agent integration contracts](docs/agent-integration-contracts.md); for logo attributions, see [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md).
-
----
-
-## Documentation
-
-### Context engine
-
-Keep an original-message archive separate from the model's working view. Selective T1/T2/T3 summaries reduce history in the view, with tools to search and restore original evidence. Disabled by default; applies to supported gateway routes with session identity, excluding native Anthropic Messages passthrough.
-
-![Context compaction mechanism comparison](docs/assets/context-engine-comparison.svg)
-
-This is a mechanism comparison, not a measured quality or performance claim. Trigger decisions and tier rules are adapted from Billion Context (MIT). See the [user guide](docs/wiki/Context-Engine.md) and [technical documentation](docs/context-engine.md) (Chinese).
 
 In this repository:
 

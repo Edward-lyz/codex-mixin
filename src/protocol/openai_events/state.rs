@@ -72,6 +72,10 @@ pub(super) struct MapperState {
     pub(super) web_search_result_indexes: HashSet<u64>,
     pub(super) usage: Usage,
     pub(super) tool_names: ToolNameMap,
+    pub(super) native_messages: bool,
+    pub(super) native_usage: Value,
+    pub(super) native_delta: Value,
+    pub(super) native_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -106,6 +110,13 @@ impl MapperState {
             web_search_result_indexes: HashSet::new(),
             usage: Usage::default(),
             tool_names,
+            native_messages: request
+                .get("__mixin_native_messages")
+                .and_then(Value::as_bool)
+                == Some(true),
+            native_usage: json!({}),
+            native_delta: Value::Null,
+            native_id: None,
         }
     }
 
@@ -141,6 +152,9 @@ impl MapperState {
             "output_tokens_details": {"reasoning_tokens": self.usage.reasoning_tokens.unwrap_or(0)},
             "total_tokens": input_tokens + output_tokens
         });
+        if self.native_messages {
+            response["__mixin_native"] = json!({"id": self.native_id, "usage": self.native_usage, "delta": self.native_delta});
+        }
         response
     }
 

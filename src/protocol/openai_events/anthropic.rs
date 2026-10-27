@@ -145,6 +145,16 @@ fn handle_anthropic_event(
 ) -> Result<Vec<Bytes>, String> {
     match data.get("type").and_then(Value::as_str) {
         Some("message_start") => {
+            if state.native_messages {
+                state.native_id = data
+                    .pointer("/message/id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                state.native_usage = data
+                    .pointer("/message/usage")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+            }
             if let Some(usage) = data.pointer("/message/usage") {
                 if baidu_oneapi_usage {
                     update_anthropic_input_usage(state, usage);
@@ -153,9 +163,28 @@ fn handle_anthropic_event(
                 }
                 state.usage.output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
             }
-            Ok(Vec::new())
+            if state.native_messages {
+                Ok(vec![encode_raw_event(
+                    "response.native_message_start",
+                    &json!({"type":"response.native_message_start", "message":data.get("message")})
+                        .to_string(),
+                )])
+            } else {
+                Ok(Vec::new())
+            }
         }
         Some("content_block_start") => {
+            if state.native_messages
+                && data
+                    .pointer("/content_block/type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| kind == "server_tool_use" || kind.ends_with("_tool_result"))
+            {
+                return Err(
+                    "native server tool output is unsupported in a context-managed stream"
+                        .to_owned(),
+                );
+            }
             let index = data
                 .get("index")
                 .and_then(Value::as_u64)
@@ -408,8 +437,17 @@ fn handle_anthropic_event(
             }
         }
         Some("message_delta") => {
+            if state.native_messages {
+                state.native_delta = data.get("delta").cloned().unwrap_or(Value::Null);
+                if let (Some(target), Some(source)) = (
+                    state.native_usage.as_object_mut(),
+                    data.get("usage").and_then(Value::as_object),
+                ) {
+                    target.extend(source.clone());
+                }
+            }
             let stop_reason = data.pointer("/delta/stop_reason").and_then(Value::as_str);
-            if stop_reason == Some("pause_turn") {
+            if stop_reason == Some("pause_turn") && !state.native_messages {
                 return Err(
                     "Anthropic returned pause_turn; automatic server-tool continuation is unsupported"
                         .to_owned(),

@@ -303,8 +303,14 @@ impl UpstreamAccess {
         request: &crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
         client_beta: Option<&str>,
+        native_body: Option<&Value>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         if provider.definition().preset_id.as_deref() == Some("kiro") {
+            if native_body.is_some() {
+                return Err(GatewayError::BadRequest(
+                    "native opaque Messages blocks are unsupported by the Kiro adapter".to_owned(),
+                ));
+            }
             return self.send_kiro(provider, request, hash_key).await;
         }
         let provider_beta = if request.speed.as_deref() == Some("fast") {
@@ -349,7 +355,14 @@ impl UpstreamAccess {
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
             let response = self
-                .send_json(upstream_request, request.clone(), provider.aws_sigv4())
+                .send_json(
+                    upstream_request,
+                    match native_body {
+                        Some(body) => body.clone(),
+                        None => serde_json::to_value(request)?,
+                    },
+                    provider.aws_sigv4(),
+                )
                 .await
                 .inspect_err(|error| {
                     tracing::error!(
@@ -392,6 +405,7 @@ impl UpstreamAccess {
         mut request: crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
         client_beta: Option<&str>,
+        mut native_body: Option<Value>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         let has_hosted_web_search = request.tools.iter().any(|tool| {
             tool.get("name").and_then(Value::as_str) == Some("web_search")
@@ -401,7 +415,13 @@ impl UpstreamAccess {
                     .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
         });
         let upstream = self
-            .send_anthropic_request(provider, &request, hash_key, client_beta)
+            .send_anthropic_request(
+                provider,
+                &request,
+                hash_key,
+                client_beta,
+                native_body.as_ref(),
+            )
             .await?;
         if !has_hosted_web_search {
             return Ok(upstream);
@@ -420,12 +440,19 @@ impl UpstreamAccess {
                 {
                     metadata.insert("user_id".to_owned(), json!(retry_hash_key));
                 }
+                if let Some(body) = native_body.as_mut() {
+                    body["tool_choice"] = json!({"type":"tool","name":"web_search"});
+                    if let Some(metadata) = &request.metadata {
+                        body["metadata"] = metadata.clone();
+                    }
+                }
                 let retry = self
                     .send_anthropic_request(
                         provider,
                         &request,
                         retry_hash_key.as_deref().or(hash_key),
                         client_beta,
+                        native_body.as_ref(),
                     )
                     .await?;
                 match inspect_anthropic_stream(retry).await? {

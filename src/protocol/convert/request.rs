@@ -15,6 +15,122 @@ pub struct ConvertedRequest {
     pub max_tokens_defaulted: bool,
 }
 
+pub(crate) fn native_messages_body(
+    body: &Value,
+    request: &MessageRequest,
+    original: &Value,
+    compaction_secret: SecretSource<'_>,
+) -> Result<Value, GatewayError> {
+    let mut result = original.clone();
+    let converted = serde_json::to_value(request)?;
+    let object = result.as_object_mut().ok_or_else(|| {
+        GatewayError::BadRequest("native Messages body must be an object".to_owned())
+    })?;
+    if let Some(fields) = converted.as_object() {
+        object.extend(fields.clone());
+    }
+    let mut system = match original.get("system") {
+        Some(Value::Array(blocks)) => blocks.clone(),
+        Some(Value::String(text)) => vec![json!({"type":"text","text":text})],
+        _ => Vec::new(),
+    };
+    let original_instructions = match original.get("system") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        _ => String::new(),
+    };
+    let instructions = body
+        .get("instructions")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let guidance = instructions
+        .strip_prefix(&original_instructions)
+        .unwrap_or(instructions)
+        .trim_start_matches('\n');
+    if !guidance.is_empty() {
+        system.push(json!({"type":"text","text":guidance}));
+    }
+    let mut messages: Vec<Value> = Vec::new();
+    let mut lifted = Vec::new();
+    for item in body
+        .get("input")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let mut converted = Vec::new();
+        append_input_item(
+            item,
+            &mut lifted,
+            &mut converted,
+            false,
+            body.get("model").and_then(Value::as_str),
+            compaction_secret,
+        )?;
+        for message in converted {
+            let mut value = serde_json::to_value(message)?;
+            // Only ingress-created items carry this sidecar. Compression
+            // summaries are new items and cannot inherit archived metadata.
+            if let Some(raw) = item.get("__mixin_native_block")
+                && let Some(block) = value
+                    .get_mut("content")
+                    .and_then(Value::as_array_mut)
+                    .and_then(|blocks| (blocks.len() == 1).then(|| &mut blocks[0]))
+            {
+                restore_native_block_fields(block, raw);
+            }
+            if let Some(last) = messages.last_mut()
+                && last.get("role") == value.get("role")
+            {
+                if let (Some(target), Some(source)) = (
+                    last.get_mut("content").and_then(Value::as_array_mut),
+                    value.get_mut("content").and_then(Value::as_array_mut),
+                ) {
+                    target.append(source);
+                }
+            } else {
+                messages.push(value);
+            }
+        }
+    }
+    for block in lifted {
+        system.push(serde_json::to_value(block)?);
+    }
+    if system.is_empty() {
+        result.as_object_mut().map(|object| object.remove("system"));
+    } else {
+        result["system"] = Value::Array(system);
+    }
+    result["messages"] = Value::Array(messages);
+    Ok(result)
+}
+
+fn restore_native_block_fields(converted: &mut Value, original: &Value) {
+    match (converted, original) {
+        (Value::Object(converted), Value::Object(original)) => {
+            for (key, value) in original {
+                if key == "name" {
+                    converted.insert(key.clone(), value.clone());
+                } else if let Some(existing) = converted.get_mut(key) {
+                    restore_native_block_fields(existing, value);
+                } else {
+                    converted.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        (Value::Array(converted), Value::Array(original)) if converted.len() == original.len() => {
+            for (converted, original) in converted.iter_mut().zip(original) {
+                restore_native_block_fields(converted, original);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Converts a streaming Responses request with hosted web search disabled.
 pub fn responses_to_anthropic(
     body: &Value,

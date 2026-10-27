@@ -5,10 +5,10 @@
 图示仅对比机制，不代表实测性能。用户侧的作用说明、默认配置、命令与排障见
 [上下文引擎使用指南 / Wiki 源稿](wiki/Context-Engine.md)。
 
-**适用路径**：当前引擎运行于共享 Responses 请求回路，需要会话标识与支持的 input
-或链式续接。`src/server/messages_http.rs` 中直接转发给原生 Anthropic Messages
-上游的路径不经过该回路；转换成 Responses 的路径才在满足条件时参与。
-因此接入 Mixin 或开启全局开关，不代表所有 Claude Code 请求均使用本引擎；
+**适用路径**：引擎运行于共享 Responses 请求回路，需要会话标识与支持的 input
+或链式续接。原生 Anthropic Messages 请求在启用引擎、有会话标识且内容可映射时
+也接入该回路，保留 thinking 签名、beta、原生选项与 Messages 响应。托管工具和
+无法保真映射的原生内容块继续直通，不启用压缩。因此开启全局开关不代表所有请求都参与；
 下文的 compact 接管特指 Responses compact / compaction_trigger。
 
 默认关闭。开启后，网关为每个会话维护「原始消息归档 + 压缩视图」两层结构：

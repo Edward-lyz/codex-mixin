@@ -33,6 +33,7 @@ struct ProviderStreamPlan {
     provider_id: String,
     upstream_model_id: String,
     routing: Option<super::UpstreamRouting>,
+    native_messages: Option<(crate::anthropic::MessageRequest, serde_json::Value)>,
 }
 
 /// Gateway execution component: routing, single-request execution, and cache
@@ -335,6 +336,7 @@ impl GatewayExecutor {
                         provider_id,
                         upstream_model_id,
                         routing,
+                        native_messages: plan.native_messages,
                     },
                     headers,
                 )
@@ -478,6 +480,7 @@ impl GatewayExecutor {
                 routing: plan.routing.as_ref(),
                 downstream_model: plan.downstream_model.as_deref(),
                 headers,
+                native_messages: plan.native_messages.as_ref(),
             },
         )
         .await;
@@ -508,6 +511,7 @@ impl GatewayExecutor {
                 routing: plan.routing.as_ref(),
                 downstream_model: plan.downstream_model.as_deref(),
                 headers,
+                native_messages: plan.native_messages.as_ref(),
             },
         )
         .await

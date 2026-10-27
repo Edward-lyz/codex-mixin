@@ -73,20 +73,9 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
 
 ---
 
-## 使用入口
-
-| 入口 | 主要用途 |
-| --- | --- |
-| macOS 菜单栏 / Windows 托盘 | 网关启停、额度速览、打开控制台；高级菜单中管理 Fusion、备份等功能 |
-| 桌面控制台 | 模型与服务、Agent 接入、用量明细 |
-| Web 控制面板 | 浏览器中管理模型与服务、Agent、用量、Fusion 及高级设置，适合 Linux 和远程机器 |
-| CLI | 脚本、自动化与诊断，命令见 [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference) |
-
----
-
 ## 界面
 
-以下为 v0.7.4 发版期间的 macOS App 实际界面。
+以下为 macOS App 实际界面。
 
 <p align="center">
   <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="macOS 控制台的模型与服务页面"></a><br>
@@ -106,7 +95,7 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
   </tr>
 </table>
 
-Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控制台管理模型与服务、Agent 接入、用量明细和上下文。
+Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服务、Agent 接入、用量明细和上下文。
 
 <p align="center">
   <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows 浅色模式托盘，显示网关状态与额度圆环"></a>
@@ -120,9 +109,11 @@ Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控
 
 ---
 
-## 功能
+## 核心功能
 
-**分段上下文引擎。** 长任务边推进、边压缩：自动将已完成的历史片段逐步替换为分层摘要，无需手动整理或触发压缩。稳定前缀设计有利于复用提示缓存，原文独立归档，细节随时可检索、恢复。默认关闭，见[开启方式与机制图](docs/wiki/Context-Engine.md)。
+**【NEW】上下文引擎。** 长任务边推进、边压缩：使用 Billion Context 原版算法，在 mixin 内部集成，可以实现在推理的同时，分段压缩替换历史，在保持缓存命中率 90% 以上的同时，让 1M 窗口的上下文能塞进 1B 的内容。
+
+<img src="docs/assets/context-engine-comparison.svg" alt="上下文压缩机制对比" style="zoom:50%;" />
 
 **与官方 Codex 共存。** 自定义模型以独立名称加入 Codex 模型目录，与官方模型并列显示。官方目录从 OpenAI 同步，接入和断开都不改动 Codex 的会话数据库与账号状态。
 
@@ -133,8 +124,6 @@ Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控
 **用量与额度。** 查看每天和每次回复的 Token、缓存命中率、思考消耗、返回模型、首字延迟与输出速度，本地保留最近 5000 条回复。供应商额度支持圆环或条形显示，已用超过 90% 时标红。
 
 **模型融合（Fusion）。** 一个模型标识可以调度主模型和辅助模型，由 Judge 模型评审结果；也可以按时间段把同一标识路由到不同供应商。
-
-**Claude Desktop 接入。** 在 Agent 页面连接 [Claude Desktop](https://claude.com/download)，让 Code 标签页通过网关使用所选模型，保留 Claude.ai 登录；断开接入即可恢复原配置。
 
 **配置备份。** 在高级菜单导出或导入供应商、模型与 Fusion 配置，用于恢复或跨机器迁移。备份包含 API Key，Base64 只是编码，请按凭据妥善保管。
 
@@ -342,85 +331,6 @@ Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控
   </tr>
 </table>
 
-### 暂未支持接入 (12 款)
-
-以下 12 款客户端的配置依赖系统钥匙串加密、进程级注入、闭源认证协议或应用内私有运行时 API，目前不写入网关配置：
-
-<table>
-  <tr>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
-      <sub>Gemini CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
-      <sub>agy</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
-      <sub>Aside</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cursor-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor CLI logo"><img src="docs/assets/agents/cursor-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor CLI logo"><br>
-      <sub>Cursor CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cursor-local-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor logo"><img src="docs/assets/agents/cursor-local-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor logo"><br>
-      <sub>Cursor</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/zed-light.svg#gh-light-mode-only" width="36" height="36" alt="Zed logo"><img src="docs/assets/agents/zed-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Zed logo"><br>
-      <sub>Zed</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/copilot-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot CLI logo"><img src="docs/assets/agents/copilot-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot CLI logo"><br>
-      <sub>Copilot CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/devin-light.svg#gh-light-mode-only" width="36" height="36" alt="Devin logo"><img src="docs/assets/agents/devin-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Devin logo"><br>
-      <sub>Devin</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
-      <sub>Muse</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
-      <sub>Hanako</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
-      <sub>Alma</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
-      <sub>Cindy</sub>
-    </td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
-  </tr>
-</table>
-
-> 安装对应框架后，可在控制台的 Agent 页面一键连接或恢复配置，亦可通过 CLI 命令操作：`codex-mixin agent connect <id>` 与 `codex-mixin agent disconnect <id>`。各适配器的写入文件、契约与限制见 [Agent integration contracts](docs/agent-integration-contracts.md)；图标归属声明见 [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md)。
-
----
-
-## 文档
-
-### 上下文引擎
-
-将原始消息归档与模型工作视图分离：按需压缩为 T1/T2/T3 摘要，保留检索和恢复原文的入口。
-默认关闭；只覆盖具备会话标识的受支持网关路线，原生 Anthropic Messages 直通路径不在其中。
-作用、配置与排障见[使用指南](docs/wiki/Context-Engine.md)，实现细节见[技术文档](docs/context-engine.md)。
-
-![上下文压缩机制对比](docs/assets/context-engine-comparison.svg)
-
-图示为机制对比，不代表实测压缩率或质量优势。触发决策与分层规则借鉴 Billion Context（MIT）。
 
 仓库内文档：
 
