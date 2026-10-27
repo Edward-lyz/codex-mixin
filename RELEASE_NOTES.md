@@ -1,4 +1,27 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.5
+
+### 特性新增
+
+- 内置上下文管理引擎，支持长会话自动分段压缩、原文归档和按需恢复，让 Agent 在同一个会话中持续推进复杂任务，同时尽可能复用缓存。支持的 Codex 和 Claude Code 请求均可使用，开启后可在控制台查看压缩与缓存情况。
+- 新增 Kiro 和 Antigravity Business 供应商接入，可以将账号可用的模型加入 Mixin，在支持的 Agent 中使用。
+- Codex 的代码审查和会话命名可以分别指定模型。主任务、代码审查和会话命名各用适合的模型，方便按需求和额度安排。
+
+### 体验优化
+
+- 自动发现本机已登录的 Kiro 和个人版 Antigravity 账号，启动网关后即可添加对应供应商并刷新模型列表，减少重复配置和登录。
+- 支持读取 macOS 和 Windows 的系统代理。登录、模型发现和额度查询等请求可以沿用已有网络配置，减少需要单独配置代理的情况。
+- 同步 Codex 官方账号对应的模型上下文窗口和速度档位，减少接入 Mixin 后模型配置与账号实际权益不一致的情况。
+- macOS 支持在网关空闲后自动安装更新；Windows 支持完整应用自动更新，后续升级更省事。
+- Windows 托盘和控制台响应更快，打开控制台、切换页面、查看额度和管理大量模型时更加流畅；保存模型配置也减少了不必要的等待。
+- 用量明细显示 Codex 会话名称，方便找到消耗对应的任务；Antigravity 请求补充首字延迟、输出速度和思考内容统计，更容易了解模型实际表现。
+
+### BUG 修复
+
+- 修复接入 Mixin 后 Codex Desktop 部分会话建议不可用的问题，官方账号模式下继续使用自定义模型时，也能保留会话建议所需的官方身份。
+- 修复 DSH 部分桌面安装和配置档案下无法正确接入、同步模型或恢复配置的问题。
+- 改进 Gemini 协议兼容性，修复部分非 Gemini 模型和 Claude 模型请求失败的问题；同时修复部分模型目录解析和 Web 面板密钥配置问题。
+
 ## v0.7.4
 
 ### 功能
@@ -189,6 +212,29 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.5
+
+### 新增功能
+
+- 內建上下文管理引擎，支援長對話自動分段壓縮、原文封存和按需還原，讓 Agent 在同一個對話中持續推進複雜任務，同時盡可能重用快取。支援符合條件的 Codex 和 Claude Code 請求，啟用後可在控制台查看壓縮與快取狀況。
+- 新增 Kiro 和 Antigravity Business 供應商接入，可將帳號可用的模型加入 Mixin，在支援的 Agent 中使用。
+- Codex 的程式碼審查和對話命名可分別指定模型，依需求與額度為不同任務選擇適合的模型。
+
+### 體驗優化
+
+- 自動發現本機已登入的 Kiro 和個人版 Antigravity 帳號，啟動閘道後即可新增供應商並更新模型清單，減少重複設定和登入。
+- 支援讀取 macOS 和 Windows 系統代理，登入、模型探索及額度查詢等請求可沿用現有網路設定。
+- 同步 Codex 官方帳號的模型上下文視窗和速度等級，減少模型設定與帳號權益不一致的情況。
+- macOS 可在閘道閒置後自動安裝更新；Windows 支援完整應用程式自動更新。
+- 改善 Windows 系統匣與控制台的回應速度，開啟視窗、切換頁面、查看額度及管理大量模型更加流暢，儲存模型設定也減少等待。
+- 用量明細顯示 Codex 對話名稱；Antigravity 請求新增首字延遲、輸出速度和思考內容統計。
+
+### 問題修正
+
+- 修正接入 Mixin 後 Codex Desktop 部分對話建議無法使用的問題，官方帳號模式下保留建議功能所需的官方身分。
+- 修正 DSH 部分桌面安裝和設定檔無法正確接入、同步模型或還原設定的問題。
+- 改善 Gemini 協定相容性，修正部分非 Gemini 和 Claude 模型請求失敗，以及部分模型目錄解析和 Web 面板金鑰設定問題。
+
 ## v0.7.4
 
 ### 功能
@@ -379,6 +425,29 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.5
+
+### New features
+
+- Introduce a context engine that automatically compresses long conversations in segments, archives original content, and restores it on demand. Agents can continue complex work in one conversation while preserving cache reuse where possible. Supported Codex and Claude Code requests can use the engine; compression and cache statistics are available in the console after enabling it.
+- Add Kiro and Antigravity Business providers, making models available to your account usable through Mixin with supported agents.
+- Select independent models for Codex code reviews and conversation titles, so each task can use a model suited to its needs and quota.
+
+### Improvements
+
+- Discover existing local Kiro and personal Antigravity logins automatically, then add the provider and refresh its models when the gateway starts.
+- Read macOS and Windows system proxy settings for login, model discovery, quota queries, and other requests.
+- Synchronize model context windows and speed tiers for the official Codex account.
+- Automatically install macOS updates when the gateway is idle, and automatically update the complete Windows application.
+- Improve Windows tray and console responsiveness when opening the console, navigating, checking quota, managing large model lists, and saving model settings.
+- Show Codex conversation titles in usage details, and record first-token latency, output speed, and reasoning information for Antigravity requests.
+
+### Bug fixes
+
+- Fix unavailable Codex Desktop conversation suggestions after connecting Mixin by retaining the official provider identity in official-account mode.
+- Fix DSH connection, model synchronization, and configuration restoration for certain desktop installations and profiles.
+- Improve Gemini protocol compatibility for non-Gemini and Claude models, and fix some model catalog parsing and Web panel credential configuration issues.
+
 ## v0.7.4
 
 ### Features
