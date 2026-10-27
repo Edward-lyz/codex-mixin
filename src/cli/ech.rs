@@ -19,7 +19,7 @@ pub(super) async fn run(command: EchCommand) -> anyhow::Result<()> {
                     status.doh_url
                 );
                 if let Some(reason) = status.fallback_reason {
-                    println!("reverted to direct: {reason}");
+                    println!("ECH off, ordinary network settings restored: {reason}");
                 }
             }
         }
@@ -38,7 +38,9 @@ pub(super) async fn run(command: EchCommand) -> anyhow::Result<()> {
             if enabled {
                 println!("official GPT ECH enabled; relay exit is not verified");
             } else {
-                println!("ECH unavailable: automatically disabled and reverted to direct access");
+                println!(
+                    "ECH unavailable: automatically disabled; ordinary network settings restored"
+                );
             }
         }
         EchCommand::Disable => {

@@ -266,7 +266,7 @@ pub struct AgyQuotaWindow {
 pub async fn fetch_agy_quota(provider: &ProviderDefinition) -> anyhow::Result<Vec<AgyQuotaWindow>> {
     let headers = auth_headers(provider).await?;
     let runtime = ProviderRuntime::new(provider.clone(), &|name| std::env::var(name).ok())?;
-    let client = reqwest::Client::new();
+    let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder()).build()?;
     let report = fetch_json(
         &client,
         &runtime,

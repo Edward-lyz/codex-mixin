@@ -210,8 +210,65 @@ pub fn add_provider(
     provider: ProviderDefinition,
     gateway_api_key: Option<String>,
 ) -> Result<(), OperationError> {
+    let preset_id = provider.preset_id.clone();
     commit_provider_change(|config| add_provider_config(config, provider, gateway_api_key))?;
+    if let Some(preset_id) = preset_id {
+        // An explicit add overrides an earlier removal of the discovered login.
+        after_provider_commit("discovered login ignore list", || {
+            crate::provider::local_oauth::set_preset_ignored(&preset_id, false)
+        })?;
+    }
     invalidate_provider_caches()
+}
+
+/// The providers the gateway would serve: stored ones minus auto-discovered
+/// accounts whose login vanished, plus logins not saved yet. Read-only.
+pub fn runtime_providers(
+    stored: Vec<ProviderDefinition>,
+) -> anyhow::Result<Vec<ProviderDefinition>> {
+    crate::provider::local_oauth::runtime_providers(stored)
+}
+
+/// Whether a usable AGY login already exists on this machine.
+pub fn local_agy_login_available() -> bool {
+    crate::provider::local_oauth::inspect(
+        ProviderPreset::Agy,
+        &crate::provider::local_oauth::Locations::current(),
+    )
+    .is_some()
+}
+
+/// Saves AGY/Kiro logins found on this machine as ordinary providers and
+/// resets the model directory of one whose account changed. Reading the
+/// external credentials is all that happens here; nothing is sent upstream.
+/// Returns the ids that were added or reset.
+pub fn adopt_local_logins() -> anyhow::Result<Vec<String>> {
+    // Dry run on a copy so an unchanged machine never rewrites the config.
+    let mut preview = crate::config::load_stored_config()?
+        .unwrap_or_default()
+        .providers;
+    if !crate::provider::local_oauth::reconcile(&mut preview)? {
+        return Ok(Vec::new());
+    }
+    let touched = mutate_stored_config(|config| {
+        let before: HashMap<String, Option<String>> = config
+            .providers
+            .iter()
+            .map(|provider| (provider.id.clone(), provider.discovered_credential.clone()))
+            .collect();
+        crate::provider::local_oauth::reconcile(&mut config.providers)?;
+        Ok(config
+            .providers
+            .iter()
+            .filter(|provider| before.get(&provider.id) != Some(&provider.discovered_credential))
+            .map(|provider| provider.id.clone())
+            .collect::<Vec<_>>())
+    })?;
+    if !touched.is_empty() {
+        WebSearchCapabilities::clear_default_cache()?;
+        ProviderCapabilities::clear_default_cache()?;
+    }
+    Ok(touched)
 }
 
 pub fn add_provider_config(
@@ -286,10 +343,22 @@ pub fn reorder_providers(ids: &[String]) -> Result<(), OperationError> {
 }
 
 pub fn remove_provider(id: &str) -> Result<RemovedProvider, OperationError> {
+    let mut discovered_preset = None;
     let renames = commit_provider_change(|config| {
         require_providers(config)?;
+        discovered_preset = config
+            .providers
+            .iter()
+            .find(|provider| provider.id == id && provider.discovered_credential.is_some())
+            .and_then(|provider| provider.preset_id.clone());
         remove_provider_config(config, id)
     })?;
+    if let Some(preset_id) = discovered_preset {
+        // Without this marker the next discovery would bring the login back.
+        after_provider_commit("discovered login ignore list", || {
+            crate::provider::local_oauth::set_preset_ignored(&preset_id, true)
+        })?;
+    }
     invalidate_provider_caches()?;
     Ok(RemovedProvider { renames })
 }

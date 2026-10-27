@@ -90,7 +90,7 @@ public sealed partial class MainWindow
             buttons.Children.Add(Button("检测 ECH", () => ChangeAsync("检测 ECH", ["ech", "test", "--json"])));
             buttons.Children.Add(Button("启用 ECH", () => ChangeAsync("启用 ECH", ["ech", "enable"])));
             buttons.Children.Add(Button("关闭 ECH", () => ChangeAsync("关闭 ECH", ["ech", "disable"])));
-            return Card("官方连接 · ECH", $"{(Json.Flag(ech, "enabled") ? "已启用" : "已关闭")} · {Json.OptionalText(ech, "fallback_reason") ?? "未发生连接回退"}", buttons);
+            return Card("官方连接 · ECH", $"{(Json.Flag(ech, "enabled") ? "已启用" : "已关闭")} · {Json.OptionalText(ech, "fallback_reason") ?? "未发生自动关闭"}", buttons);
         }, pageToken);
         return Task.CompletedTask;
     }

@@ -93,7 +93,7 @@ pub async fn refresh_provider_models(id: &str) -> anyhow::Result<ProviderRefresh
     let client = match DISCOVERY_CLIENT.get() {
         Some(client) => client.clone(),
         None => {
-            let client = reqwest::Client::builder()
+            let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
                 .timeout(Duration::from_secs(30))
                 .build()?;
             let _ = DISCOVERY_CLIENT.set(client.clone());
@@ -362,7 +362,7 @@ async fn detect_custom_provider_protocol_inner(
     let runtime = registry
         .provider(&provider.id)
         .ok_or_else(|| anyhow::anyhow!("provider registry omitted provider {}", provider.id))?;
-    let client = reqwest::Client::builder().build()?;
+    let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder()).build()?;
     let mut failures = Vec::new();
     let mut found_models_endpoint = false;
     for (models_path, versioned) in [("/v1/models", true), ("/models", false)] {

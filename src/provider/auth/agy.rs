@@ -38,7 +38,7 @@ pub(super) fn oauth_client() -> anyhow::Result<(String, String)> {
 }
 
 static REFRESH_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
+    crate::platform::proxy::auto_proxy(reqwest::Client::builder())
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap_or_default()

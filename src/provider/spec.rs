@@ -218,6 +218,7 @@ impl ProviderSpec {
             model_context_overrides: Default::default(),
             models_refreshed_at_ms: None,
             models_refresh_error: None,
+            discovered_credential: None,
         }
     }
 }

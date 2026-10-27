@@ -582,6 +582,9 @@ pub(super) enum ProviderCommand {
         /// Maximum time to wait for browser OAuth, including token exchange.
         #[arg(long, default_value_t = codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=300))]
         oauth_timeout_seconds: u64,
+        /// Sign in again in the browser even when a usable local login exists.
+        #[arg(long)]
+        reauthorize: bool,
         #[arg(long, value_name = "BOOL")]
         auxiliary_model_upstream: Option<bool>,
         #[arg(long)]

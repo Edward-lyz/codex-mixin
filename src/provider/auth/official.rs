@@ -178,7 +178,8 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
     } else {
         "https://chatgpt.com/backend-api/wham/usage"
     };
-    let mut request = reqwest::Client::new()
+    let mut request = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
+        .build()?
         .get(endpoint)
         .header("authorization", authorization)
         .header("chatgpt-account-id", account.clone())

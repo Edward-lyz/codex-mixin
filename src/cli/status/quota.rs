@@ -18,7 +18,7 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
     };
     let registry = ProviderRegistry::new(stored.providers)?;
     validate_quota_filter(&registry, official_enabled, provider_filter)?;
-    let client = reqwest::Client::builder()
+    let client = codex_mixin::platform::proxy::auto_proxy(reqwest::Client::builder())
         .timeout(Duration::from_secs(10))
         .build()?;
     let provider_jobs = registry

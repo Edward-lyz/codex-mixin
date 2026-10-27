@@ -2241,7 +2241,7 @@ RENDERERS.advanced = () => {
   echToggle.addEventListener("change", async () => {
     const enabling = echToggle.checked;
     echToggle.checked = !enabling;
-    await runAction(null, enabling ? "ech_enable" : "ech_disable", null, { ok: enabling ? "ECH 已启用，网关已重启" : "ECH 已关闭，已恢复直连" });
+    await runAction(null, enabling ? "ech_enable" : "ech_disable", null, { ok: enabling ? "ECH 已启用，网关已重启" : "ECH 已关闭，已恢复普通网络设置" });
     loadEch();
   });
   const echTest = h("button", { class: "btn btn-sm", type: "button", "data-action": "", text: "仅测试连接" });
@@ -2252,10 +2252,10 @@ RENDERERS.advanced = () => {
       render({ animate: false });
     }
   });
-  const echStatus = ech.error ? `无法读取：${ech.error}` : !advanced.ech ? "读取中…" : echOn ? "已启用" : ech.fallback_reason ? `已自动回退到直连：${ech.fallback_reason}` : "未启用";
+  const echStatus = ech.error ? `无法读取：${ech.error}` : !advanced.ech ? "读取中…" : echOn ? "已启用" : ech.fallback_reason ? `已自动关闭，恢复普通网络设置：${ech.fallback_reason}` : "未启用";
   const echCard = card(
     "ECH 代理访问 GPT",
-    "仅接管本地网关的官方 GPT 请求，保留端到端 TLS；连接失败会自动关闭并回退到直连。",
+    "仅接管本地网关的官方 GPT 请求，保留端到端 TLS；连接失败会自动关闭并恢复普通网络设置（环境变量代理、系统静态代理，否则直连）。",
     h(
       "div",
       { class: "svc-form" },

@@ -66,6 +66,8 @@ pub(crate) async fn discover_models_with_output(
         }
         return Ok(changes);
     }
+    // A login Mixin found but has not saved yet becomes refreshable here.
+    codex_mixin::application::provider::adopt_local_logins()?;
     super::super::progress_step(&format!("Refreshing model list for provider {id}"));
     let refreshed =
         match codex_mixin::application::provider::discovery::refresh_provider_models(id).await {

@@ -142,7 +142,7 @@ impl ModelBenchmarkManager {
         timeout: Duration,
         target_output_tokens: u64,
     ) -> anyhow::Result<()> {
-        let client = Client::builder().build()?;
+        let client = crate::platform::proxy::auto_proxy(Client::builder()).build()?;
         let target_order = targets
             .iter()
             .enumerate()

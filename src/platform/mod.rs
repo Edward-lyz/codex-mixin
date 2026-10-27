@@ -11,6 +11,7 @@ mod package;
 mod paths;
 mod permissions;
 mod process;
+pub mod proxy;
 mod shell;
 mod signing;
 mod startup_service;

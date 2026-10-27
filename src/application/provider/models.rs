@@ -180,7 +180,7 @@ pub async fn probe_provider_models(
             return Ok(ProviderProbeSummary::default());
         }
     }
-    let client = reqwest::Client::builder()
+    let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
         .timeout(Duration::from_secs(30))
         .build()?;
     let summary = ProviderCapabilities::probe_provider(client, &provider, &models).await?;
@@ -320,7 +320,7 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
             )
         }
         _ => {
-            let client = reqwest::Client::builder()
+            let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
                 .timeout(Duration::from_secs(10))
                 .build()?;
             let models = discover_provider_models(&client, &provider)

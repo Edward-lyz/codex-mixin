@@ -104,7 +104,7 @@ pub(crate) async fn session(
         };
         let response = CLIENT
             .get_or_try_init(|| async {
-                reqwest::Client::builder()
+                crate::platform::proxy::auto_proxy(reqwest::Client::builder())
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(Duration::from_secs(20))
                     .build()

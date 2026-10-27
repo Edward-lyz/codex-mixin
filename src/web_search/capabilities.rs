@@ -324,7 +324,7 @@ async fn run_model_probes(
     config: &GatewayConfig,
     now: u64,
 ) -> anyhow::Result<Vec<ModelWebSearchCapability>> {
-    let client = Client::builder().build()?;
+    let client = crate::platform::proxy::auto_proxy(Client::builder()).build()?;
     let release_reference = if candidates
         .iter()
         .any(|(_, _, model)| model.to_ascii_lowercase().starts_with("gpt-"))

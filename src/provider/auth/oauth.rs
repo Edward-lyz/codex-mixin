@@ -187,7 +187,8 @@ pub(super) async fn token_request(
     endpoint: &str,
     fields: &[(&str, &str)],
 ) -> anyhow::Result<Value> {
-    let mut response = reqwest::Client::new()
+    let mut response = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
+        .build()?
         .post(endpoint)
         .timeout(Duration::from_secs(20))
         .form(fields)
