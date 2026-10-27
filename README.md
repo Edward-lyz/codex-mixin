@@ -410,6 +410,16 @@ Windows 原生 WinUI 3 界面（当前开发版本）：托盘查看额度，控
 
 ## 文档
 
+### 上下文引擎
+
+将原始消息归档与模型工作视图分离：按需压缩为 T1/T2/T3 摘要，保留检索和恢复原文的入口。
+默认关闭；只覆盖具备会话标识的受支持网关路线，原生 Anthropic Messages 直通路径不在其中。
+作用、配置与排障见[使用指南](docs/wiki/Context-Engine.md)，实现细节见[技术文档](docs/context-engine.md)。
+
+![上下文压缩机制对比](docs/assets/context-engine-comparison.svg)
+
+图示为机制对比，不代表实测压缩率或质量优势。触发决策与分层规则借鉴 Billion Context（MIT）。
+
 仓库内文档：
 
 - [架构与模块边界](docs/architecture.md)

@@ -1,5 +1,16 @@
 # 长上下文引擎（Context Engine）
 
+![内置压缩与归档式分层上下文管理](assets/context-engine-comparison.svg)
+
+图示仅对比机制，不代表实测性能。用户侧的作用说明、默认配置、命令与排障见
+[上下文引擎使用指南 / Wiki 源稿](wiki/Context-Engine.md)。
+
+**适用路径**：当前引擎运行于共享 Responses 请求回路，需要会话标识与支持的 input
+或链式续接。`src/server/messages_http.rs` 中直接转发给原生 Anthropic Messages
+上游的路径不经过该回路；转换成 Responses 的路径才在满足条件时参与。
+因此接入 Mixin 或开启全局开关，不代表所有 Claude Code 请求均使用本引擎；
+下文的 compact 接管特指 Responses compact / compaction_trigger。
+
 默认关闭。开启后，网关为每个会话维护「原始消息归档 + 压缩视图」两层结构：
 客户端仍然只看到自己的对话，压缩由模型自主发起的四个内部工具驱动，Rust
 侧负责校验范围、状态与持久化。

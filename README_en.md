@@ -410,6 +410,14 @@ The following 12 tools store their configuration behind OS keychain encryption, 
 
 ## Documentation
 
+### Context engine
+
+Keep an original-message archive separate from the model's working view. Selective T1/T2/T3 summaries reduce history in the view, with tools to search and restore original evidence. Disabled by default; applies to supported gateway routes with session identity, excluding native Anthropic Messages passthrough.
+
+![Context compaction mechanism comparison](docs/assets/context-engine-comparison.svg)
+
+This is a mechanism comparison, not a measured quality or performance claim. Trigger decisions and tier rules are adapted from Billion Context (MIT). See the [user guide](docs/wiki/Context-Engine.md) and [technical documentation](docs/context-engine.md) (Chinese).
+
 In this repository:
 
 - [Architecture and module boundaries](docs/architecture.md)
