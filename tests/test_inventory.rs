@@ -20,6 +20,7 @@ const WINDOWS_INTEGRATION_SHARD_NAMES: &[&str] =
     &["integration-a", "integration-b", "integration-c"];
 const CLIENT_AUTH_TESTS: &str = "tests/client_auth_tests.txt";
 const SCRIPTS_DIR: &str = "scripts";
+const WINDOWS_SCRIPTS_DIR: &str = "windows/scripts";
 const WORKFLOWS_DIR: &str = ".github/workflows";
 const MANUAL_TEST_SCRIPTS: &str = "tests/manual_test_scripts.txt";
 const IGNORED_TESTS: &[(&str, &str)] = &[
@@ -336,23 +337,34 @@ fn client_auth_manifest() -> BTreeSet<(String, String)> {
     expected
 }
 
-fn test_script_names(directory: &Path) -> BTreeSet<String> {
-    fs::read_dir(directory)
-        .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+/// Shell and Node test entries use `test_`, `e2e_` and `evaluate_`; the
+/// PowerShell scripts use the hyphenated `test-portable-update.ps1` spelling.
+fn is_test_script_name(name: &str) -> bool {
+    let Some((stem, extension)) = name.rsplit_once('.') else {
+        return false;
+    };
+    if !["sh", "ps1", "mjs", "cjs"].contains(&extension) {
+        return false;
+    }
+    ["e2e", "test", "evaluate"].iter().any(|prefix| {
+        stem.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('_') || rest.starts_with('-'))
+    })
+}
+
+/// Test entry points under `relative`, keyed by repository-relative path so
+/// `scripts/` and `windows/scripts/` entries cannot shadow each other.
+fn test_script_paths(root: &Path, relative: &str) -> BTreeSet<String> {
+    fs::read_dir(root.join(relative))
+        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_file())
         .filter_map(|path| {
             path.file_name()
                 .map(|name| name.to_string_lossy().into_owned())
         })
-        .filter(|name| {
-            ["e2e_", "test_", "evaluate_"]
-                .iter()
-                .any(|prefix| name.starts_with(prefix))
-                && [".sh", ".ps1", ".mjs", ".cjs"]
-                    .iter()
-                    .any(|extension| name.ends_with(extension))
-        })
+        .filter(|name| is_test_script_name(name))
+        .map(|name| format!("{relative}/{name}"))
         .collect()
 }
 
@@ -375,9 +387,10 @@ fn manual_test_scripts(source: &str) -> BTreeMap<String, String> {
             .split_once('|')
             .unwrap_or_else(|| panic!("invalid manual test script row: {line}"));
         let name = name.trim();
-        let name = name
-            .strip_prefix(&format!("{SCRIPTS_DIR}/"))
-            .unwrap_or_else(|| panic!("manual test script must live under {SCRIPTS_DIR}/: {line}"));
+        assert!(
+            name.contains('/') && !name.starts_with('/'),
+            "manual test script needs a repository-relative path: {line}"
+        );
         assert!(
             entries
                 .insert(name.to_owned(), reason.trim().to_owned())
@@ -490,30 +503,48 @@ fn detects_missing_and_duplicate_windows_integration_shards() {
 
 #[test]
 fn detects_unwired_stale_and_manual_test_scripts() {
-    let scripts = BTreeSet::from(["e2e_orphan.sh".to_owned(), "test_wired.sh".to_owned()]);
-    let workflow_sources = vec!["run: ./scripts/test_wired.sh".to_owned()];
-    let script_sources = BTreeMap::from([
-        ("e2e_orphan.sh".to_owned(), "#!/bin/bash".to_owned()),
-        ("test_wired.sh".to_owned(), "#!/bin/bash".to_owned()),
+    let scripts = BTreeSet::from([
+        "scripts/e2e_orphan.sh".to_owned(),
+        "scripts/test_wired.sh".to_owned(),
+        "windows/scripts/test-orphan.ps1".to_owned(),
+        "windows/scripts/test-wired.ps1".to_owned(),
     ]);
-    let manual = BTreeMap::from([("e2e_gone.sh".to_owned(), "removed".to_owned())]);
+    let workflow_sources = vec![
+        "run: ./scripts/test_wired.sh".to_owned(),
+        "run: ./windows/scripts/test-wired.ps1".to_owned(),
+    ];
+    let script_sources = BTreeMap::from([
+        ("scripts/e2e_orphan.sh".to_owned(), "#!/bin/bash".to_owned()),
+        ("scripts/test_wired.sh".to_owned(), "#!/bin/bash".to_owned()),
+        (
+            "windows/scripts/test-orphan.ps1".to_owned(),
+            "Write-Host".to_owned(),
+        ),
+    ]);
+    let manual = BTreeMap::from([("scripts/e2e_gone.sh".to_owned(), "removed".to_owned())]);
     let errors =
         test_script_inventory_errors(&scripts, &workflow_sources, &script_sources, &manual);
-    assert!(errors.iter().any(|error| error
-        == "e2e_orphan.sh is neither run by a workflow nor listed in tests/manual_test_scripts.txt"));
+    for orphan in ["scripts/e2e_orphan.sh", "windows/scripts/test-orphan.ps1"] {
+        assert!(errors.iter().any(|error| error
+            == &format!(
+                "{orphan} is neither run by a workflow nor listed in {MANUAL_TEST_SCRIPTS}"
+            )));
+    }
     assert!(
         errors
             .iter()
-            .any(|error| error == "manual test script e2e_gone.sh does not exist")
+            .any(|error| error == "manual test script scripts/e2e_gone.sh does not exist")
     );
 
-    let manual_wired = BTreeMap::from([("test_wired.sh".to_owned(), "obsolete".to_owned())]);
+    let manual_wired = BTreeMap::from([(
+        "windows/scripts/test-wired.ps1".to_owned(),
+        "obsolete".to_owned(),
+    )]);
     let errors =
         test_script_inventory_errors(&scripts, &workflow_sources, &script_sources, &manual_wired);
     assert!(
-        errors
-            .iter()
-            .any(|error| error == "test_wired.sh runs in CI and cannot stay manual-only")
+        errors.iter().any(|error| error
+            == "windows/scripts/test-wired.ps1 runs in CI and cannot stay manual-only")
     );
 
     let commented = vec!["# ./scripts/test_wired.sh".to_owned()];
@@ -522,8 +553,35 @@ fn detects_unwired_stale_and_manual_test_scripts() {
     assert!(
         errors
             .iter()
-            .any(|error| error.starts_with("test_wired.sh is neither run by a workflow"))
+            .any(|error| error.starts_with("scripts/test_wired.sh is neither run by a workflow"))
     );
+}
+
+#[test]
+fn test_script_names_accept_both_separators() {
+    for name in [
+        "test_macos.sh",
+        "test-portable-update.ps1",
+        "test.sh",
+        "e2e_multi_provider.sh",
+        "e2e-multi-provider.sh",
+        "evaluate_context.mjs",
+    ] {
+        assert!(is_test_script_name(name), "{name} is a test entry point");
+    }
+    for name in [
+        "install-nsis.ps1",
+        "package-windows.ps1",
+        "update-user-path.ps1",
+        "testing.sh",
+        "latest.sh",
+        "e2e_multi_provider",
+    ] {
+        assert!(
+            !is_test_script_name(name),
+            "{name} is not a test entry point"
+        );
+    }
 }
 
 #[test]
@@ -592,19 +650,26 @@ fn client_auth_tests_are_explicitly_inventoried() {
 #[test]
 fn test_scripts_are_wired_into_ci_or_listed_as_manual() {
     let root = repository_root();
-    let scripts_dir = root.join(SCRIPTS_DIR);
-    let scripts = test_script_names(&scripts_dir);
+    let scripts = [SCRIPTS_DIR, WINDOWS_SCRIPTS_DIR]
+        .into_iter()
+        .flat_map(|directory| test_script_paths(&root, directory))
+        .collect::<BTreeSet<_>>();
 
     // Any script may invoke a helper, not only the test entry points.
-    let script_sources = fs::read_dir(&scripts_dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.is_file())
-        .filter_map(|path| {
-            let source = fs::read_to_string(&path).ok()?;
-            let name = path.file_name()?.to_string_lossy().into_owned();
-            Some((name, source))
+    let script_sources = [SCRIPTS_DIR, WINDOWS_SCRIPTS_DIR]
+        .into_iter()
+        .flat_map(|directory| {
+            fs::read_dir(root.join(directory))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.is_file())
+                .map(|path| {
+                    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                    (format!("{directory}/{name}"), path)
+                })
+                .collect::<Vec<_>>()
         })
+        .filter_map(|(name, path)| Some((name, fs::read_to_string(path).ok()?)))
         .collect::<BTreeMap<_, _>>();
 
     let workflow_sources = fs::read_dir(root.join(WORKFLOWS_DIR))

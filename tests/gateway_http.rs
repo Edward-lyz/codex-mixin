@@ -33,6 +33,12 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 /// it invalidates every cached prefix in flight.
 const TOOL_IMAGE_PLACEHOLDER: &str = "[tool image omitted from replay to preserve prompt cache]";
 
+/// Client-visible deadline for a gateway websocket round trip. The behaviour
+/// under test is the gateway's own (millisecond) timeout; a tight outer bound
+/// only measures how loaded the runner is while this binary runs ~160 tests in
+/// parallel, each with its own gateway and mock upstream.
+const WS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn png_data_url(width: u32, height: u32) -> String {
     use base64::Engine;
     use image::codecs::png::PngEncoder;
@@ -7629,12 +7635,10 @@ async fn reconnects_official_upstream_without_resetting_client_websocket() {
         .send(WsMessage::Text(follow_up.to_string().into()))
         .await
         .unwrap();
-    let second_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("gateway did not finish the second official response");
+    let second_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("gateway did not finish the second official response");
     let second_joined = second_frames.join("\n");
     assert!(
         second_joined.contains("\"type\":\"response.completed\""),
@@ -7665,12 +7669,10 @@ async fn reconnects_official_upstream_without_resetting_client_websocket() {
         .send(WsMessage::Text(compaction.to_string().into()))
         .await
         .unwrap();
-    let compaction_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("gateway did not finish compaction after reconnect");
+    let compaction_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("gateway did not finish compaction after reconnect");
     assert!(
         compaction_frames
             .join("\n")
@@ -7801,13 +7803,11 @@ async fn maps_official_websocket_error_to_terminal_failure() {
         .send(WsMessage::Text(body.to_string().into()))
         .await
         .unwrap();
-    let error_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("official websocket error was not mapped to response.failed")
-    .join("\n");
+    let error_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("official websocket error was not mapped to response.failed")
+            .join("\n");
     assert!(error_frames.contains("\"type\":\"response.failed\""));
     assert!(error_frames.contains("websocket_connection_limit_reached"));
 
@@ -7815,13 +7815,11 @@ async fn maps_official_websocket_error_to_terminal_failure() {
         .send(WsMessage::Text(body.to_string().into()))
         .await
         .unwrap();
-    let recovery_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("gateway remained blocked after wrapped error")
-    .join("\n");
+    let recovery_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("gateway remained blocked after wrapped error")
+            .join("\n");
     assert!(recovery_frames.contains("\"type\":\"response.completed\""));
     assert_eq!(official_requests.lock().unwrap().len(), 2);
     assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 2);
@@ -7832,7 +7830,9 @@ async fn times_out_silent_official_websocket() {
     let (gateway_url, _, official_websocket_connections, _codex_home) =
         spawn_gateway_with_mock_official(
             OfficialWebSocketBehavior::Silent,
-            Duration::from_millis(30),
+            // Also bounds the mock's localhost connect, so leave room for a
+            // busy runner instead of racing the TCP handshake.
+            Duration::from_millis(250),
         )
         .await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
@@ -7851,13 +7851,10 @@ async fn times_out_silent_official_websocket() {
         .await
         .unwrap();
 
-    let frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("silent official websocket did not time out")
-    .join("\n");
+    let frames = tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+        .await
+        .expect("silent official websocket did not time out")
+        .join("\n");
     assert!(frames.contains("\"type\":\"response.failed\""));
     assert!(frames.contains("idle timeout waiting for official websocket"));
     assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 2);
@@ -7867,7 +7864,7 @@ async fn times_out_silent_official_websocket() {
 async fn times_out_official_websocket_handshake() {
     let (gateway_url, _, _, _codex_home) = spawn_gateway_with_mock_official(
         OfficialWebSocketBehavior::SlowHandshake,
-        Duration::from_millis(30),
+        Duration::from_millis(250),
     )
     .await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
@@ -7886,13 +7883,10 @@ async fn times_out_official_websocket_handshake() {
         .await
         .unwrap();
 
-    let frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("official websocket handshake did not time out")
-    .join("\n");
+    let frames = tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+        .await
+        .expect("official websocket handshake did not time out")
+        .join("\n");
     assert!(frames.contains("\"type\":\"response.failed\""));
     assert!(frames.contains("official websocket connect timed out"));
 }
@@ -8014,12 +8008,10 @@ async fn keeps_client_websocket_open_after_partial_official_response_disconnect(
         .send(WsMessage::Text(official.to_string().into()))
         .await
         .unwrap();
-    let failed_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("gateway did not report the interrupted official response");
+    let failed_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("gateway did not report the interrupted official response");
     let failed_events = failed_frames
         .iter()
         .map(|frame| serde_json::from_str::<Value>(frame).unwrap())
@@ -8081,12 +8073,10 @@ async fn keeps_custom_websocket_open_after_noop_request() {
         ))
         .await
         .unwrap();
-    let warmup_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("noop response timed out");
+    let warmup_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("noop response timed out");
     let warmup = warmup_frames.join("\n");
     assert!(warmup.contains("\"type\":\"response.created\""));
     assert!(warmup.contains("\"type\":\"response.completed\""));
@@ -8132,13 +8122,11 @@ async fn ignores_unavailable_web_search_without_resetting_custom_websocket() {
         .await
         .unwrap();
 
-    let search_frames = tokio::time::timeout(
-        Duration::from_secs(1),
-        websocket_response_frames(&mut socket),
-    )
-    .await
-    .expect("search compatibility response timed out")
-    .join("\n");
+    let search_frames =
+        tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+            .await
+            .expect("search compatibility response timed out")
+            .join("\n");
     assert!(search_frames.contains("\"type\":\"response.completed\""));
     assert!(!search_frames.contains("\"type\":\"response.failed\""));
     assert_eq!(
