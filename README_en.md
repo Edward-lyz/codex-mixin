@@ -122,6 +122,8 @@ See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-To
 
 ## Features
 
+**Segmented context engine.** Keep long tasks moving with automatic, incremental replacement of completed history by tiered summaries. Stable prefixes support prompt-cache reuse, while an independent archive keeps original details searchable and restorable. No manual compaction is needed. Disabled by default; see the [setup guide and diagram](docs/wiki/Context-Engine.md) (Chinese).
+
 **Works with official Codex.** Custom models join the Codex model catalog under their own names and appear next to the official models. The official catalog comes from OpenAI. Connecting and disconnecting do not change the Codex session database or account state.
 
 **Protocol translation.** The gateway translates requests and streamed responses between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini. It keeps reasoning content, tool calls, and multi-turn context.
