@@ -305,7 +305,7 @@ fn read_system_proxy() -> Option<SystemProxy> {
     })
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn plist_strings(xml: &str) -> Vec<String> {
     xml.split("<string>")
         .skip(1)
