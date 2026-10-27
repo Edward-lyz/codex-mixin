@@ -167,3 +167,10 @@ async fn reqwest_client_routes_through_selected_proxy() {
         "{seen}"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn plist_exception_list_is_read_back() {
+    let xml = "<array><string>*.local</string><string>169.254/16</string><string>a&amp;b</string></array>";
+    assert_eq!(plist_strings(xml), ["*.local", "169.254/16", "a&b"]);
+}
