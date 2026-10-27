@@ -1,3 +1,4 @@
+use crate::platform::proxy::ProxySelection;
 use anyhow::Context;
 use tokio::net::TcpStream;
 use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
@@ -31,7 +32,7 @@ pub(super) fn log_official_websocket(
 pub(super) async fn connect_official_websocket<R>(
     request: R,
     upstream: &crate::upstream::UpstreamAccess,
-    proxy_env: &ProxyEnv,
+    proxy_env: &ProxySelection,
 ) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>>
 where
     R: IntoClientRequest + Unpin,
@@ -43,7 +44,7 @@ where
             .await?
             .0
     } else if upstream.official_is_direct() {
-        connect_upstream_websocket(request, &ProxyEnv::default()).await?
+        connect_upstream_websocket(request, &ProxySelection::default()).await?
     } else {
         connect_upstream_websocket(request, proxy_env).await?
     };
@@ -54,35 +55,9 @@ where
     Ok(stream)
 }
 
-#[derive(Clone, Debug, Default)]
-pub(super) struct ProxyEnv {
-    http_proxy: Option<String>,
-    https_proxy: Option<String>,
-    all_proxy: Option<String>,
-    no_proxy: Option<String>,
-}
-
-impl ProxyEnv {
-    pub(super) fn from_lookup(env_lookup: &dyn Fn(&str) -> Option<String>) -> Self {
-        Self {
-            http_proxy: first_env(env_lookup, &["HTTP_PROXY", "http_proxy"]),
-            https_proxy: first_env(env_lookup, &["HTTPS_PROXY", "https_proxy"]),
-            all_proxy: first_env(env_lookup, &["ALL_PROXY", "all_proxy"]),
-            no_proxy: first_env(env_lookup, &["NO_PROXY", "no_proxy"]),
-        }
-    }
-}
-
-fn first_env(env_lookup: &dyn Fn(&str) -> Option<String>, names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| env_lookup(name))
-        .filter(|value| !value.trim().is_empty())
-}
-
 pub(super) async fn connect_upstream_websocket<R>(
     request: R,
-    proxy_env: &ProxyEnv,
+    proxy_env: &ProxySelection,
 ) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>>
 where
     R: IntoClientRequest + Unpin,
@@ -135,7 +110,7 @@ where
     Ok(stream)
 }
 
-fn resolve_proxy(uri: &Uri, proxy_env: &ProxyEnv) -> anyhow::Result<Option<ProxyConfig>> {
+fn resolve_proxy(uri: &Uri, selection: &ProxySelection) -> anyhow::Result<Option<ProxyConfig>> {
     let Some(host) = uri.host() else {
         anyhow::bail!("websocket request has no host");
     };
@@ -143,54 +118,10 @@ fn resolve_proxy(uri: &Uri, proxy_env: &ProxyEnv) -> anyhow::Result<Option<Proxy
         Some("wss") => 443,
         _ => 80,
     });
-    if bypasses_proxy(host, port, proxy_env) {
-        return Ok(None);
-    }
-    let proxy = if uri.scheme_str() == Some("wss") {
-        proxy_env
-            .https_proxy
-            .as_deref()
-            .or(proxy_env.http_proxy.as_deref())
-    } else {
-        proxy_env.http_proxy.as_deref()
-    }
-    .or(proxy_env.all_proxy.as_deref());
-    let Some(value) = proxy else {
+    let Some(value) = selection.select(uri.scheme_str().unwrap_or("ws"), host, port) else {
         return Ok(None);
     };
-    Ok(Some(ProxyConfig::parse(value).with_context(|| {
+    Ok(Some(ProxyConfig::parse(&value).with_context(|| {
         format!("invalid websocket proxy URL: {value:?}")
     })?))
-}
-
-fn bypasses_proxy(host: &str, port: u16, proxy_env: &ProxyEnv) -> bool {
-    let Some(no_proxy) = proxy_env.no_proxy.as_deref() else {
-        return false;
-    };
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    if no_proxy.trim() == "*" {
-        return true;
-    }
-    no_proxy.split(',').any(|entry| {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            return false;
-        }
-        let (entry_host, entry_port) = match entry.split_once(':') {
-            Some((host, port)) if !entry.starts_with('[') => (host, port.parse::<u16>().ok()),
-            _ => (entry, None),
-        };
-        if entry_port.is_some_and(|entry_port| entry_port != port) {
-            return false;
-        }
-        let entry_host = entry_host.trim_start_matches('[').trim_end_matches(']');
-        if entry_host == host {
-            return true;
-        }
-        if let Some(suffix) = entry_host.strip_prefix('.') {
-            host == suffix || host.ends_with(&format!(".{suffix}"))
-        } else {
-            host.ends_with(&format!(".{entry_host}"))
-        }
-    })
 }

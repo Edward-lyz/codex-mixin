@@ -226,9 +226,9 @@ extension AppDelegate {
                 else { throw GatewayError.command("ECH 状态接口返回了无效 JSON") }
                 let alert = NSAlert()
                 alert.messageText = "启用 ECH 代理访问 GPT"
-                alert.informativeText = "当前：\(enabled ? "已启用" : "未启用")\n仅接管本地网关的官方 GPT 请求。使用 edge.1molchuan.top/plus 的 IPv4 和 ECH 配置，保留端到端 TLS。ECH 连接失败会自动关闭并回退到直连。\n\n启用会先测试连接，再保存设置并重启网关。ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。"
+                alert.informativeText = "当前：\(enabled ? "已启用" : "未启用")\n仅接管本地网关的官方 GPT 请求。使用 edge.1molchuan.top/plus 的 IPv4 和 ECH 配置，保留端到端 TLS。ECH 连接失败会自动关闭并恢复普通网络设置（环境变量代理、系统静态代理，否则直连）。\n\n启用会先测试连接，再保存设置并重启网关。ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。"
                 if let reason = object["fallback_reason"] as? String {
-                    alert.informativeText += "\n\n已自动回退到直连：\(reason)"
+                    alert.informativeText += "\n\n已自动关闭，恢复普通网络设置：\(reason)"
                 }
                 alert.addButton(withTitle: enabled ? "关闭并应用" : "启用并测试")
                 alert.addButton(withTitle: "仅测试连接")

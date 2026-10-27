@@ -14,6 +14,8 @@ use super::{normalize_base_url, provider_for_refresh, required, update_provider}
 pub struct AddProviderInput {
     pub preset: String,
     pub oauth_timeout_seconds: Option<u64>,
+    /// Force a new browser sign-in even when a usable local login exists.
+    pub reauthorize: bool,
     pub id: Option<String>,
     pub key: Option<String>,
     pub aws_access_key_id: Option<String>,

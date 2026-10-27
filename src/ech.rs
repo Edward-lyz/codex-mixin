@@ -58,7 +58,7 @@ impl OfficialEch {
         let config_path = self.config_path.clone();
         tracing::warn!(
             reason,
-            "official ECH disabled; reverting to direct connections"
+            "official ECH disabled; restoring the ordinary network policy"
         );
         tokio::task::spawn_blocking(move || {
             crate::config::mutate_stored_config_at_path(&config_path, |stored| {

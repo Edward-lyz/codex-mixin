@@ -89,7 +89,8 @@ impl GatewayConfig {
             Some(config) => config,
             None => {
                 anyhow::ensure!(
-                    crate::provider::official_auth_available(&default_codex_auth_path())?,
+                    crate::provider::official_auth_available(&default_codex_auth_path())?
+                        || !crate::provider::local_oauth::discover(&[])?.is_empty(),
                     "provider configuration is missing; run providers add --preset openai or add another provider"
                 );
                 StoredGatewayConfig::default()
@@ -116,9 +117,12 @@ impl GatewayConfig {
         Ok(key.to_owned())
     }
 
-    fn from_stored_config_value(stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
+    fn from_stored_config_value(mut stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
         ensure_config_version(stored_config.config_version)?;
         validate_cors_origins(&stored_config.cors_allowed_origins)?;
+        // Local AGY/Kiro logins join the runtime view without being saved.
+        stored_config.providers =
+            crate::provider::local_oauth::runtime_providers(stored_config.providers)?;
         if stored_config.providers.is_empty()
             && !crate::provider::official_auth_available(&default_codex_auth_path())?
         {

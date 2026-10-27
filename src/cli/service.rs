@@ -94,6 +94,7 @@ impl ServiceCommandLine {
 /// enabled startup at login. Also performs first-run model discovery for
 /// providers that have never been refreshed.
 pub(crate) async fn ensure_ready() -> anyhow::Result<()> {
+    adopt_local_logins_or_log();
     let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
     initialize_provider_models(&config).await;
     let command = ServiceCommandLine::current()?;
@@ -139,6 +140,7 @@ pub(crate) async fn stop_managed(allow_codex_disconnect: bool) -> anyhow::Result
 /// Restart under the service manager when autostart is enabled, otherwise as
 /// a daemon, then wait for readiness.
 pub(crate) async fn restart_managed() -> anyhow::Result<()> {
+    adopt_local_logins_or_log();
     let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
     let command = ServiceCommandLine::current()?;
     let service = command.status().await?;
@@ -424,6 +426,7 @@ fn model_refresh_targets(
         .filter(|provider| provider.enabled)
         .filter(|provider| {
             provider.preset_id.as_deref() == Some("agy")
+                || provider.discovered_credential.is_some()
                 || !matches!(provider.model_source, ProviderModelSource::Static)
         })
         .filter(|provider| {
@@ -464,7 +467,22 @@ async fn refresh_client_models_after_change(changed: bool) {
     }
 }
 
+/// Saves newly found AGY/Kiro logins. A failure only affects discovery, so it
+/// is logged and the gateway keeps starting with the providers it has.
+fn adopt_local_logins_or_log() {
+    match codex_mixin::application::provider::adopt_local_logins() {
+        Ok(ids) if !ids.is_empty() => {
+            tracing::info!(providers = ?ids, "adopted local OAuth logins");
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "local OAuth login discovery failed");
+        }
+    }
+}
+
 fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
+    adopt_local_logins_or_log();
     let mut providers = load_stored_config()?
         .map(|stored| model_refresh_targets(&stored.providers))
         .unwrap_or_default();

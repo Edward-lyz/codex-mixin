@@ -88,7 +88,7 @@ pub(crate) async fn headers(force: bool) -> anyhow::Result<HeaderMap> {
             .context("AGY Business OAuth client_secret is missing; use authorized_user ADC")?;
         let response = CLIENT
             .get_or_try_init(|| async {
-                reqwest::Client::builder()
+                crate::platform::proxy::auto_proxy(reqwest::Client::builder())
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(Duration::from_secs(20))
                     .build()

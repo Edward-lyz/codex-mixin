@@ -1,5 +1,5 @@
-use super::websocket_proxy::ProxyEnv;
 use super::*;
+use crate::platform::proxy::ProxySelection;
 use std::sync::Arc;
 
 use crate::catalog::CatalogService;
@@ -20,7 +20,7 @@ pub struct AppState {
     pub(crate) upstream: Arc<UpstreamAccess>,
     /// Gateway execution: routing, request plans, single-request streaming.
     pub(crate) gateway: Arc<GatewayExecutor>,
-    websocket_proxy_env: ProxyEnv,
+    websocket_proxy_env: ProxySelection,
     pub(super) image_routes: ImageRouteRegistry,
     pub(super) benchmarks: ModelBenchmarkManager,
     /// Per-session provider prompt-prefix shapes, used to report where the
@@ -93,7 +93,7 @@ impl AppState {
     ) -> anyhow::Result<Self> {
         crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
-        let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
+        let websocket_proxy_env = ProxySelection::from_lookup(&env_lookup);
         // An archived session stays readable after the feature is switched off,
         // so the engine also opens when the database already exists.
         let context_database = crate::context::database_path_with(&env_lookup)?;
@@ -104,7 +104,9 @@ impl AppState {
             env_lookup,
         )?);
         crate::config::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
-        let client = Client::builder()
+        let client = websocket_proxy_env
+            .clone()
+            .apply(Client::builder())
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)
             .build()?;
@@ -146,7 +148,7 @@ impl AppState {
         })
     }
 
-    pub(super) fn websocket_proxy_env(&self) -> &ProxyEnv {
+    pub(super) fn websocket_proxy_env(&self) -> &ProxySelection {
         &self.websocket_proxy_env
     }
 

@@ -235,6 +235,7 @@ pub(super) async fn run(
         add_provider(AddProviderOptions {
             preset: preset.to_owned(),
             oauth_timeout_seconds: None,
+            reauthorize: false,
             auxiliary_model_upstream: None,
             id: None,
             key: Some(key),

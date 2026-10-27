@@ -20,7 +20,7 @@ pub async fn fetch_catalog(
     let client = match CATALOG_CLIENT.get() {
         Some(client) => client.clone(),
         None => {
-            let client = reqwest::Client::builder().build()?;
+            let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder()).build()?;
             let _ = CATALOG_CLIENT.set(client.clone());
             client
         }

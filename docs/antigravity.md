@@ -37,6 +37,33 @@ Explicit provider keys use their own credentials for quota as well as models.
 Custom quota URLs continue through the existing parser.
 
 Choose AGY in Add Provider or run `codex-mixin --no-tui providers add --preset agy`.
+When a usable personal AGY login already exists on this machine, `providers add`
+reuses it and skips the browser; pass `--reauthorize` to sign in again.
+
+## Automatic discovery
+
+Mixin also adopts a signed-in personal AGY account and a Kiro login without any
+`providers add`. Discovery only reads the existing login files (no network, no
+writes to those files). Starting the gateway saves the account as an ordinary
+provider (`agy`, `kiro`) and refreshes its model directory; `providers list`
+stays read-only and shows such an account as `"source": "auto_discovered"` with
+`last_model_refresh_error` set to `model directory pending refresh` until the
+first refresh succeeds. A provider you configured for the same preset always wins,
+even when disabled. If the id `agy` or `kiro` already belongs to a different
+provider, discovery stops with an explicit error. Removing an auto-discovered
+provider records an ignore marker so it does not return; `providers add` for that
+preset clears the marker. Switching the signed-in account resets the old model
+directory. Business sign-ins and a bare Google ADC file are never adopted as
+personal AGY.
+
+## Network
+
+Login, token refresh, model discovery, catalog, and quota requests use the proxy
+order: environment variable for the scheme, `ALL_PROXY`, the operating system's
+static proxy (macOS and Windows), then direct. Loopback addresses never use the
+system proxy. PAC/WPAD scripts and system SOCKS proxies are not supported, and a
+system proxy change takes effect after the gateway restarts.
+
 Browser login uses PKCE, a random state and a loopback callback. It defaults
 to 120 seconds and supports `--oauth-timeout-seconds` (1–300). Cancel in the
 form or use Ctrl-C in the CLI to stop waiting. Tokens are stored privately in Mixin's

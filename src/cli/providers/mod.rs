@@ -48,6 +48,11 @@ pub(super) struct TestProviderOptions {
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let mut config = load_stored_config()?.unwrap_or_default();
     let official_available = official_provider_is_available()?;
+    // Listing never saves anything: logins not saved yet are shown as they
+    // will be served once the gateway starts.
+    config.providers = codex_mixin::application::provider::runtime_providers(std::mem::take(
+        &mut config.providers,
+    ))?;
     let runtime_config = (!config.providers.is_empty())
         .then(GatewayConfig::from_stored_config)
         .transpose()?;
@@ -80,6 +85,11 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 json!({
                     "id": provider.id,
                     "kind": "configured",
+                    "source": if provider.discovered_credential.is_some() {
+                        "auto_discovered"
+                    } else {
+                        "configured"
+                    },
                     "icon": spec_for(provider.preset_id.as_deref()).icon,
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,

@@ -236,6 +236,11 @@ pub struct ProviderDefinition {
     pub models_refreshed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models_refresh_error: Option<String>,
+    /// Set when Mixin found this account in a supported local login instead of
+    /// the user adding it. Holds a fingerprint of the account identity so a
+    /// switched account invalidates the cached model directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_credential: Option<String>,
 }
 
 impl ProviderDefinition {

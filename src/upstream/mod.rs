@@ -180,8 +180,9 @@ impl UpstreamAccess {
         let client = self
             .official_direct_client
             .get_or_try_init(|| async {
-                Client::builder()
-                    .no_proxy()
+                // After an ECH failure the official path returns to the ordinary
+                // network policy: environment, then system static proxy, then direct.
+                crate::platform::proxy::auto_proxy(Client::builder())
                     .redirect(reqwest::redirect::Policy::none())
                     .connect_timeout(std::time::Duration::from_secs(10))
                     .timeout(self.config.request_timeout)

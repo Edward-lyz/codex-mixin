@@ -483,6 +483,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::Add {
                 preset,
                 oauth_timeout_seconds,
+                reauthorize,
                 auxiliary_model_upstream,
                 id,
                 key,
@@ -519,6 +520,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 add_provider(AddProviderOptions {
                     preset: preset.as_str().to_owned(),
                     oauth_timeout_seconds: Some(oauth_timeout_seconds),
+                    reauthorize,
                     auxiliary_model_upstream,
                     id,
                     key,
