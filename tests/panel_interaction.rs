@@ -12,6 +12,11 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 mod common;
 
+/// A panel action spawns a second CLI, which takes several seconds on a loaded
+/// Windows runner. This bound only has to catch a genuine hang; the ordering
+/// assertion below keeps its own short deadline.
+const ACTION_TIMEOUT: Duration = Duration::from_secs(30);
+
 struct Panel {
     child: tokio::process::Child,
     url: String,
@@ -41,7 +46,7 @@ impl Panel {
             .spawn()
             .unwrap();
         let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
-        let (url, token) = tokio::time::timeout(Duration::from_secs(10), async {
+        let (url, token) = tokio::time::timeout(ACTION_TIMEOUT, async {
             while let Some(line) = lines.next_line().await.unwrap() {
                 if let Some((url, fragment)) = line
                     .trim()
@@ -171,7 +176,7 @@ async fn saved_provider_progress_arrives_before_discovery_and_cancel_releases_lo
     );
     let mut stream = response.bytes_stream();
     let mut output = String::new();
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         while !output.contains("provider added: baidu-oneapi") {
             output.push_str(&String::from_utf8_lossy(
                 &stream.next().await.unwrap().unwrap(),
@@ -180,7 +185,7 @@ async fn saved_provider_progress_arrives_before_discovery_and_cancel_releases_lo
     })
     .await
     .expect("saved state must reach the browser before a slow model lookup");
-    let (_connection, _) = tokio::time::timeout(Duration::from_secs(3), upstream.accept())
+    let (_connection, _) = tokio::time::timeout(ACTION_TIMEOUT, upstream.accept())
         .await
         .unwrap()
         .unwrap();
@@ -199,7 +204,7 @@ async fn saved_provider_progress_arrives_before_discovery_and_cancel_releases_lo
             .status(),
         200
     );
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         while let Some(chunk) = stream.next().await {
             output.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
         }
@@ -272,7 +277,7 @@ async fn headless_ducx_qr_is_streamed_and_login_completes() {
     assert_eq!(response.status(), 200);
     let mut stream = response.bytes_stream();
     let mut output = String::new();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         while let Some(chunk) = stream.next().await {
             output.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
         }
@@ -322,7 +327,7 @@ async fn discovery_failure_preserves_committed_stage() {
             .unwrap();
     });
     let panel = Panel::start(root.path()).await;
-    let output = tokio::time::timeout(Duration::from_secs(5), async {
+    let output = tokio::time::timeout(ACTION_TIMEOUT, async {
         panel.stream_action(json!({"action":"provider_add","params":{"preset":"baidu-oneapi","options":{"key":"fixture-secret","quota_username":"fixture-user","base_url":format!("http://{address}")}}})).await.text().await.unwrap()
     }).await.unwrap();
     server.await.unwrap();
@@ -361,7 +366,7 @@ async fn browser_disconnect_terminates_nested_login_and_releases_lock() {
     assert_eq!(response.status(), 200);
     let mut stream = response.bytes_stream();
     let mut output = String::new();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         while !output.contains("waiting-for-fixture-login") {
             output.push_str(&String::from_utf8_lossy(
                 &stream.next().await.unwrap().unwrap(),
@@ -373,7 +378,7 @@ async fn browser_disconnect_terminates_nested_login_and_releases_lock() {
     let pid =
         std::fs::read_to_string(root.path().join("home/.codex-mixin/ducx/home/login.pid")).unwrap();
     drop(stream);
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         loop {
             let response = panel
                 .post("/api/actions")
