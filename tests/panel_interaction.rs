@@ -2,7 +2,9 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+#[cfg(unix)]
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
+#[cfg(unix)]
 use codex_mixin::provider::baidu_oneapi_provider;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -15,6 +17,7 @@ struct Panel {
     url: String,
     token: String,
     client: reqwest::Client,
+    log: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 impl Drop for Panel {
@@ -55,11 +58,23 @@ impl Panel {
         })
         .await
         .unwrap();
+        // Keep draining stderr: closing the pipe makes later `eprintln!` calls
+        // in the panel fail, and the retained lines explain request failures.
+        let log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let sink = std::sync::Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                let mut sink = sink.lock().unwrap();
+                sink.push_str(&line);
+                sink.push('\n');
+            }
+        });
         Self {
             child,
             url,
             token,
             client: reqwest::Client::builder().no_proxy().build().unwrap(),
+            log,
         }
     }
 
@@ -68,6 +83,66 @@ impl Panel {
             .post(format!("{}{path}", self.url))
             .bearer_auth(&self.token)
     }
+
+    async fn stream_action(&self, body: Value) -> reqwest::Response {
+        self.post("/api/actions/stream")
+            .json(&body)
+            .send()
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "panel rejected the action stream: {error}\npanel log:\n{}",
+                    self.log.lock().unwrap()
+                )
+            })
+    }
+}
+
+/// `streamAction` in `panel/assets/app.js` reads these fields directly, so
+/// pin the wire shape here: a rename on either side breaks the panel without
+/// any Rust type error.
+fn assert_stream_contract(output: &str) -> Vec<Value> {
+    let events = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<Value>(line)
+                .unwrap_or_else(|error| panic!("invalid NDJSON event {line:?}: {error}"))
+        })
+        .collect::<Vec<_>>();
+    for event in &events {
+        let kind = event["type"]
+            .as_str()
+            .unwrap_or_else(|| panic!("stream event without a type: {event}"));
+        match kind {
+            "step" => assert!(
+                event["index"].is_number() && event["total"].is_number(),
+                "{event}"
+            ),
+            "output" => {
+                assert!(event["text"].is_string(), "{event}");
+                assert!(
+                    matches!(event["channel"].as_str(), Some("stdout" | "stderr")),
+                    "{event}"
+                );
+            }
+            "heartbeat" => {}
+            "result" => assert!(
+                event.get("stdout").is_some() && event.get("json").is_some(),
+                "{event}"
+            ),
+            "error" => assert!(event["error"].is_object(), "{event}"),
+            other => panic!("unexpected stream event type: {other}"),
+        }
+    }
+    let client = include_str!("../panel/assets/app.js");
+    for kind in ["output", "result", "error"] {
+        assert!(
+            client.contains(&format!("event.type === \"{kind}\"")),
+            "panel/assets/app.js no longer handles {kind} events"
+        );
+    }
+    events
 }
 
 #[tokio::test]
@@ -77,20 +152,16 @@ async fn saved_provider_progress_arrives_before_discovery_and_cancel_releases_lo
     let panel = Panel::start(root.path()).await;
     let response = tokio::time::timeout(
         Duration::from_secs(3),
-        panel
-            .post("/api/actions/stream")
-            .json(&json!({
-                "action": "provider_add",
-                "params": {"preset": "baidu-oneapi", "options": {
-                    "key": "fixture-secret", "quota_username": "fixture-user",
-                    "base_url": format!("http://{}", upstream.local_addr().unwrap())
-                }}
-            }))
-            .send(),
+        panel.stream_action(json!({
+            "action": "provider_add",
+            "params": {"preset": "baidu-oneapi", "options": {
+                "key": "fixture-secret", "quota_username": "fixture-user",
+                "base_url": format!("http://{}", upstream.local_addr().unwrap())
+            }}
+        })),
     )
     .await
-    .expect("action must respond before discovery finishes")
-    .unwrap();
+    .expect("action must respond before discovery finishes");
     assert_eq!(response.status(), 200);
     assert!(
         response.headers()["content-type"]
@@ -116,11 +187,8 @@ async fn saved_provider_progress_arrives_before_discovery_and_cancel_releases_lo
     assert!(root.path().join("config.json").exists());
     assert!(!output.contains("fixture-secret"));
     let busy = panel
-        .post("/api/actions/stream")
-        .json(&json!({"action":"provider_disable", "params":{"id":"baidu-oneapi"}}))
-        .send()
-        .await
-        .unwrap();
+        .stream_action(json!({"action":"provider_disable", "params":{"id":"baidu-oneapi"}}))
+        .await;
     assert_eq!(busy.status(), 409);
     assert_eq!(
         panel
@@ -198,7 +266,9 @@ async fn headless_ducx_qr_is_streamed_and_login_completes() {
     )
     .unwrap();
     let panel = Panel::start(root.path()).await;
-    let response = panel.post("/api/actions/stream").json(&json!({"action":"provider_update","params":{"id":"baidu-oneapi","options":{"baidu_auth_bridge":"ducx_loopback"}}})).send().await.unwrap();
+    let response = panel
+        .stream_action(json!({"action":"provider_update","params":{"id":"baidu-oneapi","options":{"baidu_auth_bridge":"ducx_loopback"}}}))
+        .await;
     assert_eq!(response.status(), 200);
     let mut stream = response.bytes_stream();
     let mut output = String::new();
@@ -214,7 +284,7 @@ async fn headless_ducx_qr_is_streamed_and_login_completes() {
         "QR output must reach the browser: {output}"
     );
     assert!(!output.contains("interactive terminal"), "{output}");
-    let terminal: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
+    let terminal = assert_stream_contract(&output).pop().unwrap();
     assert_eq!(terminal["type"], "result", "{output}");
     assert_eq!(terminal["ok"], true);
 
@@ -253,10 +323,10 @@ async fn discovery_failure_preserves_committed_stage() {
     });
     let panel = Panel::start(root.path()).await;
     let output = tokio::time::timeout(Duration::from_secs(5), async {
-        panel.post("/api/actions/stream").json(&json!({"action":"provider_add","params":{"preset":"baidu-oneapi","options":{"key":"fixture-secret","quota_username":"fixture-user","base_url":format!("http://{address}")}}})).send().await.unwrap().text().await.unwrap()
+        panel.stream_action(json!({"action":"provider_add","params":{"preset":"baidu-oneapi","options":{"key":"fixture-secret","quota_username":"fixture-user","base_url":format!("http://{address}")}}})).await.text().await.unwrap()
     }).await.unwrap();
     server.await.unwrap();
-    let terminal: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
+    let terminal = assert_stream_contract(&output).pop().unwrap();
     assert_eq!(terminal["type"], "error");
     assert_eq!(terminal["error"]["committed"], true);
     assert_eq!(terminal["error"]["stage"], "model discovery");
@@ -285,7 +355,9 @@ async fn browser_disconnect_terminates_nested_login_and_releases_lock() {
     )
     .unwrap();
     let panel = Panel::start(root.path()).await;
-    let response = panel.post("/api/actions/stream").json(&json!({"action":"provider_update","params":{"id":"baidu-oneapi","options":{"baidu_auth_bridge":"ducx_loopback"}}})).send().await.unwrap();
+    let response = panel
+        .stream_action(json!({"action":"provider_update","params":{"id":"baidu-oneapi","options":{"baidu_auth_bridge":"ducx_loopback"}}}))
+        .await;
     assert_eq!(response.status(), 200);
     let mut stream = response.bytes_stream();
     let mut output = String::new();
