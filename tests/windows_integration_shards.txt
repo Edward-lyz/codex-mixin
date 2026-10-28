@@ -16,6 +16,7 @@ integration-c|local_oauth_discovery.rs
 integration-c|gateway_startup.rs
 integration-c|gemini_regressions.rs
 integration-c|oauth_discovery.rs
+integration-c|panel_interaction.rs
 integration-c|platform_neutral_core.rs
 integration-c|provider_catalog.rs
 integration-c|provider_commit_boundaries.rs

@@ -73,3 +73,9 @@ User's AGENTS.md requires approval before hand-written functions/abstractions; r
 - The gateway prompt-cache E2E script was not run: this change affects panel action transport and CLI login, without changing the gateway request or cache path.
 - Real account approval and Linux deployment were not performed; the browser login completion test uses an isolated fixture.
 - Delivery is a local commit only.
+
+## PR preparation — 2026-10-28
+
+- The user subsequently requested pushing a PR. Replay only this repair onto current origin/main (118e034), preserving the original local main.
+- The new baseline requires every Rust integration test to be registered in tests/windows_integration_shards.txt. Add panel_interaction.rs to integration-c; previously Cargo discovered it locally but Windows CI had no shard assignment. Risk is limited to the extra test runtime; production behavior is unchanged.
+- Re-run the inventory check and all-target tests before opening the PR. Earlier full-suite counts above describe the original implementation baseline.
