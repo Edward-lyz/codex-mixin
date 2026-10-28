@@ -536,7 +536,9 @@ async fn persists_each_result_and_finishes_the_run() {
             BENCHMARK_TARGET_OUTPUT_TOKENS,
         )
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // The run is asynchronous; a loaded runner can delay it well past the
+    // request durations, so leave a wide margin before calling it stuck.
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         let snapshot = manager.snapshot().unwrap().unwrap();
         if snapshot.status == BenchmarkRunStatus::Completed {

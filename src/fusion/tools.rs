@@ -693,13 +693,16 @@ mod tests {
     #[cfg(unix)]
     fn terminates_panel_tool_subprocess_tree_at_the_deadline() {
         let mut command = Command::new("sh");
-        command.args(["-c", "sleep 5 & wait"]);
+        // The descendant must outlive the assertion by a wide margin: this
+        // test is about not waiting for it, not about the runner's scheduling
+        // latency. A shared runner can take over a second to start `sh`.
+        command.args(["-c", "sleep 30 & wait"]);
         let started = std::time::Instant::now();
         let error =
             command_output_with_deadline(&mut command, Duration::from_millis(20)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(
-            started.elapsed() < Duration::from_secs(1),
+            started.elapsed() < Duration::from_secs(5),
             "descendant retained the output pipe after timeout"
         );
     }
