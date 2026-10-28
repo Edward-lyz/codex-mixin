@@ -34,7 +34,7 @@ fn test_router() -> axum::Router {
         token: "expected-token".to_owned(),
         start_page: "home",
         installed_cli_path: None,
-        action_lock: tokio::sync::Mutex::new(()),
+        action_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         cancel_action: tokio::sync::watch::channel(0).0,
     }))
 }
@@ -400,7 +400,7 @@ async fn cancellation_requires_panel_authentication() {
         token: "expected-token".to_owned(),
         start_page: "home",
         installed_cli_path: None,
-        action_lock: tokio::sync::Mutex::new(()),
+        action_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         cancel_action: tokio::sync::watch::channel(0).0,
     });
     let cancellation = state.cancel_action.subscribe();

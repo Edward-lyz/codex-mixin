@@ -20,6 +20,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
         },
         "capabilities": {
             "structured_errors": true,
+            "login_stdio": true,
             "agent_management": true,
             "provider_oauth_login": true,
             "agent_versions": true,

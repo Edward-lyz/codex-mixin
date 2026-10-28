@@ -39,6 +39,7 @@ const state = {
   logLines: 200,
   busy: false,
   timer: 0,
+  refreshSequence: 0,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -198,7 +199,9 @@ async function api(path, options = {}) {
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
     cache: "no-store",
+    signal: options.signal || (options.method === "POST" ? undefined : AbortSignal.timeout(15000)),
   });
+  if (options.stream && response.ok) return response;
   const text = await response.text();
   let body = null;
   try {
@@ -286,6 +289,37 @@ function closeSheet() {
 
 // ---------- Actions ----------
 
+async function streamAction(action, params, onOutput) {
+  const response = await api("/api/actions/stream", {
+    method: "POST", body: params ? { action, params } : { action }, stream: true,
+    signal: AbortSignal.timeout(610000),
+  });
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      let end;
+      while ((end = pending.indexOf("\n")) !== -1) {
+        const line = pending.slice(0, end);
+        pending = pending.slice(end + 1);
+        if (!line.trim()) continue;
+        const event = JSON.parse(line);
+        if (event.type === "error") throw new ApiError(502, event);
+        if (event.type === "result") return event;
+        if (event.type === "output") onOutput(event.text);
+      }
+      if (pending.length > 2 * 1024 * 1024) throw new Error("操作输出超出限制，请刷新确认配置状态。");
+      if (done) throw new Error("连接已断开，未收到完成结果。部分配置可能已保存，请刷新确认后再试。");
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 // Runs one allowlisted action. `button` shows the busy state; the panel
 // refreshes afterwards so the view reflects committed state.
 async function runAction(button, action, params, messages = {}) {
@@ -297,35 +331,81 @@ async function runAction(button, action, params, messages = {}) {
     const [title, text, okLabel] = messages.confirm;
     if (!(await confirmAction(title, text, okLabel))) return null;
   }
+  if (state.busy) return null;
   state.busy = true;
-  document.querySelectorAll("[data-action]").forEach((node) => (node.disabled = true));
+  const controls = [...document.querySelectorAll("[data-action]")].map((node) => [node, node.disabled]);
+  controls.forEach(([node]) => (node.disabled = true));
   if (button) {
     button.classList.add("is-busy");
     button.setAttribute("aria-busy", "true");
   }
   $("#view").setAttribute("aria-busy", "true");
+  const dialog = $("#operation");
+  const output = $("#operation-output");
+  const status = $("#operation-status");
+  const dismiss = $("#operation-dismiss");
+  let running = true;
+  $("#operation-title").textContent = "正在执行";
+  output.textContent = "";
+  status.textContent = "正在启动，请稍候…";
+  dismiss.textContent = "取消操作";
+  dismiss.disabled = false;
+  const dismissOperation = async () => {
+    if (!running) { dialog.close(); return; }
+    dismiss.disabled = true;
+    status.textContent = "正在取消；已保存的配置会保留…";
+    try {
+      await api("/api/actions/cancel", { method: "POST", signal: AbortSignal.timeout(10000) });
+    } catch (error) {
+      status.textContent = `取消请求失败：${error.message}。可以重试。`;
+      dismiss.disabled = false;
+    }
+  };
+  dismiss.onclick = dismissOperation;
+  dialog.oncancel = (event) => { event.preventDefault(); dismissOperation(); };
+  dialog.showModal();
   try {
-    const result = await api("/api/actions", { method: "POST", body: params ? { action, params } : { action } });
+    const result = await streamAction(action, params, (text) => {
+      // Render terminal text, never HTML. DUCX emits a plain block QR; remove
+      // other CLIs' terminal controls while preserving QR spaces and newlines.
+      const plain = String(text).replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\r/g, "");
+      const stickToBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+      output.textContent = (output.textContent + plain).slice(-65536);
+      if (stickToBottom) output.scrollTop = output.scrollHeight;
+      if (plain.startsWith("MIXIN_PROGRESS ")) status.textContent = plain.slice(15).trim();
+      if (plain.startsWith("provider added:") || plain.startsWith("provider updated:")) {
+        status.textContent = "配置已保存，正在完成模型刷新等后续步骤…";
+      }
+    });
+    $("#operation-title").textContent = "操作完成";
+    status.textContent = messages.ok || "已完成";
     toast("ok", messages.ok || "已完成", lastLine(result.stdout));
     return result;
   } catch (error) {
+    const [title, detail] = describeError(error);
+    $("#operation-title").textContent = error.code === "cancelled" ? "操作已取消" : title;
+    status.textContent = detail;
     if (error.code === "cancelled") {
       toast("ok", "已取消等待", error.message);
     } else if (error.status !== 401) {
-      const [title, detail] = describeError(error);
       toast("bad", title, detail);
     }
     return null;
   } finally {
+    running = false;
+    dismiss.disabled = false;
+    dismiss.textContent = "关闭";
     state.busy = false;
+    controls.forEach(([node, disabled]) => { if (node.isConnected) node.disabled = disabled; });
     if (button) {
       button.classList.remove("is-busy");
       button.removeAttribute("aria-busy");
     }
     $("#view").setAttribute("aria-busy", "false");
-    await refresh(true);
+    // A successful mutation must not wait for unrelated snapshot/network I/O.
+    void refresh(true);
     // Agent state comes from a separate CLI query; re-read it after changes.
-    if (state.page === "apps") await loadAgents();
+    if (state.page === "apps") void loadAgents();
   }
 }
 
@@ -437,17 +517,19 @@ function navigate(pageId, options = {}) {
 
 function userIsEditing() {
   const active = document.activeElement;
-  if ($("#sheet").open || $("#confirm").open) return true;
+  if ($("#sheet").open || $("#confirm").open || $("#operation").open) return true;
   return Boolean(active && $("#view").contains(active) && active.matches("input, select, textarea"));
 }
 
 async function refresh(force = false) {
   clearTimeout(state.timer);
   if (!state.token) return;
+  const sequence = ++state.refreshSequence;
   const button = $("#refresh");
   button.classList.add("is-spinning");
   try {
     const snapshot = await api(`/api/snapshot?usage=${state.usage}`);
+    if (sequence !== state.refreshSequence) return;
     const key = JSON.stringify({ ...snapshot, refreshed_at_ms: 0 });
     const changed = key !== state.snapshotKey || state.loadError;
     state.snapshot = snapshot;
@@ -456,13 +538,14 @@ async function refresh(force = false) {
     updateChrome();
     if (changed && (force || !userIsEditing())) render({ animate: false });
   } catch (error) {
+    if (sequence !== state.refreshSequence) return;
     if (error.status === 401) return;
     state.loadError = error;
     updateChrome();
     if (!state.snapshot) render({ animate: false });
   } finally {
-    setTimeout(() => button.classList.remove("is-spinning"), 420);
-    if (state.token && document.visibilityState === "visible") {
+    if (sequence === state.refreshSequence) setTimeout(() => button.classList.remove("is-spinning"), 420);
+    if (sequence === state.refreshSequence && state.token && document.visibilityState === "visible") {
       state.timer = setTimeout(() => refresh(false), POLL_MS);
     }
   }
