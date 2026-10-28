@@ -28,7 +28,7 @@ impl UpstreamAccess {
                 session.profile_arn.as_deref(),
                 &conversation,
             )?;
-            let reply = self
+            let mut call = self
                 .client
                 .post(format!("https://runtime.{}.kiro.dev/", session.region))
                 .bearer_auth(&session.access_token)
@@ -42,9 +42,11 @@ impl UpstreamAccess {
                     "application/vnd.amazon.eventstream",
                 )
                 .header("x-amzn-codewhisperer-optout", "true")
-                .json(&body)
-                .send()
-                .await?;
+                .json(&body);
+            if let Some(kind) = session.token_type {
+                call = call.header("tokentype", kind);
+            }
+            let reply = call.send().await?;
             let unauthorized = reply.status() == reqwest::StatusCode::UNAUTHORIZED;
             response = Some(reply);
             if !unauthorized || force || !provider.definition().auth.api_key.is_empty() {

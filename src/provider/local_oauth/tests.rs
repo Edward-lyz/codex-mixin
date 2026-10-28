@@ -16,6 +16,7 @@ impl Sandbox {
         Locations {
             agy: agy.is_file().then_some(agy),
             kiro: self.home.path().join(KIRO_FILE),
+            kiro_cli: None,
             ignore: self.home.path().join("oauth/discovery-ignored.json"),
         }
     }
@@ -137,6 +138,38 @@ fn rotating_kiro_refresh_token_keeps_the_same_account() {
         r#"{"refreshToken":"new","profileArn":"arn:one"}"#,
     );
     assert_eq!(inspect(ProviderPreset::Kiro, &sandbox.at()).unwrap(), first);
+}
+
+#[test]
+fn cli_login_is_discovered_and_takes_precedence_over_ide() {
+    let sandbox = Sandbox::new();
+    sandbox.write(
+        KIRO_FILE,
+        r#"{"refreshToken":"fixture","profileArn":"arn:ide"}"#,
+    );
+    let mut locations = sandbox.at();
+    let path = sandbox.home.path().join("data.sqlite3");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value TEXT)",
+        [],
+    )
+    .unwrap();
+    db.execute("INSERT INTO auth_kv VALUES (?1, ?2)", ["kirocli:social:token", r#"{"access_token":"fixture","refresh_token":"fixture","expires_at":"2000-01-01T00:00:00Z","profile_arn":"arn:cli"}"#]).unwrap();
+    locations.kiro_cli = Some(path);
+    let found = discover_at(&locations, &[]).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].discovered_credential.as_deref(),
+        Some(fingerprint(&["kiro", "arn:cli"]).as_str())
+    );
+    db.execute("DELETE FROM auth_kv", []).unwrap();
+    assert_eq!(
+        inspect(ProviderPreset::Kiro, &locations)
+            .unwrap()
+            .fingerprint,
+        fingerprint(&["kiro", "arn:ide"])
+    );
 }
 
 #[test]

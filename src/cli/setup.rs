@@ -209,14 +209,7 @@ pub(super) async fn run(
             "provider {preset} already exists with another preset; choose another provider ID"
         );
         if oauth {
-            codex_mixin::application::provider::login::authorize_add(
-                ProviderPreset::parse(preset)?,
-                codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS,
-                |url| {
-                    super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"))
-                },
-            )
-            .await?;
+            authorize_existing_preset(preset).await?;
             discover_models_with_output(&existing_provider.id, false).await?;
         } else {
             println!("Updating provider configuration: {preset}");
@@ -332,6 +325,18 @@ pub(super) async fn run(
     next_step_line("Restart the Codex app, or start a new Codex CLI session");
     next_step_line(&format!("Check status: {executable} info"));
     next_step_line(&format!("Diagnose issues: {executable} doctor"));
+    Ok(())
+}
+
+async fn authorize_existing_preset(preset: &str) -> anyhow::Result<()> {
+    if matches!(preset, "openai" | "agy") {
+        codex_mixin::application::provider::login::authorize_add(
+            ProviderPreset::parse(preset)?,
+            codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS,
+            |url| super::progress_step(&format!("Open this URL to authorize, or cancel: {url}")),
+        )
+        .await?;
+    }
     Ok(())
 }
 

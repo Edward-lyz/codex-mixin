@@ -25,6 +25,7 @@ const AUTO_PRESETS: [ProviderPreset; 2] = [ProviderPreset::Agy, ProviderPreset::
 pub(crate) struct Locations {
     agy: Option<PathBuf>,
     kiro: PathBuf,
+    kiro_cli: Option<PathBuf>,
     ignore: PathBuf,
 }
 
@@ -33,6 +34,7 @@ impl Locations {
         Self {
             agy: crate::platform::oauth::agy_auth_path(),
             kiro: crate::platform::oauth::kiro_auth_path(),
+            kiro_cli: crate::platform::oauth::kiro_cli_auth_path(),
             ignore: crate::platform::oauth::oauth_path(IGNORE_FILE),
         }
     }
@@ -49,7 +51,14 @@ pub(crate) struct LocalCredential {
 pub(crate) fn inspect(preset: ProviderPreset, at: &Locations) -> Option<LocalCredential> {
     match preset {
         ProviderPreset::Agy => inspect_agy(at.agy.as_deref()?),
-        ProviderPreset::Kiro => inspect_kiro(&at.kiro),
+        ProviderPreset::Kiro => at
+            .kiro_cli
+            .as_deref()
+            .and_then(|path| {
+                let document = super::auth::kiro::cli_credentials(path).ok()??;
+                inspect_kiro_document(&document)
+            })
+            .or_else(|| inspect_kiro(&at.kiro)),
         _ => None,
     }
 }
@@ -116,16 +125,21 @@ fn inspect_agy(path: &Path) -> Option<LocalCredential> {
 
 fn inspect_kiro(path: &Path) -> Option<LocalCredential> {
     let document = read_json(path)?;
-    let refresh = text(&document, "refreshToken");
-    let access = text(&document, "accessToken");
-    if refresh.is_none() && !(access.is_some() && unexpired(&document, "expiresAt")) {
+    inspect_kiro_document(&document)
+}
+
+fn inspect_kiro_document(document: &Value) -> Option<LocalCredential> {
+    let refresh = text(document, "refreshToken");
+    let access = text(document, "accessToken");
+    if refresh.is_none() && !(access.is_some() && unexpired(document, "expiresAt")) {
         return None;
     }
     // The refresh token rotates when Kiro renews the session, so identify the
     // account by profile or client registration instead.
-    let identity = text(&document, "profileArn")
-        .or_else(|| text(&document, "clientIdHash"))
-        .or_else(|| text(&document, "provider"))
+    let identity = text(document, "profileArn")
+        .or_else(|| text(document, "clientIdHash"))
+        .or_else(|| text(document, "sourceKey"))
+        .or_else(|| text(document, "provider"))
         .unwrap_or("default");
     Some(LocalCredential {
         fingerprint: fingerprint(&["kiro", identity]),

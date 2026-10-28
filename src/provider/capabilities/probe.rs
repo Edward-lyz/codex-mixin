@@ -480,7 +480,7 @@ async fn probe_kiro(client: &Client, target: &ProbeTarget<'_>, body: Value) -> a
         session.profile_arn.as_deref(),
         &uuid::Uuid::new_v4().to_string(),
     )?;
-    let response = client
+    let mut call = client
         .post(format!("https://runtime.{}.kiro.dev/", session.region))
         .bearer_auth(&session.access_token)
         .header(
@@ -488,10 +488,11 @@ async fn probe_kiro(client: &Client, target: &ProbeTarget<'_>, body: Value) -> a
             "KiroRuntimeService.GenerateAssistantResponse",
         )
         .header(reqwest::header::CONTENT_TYPE, "application/x-amz-json-1.0")
-        .json(&payload)
-        .send()
-        .await?
-        .error_for_status()?;
+        .json(&payload);
+    if let Some(kind) = session.token_type {
+        call = call.header("tokentype", kind);
+    }
+    let response = call.send().await?.error_for_status()?;
     let mut stream = response.bytes_stream();
     let mut decoder = crate::protocol::kiro::EventDecoder::default();
     let mut adapter = crate::protocol::kiro::KiroSse::default();

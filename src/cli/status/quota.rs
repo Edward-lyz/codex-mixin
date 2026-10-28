@@ -11,12 +11,13 @@ use super::opencode_go::{
 
 pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> anyhow::Result<()> {
     let official_enabled = super::super::providers::official_provider_is_available()?;
-    let stored = match load_stored_config()? {
-        Some(stored) => stored,
-        None if official_enabled => Default::default(),
-        None => anyhow::bail!("provider configuration is missing"),
-    };
-    let registry = ProviderRegistry::new(stored.providers)?;
+    let stored = load_stored_config()?.unwrap_or_default();
+    let registry = ProviderRegistry::new(codex_mixin::application::provider::runtime_providers(
+        stored.providers,
+    )?)?;
+    if registry.providers().is_empty() && !official_enabled {
+        anyhow::bail!("provider configuration is missing");
+    }
     validate_quota_filter(&registry, official_enabled, provider_filter)?;
     let client = codex_mixin::platform::proxy::auto_proxy(reqwest::Client::builder())
         .timeout(Duration::from_secs(10))
@@ -33,6 +34,24 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             let client = client.clone();
             async move {
                 let mut provider_results = Vec::new();
+                if provider.definition().preset_id.as_deref() == Some("kiro") && provider.quota_url().is_none() {
+                    match codex_mixin::provider::fetch_kiro_quota(provider).await {
+                        Ok(rows) => for mut row in rows {
+                            row["provider_id"] = serde_json::json!(provider.id());
+                            row["provider_display_name"] = serde_json::json!(provider.display_name());
+                            row["display_name"] = serde_json::json!(format!("{} {}", provider.display_name(), row["label"].as_str().unwrap_or("Credits")));
+                            row["value"] = row["used"].clone();
+                            row["stale_at"] = serde_json::Value::Null;
+                            provider_results.push(row);
+                        },
+                        Err(error) => provider_results.push(serde_json::json!({
+                            "provider_id": provider.id(), "provider_display_name": provider.display_name(),
+                            "display_name": provider.display_name(), "quota_id": "quota", "label": "Quota",
+                            "value": null, "error": format!("{error:#}"), "stale_at": null,
+                        })),
+                    }
+                    return (index, provider_results);
+                }
                 if provider.definition().preset_id.as_deref() == Some("agy")
                     && provider.quota_url().is_none() {
                     match codex_mixin::provider::fetch_agy_quota(provider.definition()).await {

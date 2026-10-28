@@ -8,6 +8,7 @@ pub(crate) mod auth;
 pub(crate) mod kiro;
 pub use agy::{AgyQuotaWindow, fetch_agy_quota};
 pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
+pub use kiro::fetch_kiro_quota;
 pub mod capabilities;
 mod discovery;
 pub(crate) mod local_oauth;

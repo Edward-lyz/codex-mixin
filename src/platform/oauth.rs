@@ -47,6 +47,39 @@ pub(crate) fn kiro_auth_path() -> PathBuf {
         .unwrap_or_else(|| super::home_dir().join(".aws/sso/cache/kiro-auth-token.json"))
 }
 
+pub(crate) fn kiro_cli_auth_path() -> Option<PathBuf> {
+    if std::env::var_os("CODEX_MIXIN_KIRO_AUTH_FILE").is_some_and(|path| !path.is_empty()) {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    let path = super::home_dir().join("Library/Application Support/kiro-cli/data.sqlite3");
+    #[cfg(target_os = "windows")]
+    let path = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| super::home_dir().join("AppData/Roaming"))
+        .join("kiro-cli/data.sqlite3");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let path = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| super::home_dir().join(".local/share"))
+        .join("kiro-cli/data.sqlite3");
+    Some(path)
+}
+
+pub(crate) fn refresh_kiro_cli() -> anyhow::Result<()> {
+    let executable = super::agent_cli::find_command("kiro-cli")
+        .context("kiro-cli is required to refresh its own login")?;
+    let mut command = std::process::Command::new(executable);
+    command.args(["debug", "refresh-auth-token"]);
+    super::agent_cli::run_command(
+        command,
+        std::time::Duration::from_secs(15),
+        "refresh kiro-cli login",
+    )
+    .map(|_| ())
+    .map_err(|_| anyhow::anyhow!("kiro-cli could not refresh its login; sign in again"))
+}
+
 pub(crate) fn agy_settings_path() -> PathBuf {
     super::home_dir().join(".gemini/antigravity-cli/settings.json")
 }
