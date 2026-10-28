@@ -255,16 +255,18 @@ async fn download_archive_once(client: &Client, url: &str, partial: &Path) -> an
 }
 
 /// Sign DUCX in. An interactive terminal logs in inline; a console-less
-/// caller (a GUI shell) gets the QR-code login in a new terminal window and
-/// this call waits until the login state appears.
+/// caller (a GUI shell) gets the QR-code login in a new terminal window.
+/// CODEX_MIXIN_LOGIN_STDIO=1 explicitly requests pipe-safe login output on
+/// stderr instead, preserving JSON stdout for CLI consumers such as the panel.
 async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> {
     if is_logged_in(home) {
         return Ok(());
     }
     let codex_home = home.join(".baidu-cx");
     super::progress_step("Waiting for DUCX login");
-    if std::io::stdin().is_terminal() {
-        eprintln!("\nDUCX login is required. Complete QR-code login in this terminal.");
+    let login_stdio = std::env::var("CODEX_MIXIN_LOGIN_STDIO").as_deref() == Ok("1");
+    if std::io::stdin().is_terminal() || login_stdio {
+        eprintln!("\nDUCX login is required. Scan the QR code below to continue.");
         let mut command = Command::new(executable);
         set_tokio_home_env(&mut command, home);
         let status = command
@@ -273,8 +275,13 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
             .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
+            .stdout(if login_stdio {
+                Stdio::from(std::io::stderr())
+            } else {
+                Stdio::inherit()
+            })
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .status()
             .await
             .context("failed to start DUCX login")?;

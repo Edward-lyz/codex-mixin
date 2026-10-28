@@ -48,7 +48,7 @@ pub(crate) async fn run(
         token: token.clone(),
         start_page: start_page.fragment(),
         installed_cli_path: installed_cli_path.map(|path| path.display().to_string()),
-        action_lock: tokio::sync::Mutex::new(()),
+        action_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
         cancel_action: tokio::sync::watch::channel(0).0,
     });
     let mut shutdown = codex_mixin::platform::ShutdownSignal::install()

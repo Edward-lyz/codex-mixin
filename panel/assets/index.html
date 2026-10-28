@@ -83,5 +83,17 @@
       <div class="sheet-content" id="sheet-content"></div>
     </div>
   </dialog>
+
+  <dialog class="dialog dialog-wide" id="operation" aria-labelledby="operation-title" aria-describedby="operation-status">
+    <div class="dialog-body">
+      <h2 class="dialog-title" id="operation-title">正在执行</h2>
+      <p id="operation-status" role="status" aria-live="polite">正在连接…</p>
+      <p class="muted">下载、保存和登录进度会实时显示。出现二维码时请扫码；取消不会撤销已经保存的配置。</p>
+      <pre id="operation-output" class="operation-output" tabindex="0" aria-label="实时命令输出与登录二维码"></pre>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="operation-dismiss" type="button">取消操作</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

@@ -954,6 +954,23 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
   color: var(--c-ink);
 }
 .dialog-wide { width: min(640px, calc(100vw - 32px)); }
+.operation-output {
+  max-height: min(52vh, 480px);
+  min-height: 120px;
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  font-family: "GitLab Mono", monospace;
+  font-size: clamp(8px, 2.4vw, 13px);
+  line-height: 1.2;
+  letter-spacing: 0;
+  padding: 16px;
+  /* A QR code must retain a light quiet zone in either application theme. */
+  color: #000;
+  background: #fff;
+  border: 1px solid var(--ink-16);
+  border-radius: 8px;
+}
 .dialog[open] { animation: dialog-in var(--dur-spring) var(--spring) both; }
 .dialog.is-closing { animation: dialog-out 200ms var(--ease-in) both; }
 .dialog::backdrop {

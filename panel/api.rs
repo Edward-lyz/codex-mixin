@@ -41,7 +41,7 @@ use subtle::ConstantTimeEq;
 
 use super::actions::PanelAction;
 use super::agent_icons::{AGENT_ICONS, PROVIDER_ICONS, TEMPLATE_AGENT_ICONS};
-use super::cli::{CliFailure, run_cli, run_json};
+use super::cli::{CliFailure, run_cli, run_cli_stream, run_json};
 
 const MAX_BODY_BYTES: usize = 64 * 1024;
 /// Backups carry every provider's cached model catalog.
@@ -66,7 +66,7 @@ pub(super) struct PanelState {
     pub(super) start_page: &'static str,
     pub(super) installed_cli_path: Option<String>,
     /// Serializes CLI mutations; config commits must not interleave.
-    pub(super) action_lock: tokio::sync::Mutex<()>,
+    pub(super) action_lock: Arc<tokio::sync::Mutex<()>>,
     pub(super) cancel_action: tokio::sync::watch::Sender<u64>,
 }
 
@@ -121,6 +121,7 @@ pub(super) fn router(state: Shared) -> Router {
             post(import_config).layer(DefaultBodyLimit::max(MAX_BACKUP_BYTES)),
         )
         .route("/api/actions", post(action))
+        .route("/api/actions/stream", post(action_stream))
         .route("/api/actions/cancel", post(cancel_action))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -475,6 +476,82 @@ async fn cancel_action(State(state): State<Shared>) -> Json<Value> {
         .cancel_action
         .send_modify(|revision| *revision = revision.wrapping_add(1));
     Json(json!({"ok": true}))
+}
+
+/// Authenticated POST streaming preserves the existing JSON action contract.
+/// NDJSON records are output/heartbeat followed by exactly one result/error.
+async fn action_stream(
+    State(state): State<Shared>,
+    Json(action): Json<PanelAction>,
+) -> Result<Response, ApiError> {
+    let invocations = action.invocations().map_err(ApiError::invalid)?;
+    let guard = state
+        .action_lock
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| busy())?;
+    let mut cancellation = state.cancel_action.subscribe();
+    let (events, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
+    tokio::spawn(async move {
+        let _guard = guard;
+        let mut stdout = String::new();
+        for (index, invocation) in invocations.iter().enumerate() {
+            if events
+                .send(json!({"type": "step", "index": index + 1, "total": invocations.len()}))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            match run_cli_stream(
+                &invocation.args,
+                &invocation.secrets,
+                &events,
+                &mut cancellation,
+            )
+            .await
+            {
+                Ok(output) => stdout = output,
+                Err(failure) => {
+                    let mut event = failure.to_json();
+                    event["type"] = json!("error");
+                    // Release before completion is visible to the next caller.
+                    drop(_guard);
+                    let _ = events.send(event).await;
+                    return;
+                }
+            }
+        }
+        let parsed = if action.prints_json() {
+            serde_json::from_str(&stdout).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        drop(_guard);
+        let _ = events
+            .send(json!({"type": "result", "ok": true, "stdout": stdout, "json": parsed}))
+            .await;
+    });
+    let stream = async_stream::stream! {
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(10));
+        loop {
+            let event = tokio::select! {
+                event = receiver.recv() => match event { Some(event) => event, None => break },
+                _ = heartbeat.tick() => json!({"type": "heartbeat"}),
+            };
+            let terminal = matches!(event["type"].as_str(), Some("result" | "error"));
+            yield Ok::<_, std::convert::Infallible>(format!("{event}\n"));
+            if terminal { break; }
+        }
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response())
 }
 
 async fn ech_status() -> Result<Json<Value>, ApiError> {
