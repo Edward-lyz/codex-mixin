@@ -389,17 +389,20 @@ mod tests {
             ..Default::default()
         };
         // Persistence runs on the blocking pool; wait until every row lands.
-        for _ in 0..100 {
-            if TurnLedger::load(Some(path.clone()))
+        // Report the wait itself, so a slow runner is distinguishable from a
+        // ledger that never persisted anything.
+        let mut persisted = 0;
+        for _ in 0..500 {
+            persisted = TurnLedger::load(Some(path.clone()))
                 .unwrap()
                 .query(&all)
-                .len()
-                == 3
-            {
+                .len();
+            if persisted == 3 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
+        assert_eq!(persisted, 3, "recorded rows must reach the database");
         let reloaded = TurnLedger::load(Some(path)).unwrap();
         assert_eq!(reloaded.query(&query), rows);
         let since = TurnQuery {
