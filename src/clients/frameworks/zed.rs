@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{FrameworkModel, PROVIDER, engine, field};
 use crate::clients::IntegrationStatus;

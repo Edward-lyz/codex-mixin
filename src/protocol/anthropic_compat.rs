@@ -171,14 +171,15 @@ fn message_request_to_responses_inner(
         "max_output_tokens": request.max_tokens,
         "input": input
     });
-    if let Some(value) = request.temperature {
-        body["temperature"] = json!(value);
-    }
-    if let Some(value) = request.top_p {
-        body["top_p"] = json!(value);
-    }
-    if let Some(value) = request.top_k {
-        body["top_k"] = json!(value);
+    for (name, value) in [
+        ("temperature", request.temperature.map(|value| json!(value))),
+        ("top_p", request.top_p.map(|value| json!(value))),
+        ("top_k", request.top_k.map(|value| json!(value))),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.map(|value| (name, value)))
+    {
+        body[name] = value;
     }
     if let Some(system) = &request.system {
         let mut instructions = Vec::with_capacity(system.len());
