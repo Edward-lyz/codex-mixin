@@ -178,8 +178,13 @@ pub fn install(
         "cursor-local" => Some(
             json!({"CURSOR_LOCAL_AGENT_BASE_URL":format!("{base}/v1"),"CURSOR_LOCAL_AGENT_API_KEY":key}),
         ),
-        "muse" if cfg!(feature = "client-auth") => Some(json!({"META_API_KEY":key})),
-        "commandcode" | "fx" | "empryo" | "ante" if cfg!(feature = "client-auth") => {
+        "muse" => Some(json!({"META_API_KEY":key})),
+        "commandcode" => Some(if cfg!(feature = "client-auth") {
+            json!({"CMD_LOCAL_ONLY":"1","CODEX_MIXIN_COMMANDCODE_API_KEY":key})
+        } else {
+            json!({"CMD_LOCAL_ONLY":"1"})
+        }),
+        "fx" | "empryo" | "ante" if cfg!(feature = "client-auth") => {
             Some(json!({format!("CODEX_MIXIN_{}_API_KEY",id.to_uppercase()):key}))
         }
         _ => None,
@@ -221,7 +226,8 @@ pub fn launch_environment(
                         "GEMINI_API_KEY",
                         "CURSOR_LOCAL_AGENT_BASE_URL",
                         "CURSOR_LOCAL_AGENT_API_KEY",
-                        "META_API_KEY"
+                        "META_API_KEY",
+                        "CMD_LOCAL_ONLY"
                     ]
                     .contains(&name.as_str()),
                 "unexpected managed launch variable"
@@ -372,6 +378,83 @@ pub fn detected(id: &str) -> anyhow::Result<bool> {
 
 fn field(keys: &[&str], value: Value) -> (Vec<String>, Value) {
     (keys.iter().map(|s| (*s).to_owned()).collect(), value)
+}
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+
+    #[test]
+    fn native_model_updates_preserve_vendor_credentials_and_unrelated_edits() {
+        for id in ["cursor", "copilot", "devin"] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("settings.json");
+            let manifest = directory.path().join("integration.json");
+            let original = match id {
+                "cursor" => json!({"model":{"modelId":"old"},"hasChangedDefaultModel":false}),
+                "copilot" => json!({"model":"old","effortLevel":"low"}),
+                _ => json!({"agent":{"model":"old","other":true}}),
+            };
+            let mut original = original;
+            original["nativeAccount"] = json!("fixture-vendor-account");
+            original["theme"] = json!("original");
+            std::fs::write(&path, original.to_string()).unwrap();
+            let effort = (id == "copilot").then_some("high");
+            let result =
+                native_model_at(id, &manifest, &path, Some("vendor-model"), effort).unwrap();
+            assert_eq!(result["capability"], "native_models");
+            assert_eq!(result["model"], "vendor-model");
+            assert_eq!(result["managed"], true);
+            let mut current = engine::read_config(&path, engine::Format::Json).unwrap();
+            current["theme"] = json!("user-edited");
+            std::fs::write(&path, current.to_string()).unwrap();
+            native_model_at(id, &manifest, &path, Some("another-native-model"), effort).unwrap();
+            assert!(native_model_at(id, &manifest, &path, Some(""), effort).is_err());
+            assert!(native_model_at(id, &manifest, &path, Some("bad\nmodel"), effort).is_err());
+            remove(id, &manifest).unwrap();
+            original["theme"] = json!("user-edited");
+            assert_eq!(
+                engine::read_config(&path, engine::Format::Json).unwrap(),
+                original
+            );
+            assert!(!manifest.with_extension("launch.json").exists());
+        }
+    }
+
+    #[test]
+    fn private_launch_environment_requires_managed_fields_and_allowlisted_variables() {
+        for variable in ["CODEX_MIXIN_FX_API_KEY", "LD_PRELOAD"] {
+            let directory = tempfile::tempdir().unwrap();
+            let manifest = directory.path().join("integration.json");
+            let path = manifest.with_extension("launch.json");
+            engine::apply(
+                &manifest,
+                vec![engine::Patch {
+                    path: path.clone(),
+                    format: engine::Format::Json,
+                    fields: vec![(
+                        vec![],
+                        json!({"environment":{variable:"fixture-key"},"model":"provider/model"}),
+                    )],
+                }],
+            )
+            .unwrap();
+            let result = launch_environment("fx", &manifest);
+            if variable == "LD_PRELOAD" {
+                assert!(result.is_err());
+                continue;
+            }
+            let (environment, model) = result.unwrap();
+            assert_eq!(environment[variable], "fixture-key");
+            assert_eq!(model.as_deref(), Some("provider/model"));
+            std::fs::write(
+                path,
+                r#"{"environment":{"CODEX_MIXIN_FX_API_KEY":"changed"}}"#,
+            )
+            .unwrap();
+            assert!(launch_environment("fx", &manifest).is_err());
+        }
+    }
 }
 
 fn home_path(variable: &str, default: &str) -> anyhow::Result<PathBuf> {

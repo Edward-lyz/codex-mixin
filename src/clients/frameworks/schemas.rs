@@ -295,6 +295,11 @@ fn keyless_at(
     let first = &models[0];
     Ok(match id {
         "commandcode" => {
+            let auth = read_config(&dir.join("auth.json"), Format::Json)?;
+            anyhow::ensure!(
+                auth.get(PROVIDER).is_none() && auth.pointer("/provider/codex-mixin").is_none(),
+                "Command Code already has a stored codex-mixin credential; remove that native credential before connecting"
+            );
             vec![
                 patch(
                     dir.join("providers.json"),

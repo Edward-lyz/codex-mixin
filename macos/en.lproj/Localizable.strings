@@ -143,6 +143,14 @@
 "agentManagement.state.managed" = "Connected";
 "agentManagement.state.unmanaged" = "Not connected";
 "agentManagement.state.error" = "Connection error";
+"agentManagement.state.pending" = "Awaiting native confirmation";
+"agentManagement.state.pendingRemoval" = "Awaiting native removal";
+"agentManagement.state.nativeManaged" = "Native models managed";
+"agentManagement.mode.nativeModels" = "Vendor-native models";
+"agentManagement.mode.nativeCredentials" = "Native credential store";
+"agentManagement.mode.nativeRuntime" = "Native runtime";
+"agentManagement.mode.nativeApp" = "Native app API";
+"agentManagement.mode.confirmedImport" = "In-app import confirmation";
 "agentManagement.mode.officialAccount" = "Official account mode";
 "agentManagement.mode.customOnly" = "Custom models only";
 "agentManagement.cliVersion" = "CLI %@";

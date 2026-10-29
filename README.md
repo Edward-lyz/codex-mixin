@@ -40,7 +40,7 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
 
 接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。断开接入后，网关恢复客户端原来的配置。
 
-日常使用从图形界面开始：macOS 菜单栏、Windows 系统托盘，或 Linux / 远程机器的 Web 控制面板。添加供应商、选择模型、接入 Agent 和查看用量，都可以在界面中完成。管理目录收录 50 款 Agent，默认发布包支持其中 38 款的配置接入与恢复。
+日常使用从图形界面开始：macOS 菜单栏、Windows 系统托盘，或 Linux / 远程机器的 Web 控制面板。添加供应商、选择模型、接入 Agent 和查看用量，都可以在界面中完成。管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置或原生应用接入，Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。
 
 ---
 
@@ -154,9 +154,9 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
 
 ## Agent 接入
 
-管理目录收录 50 款 AI Coding Agent，其中 38 款在默认构建中支持一键写入网关配置，并能在断开时恢复原配置。
+50 款 Agent 均提供接入或原生模型管理。47 款支持网关配置或原生应用接入，断开时恢复托管字段并保留无关配置。Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型，不经过自定义模型网关。
 
-### 已支持接入 (38 款)
+### 已支持 Agent（50 款）
 
 <table>
   <tr>
@@ -326,10 +326,67 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
       <img src="docs/assets/agents/cline-light.svg#gh-light-mode-only" width="36" height="36" alt="Cline logo"><img src="docs/assets/agents/cline-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cline logo"><br>
       <sub>Cline</sub>
     </td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
+      <sub>Gemini CLI</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
+      <sub>agy</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cursor-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor CLI logo"><img src="docs/assets/agents/cursor-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor CLI logo"><br>
+      <sub>Cursor CLI · 原生模型</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cursor-local-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor logo"><img src="docs/assets/agents/cursor-local-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor logo"><br>
+      <sub>Cursor</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/copilot-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot CLI logo"><img src="docs/assets/agents/copilot-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot CLI logo"><br>
+      <sub>Copilot CLI · 原生模型</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/devin-light.svg#gh-light-mode-only" width="36" height="36" alt="Devin logo"><img src="docs/assets/agents/devin-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Devin logo"><br>
+      <sub>Devin · 原生模型</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/zed-light.svg#gh-light-mode-only" width="36" height="36" alt="Zed logo"><img src="docs/assets/agents/zed-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Zed logo"><br>
+      <sub>Zed</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
+      <sub>Aside</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
+      <sub>Muse</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
+      <sub>Hanako</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
+      <sub>Alma</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
+      <sub>Cindy</sub>
+    </td>
   </tr>
 </table>
+
+**原生应用前提。** Alma、Hanako 需要保持运行；Zed 使用系统凭据存储。Aside 离线时先暂存配置，待原生运行时确认后才显示已接入。Cindy 需要在应用内确认导入和手动删除提供商；等待删除时，断开操作已撤销网关访问。
+
+**受托管启动。** agy、Cursor、Muse，以及开启客户端鉴权的 Command Code / fx / Empryo / Ante，通过 `codex-mixin agent run <id>` 启动；也可用 `codex-mixin agent launch <id>` 打开受托管终端。Cursor 启动前需完全退出已有进程。密钥只进入私有托管记录和子进程环境，不修改 shell 配置文件。
+
+**厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
+
 
 
 仓库内文档：

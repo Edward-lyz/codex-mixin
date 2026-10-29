@@ -2105,12 +2105,22 @@ async function checkAgentVersions(button) {
 
 function agentStatus(agent) {
   const integration = agent.integration || {};
-  const mode = integration.mode === "custom_only" ? "仅自定义模式" : integration.mode ? "官方账号模式" : null;
+  const mode = ({
+    custom_only: "仅自定义模式", codex_oauth_proxy: "官方账号模式", official_account: "官方账号模式",
+    native_models: "厂商原生模型管理", native_credentials: "原生凭据存储",
+    native_runtime: "原生运行时", native_app: "原生应用 API", confirmed_import: "应用内确认导入",
+  })[integration.mode] || integration.mode || null;
   switch (integration.state) {
     case "managed":
-      return { tone: "is-ok", text: ["已接入", agent.id === "codex" ? mode : null].filter(Boolean).join(" · "), on: true };
+      return { tone: "is-ok", text: [integration.mode === "native_models" ? "原生模型已托管" : "已接入", mode].filter(Boolean).join(" · "), on: true };
     case "unmanaged":
-      return { tone: "", text: "未接入", on: false };
+      return { tone: "", text: ["未接入", mode].filter(Boolean).join(" · "), on: false };
+    case "pending":
+      return { tone: "", text: "等待原生应用确认", on: true, hint: integration.detail };
+    case "pending_removal":
+      return { tone: "", text: "等待原生应用移除", on: true, hint: integration.detail };
+    case "drift":
+      return { tone: "is-bad", text: "配置已改变：" + (integration.error || integration.detail), on: true };
     case "unsupported":
       return { tone: "", text: "暂不支持", on: false, locked: true, hint: integration.detail };
     default:

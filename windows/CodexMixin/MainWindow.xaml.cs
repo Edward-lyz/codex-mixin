@@ -1220,10 +1220,24 @@ public sealed partial class MainWindow : Window
                 "drift" => "配置已改变",
                 "error" => "检测失败",
                 "unsupported" => "暂不支持接入",
+                "pending" => "等待原生应用确认",
+                "pending_removal" => "等待原生应用移除",
                 _ => $"未知状态：{state}"
             };
             var version = Json.Field(agent, "cli");
-            var connected = state is "managed" or "drift";
+            var modeLabel = Json.Text(integration, "mode") switch
+            {
+                "native_models" => "厂商原生模型管理",
+                "native_credentials" => "原生凭据存储",
+                "native_runtime" => "原生运行时",
+                "native_app" => "原生应用 API",
+                "confirmed_import" => "应用内确认导入",
+                _ => ""
+            };
+            if (Json.Text(integration, "mode") == "native_models" && state == "managed")
+                stateLabel = "原生模型已托管";
+            if (modeLabel.Length > 0) stateLabel += $" · {modeLabel}";
+            var connected = state is "managed" or "drift" or "pending" or "pending_removal";
             var connectSwitch = new ToggleSwitch { IsOn = connected, OnContent = "", OffContent = "", IsEnabled = state != "unsupported", MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
             AutomationProperties.SetName(connectSwitch, $"{Json.Text(agent, "name")} 接入");
             var restoringSwitch = false;

@@ -286,7 +286,7 @@ final class AgentManagementModel: ObservableObject {
     func disconnect(agentID: String) async {
         guard !isBusy,
               let entry = entry(withID: agentID),
-              entry.integration.state == .managed
+              [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state)
         else { return }
         let confirmation = agentDisconnectConfirmation(for: entry)
         guard confirmHandler(confirmation.title, confirmation.message) else {
@@ -628,7 +628,7 @@ private struct AgentRowView: View {
 
     private var connectBinding: Binding<Bool> {
         Binding(
-            get: { entry.integration.state == .managed || entry.integration.state == .drift },
+            get: { [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state) },
             set: { isOn in
                 Task { @MainActor in
                     if isOn {

@@ -12,6 +12,8 @@ enum AgentIntegrationState: String, Decodable, Equatable {
     case error
     case unsupported
     case drift
+    case pending
+    case pendingRemoval = "pending_removal"
 }
 
 struct AgentIntegration: Decodable, Equatable {
@@ -270,6 +272,8 @@ func agentIntegrationStateText(_ state: AgentIntegrationState) -> String {
     case .error: return AppLocalization.string("agentManagement.state.error")
     case .unsupported: return "Unsupported"
     case .drift: return "Configuration drift"
+    case .pending: return AppLocalization.string("agentManagement.state.pending")
+    case .pendingRemoval: return AppLocalization.string("agentManagement.state.pendingRemoval")
     }
 }
 
@@ -283,6 +287,11 @@ func agentIntegrationModeText(_ mode: String?) -> String? {
         return AgentConnectMode.officialAccount.shortLabel
     case "custom_only", AgentConnectMode.customOnly.rawValue:
         return AgentConnectMode.customOnly.shortLabel
+    case "native_models": return AppLocalization.string("agentManagement.mode.nativeModels")
+    case "native_credentials": return AppLocalization.string("agentManagement.mode.nativeCredentials")
+    case "native_runtime": return AppLocalization.string("agentManagement.mode.nativeRuntime")
+    case "native_app": return AppLocalization.string("agentManagement.mode.nativeApp")
+    case "confirmed_import": return AppLocalization.string("agentManagement.mode.confirmedImport")
     default:
         return mode
     }
@@ -293,6 +302,9 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
     if let mode = agentIntegrationModeText(entry.integration.mode) {
         parts.append(mode)
     }
+    if entry.integration.state == .pending || entry.integration.state == .pendingRemoval {
+        parts.append(entry.integration.detail)
+    }
     // integration.detail describes what disconnect restores; it belongs in
     // the details panel and the confirmation, not the one-line summary.
     if let integrationError = entry.integration.error, !integrationError.isEmpty {
@@ -301,7 +313,9 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
     if let cliError = entry.cli.error, !cliError.isEmpty {
         parts.append(AppLocalization.string("agentManagement.cliErrorPrefix", cliError))
     }
-    let statusText = agentIntegrationStateText(entry.integration.state)
+    let statusText = entry.integration.mode == "native_models" && entry.integration.state == .managed
+        ? AppLocalization.string("agentManagement.state.nativeManaged")
+        : agentIntegrationStateText(entry.integration.state)
     let updateText = entry.cli.update && !entry.cli.latest.isEmpty
         ? AppLocalization.string("agentManagement.updateTo", entry.cli.latest)
         : nil
@@ -324,7 +338,7 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
         statusText: statusText,
         statusIsError: entry.integration.state == .error,
         detailText: parts.joined(separator: AppLocalization.string("agentManagement.detailSeparator")),
-        isConnected: entry.integration.state == .managed || entry.integration.state == .drift,
+        isConnected: [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state),
         isBusy: isBusy
     )
 }

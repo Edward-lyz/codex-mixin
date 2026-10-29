@@ -1,6 +1,8 @@
-# Remaining 20 Agent integration contracts
+# Agent integration contracts
 
-Status: configuration-adapter implementation and targeted fixture validation. This is not a claim that all 20 Agents support custom backends, nor that live vendor applications have been tested. The catalog contains 50 Agents. The default build has 38 configurable integrations; `client-auth` builds have 34 because four Agents need a managed authenticated launcher.
+The catalog contains 50 Agents in both default and `client-auth` builds: 47 gateway/native-app integrations and three vendor-native model managers. Configuration fixtures and local API fixtures exercise the production adapters; this is not a claim that all 50 vendor applications have been exercised live. App prerequisites and pending states remain part of the contract.
+
+The newly completed contracts were checked against [Magpie at 4d9058a](https://github.com/yetone/magpie/tree/4d9058a98a4c01ea42cda83b051ac6125bf79e50/internal/agent), pinned on 2026-10-29. Magpie is an integration reference; vendor documentation linked below remains the authority where available.
 
 ## Newly connected Agents
 
@@ -19,29 +21,58 @@ The same connect/disconnect commands accept the IDs below. Restart the Agent aft
 | `vscodium` | OS-specific VSCodium User settings, `chat.languageModels` provider groups | Requires an already installed `GitHub.copilot-chat` extension declaring vendor `customendpoint` or `customoai`; missing/unknown declarations fail without writes. Uses supported per-model request headers rather than claiming to populate VS Code SecretStorage. [Official extension provider declarations](https://github.com/microsoft/vscode-copilot-chat/blob/main/package.json), [custom OpenAI fields](https://github.com/microsoft/vscode-copilot-chat/blob/main/src/extension/byok/vscode-node/customOAIProvider.ts). Extension availability/licensing remains upstream-dependent. |
 | `reasonix` | `REASONIX_HOME`, otherwise `~/.reasonix` on macOS/Linux or `%APPDATA%/reasonix` on Windows; `config.toml` plus `.env` | Appends one `[[providers]]` entry, selects `default_model` and `agent.planner_model`, and extends an existing desktop provider allowlist. Credential lives only in `.env`; existing providers and non-managed environment lines survive. Project/session overrides are not changed. [Official paths and credential contract](https://github.com/esengine/DeepSeek-Reasonix/blob/studio/docs/CONFIG_PATHS.md), [provider fields](https://github.com/esengine/DeepSeek-Reasonix/blob/studio/internal/contract/config/provider_entry.go). |
 | `minimax-code` | `MINIMAX_DATA_DIR`, then `MAVIS_DATA_DIR`, otherwise `~/.minimax`; `config.yaml` | `custom_provider.codex-mixin`, `api: openai-completions`, `options.baseURL/apiKey`, model table, `defaultModel: custom_provider:codex-mixin/<flat-id>`. Uses reversible gateway aliases for slash-containing catalog IDs; does not modify the slug algorithm. Explicit data-dir overrides can select a non-default profile; profile auto-discovery is not implemented. [Official BYOK guide and data directory](https://github.com/MiniMax-AI/MiniMax-Code#bring-your-own-key), [official custom-provider examples](https://github.com/MiniMax-AI/MiniMax-Code/blob/main/docs/examples.md). Selection/flattening contract was additionally cross-checked against [Magpie's adapter](https://github.com/yetone/magpie/blob/main/internal/agent/minimax.go), a secondary source. |
-| `commandcode` | `~/.commandcode/providers.json` provider entry and `settings.json` model selection | Default build only: `apiKey: false`, `api: openai-completions`. [Official BYOK documentation](https://commandcode.ai/docs/byok). |
-| `fx` | `~/.fx/settings.json`, configured OpenAI Chat provider, `auth.type: none`, model metadata | Default build only. At most 256 selected models. [Official configured-provider schema](https://github.com/vercel-labs/fx/blob/main/src/core/config/configured_provider.zig). |
-| `empryo` | `~/.empryo/config.json` provider array and `defaultModel` | Default build only. No `envVar` credential is invented; explicit `/v1/models` discovery avoids upstream's `/v1` stripping. Availability probes the provider base URL and accepts 2xx/401/403; gateway GET `/v1` must be present. [Official custom provider implementation](https://github.com/proxysoul/Empryo/blob/main/src/core/llm/providers/custom.ts). |
-| `ante` | `${ANTE_HOME:-~/.ante}/catalog.json` provider/model catalog and `settings.json` | Default build only; `wire_style: OpenAiCompatible`. [Official catalog reference](https://docs.antigma.ai/reference/catalog-reference). |
+| `commandcode` | `~/.commandcode/providers.json` and `settings.json`; local-only managed launch | `apiKey: false` by default, or `$CODEX_MIXIN_COMMANDCODE_API_KEY` with client auth. The launcher sets `CMD_LOCAL_ONLY=1`. A conflicting stored native credential is rejected before writes. [Official BYOK documentation](https://commandcode.ai/docs/byok). |
+| `fx` | `~/.fx/settings.json`, configured OpenAI Chat provider and model metadata | At most 256 selected models. Native auth is `{type:none}` or `{type:bearer,env:CODEX_MIXIN_FX_API_KEY}`. Authenticated sessions require managed launch. [Official schema](https://github.com/vercel-labs/fx/blob/main/src/core/config/configured_provider.zig). |
+| `empryo` | `~/.empryo/config.json` provider array and `defaultModel` | Authenticated configuration references `CODEX_MIXIN_EMPRYO_API_KEY` through `envVar`; managed launch supplies it. Explicit `/v1/models` discovery avoids upstream base stripping. [Official custom provider implementation](https://github.com/proxysoul/Empryo/blob/main/src/core/llm/providers/custom.ts). |
+| `ante` | `${ANTE_HOME:-~/.ante}/catalog.json` and `settings.json` | `wire_style: OpenAiCompatible`; authenticated configuration uses `auth.bearer.env_key: CODEX_MIXIN_ANTE_API_KEY` and managed launch. [Official catalog reference](https://docs.antigma.ai/reference/catalog-reference). |
 
-CommandCode, FX, Empryo and Ante are deliberately rejected when `client-auth` is compiled in. Writing a configuration value that these applications interpret as an environment-variable name would not actually install a credential. Existing managed journals remain inspectable and removable across build-feature changes. Mixin never edits a shell profile or starts a process with an unapproved injected key.
+## Completed gateway and native-app adapters
 
-## Remaining explicit limitations (12)
+| ID | Native contract | Preconditions and recovery |
+| --- | --- | --- |
+| `gemini` | `~/.gemini/settings.json`, `~/.gemini/.env`, Gemini Developer API ingress | Writes `security.auth.selectedType=gemini-api-key`, selected model, base URL and gateway key. Native `topK` and `thinkingConfig` survive Gemini forwarding; other protocols receive canonical sampling and reasoning effort. Unsupported official Responses `topK` is rejected. `countTokens` is an estimate, identified by `x-codex-mixin-token-count: estimated`, not the vendor's billing tokenizer. |
+| `agy` | Gemini-provider mode in `~/.gemini/antigravity-cli/settings.json` | Custom aliases use `codex-mixin/<catalog-id>`. Managed launch supplies `GOOGLE_GEMINI_BASE_URL`, `GEMINI_API_KEY` and mandatory `--model`; no CloudCode account or shell-profile mutation is fabricated. |
+| `cursor-local` | `CURSOR_LOCAL_AGENT_BASE_URL` and `CURSOR_LOCAL_AGENT_API_KEY` | Fully quit Cursor, then launch the real editor through the managed process environment. Existing editor processes may retain their original environment. |
+| `zed` | Native settings plus OS credential store keyed by API URL | The private recovery record captures the prior credential before mutation. Connect/status confirm settings and credential readback; disconnect restores both and refuses credential drift. |
+| `aside` | Captured `~/.aside/u/<account>` models/settings plus bounded native REPL | Offline writes report `pending`, not a confirmed live connection. Runtime confirmation is required for `managed`. Disconnect restores the captured account even after active-account changes. |
+| `muse` | Native `endpoint_transport`, schema version 1 and `/muse-code/models` | Discovery exposes required Muse metadata and model limits. Managed launch supplies only the gateway `META_API_KEY`, so a vendor sign-in token is not reused for the gateway. Unknown settings schema versions fail closed. |
+| `alma` | Running loopback API on port 23001 | Unique owned provider, model list and chat selection are confirmed. A durable preparing record permits retry after partial API failure without duplicate providers. Disconnect preserves unrelated settings and restores the prior default. |
+| `hanako` | Running authenticated loopback API identified through `server-info.json` | The encrypted provider catalog is never rewritten. The captured agent/model is restored through native APIs. If no replacement chat model exists, disconnect reports `pending_removal` after access revocation until the user chooses a native replacement. |
+| `cindy` | `cindy://provider/import` through a private HTML handoff | Confirm import in Cindy. Status reads the exact owned provider ID from native SQLite in read-only mode; unreadable databases remain errors. Disconnect revokes gateway access and reports `pending_removal` until the user removes the native provider. The encrypted database is never written. |
 
-| ID | Why connection remains unavailable |
-| --- | --- |
-| `gemini` | Gemini Developer API ingress exists, but the CLI's `topK`/`thinkingConfig` and auxiliary `countTokens` paths are not supported end to end. Do not equate the wire ingress with a working Gemini CLI integration. |
-| `agy` | Antigravity requires its CloudCode transport/authentication, not just the Gemini Developer API. |
-| `cursor`, `copilot`, `devin` | Their supported CLI selection paths expose vendor-native models, not a verified general custom-backend contract. |
-| `cursor-local` | Requires process environment injection and a managed Cursor launcher. |
-| `zed` | Needs a credential-store adapter; settings alone do not install its API key. |
-| `aside` | Needs the native runtime connection/staging API. |
-| `muse` | Needs `/muse-code/models` discovery and an authenticated transport adapter. |
-| `hanako` | Needs the running app API for its keychain-encrypted catalog. |
-| `alma` | Needs the running local provider-import/removal API. |
-| `cindy` | Needs `cindy://provider/import` user confirmation; the provider database is encrypted. |
+## Vendor-native model management
 
-For the app/API-only restrictions, current evidence includes [Magpie's upstream adapters](https://github.com/yetone/magpie/tree/main/internal/agent), a **secondary integration source**, not official vendor validation. These entries are intentionally not marked supported. Their installation/version management remains independent from gateway integration.
+Cursor CLI (`cursor`), Copilot CLI (`copilot`) and Devin (`devin`) do not expose a verified general custom-backend endpoint. Their supported capability is explicitly `native_models`, using the vendor's account and model IDs. No gateway readiness, selected gateway model or client credential is required.
+
+```sh
+codex-mixin agent model cursor --json
+codex-mixin agent model cursor --model VENDOR_MODEL_ID
+codex-mixin agent model copilot --model VENDOR_MODEL_ID --effort high
+codex-mixin agent model devin --model VENDOR_MODEL_VARIANT
+codex-mixin agent disconnect cursor
+```
+
+Writes touch only native model fields and use the existing private undo journal. Repeated selections preserve unrelated user edits; disconnect restores the original model and leaves vendor credentials intact. Cursor CLI writes `~/.cursor/cli-config.json`; Copilot writes `~/.copilot/settings.json`; Devin writes `$XDG_CONFIG_HOME/devin/config.json` or `~/.config/devin/config.json`.
+
+## Managed process environments
+
+```sh
+codex-mixin agent connect agy
+codex-mixin agent run agy
+codex-mixin agent launch cursor-local
+```
+
+Use managed launch for agy, Cursor and Muse, and for authenticated fx/Empryo/Ante. Command Code also uses it for local-only mode. `agent run` inherits terminal I/O; `agent launch` opens a native terminal invoking the same CLI. Private journals contain environment bindings; child environments receive the gateway key. Keys are never added to command arguments or shell profiles. Disconnect removes the managed launch record and revokes only that client's gateway key.
+
+## State contract
+
+- `managed`: the adapter confirmed its owned fields, native credential or live native selection.
+- `pending`: configuration/import is prepared but the native runtime or user has not confirmed it.
+- `pending_removal`: gateway access has been revoked; native cleanup still needs user action.
+- `drift` / `error`: managed data changed or could not be inspected. These states do not count as successful confirmation.
+- `mode: native_models`: vendor-native selection management, not custom gateway routing.
+
+All shells consume these states from the CLI. No shell implements native configuration or credential policy.
 
 ## Preservation, security and verification
 
@@ -49,15 +80,4 @@ The existing durable integration journal preflights all files, records original 
 
 Reasonix `.env` parsing preserves comments and unrelated assignment contents, normalizing CRLF to LF when files are rewritten. Duplicate variable names, malformed lines and multiline assignments, including escaped closing quotes, fail before any write; this intentionally narrower syntax avoids ambiguous restore semantics. Existing managed-key collisions are rejected. The adapter never places the Reasonix API key in its TOML configuration.
 
-Targeted validation uses temporary directories and real parser/journal/public status/remove paths:
-
-```sh
-cargo test --lib clients::frameworks -- --test-threads=1
-cargo test --lib --features client-auth clients::frameworks -- --test-threads=1
-```
-
-These tests cover field mapping, catalog IDs with slashes/dots, Cline legacy-state coordination, extension declaration validation, keyless feature gates, backup/restore, unmanaged content, drift and dotenv fail-fast cases. They do not launch the eight vendor applications or make paid provider requests.
-
-Full-target regression passed with 962 tests in the default build and 963 in `client-auth`, with seven explicitly ignored tests in each build. The commands unset inherited `DSH_HOME` so subprocess fixtures cannot discover the real Harness configuration, and exclude the existing network-dependent `oauth_install_missing_repository_and_cache_creates_no_restore_marker_or_directory` test: its supposed failing fetch returned a real remote catalog in this environment. Neither ignored nor excluded tests count as passed. Both builds passed strict all-target Clippy; formatting and architecture positive/negative checks also passed.
-
-The separate Node prompt-cache E2E script could not start its mock providers: the installed Node runtime aborts because `libsimdutf.36.dylib` is missing. The Rust HTTP/SSE tests, including prompt-prefix regressions, passed; they do not substitute for a successful run of that script.
+Validation runs in GitHub CI under the user's no-local-compilation constraint. Existing default and `client-auth` full-target gates, strict Clippy, architecture checks and protocol/cache E2E remain required. Adjacent non-UI tests cover native model preservation, private launch validation, Gemini options/token estimates, Muse discovery, Zed credential rollback, Aside account staging, Cindy read-only confirmation, Alma partial failures and Hanako restoration/removal. Tests use temporary paths, in-memory credential callbacks and loopback servers; they do not invoke real credential stores or vendor applications.

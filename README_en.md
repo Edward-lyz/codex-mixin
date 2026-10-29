@@ -40,7 +40,7 @@ Codex Mixin is a local gateway written in Rust. It provides OpenAI-, Anthropic-,
 
 When you connect official Codex, your custom models appear in the model picker next to the official GPT models. ChatGPT sign-in, session history, and mobile remote tasks continue to work. When you disconnect, the gateway restores the client's original configuration.
 
-Start with the graphical interface: the macOS menu bar, the Windows system tray, or the Web control panel for Linux and remote machines. Add providers, select models, connect Agents, and view usage in the interface. The catalog lists 50 Agents; default release builds support configuration and restore for 38 of them.
+Start with the graphical interface: the macOS menu bar, the Windows system tray, or the Web control panel for Linux and remote machines. Add providers, select models, connect Agents, and view usage in the interface. The catalog supports all 50 Agents: 47 gateway or native-app integrations and vendor-native model management for Cursor CLI, Copilot CLI, and Devin. Native applications may require a running app or an import confirmation.
 
 ---
 
@@ -154,9 +154,9 @@ Test the connection and refresh models in the interface. Use the model action me
 
 ## Agent Integrations
 
-The catalog lists 50 AI coding agents. In the default build, 38 of them can be connected to the gateway with one command and restored to their original configuration on disconnect.
+All 50 catalog entries have a supported integration or native model manager. The 47 gateway/native-app integrations preserve unrelated settings and restore owned fields on disconnect. Cursor CLI, Copilot CLI, and Devin manage vendor-native models using the vendor account; they do not route arbitrary models through the gateway.
 
-### Supported Integrations (38)
+### Supported Agents (50)
 
 <table>
   <tr>
@@ -326,10 +326,67 @@ The catalog lists 50 AI coding agents. In the default build, 38 of them can be c
       <img src="docs/assets/agents/cline-light.svg#gh-light-mode-only" width="36" height="36" alt="Cline logo"><img src="docs/assets/agents/cline-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cline logo"><br>
       <sub>Cline</sub>
     </td>
-    <td width="20%" align="center"></td>
-    <td width="20%" align="center"></td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
+      <sub>Gemini CLI</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
+      <sub>agy</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cursor-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor CLI logo"><img src="docs/assets/agents/cursor-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor CLI logo"><br>
+      <sub>Cursor CLI · native models</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cursor-local-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor logo"><img src="docs/assets/agents/cursor-local-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor logo"><br>
+      <sub>Cursor</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/copilot-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot CLI logo"><img src="docs/assets/agents/copilot-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot CLI logo"><br>
+      <sub>Copilot CLI · native models</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/devin-light.svg#gh-light-mode-only" width="36" height="36" alt="Devin logo"><img src="docs/assets/agents/devin-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Devin logo"><br>
+      <sub>Devin · native models</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/zed-light.svg#gh-light-mode-only" width="36" height="36" alt="Zed logo"><img src="docs/assets/agents/zed-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Zed logo"><br>
+      <sub>Zed</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
+      <sub>Aside</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
+      <sub>Muse</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
+      <sub>Hanako</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
+      <sub>Alma</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
+      <sub>Cindy</sub>
+    </td>
   </tr>
 </table>
+
+**Native app prerequisites.** Keep Alma and Hanako running; Zed uses the system credential store. Aside may remain staged until its runtime confirms the selection. Cindy requires in-app import confirmation and manual provider removal; disconnect revokes gateway access while removal is pending.
+
+**Managed launch.** Start agy, Cursor, Muse, and authenticated Command Code / fx / Empryo / Ante sessions with `codex-mixin agent run <id>`. Use `codex-mixin agent launch <id>` to open a managed terminal. Fully quit Cursor before launching it with the managed environment. Keys stay in private managed state and child environments; shell profiles are not changed.
+
+**Vendor-native models.** For example, `codex-mixin agent model cursor --model <vendor-model-id>`; use `copilot` or `devin` for their native settings. Copilot also accepts `--effort high`. These commands do not create a gateway credential or require selected gateway models. See [Agent contracts](docs/agent-integration-contracts.md) for exact prerequisites, restoration, and estimated Gemini token counts.
+
 
 In this repository:
 

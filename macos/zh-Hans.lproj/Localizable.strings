@@ -143,6 +143,14 @@
 "agentManagement.state.managed" = "已接入";
 "agentManagement.state.unmanaged" = "未接入";
 "agentManagement.state.error" = "接入异常";
+"agentManagement.state.pending" = "等待原生应用确认";
+"agentManagement.state.pendingRemoval" = "等待原生应用移除";
+"agentManagement.state.nativeManaged" = "原生模型已托管";
+"agentManagement.mode.nativeModels" = "厂商原生模型管理";
+"agentManagement.mode.nativeCredentials" = "原生凭据存储";
+"agentManagement.mode.nativeRuntime" = "原生运行时";
+"agentManagement.mode.nativeApp" = "原生应用 API";
+"agentManagement.mode.confirmedImport" = "应用内确认导入";
 "agentManagement.mode.officialAccount" = "官方账号模式";
 "agentManagement.mode.customOnly" = "仅自定义模型模式";
 "agentManagement.cliVersion" = "CLI %@";
