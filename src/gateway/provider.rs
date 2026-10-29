@@ -217,24 +217,32 @@ async fn stream_anthropic_messages(
         Err(GatewayError::UpstreamStatus {
             status,
             body: error_body,
-            ..
-        }) if defaulted
-            && status.is_client_error()
-            && let Some(limit) =
-                super::output_limit::output_limit_from_error(&error_body, requested) =>
-        {
-            tracing::warn!(
-                provider_id = provider.id(),
-                upstream_model_id = %upstream_model_id,
-                requested,
-                limit,
-                "provider rejected the default output budget; retrying with its limit"
-            );
-            let sent = send(convert(limit)?).await?;
-            executor
-                .output_limits
-                .record(provider.id(), upstream_model_id, limit);
-            sent
+            content_type,
+            context,
+        }) if defaulted && status.is_client_error() => {
+            if let Some(limit) =
+                super::output_limit::output_limit_from_error(&error_body, requested)
+            {
+                tracing::warn!(
+                    provider_id = provider.id(),
+                    upstream_model_id = %upstream_model_id,
+                    requested,
+                    limit,
+                    "provider rejected the default output budget; retrying with its limit"
+                );
+                let sent = send(convert(limit)?).await?;
+                executor
+                    .output_limits
+                    .record(provider.id(), upstream_model_id, limit);
+                sent
+            } else {
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    body: error_body,
+                    content_type,
+                    context,
+                });
+            }
         }
         result => result?,
     };
