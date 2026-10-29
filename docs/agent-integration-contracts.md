@@ -2,7 +2,7 @@
 
 The catalog contains 50 Agents in both default and `client-auth` builds: 47 gateway/native-app integrations and three vendor-native model managers. Configuration fixtures and local API fixtures exercise the production adapters; this is not a claim that all 50 vendor applications have been exercised live. App prerequisites and pending states remain part of the contract.
 
-The newly completed contracts were checked against [Magpie at 4d9058a](https://github.com/yetone/magpie/tree/4d9058a98a4c01ea42cda83b051ac6125bf79e50/internal/agent), pinned on 2026-10-29. Magpie is an integration reference; vendor documentation linked below remains the authority where available.
+The newly completed contracts were checked against [Magpie at 9f25de5](https://github.com/yetone/magpie/tree/9f25de56c719c67e4e331a360c0c0ee74f4f79e8/internal/agent), pinned on 2026-10-29. Magpie is an integration reference; vendor documentation linked below remains the authority where available.
 
 ## Newly connected Agents
 

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::clients::IntegrationStatus;
+use anyhow::Context;
 use serde_json::{Value, json};
 
 mod alma;
