@@ -1,6 +1,8 @@
 import Cocoa
 import SwiftUI
 
+private let modelOrderDragType = "local.codex-mixin.model-order"
+
 private struct NativeSearchField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
@@ -47,6 +49,11 @@ struct ModelBenchmarkTableRow: Identifiable {
     let model: ProviderModelListItem
     let result: ModelBenchmarkResult?
     let isSelectedSortValue: Int
+    let orderPosition: Int
+
+    static var defaultSortOrder: [KeyPathComparator<Self>] {
+        [KeyPathComparator(\.orderPosition), KeyPathComparator(\.model.id, comparator: .localizedStandard)]
+    }
 
     var id: String {
         providerModelSelectionKey(providerID: providerID, modelID: model.id)
@@ -69,13 +76,6 @@ struct ModelBenchmarkTableRow: Identifiable {
     }
 }
 
-struct ProviderModelSelectionUpdate {
-    let providerID: String
-    let modelIDs: [String]
-    let modelContexts: [String: UInt64]
-    let clearedModelContexts: [String]
-}
-
 @MainActor
 final class ModelBenchmarkModel: ObservableObject {
     let startHandler: (Int, String, Int) async throws -> ModelBenchmarkSnapshot
@@ -83,14 +83,15 @@ final class ModelBenchmarkModel: ObservableObject {
     let fetchHandler: () async throws -> ModelBenchmarkSnapshot?
     let loadProvidersHandler: () async throws -> ProviderListResponse
     let saveSelectionsHandler: (
-        [String: [String]], [String: [String: UInt64]], [String: [String]], OperationProgress
+        [ProviderModelSelectionUpdate], OperationProgress
     ) async throws -> Void
 
     @Published var providers: [ProviderView] = []
     @Published var selectedProviderID: String?
     @Published var visibleRows: [ModelBenchmarkTableRow] = []
-    @Published var selectedModelKeys: Set<String> = []
-    @Published var savedModelKeys: Set<String> = []
+    @Published private(set) var selectedModelKeys: Set<String> = []
+    @Published private(set) var savedModelKeys: Set<String> = []
+    @Published private(set) var selectionDrafts: [String: ProviderModelSelectionDraft] = [:]
     @Published var query = ""
     @Published var manualModelID = ""
     @Published var selectionFilter = "all"
@@ -112,6 +113,7 @@ final class ModelBenchmarkModel: ObservableObject {
     private(set) var savedModelContextOverrides: [String: [String: UInt64]] = [:]
     private(set) var removedManualModelIDs: [String: Set<String>] = [:]
     private var pollingTask: Task<Void, Never>?
+    private var tableSortOrder = ModelBenchmarkTableRow.defaultSortOrder
     var providerListDidLoad: ((ProviderListResponse, String?) -> Void)?
 
     init(
@@ -120,7 +122,7 @@ final class ModelBenchmarkModel: ObservableObject {
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
         probeHandler: @escaping (String) async throws -> Void,
         saveSelectionsHandler: @escaping (
-            [String: [String]], [String: [String: UInt64]], [String: [String]], OperationProgress
+            [ProviderModelSelectionUpdate], OperationProgress
         ) async throws -> Void
     ) {
         self.probeHandler = probeHandler
@@ -139,7 +141,8 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     var dirty: Bool {
-        selectedModelKeys != savedModelKeys || modelContextOverrides != savedModelContextOverrides
+        selectionDrafts.values.contains(where: \.isDirty)
+            || modelContextOverrides != savedModelContextOverrides
     }
 
     var selectedProviderDirty: Bool {
@@ -198,38 +201,95 @@ final class ModelBenchmarkModel: ObservableObject {
 
     func setSelected(_ row: ModelBenchmarkTableRow, isSelected: Bool) {
         guard !isBusy, row.model.isAvailable || !isSelected else { return }
-        if isSelected {
-            selectedModelKeys.insert(row.id)
-        } else {
-            selectedModelKeys.remove(row.id)
-            if row.model.manuallyAdded {
-                modelContextOverrides[row.providerID]?.removeValue(forKey: row.model.id)
-                if modelContextOverrides[row.providerID]?.isEmpty == true {
-                    modelContextOverrides.removeValue(forKey: row.providerID)
-                }
+        selectionDrafts[row.providerID]?.setSelected(row.model.id, selected: isSelected)
+        if !isSelected && row.model.manuallyAdded {
+            modelContextOverrides[row.providerID]?.removeValue(forKey: row.model.id)
+            if modelContextOverrides[row.providerID]?.isEmpty == true {
+                modelContextOverrides.removeValue(forKey: row.providerID)
             }
         }
+        syncSelectionKeys()
     }
 
     func selectAllVisible() {
-        selectedModelKeys.formUnion(visibleRows.filter(\.model.isAvailable).map(\.id))
+        guard !isBusy else { return }
+        for row in visibleRows where row.model.isAvailable {
+            selectionDrafts[row.providerID]?.setSelected(row.model.id, selected: true)
+        }
+        syncSelectionKeys()
+        rebuildRows()
     }
 
     func selectNoneVisible() {
-        selectedModelKeys.subtract(visibleRows.map(\.id))
+        guard !isBusy else { return }
+        for row in visibleRows {
+            selectionDrafts[row.providerID]?.setSelected(row.model.id, selected: false)
+        }
+        syncSelectionKeys()
+        rebuildRows()
+    }
+
+    var selectedModelOrder: ProviderModelOrder {
+        selectedProviderID.flatMap { selectionDrafts[$0]?.order } ?? .family
+    }
+
+    func setModelOrder(_ order: ProviderModelOrder) {
+        guard !isBusy, let selectedProviderID else { return }
+        selectionDrafts[selectedProviderID]?.setOrder(order)
+        syncSelectionKeys()
+        rebuildRows()
+    }
+
+    func modelPosition(_ row: ModelBenchmarkTableRow) -> Int? {
+        selectionDrafts[row.providerID]?.modelIDs.firstIndex(of: row.model.id)
+    }
+
+    func canMoveModel(_ row: ModelBenchmarkTableRow, by delta: Int) -> Bool {
+        guard !isBusy, let draft = selectionDrafts[row.providerID],
+              let position = draft.modelIDs.firstIndex(of: row.model.id)
+        else { return false }
+        return draft.modelIDs.indices.contains(position + delta)
+    }
+
+    func moveModel(_ row: ModelBenchmarkTableRow, to destination: Int) {
+        guard !isBusy else { return }
+        selectionDrafts[row.providerID]?.move(row.model.id, to: destination)
+        syncSelectionKeys()
+        rebuildRows()
+    }
+
+    func dropModel(_ key: String, onto row: ModelBenchmarkTableRow) {
+        guard !isBusy, let draft = selectionDrafts[row.providerID],
+              let destination = draft.modelIDs.firstIndex(of: row.model.id),
+              let source = draft.modelIDs.first(where: {
+                  providerModelSelectionKey(providerID: row.providerID, modelID: $0) == key
+              })
+        else { return }
+        selectionDrafts[row.providerID]?.move(source, to: destination)
+        syncSelectionKeys()
+        rebuildRows()
+    }
+
+    private func syncSelectionKeys() {
+        selectedModelKeys = Set(selectionDrafts.flatMap { entry in
+            entry.value.modelIDs.map { providerModelSelectionKey(providerID: entry.key, modelID: $0) }
+        })
+        savedModelKeys = Set(selectionDrafts.flatMap { entry in
+            entry.value.savedModelIDs.map { providerModelSelectionKey(providerID: entry.key, modelID: $0) }
+        })
     }
 
     func addManualModel() {
         guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         let modelID = manualModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !modelID.isEmpty else { return }
-        let key = providerModelSelectionKey(providerID: provider.id, modelID: modelID)
         removedManualModelIDs[provider.id]?.remove(modelID)
         if !provider.modelItems.contains(where: { $0.id == modelID }) {
             manualModelIDs[provider.id, default: []].insert(modelID)
             modelContextOverrides[provider.id, default: [:]][modelID] = 128_000
         }
-        selectedModelKeys.insert(key)
+        selectionDrafts[provider.id]?.setSelected(modelID, selected: true)
+        syncSelectionKeys()
         manualModelID = ""
         rebuildRows()
     }
@@ -242,7 +302,8 @@ final class ModelBenchmarkModel: ObservableObject {
             modelContextOverrides.removeValue(forKey: row.providerID)
         }
         removedManualModelIDs[row.providerID, default: []].insert(row.model.id)
-        selectedModelKeys.remove(row.id)
+        selectionDrafts[row.providerID]?.setSelected(row.model.id, selected: false)
+        syncSelectionKeys()
         rebuildRows()
     }
 
@@ -303,20 +364,10 @@ final class ModelBenchmarkModel: ObservableObject {
         else {
             return nil
         }
-        let selections = providerModelSelections(
-            [provider],
-            selectedKeys: selectedModelKeys,
-            additionalModelIDs: manualModelIDs
-        )
-        let selectedContexts = modelContextOverrides[providerID] ?? [:]
-        return ProviderModelSelectionUpdate(
+        return selectionDrafts[provider.id]?.update(
             providerID: providerID,
-            modelIDs: selections[providerID] ?? [],
-            modelContexts: selectedContexts,
-            clearedModelContexts: Array(
-                Set(savedModelContextOverrides[providerID]?.keys.map { $0 } ?? [])
-                    .subtracting(modelContextOverrides[providerID]?.keys.map { $0 } ?? [])
-            ).sorted()
+            contexts: modelContextOverrides[providerID] ?? [:],
+            savedContexts: savedModelContextOverrides[providerID] ?? [:]
         )
     }
 
@@ -328,9 +379,8 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func markSelectionSaved(for providerID: String) {
-        let prefix = "\(providerID)\u{1f}"
-        savedModelKeys = Set(savedModelKeys.filter { !$0.hasPrefix(prefix) })
-            .union(Set(selectedModelKeys.filter { $0.hasPrefix(prefix) }))
+        selectionDrafts[providerID]?.markSaved()
+        syncSelectionKeys()
         if let contexts = modelContextOverrides[providerID], !contexts.isEmpty {
             savedModelContextOverrides[providerID] = contexts
         } else {
@@ -340,7 +390,10 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func discardSelectionDrafts() {
-        selectedModelKeys = savedModelKeys
+        for providerID in selectionDrafts.keys {
+            selectionDrafts[providerID]?.discard()
+        }
+        syncSelectionKeys()
         manualModelIDs.removeAll()
         removedManualModelIDs.removeAll()
         modelContextOverrides = savedModelContextOverrides
@@ -349,9 +402,8 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func discardSelectionDraft(for providerID: String) {
-        let prefix = "\(providerID)\u{1f}"
-        selectedModelKeys = Set(selectedModelKeys.filter { !$0.hasPrefix(prefix) })
-            .union(Set(savedModelKeys.filter { $0.hasPrefix(prefix) }))
+        selectionDrafts[providerID]?.discard()
+        syncSelectionKeys()
         manualModelIDs.removeValue(forKey: providerID)
         removedManualModelIDs.removeValue(forKey: providerID)
         if let contexts = savedModelContextOverrides[providerID] {
@@ -433,15 +485,17 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func applyProviderList(_ response: ProviderListResponse, selecting providerID: String?) {
-        let previousSelected = selectedModelKeys
-        let previousSaved = savedModelKeys
         let previousDraftContexts = modelContextOverrides
         let previousSavedContexts = savedModelContextOverrides
-        let changedKeys = previousSelected.union(previousSaved).filter {
-            previousSelected.contains($0) != previousSaved.contains($0)
-        }
+        var refreshedDrafts: [String: ProviderModelSelectionDraft] = [:]
         providers = response.providers
         for provider in providers {
+            var draft = selectionDrafts[provider.id]
+                ?? ProviderModelSelectionDraft(modelIDs: provider.selectedModels, order: provider.modelOrder)
+            if draft.reload(modelIDs: provider.selectedModels, order: provider.modelOrder) {
+                selectionConflictProviderIDs.insert(provider.id)
+            }
+            refreshedDrafts[provider.id] = draft
             let loaded = provider.modelContextOverrides ?? [:]
             let previousSaved = previousSavedContexts[provider.id] ?? [:]
             let availableModelIDs = Set(provider.modelItems.map(\.id))
@@ -474,24 +528,8 @@ final class ModelBenchmarkModel: ObservableObject {
         reconcileManualModelState()
         selectedProviderID = providerID ?? selectedProviderID
             ?? providers.first(where: { $0.kind == .configured })?.id
-        let loadedSaved = selectedProviderModelKeys(providers)
-        for provider in providers where hasSelectionChanges(for: provider.id) {
-            let prefix = "\(provider.id)\u{1f}"
-            let previousProviderSaved = Set(previousSaved.filter { $0.hasPrefix(prefix) })
-            let loadedProviderSaved = Set(loadedSaved.filter { $0.hasPrefix(prefix) })
-            if previousProviderSaved != loadedProviderSaved {
-                selectionConflictProviderIDs.insert(provider.id)
-            }
-        }
-        savedModelKeys = loadedSaved
-        selectedModelKeys = loadedSaved
-        for key in changedKeys {
-            if previousSelected.contains(key) {
-                selectedModelKeys.insert(key)
-            } else {
-                selectedModelKeys.remove(key)
-            }
-        }
+        selectionDrafts = refreshedDrafts
+        syncSelectionKeys()
         rebuildRows()
     }
 
@@ -500,6 +538,7 @@ final class ModelBenchmarkModel: ObservableObject {
         filterOverride: String? = nil,
         sortOverride: [KeyPathComparator<ModelBenchmarkTableRow>]? = nil
     ) {
+        if let sortOverride { tableSortOrder = sortOverride }
         guard let provider = selectedProvider else {
             visibleRows = []
             return
@@ -510,6 +549,9 @@ final class ModelBenchmarkModel: ObservableObject {
             provider,
             additionalModelIDs: manualModelIDs[provider.id] ?? [],
             excludingModelIDs: removedManualModelIDs[provider.id] ?? []
+        )
+        let positions = Dictionary(uniqueKeysWithValues:
+            (selectionDrafts[provider.id]?.modelIDs ?? []).enumerated().map { ($1, $0) }
         )
         let rows = modelItems.compactMap { model -> ModelBenchmarkTableRow? in
             let key = providerModelSelectionKey(providerID: provider.id, modelID: model.id)
@@ -532,12 +574,11 @@ final class ModelBenchmarkModel: ObservableObject {
                 providerID: provider.id,
                 model: model,
                 result: resultCache[key],
-                isSelectedSortValue: selectedModelKeys.contains(key) ? 1 : 0
+                isSelectedSortValue: selectedModelKeys.contains(key) ? 1 : 0,
+                orderPosition: positions[model.id] ?? .max
             )
         }
-        visibleRows = rows.sorted(using: sortOverride ?? [
-            KeyPathComparator(\ModelBenchmarkTableRow.model.id, comparator: .localizedStandard),
-        ])
+        visibleRows = rows.sorted(using: tableSortOrder)
     }
 
     private func reconcileManualModelState() {
@@ -558,11 +599,8 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     private func hasSelectionChanges(for providerID: String) -> Bool {
-        let prefix = "\(providerID)\u{1f}"
-        let selected = Set(selectedModelKeys.filter { $0.hasPrefix(prefix) })
-        let saved = Set(savedModelKeys.filter { $0.hasPrefix(prefix) })
-        return selected != saved
-            || modelContextOverrides[providerID] != savedModelContextOverrides[providerID]
+        selectionDrafts[providerID]?.isDirty == true
+            || (modelContextOverrides[providerID] ?? [:]) != (savedModelContextOverrides[providerID] ?? [:])
     }
 
     private func loadProviders(selecting providerID: String?) async throws {
@@ -575,8 +613,6 @@ final class ModelBenchmarkModel: ObservableObject {
         providers = []
         visibleRows = []
         selectedProviderID = nil
-        selectedModelKeys = []
-        savedModelKeys = []
         setStatus("读取模型列表失败", color: .red)
         presentBenchmarkError(
             title: "读取模型列表失败",
@@ -591,18 +627,8 @@ final class ModelBenchmarkModel: ObservableObject {
             isSavingSelections = false
         }
         setStatus("正在保存模型选择并更新 Codex 目录…", color: .secondary)
-        let selections = providerModelSelections(
-            providers,
-            selectedKeys: selectedModelKeys,
-            additionalModelIDs: manualModelIDs
-        )
-        let selectedContexts = modelContextOverrides
-        let clearedContexts = Dictionary(uniqueKeysWithValues: providers.compactMap { provider in
-            let previous = Set(savedModelContextOverrides[provider.id]?.keys.map { $0 } ?? [])
-            let current = Set(modelContextOverrides[provider.id]?.keys.map { $0 } ?? [])
-            let cleared = Array(previous.subtracting(current)).sorted()
-            return cleared.isEmpty ? nil : (provider.id, cleared)
-        })
+        let updates = providers.compactMap { selectionUpdate(for: $0.id) }
+        for update in updates { _ = try update.arguments() }
         try await runOperationProgress(
             title: "正在保存模型选择",
             phases: ["写入模型选择", "重启本地网关", "刷新 Codex 模型目录", "完成"],
@@ -610,10 +636,12 @@ final class ModelBenchmarkModel: ObservableObject {
             failureTitle: "✗ 保存失败",
             showFailureAlert: false
         ) { progress in
-            try await self.saveSelectionsHandler(selections, selectedContexts, clearedContexts, progress)
+            try await self.saveSelectionsHandler(updates, progress)
         }
-        savedModelKeys = selectedModelKeys
+        for update in updates { selectionDrafts[update.providerID]?.markSaved() }
+        syncSelectionKeys()
         savedModelContextOverrides = modelContextOverrides
+        reloadProviders(selecting: selectedProviderID)
     }
 
     private func beginPolling() {
@@ -719,9 +747,7 @@ struct ModelBenchmarkRootView: View {
     var hasExternalDraft = false
     var isExternallyBusy = false
     @State private var showsManualModelEntry = false
-    @State private var sortOrder: [KeyPathComparator<ModelBenchmarkTableRow>] = [
-        KeyPathComparator(\ModelBenchmarkTableRow.model.id, comparator: .localizedStandard),
-    ]
+    @State private var sortOrder = ModelBenchmarkTableRow.defaultSortOrder
 
     var body: some View {
         VStack(spacing: 0) {
@@ -795,7 +821,7 @@ struct ModelBenchmarkRootView: View {
     private var minimumModelTableWidth: CGFloat {
         modelTableMinimumWidth(
             includesRatio: model.selectedProvider?.presetID == "baidu-oneapi"
-        )
+        ) + 110
     }
 
     @ViewBuilder
@@ -803,6 +829,7 @@ struct ModelBenchmarkRootView: View {
         if model.selectedProvider?.presetID == "baidu-oneapi" {
             Table(model.visibleRows, sortOrder: $sortOrder) {
                 selectedColumn
+                orderColumn
                 modelColumn
                 latencyColumn
                 throughputColumn
@@ -814,6 +841,7 @@ struct ModelBenchmarkRootView: View {
         } else {
             Table(model.visibleRows, sortOrder: $sortOrder) {
                 selectedColumn
+                orderColumn
                 modelColumn
                 latencyColumn
                 throughputColumn
@@ -891,6 +919,28 @@ struct ModelBenchmarkRootView: View {
 
     @ViewBuilder
     private var selectionToolbar: some View {
+        if model.selectedProvider != nil {
+            HStack(spacing: 10) {
+                Picker(AppLocalization.string("provider.modelOrder.title"), selection: Binding(
+                    get: { model.selectedModelOrder },
+                    set: { model.setModelOrder($0); showModelOrder() }
+                )) {
+                    Text(AppLocalization.string("provider.modelOrder.family")).tag(ProviderModelOrder.family)
+                    Text(AppLocalization.string("provider.modelOrder.manual")).tag(ProviderModelOrder.manual)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 260)
+                .disabled(model.isBusy || isExternallyBusy)
+                if model.selectedModelOrder == .family && model.selectedProviderDirty {
+                    Text(AppLocalization.string("provider.modelOrder.defaultHelp"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 10)
+        }
         if showsManualModelEntry {
             HStack(spacing: 8) {
                 TextField("手动输入模型 ID（可不在 /v1/models 中）", text: $model.manualModelID)
@@ -1033,6 +1083,76 @@ struct ModelBenchmarkRootView: View {
                 )
         }
         .width(76)
+    }
+
+    private var orderColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
+        TableColumn(AppLocalization.string("provider.modelOrder.position"),
+                    sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.orderPosition)) { row in
+            HStack(spacing: 5) {
+                if let position = model.modelPosition(row) {
+                    Text("\(position + 1)")
+                        .monospacedDigit()
+                        .frame(minWidth: 18, alignment: .trailing)
+                    Image(systemName: "line.3.horizontal")
+                        .foregroundStyle(.secondary)
+                        .help(AppLocalization.string("provider.modelOrder.drag"))
+                        .accessibilityLabel(AppLocalization.string("provider.modelOrder.drag"))
+                        .onDrag {
+                            let item = NSItemProvider()
+                            guard !model.isBusy, !isExternallyBusy else { return item }
+                            item.registerDataRepresentation(forTypeIdentifier: modelOrderDragType,
+                                                            visibility: .ownProcess) { completion in
+                                completion(Data(row.id.utf8), nil)
+                                return nil
+                            }
+                            return item
+                        }
+                    Button {
+                        if let current = model.modelPosition(row) {
+                            model.moveModel(row, to: current - 1)
+                            showModelOrder()
+                        }
+                    } label: { Image(systemName: "arrow.up") }
+                    .help(AppLocalization.string("provider.modelOrder.up"))
+                    .accessibilityLabel(AppLocalization.string("provider.modelOrder.up") + " " + row.model.id)
+                    .disabled(isExternallyBusy || !model.canMoveModel(row, by: -1))
+                    Button {
+                        if let current = model.modelPosition(row) {
+                            model.moveModel(row, to: current + 1)
+                            showModelOrder()
+                        }
+                    } label: { Image(systemName: "arrow.down") }
+                    .help(AppLocalization.string("provider.modelOrder.down"))
+                    .accessibilityLabel(AppLocalization.string("provider.modelOrder.down") + " " + row.model.id)
+                    .disabled(isExternallyBusy || !model.canMoveModel(row, by: 1))
+                }
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .frame(maxWidth: .infinity, minHeight: 24)
+            .contentShape(Rectangle())
+            .onDrop(of: [modelOrderDragType], isTargeted: nil) { items in
+                guard !model.isBusy, !isExternallyBusy, model.isSelected(row),
+                      let item = items.first(where: { $0.hasItemConformingToTypeIdentifier(modelOrderDragType) })
+                else { return false }
+                item.loadDataRepresentation(forTypeIdentifier: modelOrderDragType) { data, _ in
+                    guard let data, data.count <= 4096, let key = String(data: data, encoding: .utf8)
+                    else { return }
+                    Task { @MainActor in
+                        guard model.selectedProviderID == row.providerID else { return }
+                        model.dropModel(key, onto: row)
+                        showModelOrder()
+                    }
+                }
+                return true
+            }
+        }
+        .width(110)
+    }
+
+    private func showModelOrder() {
+        sortOrder = ModelBenchmarkTableRow.defaultSortOrder
+        model.rebuildRows(sortOverride: sortOrder)
     }
 
     private var modelColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {

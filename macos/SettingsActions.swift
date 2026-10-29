@@ -189,21 +189,7 @@ extension AppDelegate {
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
-                    var arguments = ["providers", "select", update.providerID]
-                    for modelID in update.modelIDs {
-                        arguments.append(contentsOf: ["--model", modelID])
-                    }
-                    for (modelID, contextWindow) in update.modelContexts.sorted(by: {
-                        $0.key.localizedStandardCompare($1.key) == .orderedAscending
-                    }) {
-                        arguments.append(contentsOf: [
-                            "--model-context", "\(modelID)=\(contextWindow)",
-                        ])
-                    }
-                    for modelID in update.clearedModelContexts {
-                        arguments.append(contentsOf: ["--clear-model-context", modelID])
-                    }
-                    _ = try await self.runGateway(arguments)
+                    _ = try await self.runGateway(update.arguments())
                 }
             )
             providerSettingsWindowController?.onClose = { [weak self] in

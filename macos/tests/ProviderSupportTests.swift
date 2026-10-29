@@ -228,37 +228,10 @@ struct ProviderSupportTests {
         precondition(shouldShowModelRatioColumn(for: baidu))
         precondition(!shouldShowModelRatioColumn(for: response.providers[1]))
         precondition(!shouldShowModelRatioColumn(for: nil))
-        let selectedKeys = selectedProviderModelKeys(response.providers)
-        precondition(
-            selectedKeys.contains(
-                providerModelSelectionKey(providerID: baidu.id, modelID: baidu.selectedModels[0])
-            )
-        )
-        let selections = providerModelSelections(response.providers, selectedKeys: selectedKeys)
-        precondition(selections[baidu.id] == baidu.selectedModels)
         let providerOptions = modelSelectionProviderOptions(response.providers)
         precondition(providerOptions.count == response.providers.count)
         precondition(Set(providerOptions.map(\.id)) == Set(response.providers.map(\.id)))
         precondition(modelSelectionProviderOptions(response.providers + [official]).count == 5)
-        let officialSelectedKeys = selectedProviderModelKeys([official])
-        precondition(
-            officialSelectedKeys.contains(
-                providerModelSelectionKey(providerID: "official", modelID: "gpt-5.6-sol")
-            )
-        )
-        precondition(
-            providerModelSelections([official], selectedKeys: officialSelectedKeys)["official"]
-                == ["gpt-5.6-sol"]
-        )
-        let benchmarkColumns = modelBenchmarkColumnDefinitions()
-        precondition(
-            benchmarkColumns.map(\.title)
-                == [
-                    "Codex", "模型", "首 Token", "生成速度", "上下文", "倍率",
-                    "能力",
-                ]
-        )
-        precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
         precondition(benchmarkRatioValue("0.5x") == 0.5)
         precondition(benchmarkRatioValue(nil) == nil)
         let gatewayStatus = try decodeGatewayStatus(

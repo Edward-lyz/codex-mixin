@@ -155,6 +155,54 @@ fn cli_model_order_is_persisted_and_reaches_codex_priorities() {
 }
 
 #[test]
+fn explicit_selection_and_context_updates_preserve_requested_order_mode() {
+    for (mode, expected) in [
+        ("manual", ["Opus 4.8", "Claude Haiku 5.5"]),
+        ("family", ["Claude Haiku 5.5", "Opus 4.8"]),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let catalog = prepare(root, false);
+        let output = select(
+            root,
+            "test",
+            &[
+                "--model-order",
+                mode,
+                "--model",
+                "Opus 4.8",
+                "--model",
+                "Claude Haiku 5.5",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for arguments in [
+            ["--model-context", "Opus 4.8=64000"],
+            ["--clear-model-context", "Opus 4.8"],
+        ] {
+            let output = select(root, "test", &arguments);
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let config = load_stored_config_from_path(&root.join("config.json"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(config.providers[0].model_order.as_str(), mode);
+            assert_eq!(config.providers[0].selected_models, expected);
+            let models = catalog_models(&catalog);
+            assert_eq!(models[0]["slug"], format!("{}-test", expected[0]));
+            assert_eq!(models[1]["slug"], format!("{}-test", expected[1]));
+        }
+    }
+}
+
+#[test]
 fn account_catalog_membership_and_manual_order_reach_codex_together() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();

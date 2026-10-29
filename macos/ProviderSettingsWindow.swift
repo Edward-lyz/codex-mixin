@@ -70,15 +70,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             probeHandler: { providerID in
                 _ = try await runHandler(["provider", "probe", providerID])
             },
-            saveSelectionsHandler: { selections, contexts, clearedContexts, progress in
+            saveSelectionsHandler: { updates, progress in
                 progress.advance(to: 0)
-                for providerID in selections.keys.sorted() {
-                    try await saveModelSelectionHandler(ProviderModelSelectionUpdate(
-                        providerID: providerID,
-                        modelIDs: selections[providerID] ?? [],
-                        modelContexts: contexts[providerID] ?? [:],
-                        clearedModelContexts: clearedContexts[providerID] ?? []
-                    ))
+                for update in updates {
+                    try await saveModelSelectionHandler(update)
                 }
                 try await applyHandler(progress)
             }
@@ -589,6 +584,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         let selectionUpdate = benchmarkModel.selectionUpdate(for: provider.id)
         guard updatePlan != nil || selectionUpdate != nil || model.applyRetryRequired else { return }
+        do {
+            if let selectionUpdate { _ = try selectionUpdate.arguments() }
+        } catch {
+            showBanner(
+                title: AppLocalization.string("provider.modelOrder.title"),
+                message: localizedErrorDescription(error),
+                isError: true
+            )
+            return
+        }
 
         setBusy(true, status: "正在应用 \(provider.displayName) 的更改…")
         Task { @MainActor [weak self] in

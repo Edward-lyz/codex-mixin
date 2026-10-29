@@ -333,6 +333,16 @@
 "context.validation.contextWindowTokens" = "上下文窗口必须是正整数。";
 
 "provider.includeModel" = "是否加入";
+"provider.modelOrder.title" = "模型顺序";
+"provider.modelOrder.family" = "家族与版本";
+"provider.modelOrder.manual" = "手动排序";
+"provider.modelOrder.position" = "顺序";
+"provider.modelOrder.up" = "上移模型";
+"provider.modelOrder.down" = "下移模型";
+"provider.modelOrder.drag" = "拖动以调整已选模型顺序";
+"provider.modelOrder.defaultHelp" = "家族与版本排序会在应用更改后生效。";
+"provider.modelOrder.emptySelection" = "请至少选择一个模型后再应用更改。";
+"provider.modelOrder.noChanges" = "没有需要保存的模型更改。";
 "provider.reviewModelOverride" = "Codex 审查模型覆盖";
 "provider.reviewModel" = "审查模型";
 "provider.reviewModelOverrideDetail" = "独立指定审查模型；关闭时使用默认路由。";
