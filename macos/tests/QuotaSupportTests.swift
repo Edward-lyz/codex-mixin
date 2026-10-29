@@ -7,6 +7,15 @@ enum GatewayError: Error {
 @main
 struct QuotaSupportTests {
     static func main() throws {
+        for (count, expected): (UInt64, String) in [
+            (1_500_000_000, "1.5B"),
+            (999, "999"), (1_000, "1.0K"), (999_949, "999.9K"),
+            (999_950, "1.0M"), (999_950_000, "1.0B"),
+            (1_000_000_000_000, "1.0T"),
+            (UInt64.max, "18.4E"),
+        ] {
+            precondition(formatTokenCount(count) == expected, "\(count): \(formatTokenCount(count)) != \(expected)")
+        }
         let dynamic = try parseProviderQuotaUsage(#"[{"provider_id":"agy","quota_id":"Future/Daily","label":"Future Daily","unit":"percent","remaining":42,"limit":100,"used":58,"reset_at":"2026-10-16T00:00:00Z"}]"#)
         precondition(dynamic[0].unit == "percent" && dynamic[0].remaining == 42)
         precondition(dynamic[0].resetAt == "2026-10-16T00:00:00Z")

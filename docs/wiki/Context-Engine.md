@@ -27,6 +27,10 @@ codex-mixin context config set --enabled true
 ```
 
 macOS、Windows 控制台和 Web 面板也提供「上下文」设置入口，保存使用同一 CLI 流程。
+压缩策略有「激进」和「平和」两档：激进更早提醒模型压缩，平和保留更长上下文，默认选择平和。
+「跟随模型上下文窗口」默认开启，无需输入窗口大小。CLI 可以用
+`codex-mixin context config set --compression-mode aggressive` 切换激进档，
+或用 `--compression-mode gentle` 恢复平和档。
 
 **设置发生变化时，CLI 会自动重启正在运行的网关一次。** 正在进行的请求可能受重启影响，应在请求结束后调整。设置没有变化则不重启；网关原本停止则只保存，不启动。若保存成功但重启失败，命令返回非零退出码；`--json-errors` 会说明 `committed: true`、`stage: "context gateway restart"`，配置不会回滚。
 

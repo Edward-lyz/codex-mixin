@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::args::{ContextCommand, ContextConfigCommand, ContextSessionsCommand};
 
 struct ContextUpdate {
+    compression_mode: Option<String>,
     enabled: Option<bool>,
     growth_threshold_tokens: Option<u64>,
     pressure_ratio: Option<f64>,
@@ -27,6 +28,7 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
         ContextCommand::Config { command } => match command {
             ContextConfigCommand::Get { json: json_output } => config_get(json_output),
             ContextConfigCommand::Set {
+                compression_mode,
                 enabled,
                 growth_threshold_tokens,
                 pressure_ratio,
@@ -41,6 +43,7 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
             } => {
                 config_set(
                     ContextUpdate {
+                        compression_mode,
                         enabled,
                         growth_threshold_tokens,
                         pressure_ratio,
@@ -75,8 +78,18 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
 
 fn config_get(json_output: bool) -> Result<()> {
     let settings = stored_settings()?;
+    let defaults = ContextSettings::default();
+    let compression_mode = if settings.growth_threshold_tokens < defaults.growth_threshold_tokens
+        || settings.pressure_ratio < defaults.pressure_ratio
+        || settings.urgent_ratio < defaults.urgent_ratio
+    {
+        "aggressive"
+    } else {
+        "gentle"
+    };
     let value = json!({
         "context": settings,
+        "compression_mode": compression_mode,
         "config_path": stored_config_path(),
         "database_path": codex_mixin::context::database_path()?,
     });
@@ -85,6 +98,7 @@ fn config_get(json_output: bool) -> Result<()> {
     } else {
         let settings = &value["context"];
         println!("context enabled: {}", settings["enabled"]);
+        println!("compression mode: {compression_mode}");
         println!(
             "growth threshold tokens: {}",
             settings["growth_threshold_tokens"]
@@ -137,9 +151,21 @@ async fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
         })?;
     }
     if json_output {
+        let defaults = ContextSettings::default();
+        let compression_mode = if settings.growth_threshold_tokens
+            < defaults.growth_threshold_tokens
+            || settings.pressure_ratio < defaults.pressure_ratio
+            || settings.urgent_ratio < defaults.urgent_ratio
+        {
+            "aggressive"
+        } else {
+            "gentle"
+        };
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({"context": settings}))?
+            serde_json::to_string_pretty(
+                &json!({"context": settings, "compression_mode": compression_mode})
+            )?
         );
     } else {
         println!("context settings updated");
@@ -150,6 +176,22 @@ async fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
 }
 
 fn apply_update(settings: &mut ContextSettings, update: ContextUpdate) -> Result<()> {
+    if let Some(mode) = update.compression_mode {
+        let defaults = ContextSettings::default();
+        (
+            settings.growth_threshold_tokens,
+            settings.pressure_ratio,
+            settings.urgent_ratio,
+        ) = match mode.as_str() {
+            "aggressive" => (25_000, 0.6, 0.85),
+            "gentle" => (
+                defaults.growth_threshold_tokens,
+                defaults.pressure_ratio,
+                defaults.urgent_ratio,
+            ),
+            _ => bail!("context compression mode must be aggressive or gentle"),
+        };
+    }
     if let Some(enabled) = update.enabled {
         settings.enabled = enabled;
     }
@@ -286,33 +328,64 @@ fn stats(json_output: bool) -> Result<()> {
         return Ok(());
     }
     println!("context enabled: {}", stats.enabled);
-    println!(
-        "sessions: {}  compressions: {}  saved tokens: {}  view tokens: {}",
+    let totals = [
         stats.totals.sessions,
         stats.totals.compressions,
         stats.totals.saved_tokens,
-        stats.totals.view_tokens
+        stats.totals.view_tokens,
+        stats.totals.cache.turns,
+        stats.totals.cache.input_tokens,
+        stats.totals.cache.cached_tokens,
+        stats.totals.cache.output_tokens,
+    ]
+    .map(|count| {
+        super::COUNT_UNITS
+            .iter()
+            .find(|(scale, _)| count >= *scale - *scale / 20_000)
+            .map_or_else(
+                || count.to_string(),
+                |(scale, suffix)| format!("{:.1}{suffix}", count as f64 / *scale as f64),
+            )
+    });
+    println!(
+        "sessions: {}  compressions: {}  saved tokens: {}  view tokens: {}",
+        totals[0], totals[1], totals[2], totals[3]
     );
     println!(
         "cache: turns {}  hit {}  input {}  cached {}  output {}",
-        stats.totals.cache.turns,
+        totals[4],
         stats
             .totals
             .cache
             .hit_percent
             .map_or_else(|| "-".to_owned(), |value| format!("{value:.1}%")),
-        stats.totals.cache.input_tokens,
-        stats.totals.cache.cached_tokens,
-        stats.totals.cache.output_tokens
+        totals[5],
+        totals[6],
+        totals[7]
     );
     for session in stats.sessions {
-        println!(
-            "{}  messages={} compressions={} saved_tokens={} view_tokens={} cache_hit={}",
-            session.display,
+        let counts = [
             session.messages,
             session.compressions,
             session.saved_tokens,
             session.view_tokens,
+        ]
+        .map(|count| {
+            super::COUNT_UNITS
+                .iter()
+                .find(|(scale, _)| count >= *scale - *scale / 20_000)
+                .map_or_else(
+                    || count.to_string(),
+                    |(scale, suffix)| format!("{:.1}{suffix}", count as f64 / *scale as f64),
+                )
+        });
+        println!(
+            "{}  messages={} compressions={} saved_tokens={} view_tokens={} cache_hit={}",
+            session.display,
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3],
             session
                 .cache
                 .hit_percent
@@ -459,6 +532,7 @@ mod tests {
     fn rejects_invalid_settings_before_saving() {
         let mut settings = ContextSettings::default();
         let update = ContextUpdate {
+            compression_mode: None,
             enabled: Some(true),
             growth_threshold_tokens: Some(0),
             pressure_ratio: None,

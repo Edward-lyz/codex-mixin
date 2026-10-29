@@ -5,7 +5,7 @@
 //! answered with the model that was requested. It keeps counters and model
 //! names only, never prompt or completion text.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -191,12 +191,17 @@ impl TurnLedger {
     }
 
     /// Newest turns first.
-    pub(crate) fn query(&self, query: &TurnQuery) -> Vec<TurnUsage> {
+    pub(crate) fn query(
+        &self,
+        query: &TurnQuery,
+        providers: Option<&HashSet<String>>,
+    ) -> Vec<TurnUsage> {
         let turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
         turns
             .iter()
             .rev()
             .filter(|turn| query.since_ms.is_none_or(|since| turn.at_ms >= since))
+            .filter(|turn| providers.is_none_or(|providers| providers.contains(&turn.provider_id)))
             .filter(|turn| {
                 query
                     .provider_id
@@ -379,7 +384,7 @@ mod tests {
             limit: 10,
             ..Default::default()
         };
-        let rows = ledger.query(&query);
+        let rows = ledger.query(&query, None);
         assert_eq!(
             rows.iter().map(|row| row.at_ms).collect::<Vec<_>>(),
             [12, 10]
@@ -395,7 +400,7 @@ mod tests {
         for _ in 0..500 {
             persisted = TurnLedger::load(Some(path.clone()))
                 .unwrap()
-                .query(&all)
+                .query(&all, None)
                 .len();
             if persisted == 3 {
                 break;
@@ -404,12 +409,12 @@ mod tests {
         }
         assert_eq!(persisted, 3, "recorded rows must reach the database");
         let reloaded = TurnLedger::load(Some(path)).unwrap();
-        assert_eq!(reloaded.query(&query), rows);
+        assert_eq!(reloaded.query(&query, None), rows);
         let since = TurnQuery {
             since_ms: Some(11),
             limit: 10,
             ..Default::default()
         };
-        assert_eq!(reloaded.query(&since).len(), 2);
+        assert_eq!(reloaded.query(&since, None).len(), 2);
     }
 }

@@ -281,7 +281,12 @@
 "context.enabled" = "启用上下文引擎";
 "context.restartNote" = "保存更改后自动重启运行中的网关并生效。";
 "context.section.settings" = "上下文引擎";
-"context.section.limits" = "限制";
+"context.section.limits" = "压缩策略";
+"context.compressionMode" = "压缩策略";
+"context.mode.aggressive" = "激进";
+"context.mode.gentle" = "平和";
+"context.mode.aggressiveNote" = "更早压缩，节省更多 token。";
+"context.mode.gentleNote" = "保留更长上下文，稍后再压缩。";
 "context.section.stats" = "上下文统计";
 "context.growthThreshold" = "增长阈值（token）";
 "context.pressureRatio" = "压缩压力比例";

@@ -281,7 +281,12 @@
 "context.enabled" = "Enable context engine";
 "context.restartNote" = "Saving changes automatically restarts the running gateway to apply them.";
 "context.section.settings" = "Context engine";
-"context.section.limits" = "Limits";
+"context.section.limits" = "Compression";
+"context.compressionMode" = "Compression mode";
+"context.mode.aggressive" = "Aggressive";
+"context.mode.gentle" = "Gentle";
+"context.mode.aggressiveNote" = "Compress earlier to save more tokens.";
+"context.mode.gentleNote" = "Keep more context before compressing.";
 "context.section.stats" = "Context statistics";
 "context.growthThreshold" = "Growth threshold (tokens)";
 "context.pressureRatio" = "Pressure ratio";

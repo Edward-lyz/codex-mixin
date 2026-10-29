@@ -27,8 +27,12 @@ internal static class UsageView
     private static long Tokens(JsonElement row) =>
         Count(row, "input_tokens") + Count(row, "cache_read_tokens") + Count(row, "cache_creation_tokens") + Count(row, "output_tokens");
 
-    internal static string Compact(double value) =>
-        value >= 1_000_000 ? $"{value / 1_000_000:0.##}M" : value >= 10_000 ? $"{value / 1000:0.#}K" : $"{value:0}";
+    internal static string Compact(double value)
+    {
+        foreach (var (scale, suffix) in new[] { (1e18, "E"), (1e15, "P"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K") })
+            if (Math.Abs(value) >= (scale == 1e3 ? scale : scale * 0.99995)) return $"{value / scale:0.0}{suffix}";
+        return $"{value:0}";
+    }
 
     internal static UIElement Summary(JsonElement[] daily, JsonElement[] turns, Func<string, string, UIElement?, Border> card)
     {
@@ -59,7 +63,7 @@ internal static class UsageView
     }
 
     /// Stacked daily bars; `split` stacks one segment per provider.
-    internal static UIElement Chart(JsonElement[] daily, int days, bool split, Func<JsonElement, long> metric, string title)
+    internal static UIElement Chart(JsonElement[] daily, IReadOnlyDictionary<string, string> providerNames, int days, bool split, Func<JsonElement, long> metric, string title)
     {
         var today = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / DayMs;
         var (series, buckets, values, totalValue, max) = UsageBuckets.Build(daily, days, split, today, metric, Tokens);
@@ -98,7 +102,7 @@ internal static class UsageView
             {
                 var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
                 item.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = SeriesBrush(index), VerticalAlignment = VerticalAlignment.Center });
-                item.Children.Add(new TextBlock { Text = series[index], Style = Themed("Caption") });
+                item.Children.Add(new TextBlock { Text = providerNames.GetValueOrDefault(series[index], series[index]), Style = Themed("Caption") });
                 legend.Children.Add(item);
             }
             body.Children.Add(legend);
@@ -114,7 +118,7 @@ internal static class UsageView
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
     /// One row per reply, newest first; `onSession` filters to one session.
-    internal static ListView Turns(JsonElement[] turns, Action<string> onSession)
+    internal static ListView Turns(JsonElement[] turns, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession)
     {
         var headers = new[] { "时间", "会话", "模型", "未缓存", "命中缓存", "输出", "思考", "首字", "速度" };
         var list = new ListView
@@ -129,13 +133,13 @@ internal static class UsageView
         list.ContainerContentChanging += (_, args) =>
         {
             if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
-            content.Content = args.InRecycleQueue ? null : Turn(turns[(int)args.Item], onSession);
+            content.Content = args.InRecycleQueue ? null : Turn(turns[(int)args.Item], providerNames, onSession);
             args.Handled = true;
         };
         return list;
     }
 
-    private static Border Turn(JsonElement turn, Action<string> onSession)
+    private static Border Turn(JsonElement turn, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession)
     {
         var session = Json.Text(turn, "session");
         var sessionTitle = Json.OptionalText(turn, "session_display") ?? session;
@@ -151,9 +155,11 @@ internal static class UsageView
         var model = new StackPanel();
         model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });
         var mismatch = turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False;
+        var providerId = Json.Text(turn, "provider_id");
+        var providerName = providerNames.GetValueOrDefault(providerId, providerId);
         model.Children.Add(new TextBlock
         {
-            Text = mismatch ? $"{Json.Text(turn, "provider_id")} · 返回 {Json.OptionalText(turn, "returned_model")}" : Json.Text(turn, "provider_id"),
+            Text = mismatch ? $"{providerName} · 返回 {Json.OptionalText(turn, "returned_model")}" : providerName,
             Style = Themed(mismatch ? "CautionCaption" : "Caption")
         });
         var promptTokens = Count(turn, "input_tokens") + Count(turn, "cache_read_tokens") + Count(turn, "cache_creation_tokens");

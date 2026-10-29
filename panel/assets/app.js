@@ -154,9 +154,9 @@ const numberFormat = new Intl.NumberFormat("zh-CN");
 
 function compact(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "\u2014";
-  if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
-  if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
-  if (Math.abs(value) >= 1e4) return `${(value / 1e3).toFixed(1)}K`;
+  for (const [scale, suffix] of [[1e18, "E"], [1e15, "P"], [1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
+    if (Math.abs(value) >= (scale === 1e3 ? scale : scale * 0.99995)) return `${(value / scale).toFixed(1)}${suffix}`;
+  }
   return numberFormat.format(value);
 }
 
@@ -810,7 +810,7 @@ function usageCard() {
             h(
               "tr",
               null,
-              h("td", null, h("div", { text: row.model_id }), h("div", { class: "row-sub", text: row.provider_id })),
+              h("td", null, h("div", { text: row.model_id }), h("div", { class: "row-sub", text: providerName(row.provider_id) })),
               h("td", { class: "r", text: compact(row.request_count) }),
               h("td", { class: "r", text: compact(row.input_tokens) }),
               h("td", { class: "r", text: fixed(row.cache_hit_percent, 1, "%") }),
@@ -924,7 +924,7 @@ function barChart(title, buckets, keys, metric, format) {
 function usageLegend(keys) {
   if (!usagePage.split || !keys.length) return null;
   return h("ul", { class: "uchart-legend" }, keys.map((key) =>
-    h("li", null, h("span", { class: `quota-swatch ${seriesClass(keys, key)}`, "aria-hidden": "true" }), h("span", { text: key }))));
+    h("li", null, h("span", { class: `quota-swatch ${seriesClass(keys, key)}`, "aria-hidden": "true" }), h("span", { text: providerName(key) }))));
 }
 
 function reasoningText(turn) {
@@ -955,7 +955,7 @@ function turnsTable(turns) {
     const mismatch = turn.model_matches === false;
     return h("td", null,
       h("div", { text: turn.upstream_model_id }),
-      h("div", { class: "row-sub" }, turn.provider_id,
+      h("div", { class: "row-sub" }, providerName(turn.provider_id),
         mismatch ? h("span", { class: "badge badge-bad", title: "上游返回的模型与请求的模型不一致", text: `返回 ${turn.returned_model}` }) : null));
   };
   return h("div", { class: "table-wrap" }, h("table", { class: "table turns" },
@@ -981,13 +981,17 @@ RENDERERS.usage = () => {
   const daily = usagePage.data?.daily || [];
   const allTurns = usagePage.data?.turns || [];
   const providers = [...new Set([...daily.map((row) => row.provider_id), ...allTurns.map((turn) => turn.provider_id)])].sort();
+  if (usagePage.provider && !providers.includes(usagePage.provider)) {
+    usagePage.provider = "";
+    usagePage.session = "";
+  }
   const byProvider = (row) => !usagePage.provider || row.provider_id === usagePage.provider;
   const rows = daily.filter(byProvider);
   const turns = allTurns.filter(byProvider).filter((turn) => !usagePage.session || turn.session === usagePage.session);
 
   const providerSelect = h("select", { class: "select select-sm", "aria-label": "Provider", onchange: (event) => { usagePage.provider = event.target.value; usagePage.session = ""; render({ animate: false }); } },
     h("option", { value: "", text: "全部 Provider", selected: !usagePage.provider }),
-    providers.map((id) => h("option", { value: id, text: id, selected: usagePage.provider === id })));
+    providers.map((id) => h("option", { value: id, text: providerName(id), selected: usagePage.provider === id })));
   const toolbar = h("div", { class: "usage-toolbar" },
     segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), "时间范围"),
     providerSelect,
@@ -1266,7 +1270,14 @@ function configuredProviders() {
 }
 
 function providerName(provider) {
-  return provider.display_name || provider.id;
+  if (typeof provider === "string") {
+    const id = provider;
+    provider = (state.snapshot?.providers || []).find((row) => row.id === id);
+    if (!provider) return id;
+  }
+  const name = provider.display_name || provider.id;
+  return (state.snapshot?.providers || []).filter((row) => (row.display_name || row.id) === name).length > 1
+    ? `${name} (${provider.id})` : name;
 }
 
 function providerIcon(provider, size = 28) {
@@ -2451,21 +2462,27 @@ async function loadContext() {
 function contextSettingsCard(context) {
   const settings = context.settings || {};
   const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: Boolean(settings.enabled), disabled: state.busy, "aria-label": "启用上下文引擎", "data-action": "" });
-  toggle.addEventListener("change", async () => {
-    const enabled = toggle.checked;
-    toggle.disabled = true;
-    await runAction(null, "context_configure", { enabled }, { ok: enabled ? "已开启上下文引擎" : "已关闭上下文引擎" });
-    await loadContext();
+  const mode = h("select", { class: "select", "aria-label": "压缩策略", disabled: state.busy },
+    h("option", { value: "aggressive", text: "激进", selected: context.compression_mode === "aggressive" }),
+    h("option", { value: "gentle", text: "平和", selected: context.compression_mode === "gentle" }));
+  const note = h("div", { class: "row-sub", text: mode.value === "aggressive" ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。" });
+  mode.addEventListener("change", () => {
+    note.textContent = mode.value === "aggressive" ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。";
   });
-  const rows = [
-    ["增长阈值", settings.growth_threshold_tokens ? compact(settings.growth_threshold_tokens) + " tokens" : "\u2014"],
-    ["压力 / 紧急阈值", fixed((settings.pressure_ratio ?? 0) * 100, 0, "%") + " / " + fixed((settings.urgent_ratio ?? 0) * 100, 0, "%")],
-    ["保护最近消息", str(settings.protected_messages) + " 条 · " + compact(settings.protected_tokens ?? 0) + " tokens"],
-    ["内部轮上限", str(settings.max_internal_rounds)],
-    ["上下文窗口", settings.context_window_tokens ? compact(settings.context_window_tokens) + " tokens" : "跟随模型"],
-  ];
+  const followsModel = settings.context_window_tokens == null;
+  const follow = h("input", { class: "switch", type: "checkbox", role: "switch", checked: followsModel, disabled: state.busy, "aria-label": "跟随模型上下文窗口" });
+  const windowInput = h("input", { class: "input", type: "number", min: "1", step: "1", required: true,
+    value: settings.context_window_tokens ?? "", disabled: state.busy || followsModel, "aria-label": "上下文窗口（tokens）" });
+  const windowRow = h("div", { class: "row", hidden: followsModel },
+    h("div", { class: "row-main" }, h("label", { class: "row-title", text: "上下文窗口（tokens）" })), windowInput);
+  follow.addEventListener("change", () => {
+    windowInput.disabled = follow.checked;
+    windowRow.hidden = follow.checked;
+    if (!follow.checked) windowInput.focus();
+  });
+  const save = h("button", { class: "btn btn-primary", type: "submit", text: "保存设置", disabled: state.busy });
   const body = h(
-    "div",
+    "form",
     { class: "rows" },
     h(
       "div",
@@ -2477,15 +2494,20 @@ function contextSettingsCard(context) {
       ),
       toggle,
     ),
-    ...rows.map(([label, value]) =>
-      h(
-        "div",
-        { class: "row" },
-        h("div", { class: "row-main" }, h("div", { class: "row-title", text: label })),
-        h("span", { class: "row-sub", text: value }),
-      ),
-    ),
+    h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: "压缩策略" }), note), mode),
+    h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: "跟随模型上下文窗口" })), follow),
+    windowRow,
+    h("div", { class: "row" }, h("span", { class: "row-sub", text: "保存后自动应用到运行中的网关。" }), save),
   );
+  body.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const params = { enabled: toggle.checked };
+    if (mode.value !== context.compression_mode) params.compression_mode = mode.value;
+    const window = follow.checked ? "none" : windowInput.value;
+    if (window !== (settings.context_window_tokens == null ? "none" : String(settings.context_window_tokens))) params.context_window_tokens = window;
+    await runAction(save, "context_configure", params, { ok: "上下文设置已保存" });
+    await loadContext();
+  });
   return card("上下文引擎", null, body);
 }
 

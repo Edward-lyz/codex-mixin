@@ -18,19 +18,29 @@ pub(crate) async fn usage(json_output: bool, days: Option<u64>) -> anyhow::Resul
         return Ok(());
     }
     for row in rows {
+        let [requests, input, cached, creation, output] = [
+            row.request_count,
+            row.input_tokens,
+            row.cache_read_tokens,
+            row.cache_creation_tokens,
+            row.output_tokens,
+        ]
+        .map(|count| {
+            super::super::COUNT_UNITS
+                .iter()
+                .find(|(scale, _)| count >= *scale - *scale / 20_000)
+                .map_or_else(
+                    || count.to_string(),
+                    |(scale, suffix)| format!("{:.1}{suffix}", count as f64 / *scale as f64),
+                )
+        });
         let cache_hit = row
             .cache_hit_percent
             .map(|percent| format!(", cache hit {percent:.1}%"))
             .unwrap_or_default();
         println!(
             "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}",
-            row.provider_id,
-            row.model_id,
-            row.request_count,
-            row.input_tokens,
-            row.cache_read_tokens,
-            row.cache_creation_tokens,
-            row.output_tokens
+            row.provider_id, row.model_id, requests, input, cached, creation, output
         );
     }
     Ok(())
@@ -82,14 +92,36 @@ pub(crate) async fn usage_daily(json_output: bool, days: Option<u64>) -> anyhow:
             .as_i64()
             .and_then(|day| chrono::DateTime::from_timestamp(day * 86_400, 0))
             .map_or("?".to_owned(), |date| date.format("%Y-%m-%d").to_string());
+        let [requests, input, cached, output] = [
+            "request_count",
+            "input_tokens",
+            "cache_read_tokens",
+            "output_tokens",
+        ]
+        .map(|key| {
+            row[key].as_u64().map_or_else(
+                || row[key].to_string(),
+                |count| {
+                    super::super::COUNT_UNITS
+                        .iter()
+                        .find(|(scale, _)| count >= *scale - *scale / 20_000)
+                        .map_or_else(
+                            || count.to_string(),
+                            |(scale, suffix)| {
+                                format!("{:.1}{suffix}", count as f64 / *scale as f64)
+                            },
+                        )
+                },
+            )
+        });
         println!(
             "{day} {}/{}: {} requests, {} input, {} cached, {} output",
             row["provider_id"].as_str().unwrap_or("?"),
             row["model_id"].as_str().unwrap_or("?"),
-            row["request_count"],
-            row["input_tokens"],
-            row["cache_read_tokens"],
-            row["output_tokens"],
+            requests,
+            input,
+            cached,
+            output,
         );
     }
     Ok(())
@@ -133,9 +165,18 @@ pub(crate) async fn usage_turns(
 fn turn_line(row: &serde_json::Value) -> String {
     let text = |key: &str| row[key].as_str().unwrap_or("?").to_owned();
     let count = |key: &str| {
-        row[key]
-            .as_u64()
-            .map_or("-".to_owned(), |value| value.to_string())
+        row[key].as_u64().map_or_else(
+            || "-".to_owned(),
+            |count| {
+                super::super::COUNT_UNITS
+                    .iter()
+                    .find(|(scale, _)| count >= *scale - *scale / 20_000)
+                    .map_or_else(
+                        || count.to_string(),
+                        |(scale, suffix)| format!("{:.1}{suffix}", count as f64 / *scale as f64),
+                    )
+            },
+        )
     };
     let cache = row["cache_hit_percent"]
         .as_f64()
@@ -191,6 +232,16 @@ mod tests {
             turn_line(&row),
             "ab12cd34 baidu/glm-5.2 (returned glm-4.6): input 10, cached 30 (75.0%), output 5, reasoning -"
         );
+        let large = serde_json::json!({
+            "session": "fixture", "provider_id": "p", "upstream_model_id": "m",
+            "input_tokens": 1_500_000_000_u64, "cache_read_tokens": 1_000_000_000_000_u64,
+            "output_tokens": 999_950, "reasoning_tokens": u64::MAX
+        });
+        assert_eq!(
+            turn_line(&large),
+            "fixture p/m: input 1.5B, cached 1.0T (-), output 1.0M, reasoning 18.4E"
+        );
+        assert_eq!(large["input_tokens"], 1_500_000_000_u64);
     }
 
     #[test]

@@ -365,6 +365,7 @@ pub(crate) struct TokenUsageAggregator {
     persist_path: Option<PathBuf>,
     turns: TurnLedger,
     oneapi_providers: HashSet<String>,
+    configured_providers: Option<HashSet<String>>,
 }
 
 impl TokenUsageAggregator {
@@ -381,6 +382,7 @@ impl TokenUsageAggregator {
             turns: TurnLedger::load(path.clone())?,
             persist_path: path,
             oneapi_providers: HashSet::new(),
+            configured_providers: None,
         })
     }
 
@@ -388,6 +390,15 @@ impl TokenUsageAggregator {
         mut self,
         providers: &[crate::provider::ProviderDefinition],
     ) -> Self {
+        // Official forwarding is built in and has no custom provider entry.
+        // Keep history on disk so re-adding a provider restores its usage.
+        self.configured_providers = Some(
+            providers
+                .iter()
+                .map(|provider| provider.id.clone())
+                .chain(std::iter::once("official".to_owned()))
+                .collect(),
+        );
         self.oneapi_providers = providers
             .iter()
             .filter(|provider| {
@@ -404,7 +415,7 @@ impl TokenUsageAggregator {
     }
 
     pub(crate) fn turns(&self, query: &TurnQuery) -> Vec<TurnUsage> {
-        let mut turns = self.turns.query(query);
+        let mut turns = self.turns.query(query, self.configured_providers.as_ref());
         for turn in &mut turns {
             if !self.cache_metrics_available(&turn.provider_id, &turn.upstream_model_id) {
                 turn.cache_hit_percent = None;
@@ -505,6 +516,9 @@ impl TokenUsageAggregator {
 
     fn finalize_entries(&self, entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsage> {
         let mut entries = finalize_usage(entries);
+        if let Some(providers) = &self.configured_providers {
+            entries.retain(|entry| providers.contains(&entry.provider_id));
+        }
         for entry in &mut entries {
             if !self.cache_metrics_available(&entry.provider_id, &entry.model_id) {
                 entry.cache_hit_percent = None;
@@ -533,6 +547,11 @@ impl TokenUsageAggregator {
             .daily_entries
             .iter()
             .filter(|((day, _, _), _)| *day >= first_day)
+            .filter(|((_, provider, _), _)| {
+                self.configured_providers
+                    .as_ref()
+                    .is_none_or(|providers| providers.contains(provider))
+            })
             .map(|((day, _, _), usage)| (*day, usage.clone()))
             .collect::<Vec<_>>();
         drop(state);
@@ -755,6 +774,103 @@ impl UpstreamCacheUsage {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn usage_queries_exclude_removed_providers_without_erasing_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.sqlite3");
+        let counters = UpstreamCacheUsage {
+            input_tokens: Some(1_500_000_000),
+            output_tokens: Some(100),
+            ..Default::default()
+        };
+        for provider in ["current", "removed", "official"] {
+            persist_usage_delta(&path, provider, "m", &counters).unwrap();
+        }
+        let usage = TokenUsageAggregator {
+            state: Mutex::new(load_persisted_usage(&path).unwrap()),
+            turns: TurnLedger::load(None).unwrap(),
+            ..Default::default()
+        }
+        .with_providers(&[crate::provider::custom_provider("current", "unused")]);
+        for (at_ms, provider) in [(1, "current"), (2, "official"), (3, "removed")] {
+            usage.record_turn(TurnUsage {
+                at_ms,
+                session: "fixture".to_owned(),
+                session_display: None,
+                provider_id: provider.to_owned(),
+                catalog_slug: "m".to_owned(),
+                upstream_model_id: "m".to_owned(),
+                returned_model: None,
+                model_matches: None,
+                protocol: "responses".to_owned(),
+                prefix_state: "new".to_owned(),
+                input_tokens: Some(1_500_000_000),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                output_tokens: Some(100),
+                reasoning_tokens: None,
+                reasoning_chars: 0,
+                cache_hit_percent: None,
+                ttft_ms: None,
+                output_tps: None,
+            });
+        }
+        for rows in [
+            usage.snapshot(),
+            usage.snapshot_for_days(1).unwrap(),
+            usage
+                .daily_series(1)
+                .unwrap()
+                .into_iter()
+                .map(|row| row.usage)
+                .collect(),
+        ] {
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row.provider_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["current", "official"]
+            );
+            assert_eq!(
+                serde_json::to_value(&rows).unwrap()[0]["input_tokens"],
+                1_500_000_000_u64
+            );
+        }
+        let rows = usage.turns(&TurnQuery {
+            limit: 1,
+            ..Default::default()
+        });
+        assert_eq!(
+            rows.len(),
+            1,
+            "provider scope must be applied before the limit"
+        );
+        assert_eq!(rows[0].provider_id, "official");
+        assert!(
+            usage
+                .turns(&TurnQuery {
+                    provider_id: Some("removed".to_owned()),
+                    limit: 10,
+                    ..Default::default()
+                })
+                .is_empty()
+        );
+        assert_eq!(load_persisted_usage(&path).unwrap().entries.len(), 3);
+        let restored = usage.with_providers(&[
+            crate::provider::custom_provider("current", "unused"),
+            crate::provider::custom_provider("removed", "unused"),
+        ]);
+        assert_eq!(restored.snapshot().len(), 3);
+        assert_eq!(
+            restored.turns(&TurnQuery {
+                limit: 1,
+                ..Default::default()
+            })[0]
+                .provider_id,
+            "removed"
+        );
+    }
+
     #[test]
     fn excludes_legacy_oneapi_counters_after_reload() {
         let directory = tempfile::tempdir().unwrap();
@@ -772,6 +888,7 @@ mod tests {
             turns: TurnLedger::load(Some(path.clone())).unwrap(),
             persist_path: Some(path),
             oneapi_providers: HashSet::new(),
+            configured_providers: None,
         }
         .with_providers(&[crate::provider::baidu_oneapi_provider("renamed", "unused")]);
         for rows in [

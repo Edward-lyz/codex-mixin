@@ -385,16 +385,20 @@ Check("context contract rejects unknown values", async () =>
     Assert(cache.HitPercent is null && cache.InputTokens == 32000,
         "Unavailable cache metrics must retain billed tokens");
     var valid = Parse("""
-        {"context":{"enabled":true,"growth_threshold_tokens":80000,"pressure_ratio":0.6,"urgent_ratio":0.8,"protected_messages":8,"protected_tokens":24000,"max_internal_rounds":2,"max_tier":2,"guidance_only":false,"context_window_tokens":128000},"config_path":"/tmp/config.json","database_path":"/tmp/context.db"}
+        {"compression_mode":"aggressive","context":{"enabled":true,"growth_threshold_tokens":80000,"pressure_ratio":0.6,"urgent_ratio":0.8,"protected_messages":8,"protected_tokens":24000,"max_internal_rounds":2,"max_tier":2,"guidance_only":false,"context_window_tokens":128000},"config_path":"/tmp/config.json","database_path":"/tmp/context.db"}
         """);
     var config = ContextContract.ParseConfig(valid);
     Assert(config.Settings.GrowthThresholdTokens == 80000 && config.Settings.ContextWindowTokens == 128000,
         "Valid context settings were not parsed");
+    Assert(config.Settings.CompressionMode == "aggressive", "Compression mode must come from the CLI");
 });
 Check("context save sends only changed fields", () =>
 {
     var stored = new ContextSettings(true, 80000, 0.6, 0.8, 8, 24000, 2, 2, false, 128000);
     Assert(ContextContract.SaveArguments(stored, stored) is null, "Unchanged settings must not call the CLI");
+    var modeArguments = ContextContract.SaveArguments(stored, stored with { CompressionMode = "aggressive" });
+    Assert(modeArguments is not null && modeArguments.SequenceEqual(["context", "config", "set", "--compression-mode", "aggressive"]),
+        "The shell must send the mode without duplicating its thresholds");
     var edited = stored with { Enabled = false, ContextWindowTokens = null };
     var arguments = ContextContract.SaveArguments(stored, edited);
     Assert(arguments is not null && arguments.SequenceEqual(["context", "config", "set", "--enabled", "false", "--context-window-tokens", "none"]),

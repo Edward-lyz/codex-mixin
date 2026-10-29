@@ -43,7 +43,14 @@ extension AppDelegate {
                 async let turns = self.runGateway([
                     "usage", "--turns", "--json", "--days", "\(days)", "--limit", "500",
                 ])
-                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns))
+                async let providerList = self.runGateway(["providers", "list", "--json"])
+                let providers = try decodeProviderList(try await providerList).providers
+                let byName = Dictionary(grouping: providers, by: \.displayName)
+                let names = Dictionary(uniqueKeysWithValues: providers.map { provider in
+                    (provider.id, byName[provider.displayName]?.count == 1
+                        ? provider.displayName : "\(provider.displayName) (\(provider.id))")
+                })
+                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns), names)
             }
             let contextModel = ContextSettingsModel { [weak self] in
                 guard let self else { throw GatewayError.command("Codex Mixin 已退出") }

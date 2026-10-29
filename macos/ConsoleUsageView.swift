@@ -12,7 +12,9 @@ enum ConsoleUsageRange: Int, CaseIterable, Identifiable {
 
 @MainActor
 final class ConsoleUsageModel: ObservableObject {
-    typealias Loader = (_ days: Int) async throws -> ([DailyUsageRecord], [TurnUsageRecord])
+    typealias Loader = (_ days: Int) async throws -> (
+        [DailyUsageRecord], [TurnUsageRecord], [String: String]
+    )
 
     @Published var range = ConsoleUsageRange.week
     @Published var split = false
@@ -20,6 +22,7 @@ final class ConsoleUsageModel: ObservableObject {
     @Published var sessionFilter: String?
     @Published private(set) var daily: [DailyUsageRecord] = []
     @Published private(set) var turns: [TurnUsageRecord] = []
+    @Published private(set) var providerNames: [String: String] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     private let loader: Loader
@@ -55,7 +58,11 @@ final class ConsoleUsageModel: ObservableObject {
         do {
             let result = try await loader(days)
             guard generation == loadGeneration else { return }
-            (daily, turns) = result
+            (daily, turns, providerNames) = result
+            if let providerFilter, !providers.contains(providerFilter) {
+                self.providerFilter = nil
+                sessionFilter = nil
+            }
             errorMessage = nil
         } catch {
             guard generation == loadGeneration else { return }
@@ -107,7 +114,9 @@ struct ConsoleUsageView: View {
                 set: { model.providerFilter = $0; model.sessionFilter = nil }
             )) {
                 Text(AppLocalization.string("console.usage.allProviders")).tag(String?.none)
-                ForEach(model.providers, id: \.self) { Text($0).tag(String?.some($0)) }
+                ForEach(model.providers, id: \.self) { provider in
+                    Text(model.providerNames[provider] ?? provider).tag(String?.some(provider))
+                }
             }
             .fixedSize()
             Picker(AppLocalization.string("console.usage.grouping"), selection: $model.split) {
@@ -183,7 +192,11 @@ struct ConsoleUsageView: View {
                     x: .value("Day", point.dayLabel),
                     y: .value(title, value(point))
                 )
-                .foregroundStyle(by: .value("Provider", point.series))
+                .foregroundStyle(by: .value("Provider", model.providerNames[point.series] ?? point.series))
+            }
+            .chartYAxis {
+                AxisMarks(format: FloatingPointFormatStyle<Double>(locale: Locale(identifier: "en_US"))
+                    .notation(.compactName).precision(.fractionLength(0...1)))
             }
             .chartLegend(model.split ? .visible : .hidden)
         }
@@ -209,7 +222,7 @@ struct ConsoleUsageView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(turn.upstreamModelID)
                     HStack(spacing: 4) {
-                        Text(turn.providerID).foregroundStyle(.secondary)
+                        Text(model.providerNames[turn.providerID] ?? turn.providerID).foregroundStyle(.secondary)
                         if turn.modelMatches == false, let returned = turn.returnedModel {
                             Text(AppLocalization.string("console.usage.returned", returned))
                                 .foregroundStyle(.red)

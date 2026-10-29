@@ -19,6 +19,7 @@ struct ContextSettingsTests {
         let getJSON = """
         {
           "config_path": "/tmp/config.json",
+          "compression_mode": "gentle",
           "context": {
             "context_window_tokens": null,
             "enabled": true,
@@ -44,7 +45,7 @@ struct ContextSettingsTests {
 
         // `config set` returns only the `context` object.
         let setJSON = """
-        {"context": {"context_window_tokens": 128000, "enabled": false,
+        {"compression_mode": "aggressive", "context": {"context_window_tokens": 128000, "enabled": false,
           "growth_threshold_tokens": 40000, "max_internal_rounds": 2,
           "pressure_ratio": 0.6, "protected_messages": 3,
           "protected_tokens": 2000, "urgent_ratio": 0.9}}
@@ -52,6 +53,14 @@ struct ContextSettingsTests {
         let updated = try parseContextSettings(setJSON)
         precondition(updated.contextWindowTokens == 128000)
         precondition(!updated.enabled)
+        precondition(updated.compressionMode == "aggressive")
+        var modeDraft = ContextSettingsDraft(settings: updated)
+        modeDraft.compressionMode = "gentle"
+        guard case .success(let modeSettings) = modeDraft.validated() else {
+            preconditionFailure("mode change should validate")
+        }
+        precondition(contextSettingsArguments(from: updated, to: modeSettings)
+            == ["context", "config", "set", "--compression-mode", "gentle", "--json", "--json-errors"])
 
         // A malformed payload fails as a structured error, not a crash.
         do {

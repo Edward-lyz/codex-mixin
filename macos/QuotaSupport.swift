@@ -79,7 +79,11 @@ func parseProviderQuotaUsage(_ rawJSON: String) throws -> [ProviderQuotaUsage] {
 }
 
 func formatTokenCount(_ count: UInt64) -> String {
-    if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
-    if count >= 1_000 { return String(format: "%.1fk", Double(count) / 1_000) }
+    for (scale, suffix) in [(1e18, "E"), (1e15, "P"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")] {
+        // Promote before rounding would produce an unreadable 1000.0M.
+        if Double(count) >= (scale == 1e3 ? scale : scale * 0.99995) {
+            return String(format: "%.1f%@", Double(count) / scale, suffix)
+        }
+    }
     return "\(count)"
 }

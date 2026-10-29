@@ -19,8 +19,17 @@
 
 ```bash
 codex-mixin context config set --enabled true
+codex-mixin context config set --compression-mode aggressive
 codex-mixin context config get --json
 ```
+
+macOS、Windows 和 Web 设置页统一提供「激进 / 平和」两档，不展示内部阈值。
+平和是默认档；激进将增长门槛降到 25000 tokens、压力/紧急占比降到 0.6/0.85，
+平和使用下表默认值。CLI 接受 `--compression-mode aggressive|gentle`，与三个阈值参数互斥；
+两档只改变这三个阈值，保留保护区、内部轮次和显式窗口覆盖。`config get/set --json`
+在顶层返回 `compression_mode`，GUI 只传档位名；已有自定义阈值不因无关保存而重置，
+低于默认门槛的自定义配置显示为激进，其余显示为平和。
+跟随模型窗口默认开启（`context_window_tokens: null`），关闭后才显示手动窗口输入。
 
 可调项（默认值见 `src/config/context.rs`）：
 

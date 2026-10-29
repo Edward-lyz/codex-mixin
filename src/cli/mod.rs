@@ -14,6 +14,16 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use codex_mixin::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
+// One-decimal rounding promotes at scale - scale / 20_000.
+const COUNT_UNITS: [(u64, &str); 6] = [
+    (1_000_000_000_000_000_000, "E"),
+    (1_000_000_000_000_000, "P"),
+    (1_000_000_000_000, "T"),
+    (1_000_000_000, "B"),
+    (1_000_000, "M"),
+    (1_000, "K"),
+];
+
 mod agents;
 mod benchmark_proxy;
 mod claude;

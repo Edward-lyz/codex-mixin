@@ -971,6 +971,9 @@ pub(super) enum ContextConfigCommand {
     },
     /// Update one or more context settings.
     Set {
+        /// Compression timing: aggressive compresses earlier; gentle keeps more context.
+        #[arg(long, value_parser = ["aggressive", "gentle"], conflicts_with_all = ["growth_threshold_tokens", "pressure_ratio", "urgent_ratio"])]
+        compression_mode: Option<String>,
         #[arg(long)]
         enabled: Option<bool>,
         #[arg(long)]

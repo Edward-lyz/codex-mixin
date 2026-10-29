@@ -88,6 +88,8 @@ pub(super) enum PanelAction {
     ContextConfigure {
         enabled: bool,
         #[serde(default)]
+        compression_mode: Option<String>,
+        #[serde(default)]
         growth_threshold_tokens: Option<u64>,
         #[serde(default)]
         protected_messages: Option<usize>,
@@ -470,6 +472,7 @@ impl PanelAction {
             }
             Self::ContextConfigure {
                 enabled,
+                compression_mode,
                 growth_threshold_tokens,
                 protected_messages,
                 max_internal_rounds,
@@ -477,6 +480,9 @@ impl PanelAction {
             } => {
                 let mut invocation = CliInvocation::fixed(&["context", "config", "set"]);
                 invocation.push(format!("--enabled={enabled}"));
+                if let Some(mode) = compression_mode {
+                    invocation.push_value("compression-mode", mode)?;
+                }
                 if let Some(tokens) = growth_threshold_tokens {
                     if *tokens == 0 {
                         return Err("growth threshold tokens must be positive".to_owned());

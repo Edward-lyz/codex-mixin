@@ -364,6 +364,7 @@ async fn context_stats() -> Result<Json<Value>, ApiError> {
     )?;
     Ok(Json(json!({
         "settings": config.get("context").cloned().unwrap_or(Value::Null),
+        "compression_mode": config.get("compression_mode").cloned().unwrap_or(Value::Null),
         "config_path": config.get("config_path").cloned().unwrap_or(Value::Null),
         "database_path": stats.get("database_path").cloned().unwrap_or(Value::Null),
         "totals": stats.get("totals").cloned().unwrap_or(Value::Null),

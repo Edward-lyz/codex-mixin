@@ -81,6 +81,8 @@ fn context_cli_reports_settings_and_empty_stats() {
     ));
     assert_eq!(got["context"]["enabled"], false);
     assert_eq!(got["context"]["growth_threshold_tokens"], 50000);
+    assert_eq!(got["compression_mode"], "gentle");
+    assert_eq!(got["context"]["context_window_tokens"], Value::Null);
     assert_eq!(got["database_path"], database.display().to_string());
 
     let stats = successful(cli(
@@ -96,6 +98,110 @@ fn context_cli_reports_settings_and_empty_stats() {
         !database.exists(),
         "reading statistics must not create the archive"
     );
+}
+
+#[test]
+fn context_compression_modes_are_persisted_by_the_cli() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    for (mode, growth, pressure, urgent) in [
+        ("aggressive", 25_000, 0.6, 0.85),
+        ("gentle", 50_000, 0.75, 0.95),
+    ] {
+        let saved = successful(cli(
+            directory.path(),
+            &database,
+            &[
+                "context",
+                "config",
+                "set",
+                "--compression-mode",
+                mode,
+                "--json",
+            ],
+        ));
+        assert_eq!(saved["compression_mode"], mode);
+        assert_eq!(saved["context"]["growth_threshold_tokens"], growth);
+        assert_eq!(saved["context"]["pressure_ratio"], pressure);
+        assert_eq!(saved["context"]["urgent_ratio"], urgent);
+        assert_eq!(saved["context"]["context_window_tokens"], Value::Null);
+        let reopened = successful(cli(
+            directory.path(),
+            &database,
+            &["context", "config", "get", "--json"],
+        ));
+        assert_eq!(reopened["compression_mode"], mode);
+        assert_eq!(reopened["context"], saved["context"]);
+    }
+    let rejected = cli(
+        directory.path(),
+        &database,
+        &[
+            "context",
+            "config",
+            "set",
+            "--compression-mode",
+            "unknown",
+            "--json",
+        ],
+    );
+    assert!(!rejected.status.success());
+    let reopened = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "config", "get", "--json"],
+    ));
+    assert_eq!(reopened["compression_mode"], "gentle");
+    assert!(!directory.path().join("runtime.json").exists());
+    successful(cli(
+        directory.path(),
+        &database,
+        &[
+            "context",
+            "config",
+            "set",
+            "--context-window-tokens",
+            "128000",
+            "--protected-tokens",
+            "10000",
+            "--json",
+        ],
+    ));
+    let manual = successful(cli(
+        directory.path(),
+        &database,
+        &[
+            "context",
+            "config",
+            "set",
+            "--compression-mode",
+            "aggressive",
+            "--json",
+        ],
+    ));
+    assert_eq!(manual["context"]["context_window_tokens"], 128000);
+    assert_eq!(manual["context"]["protected_tokens"], 10000);
+    let conflicting = cli(
+        directory.path(),
+        &database,
+        &[
+            "context",
+            "config",
+            "set",
+            "--compression-mode",
+            "gentle",
+            "--pressure-ratio",
+            "0.4",
+            "--json",
+        ],
+    );
+    assert!(!conflicting.status.success());
+    let unchanged = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "config", "get", "--json"],
+    ));
+    assert_eq!(unchanged["context"], manual["context"]);
 }
 
 #[test]
@@ -284,6 +390,24 @@ fn context_cli_reports_compressed_archive() {
     assert_eq!(session_row["display"], "codex / please start the task");
     assert_eq!(session_row["compressions"], 1);
     assert!(session_row["view_tokens"].as_u64().unwrap() > 0);
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute(
+            "UPDATE blocks SET covered_tokens = replacement_tokens + 1500000000",
+            [],
+        )
+        .unwrap();
+    let large = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--json"],
+    ));
+    assert_eq!(large["totals"]["saved_tokens"], 1_500_000_000_u64);
+    let human = cli(directory.path(), &database, &["context", "stats"]);
+    assert!(human.status.success());
+    let text = String::from_utf8(human.stdout).unwrap();
+    assert!(text.contains("saved tokens: 1.5B"), "{text}");
+    assert!(text.contains("saved_tokens=1.5B"), "{text}");
 }
 
 #[test]

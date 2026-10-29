@@ -1301,6 +1301,7 @@ public sealed partial class MainWindow : Window
         filters.Children.Add(range); filters.Children.Add(grouping);
         var usageBody = new StackPanel { Spacing = 12 };
         JsonElement[] daily = [], turns = [];
+        Dictionary<string, string> providerNames = [];
         string? session = null;
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
         var summaryHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -1314,7 +1315,7 @@ public sealed partial class MainWindow : Window
             var sessionTitle = shown.Length == 0 ? session : Json.OptionalText(shown[0], "session_display") ?? session;
             var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {sessionTitle} · {shown.Length} 条";
             turnsHost.Content = Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
-                : new Border { Child = UsageView.Turns(shown, tag => { session = session == tag ? null : tag; RenderTurns(); }), Style = Themed("ListCard") });
+                : new Border { Child = UsageView.Turns(shown, providerNames, tag => { session = session == tag ? null : tag; RenderTurns(); }), Style = Themed("ListCard") });
         }
         void RenderCharts()
         {
@@ -1322,8 +1323,8 @@ public sealed partial class MainWindow : Window
             var charts = new Grid { ColumnSpacing = 24 };
             charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            charts.Children.Add(UsageView.Chart(daily, Days(), split, UsageView.DailyTokens, "Tokens"));
-            var requests = UsageView.Chart(daily, Days(), split, UsageView.DailyRequests, "请求次数");
+            charts.Children.Add(UsageView.Chart(daily, providerNames, Days(), split, UsageView.DailyTokens, "Tokens"));
+            var requests = UsageView.Chart(daily, providerNames, Days(), split, UsageView.DailyRequests, "请求次数");
             Grid.SetColumn((FrameworkElement)requests, 1); charts.Children.Add(requests);
             chartsHost.Content = Card("每日用量", split ? "按 Provider 拆分" : "全部 Provider 聚合", charts);
         }
@@ -1335,8 +1336,17 @@ public sealed partial class MainWindow : Window
             {
                 var snapshots = await Task.WhenAll(
                     Client.QueryAsync(["usage", "--daily", "--json", "--days", days], cancellation),
-                    Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation));
+                    Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation),
+                    Client.QueryAsync(["providers", "list", "--json"], cancellation));
                 daily = Json.Rows(snapshots[0]); turns = Json.Rows(snapshots[1]);
+                var listedProviders = Json.Rows(Json.Field(snapshots[2], "providers"));
+                var byName = listedProviders.GroupBy(provider => Json.Text(provider, "display_name"))
+                    .ToDictionary(group => group.Key, group => group.Count());
+                providerNames = listedProviders.ToDictionary(provider => Json.Text(provider, "id"), provider =>
+                {
+                    var name = Json.Text(provider, "display_name");
+                    return byName[name] == 1 ? name : $"{name} ({Json.Text(provider, "id")})";
+                });
                 session = null;
                 if (usageBody.Children.Count == 0)
                 {

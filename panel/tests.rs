@@ -224,6 +224,23 @@ fn fixed_actions_map_to_their_cli_commands() {
 
 #[test]
 fn context_settings_map_to_the_context_cli() {
+    let preset = action(json!({"action":"context_configure", "params": {
+        "enabled": true, "compression_mode": "aggressive", "context_window_tokens": "none"
+    }}))
+    .invocation()
+    .unwrap();
+    assert_eq!(
+        preset.args,
+        [
+            "context",
+            "config",
+            "set",
+            "--enabled=true",
+            "--compression-mode=aggressive",
+            "--context-window-tokens=none",
+            "--json"
+        ]
+    );
     let invocation = action(json!({
         "action": "context_configure",
         "params": {

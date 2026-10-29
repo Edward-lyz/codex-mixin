@@ -47,42 +47,25 @@ public sealed partial class MainWindow
             IsChecked = stored.Enabled
         };
         AutomationProperties.SetAutomationId(enabled, "context-enabled");
-        var growth = Amount("增长阈值（tokens）", stored.GrowthThresholdTokens, "context-growth-threshold");
+        var mode = new ComboBox { Header = "压缩策略", ItemsSource = new[] { "激进", "平和" },
+            SelectedIndex = stored.CompressionMode == "aggressive" ? 0 : 1, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var followsModel = new CheckBox { Content = "跟随模型上下文窗口", IsChecked = stored.ContextWindowTokens is null };
         var window = Amount("上下文窗口（tokens）", stored.ContextWindowTokens, "context-window-tokens");
-        window.PlaceholderText = "留空表示跟随模型";
-        var pressure = Fraction("压力比例", stored.PressureRatio, "context-pressure-ratio");
-        var urgent = Fraction("紧急比例", stored.UrgentRatio, "context-urgent-ratio");
-        var protectedMessages = Amount("保护消息数", stored.ProtectedMessages, "context-protected-messages");
-        var protectedTokens = Amount("保护 token 数", stored.ProtectedTokens, "context-protected-tokens");
-        var rounds = Amount("内部续轮上限", stored.MaxInternalRounds, "context-max-internal-rounds");
-
-        var fields = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
-        for (var column = 0; column < 2; column++)
-            fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var cells = new FrameworkElement[] { growth, window, pressure, urgent, protectedMessages, protectedTokens, rounds };
-        for (var index = 0; index < cells.Length; index++)
-        {
-            Grid.SetRow(cells[index], index / 2);
-            Grid.SetColumn(cells[index], index % 2);
-            fields.Children.Add(cells[index]);
-        }
-        fields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        fields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        fields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        fields.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        window.Visibility = stored.ContextWindowTokens is null ? Visibility.Collapsed : Visibility.Visible;
+        followsModel.Checked += (_, _) => window.Visibility = Visibility.Collapsed;
+        followsModel.Unchecked += (_, _) => window.Visibility = Visibility.Visible;
+        var note = new TextBlock { Text = stored.CompressionMode == "aggressive"
+            ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。", TextWrapping = TextWrapping.Wrap };
+        mode.SelectionChanged += (_, _) => note.Text = mode.SelectedIndex == 0
+            ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。";
 
         async Task SaveAsync()
         {
             var edited = stored with
             {
                 Enabled = enabled.IsChecked == true,
-                GrowthThresholdTokens = Whole(growth, "增长阈值"),
-                PressureRatio = FractionValue(pressure, "压力比例"),
-                UrgentRatio = FractionValue(urgent, "紧急比例"),
-                ProtectedMessages = Whole(protectedMessages, "保护消息数"),
-                ProtectedTokens = Whole(protectedTokens, "保护 token 数"),
-                MaxInternalRounds = Whole(rounds, "内部续轮上限"),
-                ContextWindowTokens = WindowTokens(window)
+                CompressionMode = mode.SelectedIndex == 0 ? "aggressive" : "gentle",
+                ContextWindowTokens = followsModel.IsChecked == true ? null : Whole(window, "上下文窗口 token 数")
             };
             if (ContextContract.SaveArguments(stored, edited) is not { } arguments)
             {
@@ -99,11 +82,16 @@ public sealed partial class MainWindow
         ApplyChanges.Content = "保存设置";
         ToolTipService.SetToolTip(ApplyChanges, "保存更改后自动重启运行中的网关并生效。");
         TrackDraft(enabled);
-        foreach (var field in cells) TrackDraft(field);
+        TrackDraft(mode);
+        TrackDraft(followsModel);
+        TrackDraft(window);
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(enabled);
-        body.Children.Add(fields);
+        body.Children.Add(mode);
+        body.Children.Add(note);
+        body.Children.Add(followsModel);
+        body.Children.Add(window);
         return Card("上下文引擎", "", body);
     }
 
@@ -232,14 +220,6 @@ public sealed partial class MainWindow
         return box;
     }
 
-    private static NumberBox Fraction(string header, double value, string id)
-    {
-        var box = new NumberBox { Header = header, Value = value, MinWidth = 180 };
-        AutomationProperties.SetAutomationId(box, id);
-        AutomationProperties.SetName(box, header);
-        return box;
-    }
-
     // NumberBox holds a double; integers are still validated here so a fractional
     // entry never silently reaches the CLI. Range checks stay in the CLI.
     private static long Whole(NumberBox box, string label)
@@ -249,8 +229,4 @@ public sealed partial class MainWindow
             : throw new InvalidOperationException($"{label}必须是整数。");
     }
 
-    private static double FractionValue(NumberBox box, string label) =>
-        double.IsFinite(box.Value) ? box.Value : throw new InvalidOperationException($"{label}必须是数字。");
-
-    private static long? WindowTokens(NumberBox box) => double.IsNaN(box.Value) ? null : Whole(box, "上下文窗口 token 数");
 }
