@@ -383,9 +383,13 @@ fn framework_registry_covers_listed_agents() {
             continue;
         }
         assert!(name(id).is_ok(), "{id}");
+        assert!(
+            require_supported(id).is_ok(),
+            "{id} must expose its supported integration or native model management"
+        );
     }
     assert!(name("../../escape").is_err());
-    assert!(require_supported("gemini").is_err());
+    assert!(require_supported("../../escape").is_err());
 }
 
 #[test]
