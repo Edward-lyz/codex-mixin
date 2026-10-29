@@ -1,10 +1,12 @@
 # Tests whose behavior changes when the client-auth feature is enabled.
 # scope|source|fully qualified test name
+cors|tests/cors.rs|cors_covers_success_and_errors
+gateway_http|tests/gateway_http.rs|claude_desktop_auth_obeys_build_feature
+gateway_http|tests/gateway_http.rs|responses_auth_obeys_build_feature
+gateway_startup|tests/gateway_startup.rs|running_gateway_serves_a_rotated_client_key
+lib|src/clients/frameworks/schemas.rs|clients::frameworks::schemas::tests::agy_custom_models_and_muse_transport_keep_literal_model_ids
+lib|src/clients/frameworks/schemas.rs|clients::frameworks::schemas::tests::environment_auth_adapters_roundtrip_without_literal_secrets
+lib|src/server/gemini/tests.rs|server::gemini::tests::gemini_http_rejects_unsupported_fields_actions_and_auth
+lib|src/server/gemini/tests.rs|server::gemini::tests::gemini_token_estimates_and_muse_discovery_do_not_generate
 lib|src/server/tests.rs|server::tests::gateway_auth_obeys_build_feature
 lib|src/server/tests.rs|server::tests::usage_auth_obeys_build_feature
-lib|src/server/gemini/tests.rs|server::gemini::tests::gemini_http_rejects_unsupported_fields_actions_and_auth
-lib|src/clients/frameworks/schemas.rs|clients::frameworks::schemas::tests::keyless_adapters_roundtrip_and_feature_gate
-cors|tests/cors.rs|cors_covers_success_and_errors
-gateway_http|tests/gateway_http.rs|responses_auth_obeys_build_feature
-gateway_http|tests/gateway_http.rs|claude_desktop_auth_obeys_build_feature
-gateway_startup|tests/gateway_startup.rs|running_gateway_serves_a_rotated_client_key
