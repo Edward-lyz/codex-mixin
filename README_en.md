@@ -387,6 +387,8 @@ All 50 catalog entries have a supported integration or native model manager. The
 
 **Gemini model selection.** Restart Gemini after connecting, then choose a `Codex Mixin:` custom model under the manual section of `/model`. Disconnect and reconnect older integrations to refresh the native model catalog.
 
+**OmO's first Pi import.** OmO uses its own `codex-mixin-omo` provider, preserving providers and credentials imported from Pi on first launch. Disconnect restores the previous default model. Mixin selects the first nonblank `OMO_CODING_AGENT_DIR` or `SENPI_CODING_AGENT_DIR`, otherwise `~/.omo/agent`. If only `PI_CODING_AGENT_DIR` is set, or OmO explicitly shares Pi's directory, set `OMO_CODING_AGENT_DIR` to a separate directory before launching OmO and connecting Mixin. Disconnect and reconnect older OmO integrations to use the independent provider.
+
 **Vendor-native models.** For example, `codex-mixin agent model cursor --model <vendor-model-id>`; use `copilot` or `devin` for their native settings. Copilot also accepts `--effort high`. Connecting captures the existing vendor-native selection; select a model with these commands first if none is configured. These commands do not create a gateway credential or require selected gateway models. See [Agent contracts](docs/agent-integration-contracts.md) for exact prerequisites, restoration, and estimated Gemini token counts.
 
 

@@ -526,21 +526,72 @@ fn droid(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<P
 fn pi_like(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
     let dir = if id == "pencil" {
         home_path("", ".pencil")?
-    } else if std::env::var_os("OMO_CODING_AGENT_DIR").is_some() {
-        home_path("OMO_CODING_AGENT_DIR", ".omo/agent")?
     } else {
-        home_path("SENPI_CODING_AGENT_DIR", ".omo/agent")?
+        let overrides = [
+            "OMO_CODING_AGENT_DIR",
+            "SENPI_CODING_AGENT_DIR",
+            "PI_CODING_AGENT_DIR",
+        ]
+        .map(std::env::var_os);
+        let [omo, senpi, pi] = overrides.each_ref().map(|value| {
+            value
+                .as_deref()
+                .map(|value| {
+                    value
+                        .to_str()
+                        .context("OmO agent directory must be valid UTF-8")
+                })
+                .transpose()
+        });
+        omo_agent_dir(&crate::platform::home_dir(), [omo?, senpi?, pi?])?
     };
     Ok(pi_like_at(id, &dir, v1, key, models))
 }
 
+fn omo_agent_dir(home: &Path, overrides: [Option<&str>; 3]) -> anyhow::Result<PathBuf> {
+    let [omo, senpi, pi] =
+        overrides.map(|value| value.map(str::trim).filter(|value| !value.is_empty()));
+    let configured = omo.or(senpi);
+    anyhow::ensure!(
+        configured.is_some() || pi.is_none(),
+        "OmO uses PI_CODING_AGENT_DIR; set OMO_CODING_AGENT_DIR to a separate directory before connecting"
+    );
+    let dir = std::path::absolute(
+        configured
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".omo/agent")),
+    )
+    .context("resolve OmO agent directory")?;
+    super::engine::validate_path(&dir)?;
+    let pi_dir = std::path::absolute(
+        pi.map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".pi/agent")),
+    )
+    .context("resolve Pi agent directory")?;
+    let shared = dir == pi_dir
+        || (dir.try_exists()?
+            && pi_dir.try_exists()?
+            && dir.canonicalize()? == pi_dir.canonicalize()?);
+    anyhow::ensure!(
+        !shared,
+        "OmO and Pi share an agent directory; set OMO_CODING_AGENT_DIR to a separate directory before connecting"
+    );
+    Ok(dir)
+}
+
 fn pi_like_at(id: &str, dir: &Path, v1: &str, key: &str, models: &[FrameworkModel]) -> Vec<Patch> {
+    // OmO can import Pi's provider before Mixin has an OmO ownership journal.
+    let provider = if id == "omo" {
+        "codex-mixin-omo"
+    } else {
+        PROVIDER
+    };
     let mut patches = vec![patch(
         dir.join("models.json"),
         Format::Json,
         vec![field(
-            &["providers", PROVIDER],
-            json!({"name":PROVIDER,"baseUrl":v1,"api":"openai-responses","apiKey":key,"models":pi_models(models,v1)}),
+            &["providers", provider],
+            json!({"name":provider,"baseUrl":v1,"api":"openai-responses","apiKey":key,"models":pi_models(models,v1)}),
         )],
     )];
     if id == "omo" {
@@ -548,7 +599,7 @@ fn pi_like_at(id: &str, dir: &Path, v1: &str, key: &str, models: &[FrameworkMode
             dir.join("settings.json"),
             Format::Json,
             vec![
-                field(&["defaultProvider"], json!(PROVIDER)),
+                field(&["defaultProvider"], json!(provider)),
                 field(&["defaultModel"], json!(models[0].id)),
             ],
         ));
@@ -1093,6 +1144,85 @@ fn zcode(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omo_directory_matches_native_precedence_without_sharing_pi() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let omo = root.join("custom-omo");
+        let senpi = root.join("custom-senpi");
+        let pi = root.join("custom-pi");
+        let omo = omo.to_str().unwrap();
+        let senpi = senpi.to_str().unwrap();
+        let pi = pi.to_str().unwrap();
+        let padded = format!(" {omo} \t");
+        for (overrides, expected) in [
+            ([None, None, None], root.join(".omo/agent")),
+            ([Some(" \t"), Some(""), None], root.join(".omo/agent")),
+            (
+                [Some(padded.as_str()), Some(senpi), Some(pi)],
+                PathBuf::from(omo),
+            ),
+            ([Some(""), Some(senpi), Some(pi)], PathBuf::from(senpi)),
+            ([None, Some(senpi), None], PathBuf::from(senpi)),
+            (
+                [Some("omo-relative-fixture"), None, None],
+                std::env::current_dir()
+                    .unwrap()
+                    .join("omo-relative-fixture"),
+            ),
+        ] {
+            assert_eq!(omo_agent_dir(&root, overrides).unwrap(), expected);
+        }
+        let default_pi = root.join(".pi/agent");
+        for overrides in [
+            [None, None, Some(pi)],
+            [Some(" \t"), Some(""), Some(pi)],
+            [Some(pi), None, Some(pi)],
+            [None, Some(pi), Some(pi)],
+            [Some(default_pi.to_str().unwrap()), None, None],
+        ] {
+            let error = omo_agent_dir(&root, overrides).unwrap_err();
+            assert!(error.to_string().contains("set OMO_CODING_AGENT_DIR"));
+        }
+        assert!(std::fs::read_dir(&root).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn omo_unowned_namespace_is_rejected_before_any_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let before = "{\"providers\":{\"codex-mixin-omo\":{\"apiKey\":\"native-fixture\"}}}\n";
+        let settings = "{\"defaultProvider\":\"native\",\"unrelated\":true}\n";
+        std::fs::write(dir.join("models.json"), before).unwrap();
+        std::fs::write(dir.join("settings.json"), settings).unwrap();
+        let journal = dir.join("journal.json");
+        let error = super::super::engine::apply(
+            &journal,
+            pi_like_at(
+                "omo",
+                &dir,
+                "http://127.0.0.1:8787/v1",
+                "omo-fixture-key",
+                &model_fixture(),
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("configuration already exists without an undo journal")
+        );
+        assert!(!journal.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("models.json")).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("settings.json")).unwrap(),
+            settings
+        );
+    }
 
     #[test]
     fn omo_imported_pi_provider_has_an_independent_owned_binding() {

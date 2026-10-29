@@ -387,6 +387,8 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
 
 **Gemini 模型选择。** 接入后重启 Gemini，在 `/model` 的手动选择中查看标为 `Codex Mixin:` 的自定义模型。旧版接入请先断开再重新接入，以更新原生模型目录。
 
+**OmO 首次导入 Pi 配置。** OmO 使用独立的 `codex-mixin-omo` 提供商，保留首次启动时从 Pi 导入的提供商和认证；断开后恢复原来的默认模型。配置目录按非空的 `OMO_CODING_AGENT_DIR`、`SENPI_CODING_AGENT_DIR` 顺序选择，否则使用 `~/.omo/agent`。若只设置了 `PI_CODING_AGENT_DIR`，或显式与 Pi 共用目录，请先将 `OMO_CODING_AGENT_DIR` 设为独立目录，再启动 OmO 和接入 Mixin。旧版已接入的 OmO 可断开后重新接入，以使用独立提供商。
+
 **厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。接入时沿用已有的厂商原生模型；尚未选择时，先用上述命令指定模型。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
 
 
