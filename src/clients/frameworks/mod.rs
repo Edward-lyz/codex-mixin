@@ -380,6 +380,55 @@ fn field(keys: &[&str], value: Value) -> (Vec<String>, Value) {
     (keys.iter().map(|s| (*s).to_owned()).collect(), value)
 }
 
+fn home_path(variable: &str, default: &str) -> anyhow::Result<PathBuf> {
+    let path = match std::env::var_os(variable).filter(|v| !variable.is_empty() && !v.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => crate::platform::home_dir().join(default),
+    };
+    anyhow::ensure!(path.is_absolute(), "{variable} must be an absolute path");
+    Ok(path)
+}
+
+fn config_home() -> anyhow::Result<PathBuf> {
+    home_path("XDG_CONFIG_HOME", ".config")
+}
+
+fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
+    let entries: Vec<_> = models
+        .iter()
+        .map(|m| {
+            let api = match m.protocol {
+                crate::provider::ProviderProtocol::OpenAiChat => "openai-completions",
+                crate::provider::ProviderProtocol::OpenAiResponses => "openai-responses",
+                crate::provider::ProviderProtocol::AnthropicMessages => "anthropic-messages",
+                crate::provider::ProviderProtocol::GoogleGemini => "google-gemini",
+            };
+            let base_url = if m.protocol == crate::provider::ProviderProtocol::AnthropicMessages {
+                base.trim_end_matches("/v1")
+            } else {
+                base
+            };
+            let input = if m.supports_image {
+                vec!["text", "image"]
+            } else {
+                vec!["text"]
+            };
+            json!({
+                "id": m.id,
+                "name": m.name,
+                "api": api,
+                "baseUrl": base_url,
+                "input": input,
+                "contextWindow": m.context_window,
+                "maxTokens": m.max_tokens,
+                "reasoning": !m.efforts.is_empty(),
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+            })
+        })
+        .collect();
+    json!(entries)
+}
+
 #[cfg(test)]
 mod native_tests {
     use super::*;
@@ -467,53 +516,4 @@ mod native_tests {
             assert!(launch_environment("fx", &manifest).is_err());
         }
     }
-}
-
-fn home_path(variable: &str, default: &str) -> anyhow::Result<PathBuf> {
-    let path = match std::env::var_os(variable).filter(|v| !variable.is_empty() && !v.is_empty()) {
-        Some(value) => PathBuf::from(value),
-        None => crate::platform::home_dir().join(default),
-    };
-    anyhow::ensure!(path.is_absolute(), "{variable} must be an absolute path");
-    Ok(path)
-}
-
-fn config_home() -> anyhow::Result<PathBuf> {
-    home_path("XDG_CONFIG_HOME", ".config")
-}
-
-fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
-    let entries: Vec<_> = models
-        .iter()
-        .map(|m| {
-            let api = match m.protocol {
-                crate::provider::ProviderProtocol::OpenAiChat => "openai-completions",
-                crate::provider::ProviderProtocol::OpenAiResponses => "openai-responses",
-                crate::provider::ProviderProtocol::AnthropicMessages => "anthropic-messages",
-                crate::provider::ProviderProtocol::GoogleGemini => "google-gemini",
-            };
-            let base_url = if m.protocol == crate::provider::ProviderProtocol::AnthropicMessages {
-                base.trim_end_matches("/v1")
-            } else {
-                base
-            };
-            let input = if m.supports_image {
-                vec!["text", "image"]
-            } else {
-                vec!["text"]
-            };
-            json!({
-                "id": m.id,
-                "name": m.name,
-                "api": api,
-                "baseUrl": base_url,
-                "input": input,
-                "contextWindow": m.context_window,
-                "maxTokens": m.max_tokens,
-                "reasoning": !m.efforts.is_empty(),
-                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-            })
-        })
-        .collect();
-    json!(entries)
 }
