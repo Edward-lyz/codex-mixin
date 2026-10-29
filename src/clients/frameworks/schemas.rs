@@ -50,6 +50,10 @@ pub(super) fn patches(
     let first = &models[0];
     let v1 = format!("{base}/v1");
     Ok(match id {
+        "gemini" => gemini_at(&home_path("", ".gemini")?, base, key, first),
+        "agy" => agy_at(&home_path("", ".gemini/antigravity-cli")?, models),
+        "muse" => muse_at(&config_home()?.join("muse"), &v1, first)?,
+        "cursor-local" => Vec::new(),
         "reasonix" => reasonix(&crate::platform::reasonix_home()?, &v1, key, models)?,
         "minimax-code" => {
             let dir = if std::env::var_os("MINIMAX_DATA_DIR").is_some() {
@@ -132,6 +136,74 @@ pub(super) fn patches(
     })
 }
 
+fn gemini_at(dir: &Path, base: &str, key: &str, model: &FrameworkModel) -> Vec<Patch> {
+    vec![
+        patch(
+            dir.join("settings.json"),
+            Format::Json,
+            vec![
+                field(
+                    &["security", "auth", "selectedType"],
+                    json!("gemini-api-key"),
+                ),
+                field(&["model", "name"], json!(model.id)),
+            ],
+        ),
+        patch(
+            dir.join(".env"),
+            Format::Env,
+            vec![
+                field(&["GOOGLE_GEMINI_BASE_URL"], json!(base)),
+                field(&["GEMINI_API_KEY"], json!(key)),
+            ],
+        ),
+    ]
+}
+
+fn agy_at(dir: &Path, models: &[FrameworkModel]) -> Vec<Patch> {
+    let mut fields = vec![
+        field(&["modelProvider"], json!("gemini")),
+        field(&["model"], json!(format!("{PROVIDER}/{}", models[0].id))),
+    ];
+    fields.extend(models.iter().map(|model| {
+        field(
+            &[
+                "customModelsConfig",
+                "customModels",
+                &format!("{PROVIDER}/{}", model.id),
+            ],
+            json!({"apiProvider":"gemini","modelName":model.id}),
+        )
+    }));
+    vec![patch(dir.join("settings.json"), Format::Json, fields)]
+}
+
+fn muse_at(dir: &Path, v1: &str, model: &FrameworkModel) -> anyhow::Result<Vec<Patch>> {
+    let path = dir.join("settings.json");
+    let document = read_config(&path, Format::Json)?;
+    anyhow::ensure!(
+        document
+            .get("schema_version")
+            .is_none_or(|version| version == 1),
+        "unsupported Muse settings schema_version"
+    );
+    Ok(vec![patch(
+        path,
+        Format::Json,
+        vec![
+            field(&["schema_version"], json!(1)),
+            field(
+                &["endpoint_transport"],
+                json!({
+                    "base_url":v1,
+                    "auth":if cfg!(feature="client-auth") {"bearer"} else {"none"}
+                }),
+            ),
+            field(&["model"], json!(model.id)),
+        ],
+    )])
+}
+
 fn reasonix(
     dir: &Path,
     v1: &str,
@@ -204,10 +276,6 @@ fn minimax(dir: &Path, v1: &str, key: &str, models: &[FrameworkModel]) -> Vec<Pa
 }
 
 fn keyless(id: &str, v1: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
-    anyhow::ensure!(
-        !cfg!(feature = "client-auth"),
-        "{id} requires a managed authenticated launcher in client-auth builds"
-    );
     let dir = match id {
         "commandcode" => home_path("", ".commandcode")?,
         "fx" => home_path("", ".fx")?,
@@ -233,7 +301,7 @@ fn keyless_at(
                     Format::Json,
                     vec![field(
                         &["provider", PROVIDER],
-                        json!({"name":PROVIDER,"api":"openai-completions","baseURL":v1,"apiKey":false,"models":Value::Object(models.iter().map(|m|(m.id.clone(),json!({"name":m.name}))).collect())}),
+                        json!({"name":PROVIDER,"api":"openai-completions","baseURL":v1,"apiKey":if cfg!(feature="client-auth") {json!("$CODEX_MIXIN_COMMANDCODE_API_KEY")} else {json!(false)},"models":Value::Object(models.iter().map(|m|(m.id.clone(),json!({"name":m.name}))).collect())}),
                     )],
                 ),
                 patch(
@@ -267,7 +335,7 @@ fn keyless_at(
                     field(&["models", PROVIDER], json!(first.id)),
                     field(
                         &["providers", PROVIDER],
-                        json!({"protocol":"openai-chat-completions","base_url":v1,"auth":{"type":"none"},"tool_choice_mode":"send","model_metadata":metadata}),
+                        json!({"protocol":"openai-chat-completions","base_url":v1,"auth":if cfg!(feature="client-auth") {json!({"type":"bearer","env":"CODEX_MIXIN_FX_API_KEY"})} else {json!({"type":"none"})},"tool_choice_mode":"send","model_metadata":metadata}),
                     ),
                 ],
             )]
@@ -286,7 +354,11 @@ fn keyless_at(
                 !providers.iter().any(|p| p["id"] == PROVIDER),
                 "unmanaged Empryo provider collision"
             );
-            providers.push(json!({"id":PROVIDER,"name":PROVIDER,"baseURL":v1,"modelsAPI":format!("{v1}/models")}));
+            let mut provider = json!({"id":PROVIDER,"name":PROVIDER,"baseURL":v1,"modelsAPI":format!("{v1}/models")});
+            if cfg!(feature = "client-auth") {
+                provider["envVar"] = json!("CODEX_MIXIN_EMPRYO_API_KEY");
+            }
+            providers.push(provider);
             vec![patch(
                 path,
                 Format::Json,
@@ -303,7 +375,7 @@ fn keyless_at(
                     Format::Json,
                     vec![field(
                         &["providers", PROVIDER],
-                        json!({"display_name":PROVIDER,"base_url":v1,"wire_style":"OpenAiCompatible","preferred_models":models.iter().map(|m|json!({"id":m.id,"display_name":m.name,"context_limit":m.context_window,"max_tokens":m.max_tokens,"support_vision":m.supports_image})).collect::<Vec<_>>()}),
+                        json!({"display_name":PROVIDER,"base_url":v1,"wire_style":"OpenAiCompatible","auth":if cfg!(feature="client-auth") {json!({"bearer":{"env_key":"CODEX_MIXIN_ANTE_API_KEY"}})} else {Value::Null},"preferred_models":models.iter().map(|m|json!({"id":m.id,"display_name":m.name,"context_limit":m.context_window,"max_tokens":m.max_tokens,"support_vision":m.supports_image})).collect::<Vec<_>>()}),
                     )],
                 ),
                 patch(
@@ -1001,6 +1073,92 @@ fn zcode(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gemini_configuration_preserves_oauth_and_restores_original_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().canonicalize().unwrap();
+        let settings = dir.join("settings.json");
+        let environment = dir.join(".env");
+        let before =
+            "{\"security\":{\"auth\":{\"selectedType\":\"oauth-personal\"}},\"unrelated\":true}\n";
+        std::fs::write(&settings, before).unwrap();
+        std::fs::write(&environment, "# preserve\nOTHER=value\n").unwrap();
+        let journal = dir.join("journal.json");
+        super::super::engine::apply(
+            &journal,
+            gemini_at(
+                &dir,
+                "http://127.0.0.1:8787",
+                "fixture-key",
+                &model_fixture()[0],
+            ),
+        )
+        .unwrap();
+        let value = read_config(&settings, Format::Json).unwrap();
+        assert_eq!(
+            value.pointer("/security/auth/selectedType").unwrap(),
+            "gemini-api-key"
+        );
+        assert_eq!(
+            value.pointer("/model/name").unwrap(),
+            "provider/model.with.dots"
+        );
+        let values = read_config(&environment, Format::Env).unwrap();
+        assert_eq!(values["GEMINI_API_KEY"], "fixture-key");
+        assert_eq!(values["GOOGLE_GEMINI_BASE_URL"], "http://127.0.0.1:8787");
+        assert_eq!(values["OTHER"], "value");
+        super::super::engine::remove(&journal).unwrap();
+        assert_eq!(std::fs::read_to_string(settings).unwrap(), before);
+        assert_eq!(
+            std::fs::read_to_string(environment).unwrap(),
+            "# preserve\nOTHER=value\n"
+        );
+    }
+
+    #[test]
+    fn agy_custom_models_and_muse_transport_keep_literal_model_ids() {
+        for id in ["agy", "muse"] {
+            let temp = tempfile::tempdir().unwrap();
+            let dir = temp.path().canonicalize().unwrap();
+            let settings = dir.join("settings.json");
+            let before = "{\"schema_version\":1,\"model\":\"vendor-native\",\"unrelated\":true}";
+            std::fs::write(&settings, before).unwrap();
+            let patches = if id == "agy" {
+                agy_at(&dir, &model_fixture())
+            } else {
+                muse_at(&dir, "http://127.0.0.1:8787/v1", &model_fixture()[0]).unwrap()
+            };
+            let journal = dir.join("journal.json");
+            super::super::engine::apply(&journal, patches).unwrap();
+            let value = read_config(&settings, Format::Json).unwrap();
+            if id == "agy" {
+                assert_eq!(value["modelProvider"], "gemini");
+                assert_eq!(
+                    value["customModelsConfig"]["customModels"]["codex-mixin/provider/model.with.dots"]
+                        ["modelName"],
+                    "provider/model.with.dots"
+                );
+            } else {
+                assert_eq!(
+                    value["endpoint_transport"]["base_url"],
+                    "http://127.0.0.1:8787/v1"
+                );
+                assert_eq!(
+                    value["endpoint_transport"]["auth"],
+                    if cfg!(feature = "client-auth") {
+                        "bearer"
+                    } else {
+                        "none"
+                    }
+                );
+            }
+            super::super::engine::remove(&journal).unwrap();
+            assert_eq!(std::fs::read_to_string(settings).unwrap(), before);
+        }
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("settings.json"), "{\"schema_version\":2}").unwrap();
+        assert!(muse_at(temp.path(), "http://127.0.0.1:8787/v1", &model_fixture()[0]).is_err());
+    }
     fn model_fixture() -> Vec<FrameworkModel> {
         vec![FrameworkModel {
             id: "provider/model.with.dots".to_owned(),
@@ -1207,12 +1365,9 @@ mod tests {
     }
 
     #[test]
-    fn keyless_adapters_roundtrip_and_feature_gate() {
+    fn environment_auth_adapters_roundtrip_without_literal_secrets() {
         for id in ["commandcode", "fx", "empryo", "ante"] {
-            assert_eq!(
-                super::super::require_supported(id).is_err(),
-                cfg!(feature = "client-auth")
-            );
+            assert!(super::super::require_supported(id).is_ok());
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().canonicalize().unwrap();
             let manifest = root.join("journal.json");
@@ -1223,6 +1378,13 @@ mod tests {
                 std::fs::write(path, r#"{"unrelated":"keep"}"#).unwrap();
             }
             super::super::engine::apply(&manifest, patches).unwrap();
+            let serialized = paths
+                .iter()
+                .map(|path| std::fs::read_to_string(path).unwrap())
+                .collect::<String>();
+            if cfg!(feature = "client-auth") {
+                assert!(serialized.contains(&format!("CODEX_MIXIN_{}_API_KEY", id.to_uppercase())));
+            }
             assert!(super::super::engine::is_managed(&manifest).unwrap());
             assert_eq!(
                 super::super::status(id, &manifest).unwrap().state,

@@ -74,14 +74,8 @@ pub fn name(id: &str) -> anyhow::Result<&'static str> {
 
 pub fn limitation(id: &str) -> Option<&'static str> {
     match id {
-        "cursor" | "copilot" | "devin" => Some(
-            "The vendor CLI exposes native model selection only; magpie does not connect it to a third-party gateway.",
-        ),
         "gemini" => Some(
             "Gemini Developer API ingress is available, but the CLI's topK/thinkingConfig and countTokens paths are not yet supported end to end.",
-        ),
-        "agy" => Some(
-            "Requires the Antigravity CloudCode transport and authentication; Gemini Developer API ingress alone does not provide it.",
         ),
         "zed" => Some(
             "Requires an OS credential-store adapter; writing settings alone does not install its API key.",
@@ -94,14 +88,8 @@ pub fn limitation(id: &str) -> Option<&'static str> {
             Some("Requires the running app API for its keychain-encrypted provider catalog.")
         }
         "aside" => Some("Requires Aside's native runtime connection and staging API."),
-        "cursor-local" => {
-            Some("Requires process-level environment injection and a managed Cursor launcher.")
-        }
         "muse" => Some(
             "Requires the Muse discovery endpoint /muse-code/models and an authenticated transport adapter.",
-        ),
-        "commandcode" | "fx" | "empryo" | "ante" if cfg!(feature = "client-auth") => Some(
-            "This agent requires process environment authentication; a managed launcher is not implemented. Keyless integration is available only in builds without client-auth.",
         ),
         _ => None,
     }
@@ -124,6 +112,7 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
 
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     name(id)?;
+    let native = matches!(id, "cursor" | "copilot" | "devin");
     if let Some(detail) = limitation(id).filter(|_| !manifest.exists()) {
         return Ok(IntegrationStatus {
             state: "unsupported",
@@ -135,13 +124,17 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     Ok(match engine::is_managed(manifest) {
         Ok(managed) => IntegrationStatus {
             state: if managed { "managed" } else { "unmanaged" },
-            mode: None,
-            detail: DETAIL,
+            mode: native.then_some("native_models"),
+            detail: if native {
+                "Native vendor model management; this agent does not expose a custom gateway endpoint."
+            } else {
+                DETAIL
+            },
             error: None,
         },
         Err(error) => IntegrationStatus {
             state: if manifest.exists() { "drift" } else { "error" },
-            mode: None,
+            mode: native.then_some("native_models"),
             detail: DETAIL,
             error: Some(format!("{error:#}")),
         },
@@ -160,12 +153,174 @@ pub fn install(
         anyhow::ensure!(engine::is_managed(manifest)?, "integration is not managed");
         return Ok(());
     }
+    if matches!(id, "cursor" | "copilot" | "devin") {
+        return engine::apply(manifest, Vec::new());
+    }
     anyhow::ensure!(
         !models.is_empty(),
         "no selected models are available for {id}"
     );
     let patches = schemas::patches(id, base, key, models)?;
+    let mut patches = patches;
+    let environment = match id {
+        "agy" => Some(json!({"GOOGLE_GEMINI_BASE_URL":base,"GEMINI_API_KEY":key})),
+        "cursor-local" => Some(
+            json!({"CURSOR_LOCAL_AGENT_BASE_URL":format!("{base}/v1"),"CURSOR_LOCAL_AGENT_API_KEY":key}),
+        ),
+        "muse" if cfg!(feature = "client-auth") => Some(json!({"META_API_KEY":key})),
+        "commandcode" | "fx" | "empryo" | "ante" if cfg!(feature = "client-auth") => {
+            Some(json!({format!("CODEX_MIXIN_{}_API_KEY",id.to_uppercase()):key}))
+        }
+        _ => None,
+    };
+    if let Some(environment) = environment {
+        patches.push(engine::Patch {
+            path: manifest.with_extension("launch.json"), format: engine::Format::Json,
+            fields: vec![(vec![],json!({"environment":environment,"model":if id=="agy" {format!("{PROVIDER}/{}",models[0].id)} else {models[0].id.clone()}}))],
+        });
+    }
     engine::apply(manifest, patches)
+}
+
+/// Only managed launchers read this private record; callers never print it.
+pub fn launch_environment(
+    id: &str,
+    manifest: &Path,
+) -> anyhow::Result<(Vec<(String, String)>, Option<String>)> {
+    name(id)?;
+    anyhow::ensure!(
+        status(id, manifest)?.state == "managed",
+        "connect {id} before starting a managed session"
+    );
+    let path = manifest.with_extension("launch.json");
+    if !path.exists() {
+        return Ok((Vec::new(), None));
+    }
+    let record = engine::read_config(&path, engine::Format::Json)?;
+    let environment = record["environment"]
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("invalid managed launch environment"))?;
+    let environment = environment
+        .iter()
+        .map(|(name, value)| {
+            anyhow::ensure!(
+                name.starts_with("CODEX_MIXIN_")
+                    || [
+                        "GOOGLE_GEMINI_BASE_URL",
+                        "GEMINI_API_KEY",
+                        "CURSOR_LOCAL_AGENT_BASE_URL",
+                        "CURSOR_LOCAL_AGENT_API_KEY",
+                        "META_API_KEY"
+                    ]
+                    .contains(&name.as_str()),
+                "unexpected managed launch variable"
+            );
+            let value = value
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid managed launch value"))?;
+            anyhow::ensure!(
+                !value.chars().any(char::is_control),
+                "invalid managed launch value"
+            );
+            Ok((name.clone(), value.to_owned()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok((
+        environment,
+        record
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    ))
+}
+
+/// Read or change a vendor-native model without configuring a gateway or key.
+pub fn native_model(
+    id: &str,
+    manifest: &Path,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> anyhow::Result<Value> {
+    let path = match id {
+        "cursor" => home_path("", ".cursor/cli-config.json")?,
+        "copilot" => home_path("", ".copilot/settings.json")?,
+        "devin" => config_home()?.join("devin/config.json"),
+        _ => anyhow::bail!("native model management requires cursor, copilot or devin"),
+    };
+    native_model_at(id, manifest, &path, model, effort)
+}
+
+fn native_model_at(
+    id: &str,
+    manifest: &Path,
+    path: &Path,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> anyhow::Result<Value> {
+    use engine::{Format, Patch};
+    anyhow::ensure!(
+        matches!(id, "cursor" | "copilot" | "devin"),
+        "unsupported native model manager"
+    );
+    anyhow::ensure!(
+        model.is_some() || effort.is_none(),
+        "--effort requires --model"
+    );
+    if let Some(model) = model {
+        anyhow::ensure!(
+            !model.trim().is_empty() && model.len() <= 256 && !model.chars().any(char::is_control),
+            "invalid native model id"
+        );
+        anyhow::ensure!(
+            id == "copilot" || effort.is_none(),
+            "--effort applies only to Copilot; use a native model variant for Devin"
+        );
+        if let Some(effort) = effort {
+            anyhow::ensure!(
+                ["low", "medium", "high", "xhigh"].contains(&effort),
+                "unsupported native reasoning effort"
+            );
+        }
+        let fields = match id {
+            "cursor" => vec![
+                field(
+                    &["model"],
+                    json!({"modelId":model,"displayModelId":model,"displayName":model}),
+                ),
+                field(&["hasChangedDefaultModel"], json!(true)),
+            ],
+            "copilot" => {
+                let mut fields = vec![field(&["model"], json!(model))];
+                if let Some(effort) = effort {
+                    fields.push(field(&["effortLevel"], json!(effort)));
+                }
+                fields
+            }
+            _ => vec![field(&["agent", "model"], json!(model))],
+        };
+        // The existing journal checks ownership before restoring. Reapply only
+        // these native fields, retaining all unrelated changes and credentials.
+        engine::remove(manifest)?;
+        engine::apply(
+            manifest,
+            vec![Patch {
+                path: path.to_owned(),
+                format: Format::Json,
+                fields,
+            }],
+        )?;
+    }
+    let value = engine::read_config(path, Format::Json)?;
+    let selected = match id {
+        "cursor" => value.pointer("/model/modelId"),
+        "copilot" => value.get("model"),
+        _ => value.pointer("/agent/model"),
+    }
+    .cloned()
+    .unwrap_or(Value::Null);
+    Ok(
+        json!({"id":id,"capability":"native_models","model":selected,"effort":value.get("effortLevel"),"managed":engine::is_managed(manifest)?}),
+    )
 }
 
 pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {

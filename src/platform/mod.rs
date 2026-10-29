@@ -58,6 +58,7 @@ pub use terminal::{TerminalCommand, open_terminal_window};
 pub mod update;
 
 pub mod agent_cli;
+pub mod agent_credentials;
 
 pub mod installation;
 

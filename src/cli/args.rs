@@ -927,6 +927,29 @@ pub(super) enum AgentCommand {
         #[arg(value_parser = agent_id)]
         id: String,
     },
+    /// Read or select a vendor-native model for Cursor CLI, Copilot CLI or Devin.
+    Model {
+        #[arg(value_parser = ["cursor", "copilot", "devin"])]
+        id: String,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, requires = "model")]
+        effort: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run an integrated agent with its private process environment.
+    Run {
+        #[arg(value_parser = agent_id)]
+        id: String,
+        #[arg(last = true, allow_hyphen_values = true)]
+        arguments: Vec<String>,
+    },
+    /// Open a managed agent session in a visible native terminal.
+    Launch {
+        #[arg(value_parser = agent_id)]
+        id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

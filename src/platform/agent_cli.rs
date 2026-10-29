@@ -77,18 +77,78 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
 }
 
 /// Run a prepared command to completion within `timeout`. The command never
+/// Locate the Cursor editor's real executable so its child receives the
+/// managed environment even when a desktop launcher would reuse a process.
+pub fn cursor_editor_program() -> anyhow::Result<PathBuf> {
+    let mut candidates = Vec::new();
+    if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from(
+            "/Applications/Cursor.app/Contents/MacOS/Cursor",
+        ));
+        candidates.push(
+            super::home_dir_required()?.join("Applications/Cursor.app/Contents/MacOS/Cursor"),
+        );
+    } else if cfg!(windows) {
+        for variable in ["LOCALAPPDATA", "ProgramFiles"] {
+            if let Some(root) = std::env::var_os(variable) {
+                let root = PathBuf::from(root);
+                candidates.extend([
+                    root.join("Programs/cursor/Cursor.exe"),
+                    root.join("cursor/Cursor.exe"),
+                ]);
+            }
+        }
+    }
+    if let Some(program) = find_command("cursor") {
+        candidates.push(program);
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| anyhow::anyhow!("Cursor editor executable is not installed"))
+}
+
+/// Run a prepared command to completion within `timeout`. The command never
 /// reads standard input. A failure keeps the exit status and the last output
 /// lines; a timeout kills the child and reports itself.
 pub fn run_command(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     what: &str,
 ) -> anyhow::Result<CommandOutcome> {
+    run_command_with_input(command, timeout, what, None)
+}
+
+/// Supply private native-tool input through a pipe, never through argv.
+/// Errors deliberately omit tool output when input may contain credentials.
+pub fn run_command_with_input(
+    mut command: Command,
+    timeout: Duration,
+    what: &str,
+    input: Option<Vec<u8>>,
+) -> anyhow::Result<CommandOutcome> {
+    let private_input = input.is_some();
+    anyhow::ensure!(
+        input.as_ref().is_none_or(|bytes| bytes.len() <= 64 * 1024),
+        "native tool input is too large"
+    );
     command
-        .stdin(Stdio::null())
+        .stdin(if private_input {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command.spawn().with_context(|| format!("run {what}"))?;
+    if let Some(input) = input {
+        let pipe = child.stdin.take();
+        std::thread::spawn(move || {
+            if let Some(mut pipe) = pipe {
+                let _ = std::io::Write::write_all(&mut pipe, &input);
+            }
+        });
+    }
     // Read both pipes while the child runs: a child that prints more than a
     // pipe buffer would otherwise block until the timeout fires.
     let stdout_reader = std::thread::spawn({
@@ -124,6 +184,9 @@ pub fn run_command(
     }
     let text = strip_ansi(&combined);
     if !status.success() {
+        if private_input {
+            anyhow::bail!("{what} failed with {status}");
+        }
         let tail = last_lines(&text, FAILURE_TAIL_LINES);
         return Err(if tail.is_empty() {
             anyhow::anyhow!("{what} failed with {status}")
@@ -150,7 +213,16 @@ pub fn probe_version_output(program: &Path, timeout: Duration) -> anyhow::Result
 fn read_pipe(pipe: Option<impl Read>) -> String {
     let mut bytes = Vec::new();
     if let Some(mut pipe) = pipe {
-        let _ = pipe.read_to_end(&mut bytes);
+        let mut chunk = [0u8; 8192];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(length) => {
+                    let keep = length.min((1usize << 20).saturating_sub(bytes.len()));
+                    bytes.extend_from_slice(&chunk[..keep]);
+                }
+            }
+        }
     }
     String::from_utf8_lossy(&bytes).into_owned()
 }

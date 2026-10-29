@@ -33,7 +33,77 @@ pub(super) async fn run(command: AgentCommand) -> anyhow::Result<()> {
         }
         AgentCommand::Connect { id, mode } => connect(&id, mode).await,
         AgentCommand::Disconnect { id } => disconnect(&id).await,
+        AgentCommand::Model {
+            id,
+            model,
+            effort,
+            json,
+        } => {
+            let _lock = integration_lock()?;
+            let (manifest, _) = integration_paths(&id)?;
+            output(
+                &codex_mixin::clients::frameworks::native_model(
+                    &id,
+                    &manifest,
+                    model.as_deref(),
+                    effort.as_deref(),
+                )?,
+                json,
+            )
+        }
+        AgentCommand::Run { id, arguments } => run_agent(&id, &arguments).await,
+        AgentCommand::Launch { id } => {
+            let executable = std::env::current_exe()?;
+            let directory = super::runtime::state_dir()
+                .join("agent-launchers")
+                .join(&id);
+            codex_mixin::platform::ensure_owner_only_dir(&directory)?;
+            codex_mixin::platform::open_terminal_window(&codex_mixin::platform::TerminalCommand {
+                title: agent_name(&id)?,
+                script_directory: &directory,
+                home: None,
+                environment: &[],
+                program: &executable,
+                arguments: &["--no-tui", "agent", "run", &id],
+            })?;
+            Ok(())
+        }
     }
+}
+
+async fn run_agent(id: &str, arguments: &[String]) -> anyhow::Result<()> {
+    let (environment, model) = if is_legacy(id) {
+        (Vec::new(), None)
+    } else {
+        let (manifest, _) = integration_paths(id)?;
+        codex_mixin::clients::frameworks::launch_environment(id, &manifest)?
+    };
+    let program = if id == "cursor-local" {
+        codex_mixin::platform::agent_cli::cursor_editor_program()?
+    } else {
+        PathBuf::from(
+            agent_versions::discover_agent(id)?
+                .path
+                .context("agent executable is not installed")?,
+        )
+    };
+    let mut command = codex_mixin::platform::launcher_command(&program);
+    command.envs(environment);
+    if id == "agy" {
+        command.args([
+            "--model",
+            model.as_deref().context("managed AGY model is missing")?,
+        ]);
+    }
+    command.args(arguments);
+    let mut command = tokio::process::Command::from(command);
+    command.kill_on_drop(true);
+    let status = command
+        .status()
+        .await
+        .context("start managed agent session")?;
+    anyhow::ensure!(status.success(), "{id} exited with {status}");
+    Ok(())
 }
 
 fn output(value: &Value, json_output: bool) -> anyhow::Result<()> {
@@ -241,6 +311,10 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
     let (manifest, _) = integration_paths(id)?;
     if frameworks::status(id, &manifest)?.state == "managed" {
         return Ok(());
+    }
+    if matches!(id, "cursor" | "copilot" | "devin") {
+        frameworks::install(id, &manifest, "", "", &[])?;
+        return verify_integration(id, "managed").await;
     }
     // Resolve an automatic listener port before persisting a client endpoint.
     super::service::ensure_ready().await?;
