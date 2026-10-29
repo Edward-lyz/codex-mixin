@@ -18,6 +18,22 @@ const FAILURE_TAIL_LINES: usize = 3;
 
 /// Zed follows its own native configuration convention, including ~/.config
 /// on macOS rather than Application Support.
+pub(crate) fn devin_settings_path() -> anyhow::Result<PathBuf> {
+    let root = if cfg!(windows) {
+        super::framework_app_root("devin")?
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| super::home_dir().join(".config"))
+            .join("devin")
+    };
+    anyhow::ensure!(
+        root.is_absolute(),
+        "Devin configuration root must be absolute"
+    );
+    Ok(root.join("config.json"))
+}
+
 pub(crate) fn zed_settings_path() -> anyhow::Result<PathBuf> {
     let root = if cfg!(windows) {
         super::framework_app_root()?

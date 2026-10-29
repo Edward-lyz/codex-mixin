@@ -42,7 +42,7 @@ The same connect/disconnect commands accept the IDs below. Restart the Agent aft
 
 ## Vendor-native model management
 
-Cursor CLI (`cursor`), Copilot CLI (`copilot`) and Devin (`devin`) do not expose a verified general custom-backend endpoint. Their supported capability is explicitly `native_models`, using the vendor's account and model IDs. No gateway readiness, selected gateway model or client credential is required. Connecting captures the existing vendor-native model in a real undo journal. If no native model is configured, explicitly select one first; empty marker journals never count as managed.
+Cursor CLI (`cursor`), Copilot CLI (`copilot`) and Devin (`devin`) do not expose a verified general custom-backend endpoint. Their supported capability is explicitly `native_models`, using the vendor's account and model IDs. No gateway readiness, selected gateway model or client credential is required. Native files are `~/.cursor/cli-config.json`, `~/.copilot/settings.json`, and `$XDG_CONFIG_HOME/devin/config.json` (default `~/.config/devin/config.json`); Devin uses `%APPDATA%/devin/config.json` on Windows. Connecting captures the existing vendor-native model in a real undo journal. If no native model is configured, explicitly select one first; empty marker journals never count as managed.
 
 ```sh
 codex-mixin agent model cursor --json

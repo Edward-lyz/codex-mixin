@@ -293,7 +293,7 @@ pub fn native_model(
     let path = match id {
         "cursor" => home_path("", ".cursor/cli-config.json")?,
         "copilot" => home_path("", ".copilot/settings.json")?,
-        "devin" => config_home()?.join("devin/config.json"),
+        "devin" => crate::platform::agent_cli::devin_settings_path()?,
         _ => anyhow::bail!("native model management requires cursor, copilot or devin"),
     };
     native_model_at(id, manifest, &path, model, effort)
