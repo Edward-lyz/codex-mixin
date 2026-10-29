@@ -463,41 +463,57 @@ fn apply_account_model_metadata(
     if !is_official_account_catalog(account_catalog) {
         return Ok(());
     }
+    codex_mixin::catalog::official::validate_catalog(account_catalog)?;
     let account_models = account_catalog
         .get("models")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("official account catalog has no models array"))?;
-    let account_models = account_models
+    anyhow::ensure!(
+        !account_models.iter().any(is_managed_catalog_model),
+        "official account catalog contains managed provider models"
+    );
+    let template_models = template
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("official template has no models array"))?;
+    let by_slug = template_models
         .iter()
-        .filter(|model| !is_managed_catalog_model(model))
         .filter_map(|model| Some((model.get("slug")?.as_str()?, model)))
         .collect::<HashMap<_, _>>();
-    let models = template
-        .get_mut("models")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| anyhow::anyhow!("official template has no models array"))?;
-    for model in models
-        .iter_mut()
-        .filter(|model| !is_managed_catalog_model(model))
-    {
-        let Some(account_model) = model
+    let mut merged = Vec::with_capacity(account_models.len());
+    for account_model in account_models {
+        let slug = account_model
             .get("slug")
             .and_then(serde_json::Value::as_str)
-            .and_then(|slug| account_models.get(slug))
-        else {
+            .ok_or_else(|| anyhow::anyhow!("official account model is missing slug"))?;
+        // A legacy mixed template may also contain provider-owned models.
+        // Account metadata must never replace their identity or capabilities.
+        if by_slug
+            .get(slug)
+            .is_some_and(|model| is_managed_catalog_model(model))
+        {
             continue;
-        };
-        let model = model
+        }
+        let mut model = by_slug
+            .get(slug)
+            .map_or_else(|| account_model.clone(), |model| (*model).clone());
+        let fields = model
             .as_object_mut()
             .ok_or_else(|| anyhow::anyhow!("official template model must be an object"))?;
         // An account may lose a tier or explicitly advertise none.
-        for field in ["service_tiers", "additional_speed_tiers"] {
+        for field in [
+            "service_tiers",
+            "additional_speed_tiers",
+            "visibility",
+            "supported_in_api",
+            "priority",
+        ] {
             match account_model.get(field) {
                 Some(value) => {
-                    model.insert(field.to_owned(), value.clone());
+                    fields.insert(field.to_owned(), value.clone());
                 }
                 None => {
-                    model.remove(field);
+                    fields.remove(field);
                 }
             }
         }
@@ -513,14 +529,14 @@ fn apply_account_model_metadata(
                     value.is_null() || value.as_i64().is_some_and(|limit| limit > 0),
                     "official account model {field} must be null or a positive 64-bit integer"
                 );
-                model.insert(field.to_owned(), value.clone());
+                fields.insert(field.to_owned(), value.clone());
             }
         }
         if let (Some(window), Some(maximum)) = (
-            model
+            fields
                 .get("context_window")
                 .and_then(serde_json::Value::as_i64),
-            model
+            fields
                 .get("max_context_window")
                 .and_then(serde_json::Value::as_i64),
         ) {
@@ -529,7 +545,15 @@ fn apply_account_model_metadata(
                 "official account context_window exceeds max_context_window"
             );
         }
+        merged.push(model);
     }
+    merged.extend(
+        template_models
+            .iter()
+            .filter(|model| is_managed_catalog_model(model))
+            .cloned(),
+    );
+    template["models"] = serde_json::Value::Array(merged);
     Ok(())
 }
 
@@ -642,6 +666,38 @@ pub(in crate::cli) fn is_gpt_model(model: &str) -> bool {
 mod account_cache_regressions {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn model_order_regression_account_catalog_controls_available_models() {
+        let mut template = json!({"models":[
+            {"slug":"gpt-5.5","visibility":"list"},
+            {"slug":"gpt-current","visibility":"list","base_instructions":"public instructions"},
+            {"slug":"gpt-hidden","visibility":"list"}
+        ]});
+        let account = json!({
+            "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
+            "codex_mixin_account_id":"current-account",
+            "models":[
+                {"slug":"gpt-current","visibility":"list","context_window":500000},
+                {"slug":"gpt-hidden","visibility":"hide"},
+                {"slug":"gpt-new","visibility":"list","context_window":600000,
+                    "base_instructions":"account instructions"}
+            ]
+        });
+        apply_account_model_metadata(&mut template, &account).unwrap();
+        let models = template["models"].as_array().unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model["slug"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["gpt-current", "gpt-hidden", "gpt-new"]
+        );
+        assert_eq!(models[0]["base_instructions"], "public instructions");
+        assert_eq!(models[0]["context_window"], 500000);
+        assert_eq!(models[1]["visibility"], "hide");
+        assert_eq!(models[2], account["models"][2]);
+    }
 
     #[tokio::test]
     async fn selection_sync_reuses_public_template_without_contacting_upstream() {
@@ -792,8 +848,8 @@ mod account_cache_regressions {
         for field in ["base_instructions", "input_modalities"] {
             assert_eq!(template["models"][0][field], original["models"][0][field]);
         }
-        assert_eq!(template["models"][1], original["models"][1]);
-        assert_eq!(template["models"][2], original["models"][2]);
+        assert_eq!(template["models"][1], account["models"][2]);
+        assert_eq!(template["models"][2], original["models"][1]);
         assert_eq!(template["models"].as_array().unwrap().len(), 3);
     }
 
@@ -883,7 +939,7 @@ mod account_cache_regressions {
             "codex_mixin_account_id":"current-account",
             "models":[{"slug":"gpt-test","codex_mixin_managed":true,"context_window":500000}]
         });
-        apply_account_model_metadata(&mut template, &account).unwrap();
+        assert!(apply_account_model_metadata(&mut template, &account).is_err());
         assert_eq!(template, original);
     }
 

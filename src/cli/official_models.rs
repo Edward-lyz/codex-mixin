@@ -52,13 +52,20 @@ fn catalog_for_current_account(
 }
 
 pub(super) fn load_official_account_catalog() -> anyhow::Result<Option<Value>> {
+    let current = codex_mixin::provider::official_account_id(
+        &super::codex::codex_home_path().join("auth.json"),
+    )?;
+    let Some(current) = current else {
+        return Ok(None);
+    };
     let catalog = load_template_catalog(Some(&official_models_cache_path()))?
         .filter(is_official_account_catalog);
-    catalog_for_current_account(catalog, || {
-        codex_mixin::provider::official_account_id(
-            &super::codex::codex_home_path().join("auth.json"),
-        )
-    })
+    let catalog = catalog_for_current_account(catalog, || Ok(Some(current)))?;
+    anyhow::ensure!(
+        catalog.is_some(),
+        "current official account model catalog is missing; refresh the OpenAI model list first"
+    );
+    Ok(catalog)
 }
 
 pub(super) fn is_official_account_catalog(catalog: &Value) -> bool {
