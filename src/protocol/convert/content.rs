@@ -471,6 +471,19 @@ pub(super) fn merge_consecutive_messages(messages: &mut Vec<Message>) {
         }
         merged.push(message);
     }
+    for message in &mut merged {
+        if message.role == "assistant" {
+            // Hidden context-tool rounds leave thinking/text/thinking behind.
+            // Keep the signed blocks intact and contiguous when replay merges
+            // those rounds; stable sorting preserves both groups' order.
+            message.content.sort_by_key(|block| {
+                !matches!(
+                    block,
+                    ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
+                )
+            });
+        }
+    }
     *messages = merged;
 }
 

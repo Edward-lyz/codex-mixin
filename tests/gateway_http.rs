@@ -3613,6 +3613,236 @@ async fn context_repeated_compress_failure_stops_early() {
 }
 
 #[tokio::test]
+async fn context_thinking_normalization_survives_compress_and_client_tool_replay() {
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = Arc::clone(&requests);
+    let mut payloads = Vec::new();
+    for (round, name, arguments) in [
+        (
+            0,
+            "mixin_context_compress",
+            json!({
+                "ranges":[{"start":"m000003","end":"m000004"}],
+                "topic":"exploration", "summary":"alpha and beta explored two ideas"
+            }),
+        ),
+        (1, "exec_command", json!({"cmd":"pwd"})),
+    ] {
+        let mut encoded = text_then_tool_sse(name, arguments).into_bytes();
+        let mut events: Vec<Value> = drain_events(&mut encoded)
+            .into_iter()
+            .map(|event| serde_json::from_str(&event.data).unwrap())
+            .collect();
+        for event in &mut events {
+            if let Some(index) = event.get_mut("index") {
+                *index = json!(index.as_u64().unwrap() + 1);
+            }
+            if event["content_block"]["type"] == "tool_use" {
+                event["content_block"]["id"] = json!(format!("call_{round}"));
+            }
+        }
+        events.splice(1..1, [
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":format!("thought {round}")}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":format!("signature-{round}")}}),
+            json!({"type":"content_block_stop","index":0}),
+        ]);
+        payloads.push(
+            events
+                .into_iter()
+                .map(|event| {
+                    format!(
+                        "event: {}\ndata: {event}\n\n",
+                        event["type"].as_str().unwrap()
+                    )
+                })
+                .collect::<String>(),
+        );
+    }
+    let upstream = spawn_router(Router::new().route(
+        "/v1/messages",
+        post(move |Json(body): Json<Value>| {
+            let captured = Arc::clone(&captured);
+            let payloads = payloads.clone();
+            async move {
+                let index = {
+                    let mut requests = captured.lock().unwrap();
+                    let index = requests.len();
+                    requests.push(body);
+                    index
+                };
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(
+                        payloads.get(index).cloned().unwrap_or_else(text_sse),
+                    ))
+                    .unwrap()
+            }
+        }),
+    ))
+    .await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    config.context.protected_messages = 1;
+    config.context.protected_tokens = 1;
+    let database = tempfile::tempdir().unwrap();
+    let path = database.path().join("context.db");
+    let gateway = spawn_gateway_with_context(config, &path).await;
+    let client = reqwest::Client::new();
+    let mut body = responses_request();
+    body["input"] = json!([
+        {"type":"message","role":"developer","content":"dev rules"},
+        {"type":"message","role":"user","content":"explore two ideas"},
+        {"type":"message","role":"assistant","content":format!("alpha {}", "word ".repeat(400))},
+        {"type":"message","role":"assistant","content":format!("beta {}", "word ".repeat(400))},
+        {"type":"message","role":"user","content":"continue"}
+    ]);
+    let response = client
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thinking-compress")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let completed: Value = drain_events(&mut encoded)
+        .into_iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .map(|event| serde_json::from_str(&event.data).unwrap())
+        .unwrap();
+    assert!(!completed.to_string().contains("mixin_context_compress"));
+    let output = completed["response"]["output"].as_array().unwrap();
+    assert_eq!(
+        output
+            .iter()
+            .filter(|item| item["type"] == "reasoning")
+            .count(),
+        2
+    );
+    body["previous_response_id"] = completed["response"]["id"].clone();
+    body["input"] =
+        json!([{"type":"function_call_output","call_id":"call_1","output":"/workspace"}]);
+    let response = client
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thinking-compress")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(
+        stream.contains("response.completed") && !stream.contains("response.failed"),
+        "{stream}"
+    );
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 3);
+    assert!(
+        recorded[1]
+            .to_string()
+            .contains("alpha and beta explored two ideas")
+    );
+    let messages = recorded[2]["messages"].as_array().unwrap();
+    let assistant = messages
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .unwrap();
+    assert_eq!(
+        assistant["content"],
+        json!([
+            {"type":"thinking","thinking":"thought 0","signature":"signature-0"},
+            {"type":"thinking","thinking":"thought 1","signature":"signature-1"},
+            {"type":"text","text":"checking"}, {"type":"text","text":"checking"},
+            {"type":"tool_use","id":"call_1","name":"exec_command","input":{"cmd":"pwd"}}
+        ])
+    );
+    assert!(recorded[2].to_string().contains("/workspace"));
+    assert!(
+        !recorded[2]["messages"]
+            .to_string()
+            .contains("mixin_context_compress")
+    );
+}
+
+#[tokio::test]
+async fn context_thinking_normalization_repairs_reopened_legacy_archives() {
+    for enabled in [true, false] {
+        let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+        let mut config = test_config(upstream.clone());
+        config.context.enabled = true;
+        let database = tempfile::tempdir().unwrap();
+        let path = database.path().join("context.db");
+        let gateway = spawn_gateway_with_context(config, &path).await;
+        let first = json!({"type":"thinking","thinking":"old first","signature":"old-signature-1"});
+        let last = json!({"type":"thinking","thinking":"old last","signature":"old-signature-2"});
+        // Persist the pre-fix archive shape without calling the converter.
+        let legacy = json!([
+            {"type":"message","role":"user","content":"old request"},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-thinking:v1:{first}")},
+            {"type":"message","role":"assistant","content":"before hidden compress"},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-thinking:v1:{last}")},
+            {"type":"message","role":"assistant","content":"old answer"}
+        ]);
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/responses/compact"))
+            .bearer_auth("gateway-key")
+            .header("x-session-id", "legacy-thinking")
+            .json(&json!({"model":"DeepSeek-V4-Flash-custom","input":legacy}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let checkpoint: Value = response.json().await.unwrap();
+        assert!(requests.lock().unwrap().is_empty());
+        let mut config = test_config(upstream);
+        config.context.enabled = enabled;
+        let reopened = spawn_gateway_with_context(config, &path).await;
+        let response = replay_context_checkpoint(
+            &reopened,
+            "legacy-thinking",
+            checkpoint["output"][0]["encrypted_content"]
+                .as_str()
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let stream = response.text().await.unwrap();
+        assert!(
+            stream.contains("response.completed") && !stream.contains("response.failed"),
+            "{stream}"
+        );
+        let captured = requests.lock().unwrap().clone();
+        assert_eq!(captured.len(), 1);
+        let assistant = captured[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "assistant")
+            .unwrap();
+        assert_eq!(
+            assistant["content"],
+            json!([
+                first, last,
+                {"type":"text","text":"before hidden compress"},
+                {"type":"text","text":"old answer"}
+            ])
+        );
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let archived: Vec<Value> = db.prepare("SELECT m.item_json FROM history h JOIN messages m ON m.session_key=h.session_key AND m.reference=h.reference ORDER BY h.position")
+            .unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap()
+            .map(|row| serde_json::from_str(&row.unwrap()).unwrap()).collect();
+        assert_eq!(
+            &archived[..legacy.as_array().unwrap().len()],
+            legacy.as_array().unwrap()
+        );
+    }
+}
+
+#[tokio::test]
 async fn context_internal_rounds_are_bounded() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusOnly).await;
     let mut config = test_config(upstream_url);
@@ -9047,6 +9277,48 @@ async fn native_messages_preserves_streaming_thinking_and_usage() {
         text.contains("\"input_tokens\":10") && text.contains("\"output_tokens\":8"),
         "{text}"
     );
+}
+
+#[tokio::test]
+async fn native_messages_thinking_normalization_preserves_block_metadata() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &database.path().join("context.db")).await;
+    let first = json!({"type":"thinking","thinking":"first","signature":"first-signature"});
+    let last = json!({"type":"thinking","thinking":"last","signature":"last-signature"});
+    let redacted = json!({"type":"redacted_thinking","data":"opaque"});
+    let unsigned = json!({"type":"thinking","thinking":"unsigned"});
+    let text = json!({"type":"text","text":"before compress","cache_control":{"type":"ephemeral"}});
+    let tool = json!({"type":"tool_use","id":"client-call","name":"tool.with.punctuation","input":{"key":"value"}});
+    let response = reqwest::Client::new().post(format!("{gateway}/v1/messages"))
+        .bearer_auth("gateway-key").header("x-session-id", "native-normalization")
+        .json(&json!({
+            "model":"DeepSeek-V4-Flash-custom", "max_tokens":1024, "stream":true,
+            "messages":[
+                {"role":"user","content":"start"},
+                {"role":"assistant","content":[first, text, last, redacted, unsigned, tool]},
+                {"role":"user","content":[{"type":"tool_result","tool_use_id":"client-call","content":"done"}]}
+            ],
+            "tools":[{"name":"tool.with.punctuation","description":"test tool","input_schema":{"type":"object"}}]
+        })).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(stream.contains("message_stop"), "{stream}");
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    let assistant = captured[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .unwrap();
+    assert_eq!(
+        assistant["content"],
+        json!([first, last, redacted, unsigned, text, tool])
+    );
+    assert!(!captured[0].to_string().contains("__mixin_native_block"));
 }
 
 #[tokio::test]

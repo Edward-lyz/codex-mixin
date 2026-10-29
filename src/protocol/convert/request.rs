@@ -97,6 +97,20 @@ pub(crate) fn native_messages_body(
             }
         }
     }
+    for message in &mut messages {
+        if message.get("role").and_then(Value::as_str) == Some("assistant")
+            && let Some(content) = message.get_mut("content").and_then(Value::as_array_mut)
+        {
+            // Match typed replay normalization after restoring native fields,
+            // keeping signatures, cache controls and other sidecar data intact.
+            content.sort_by_key(|block| {
+                !matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("thinking" | "redacted_thinking")
+                )
+            });
+        }
+    }
     for block in lifted {
         system.push(serde_json::to_value(block)?);
     }

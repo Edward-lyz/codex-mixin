@@ -88,6 +88,16 @@ HTTP 与 WebSocket（含官方模型）复用同一上下文回路。可见文�
 工具事件上限为 8 MiB，超限返回 `response.failed`，不会无界缓冲整轮 SSE。内部续轮对
 客户端保持同一 response id、单一终止事件和递增事件编号；HTTP 断连会释放请求租约与上游流。
 
+向 Anthropic Messages 上游回放时，隐藏内部工具轮留下的相邻 assistant 消息会先合并，
+再将其中的 thinking / redacted_thinking 稳定归一化为开头的连续块。
+例如 `[thinking₁, 文字₁, thinking₂, 文字₂, tool_use]` 变为
+`[thinking₁, thinking₂, 文字₁, 文字₂, tool_use]`，避免 OneAPI 返回
+`multiple signed blocks lack recorded continuation provenance`。
+全部 thinking 内容、签名和原生块字段保持完整，文字与工具块之间的顺序不变；
+原本已归一化的前缀不变。Responses 转换及启用上下文引擎的原生 Messages 重建均执行
+这一步。旧版本保存的会话、链式续接和 checkpoint 展开也自动处理，包括关闭引擎后的
+checkpoint 只读回放；不需要清库、重开会话或迁移原始消息。
+
 压缩分三级：原始消息 → T1 摘要 → T2 摘要合并 → T3 再合并。范围必须连续、
 不重叠、至少两段，且不能触碰受保护内容。
 

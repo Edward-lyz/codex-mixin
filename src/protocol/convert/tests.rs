@@ -441,6 +441,85 @@ fn rejects_corrupt_mixin_anthropic_thinking_state() {
 }
 
 #[test]
+fn normalizes_thinking_from_hidden_context_rounds_without_losing_blocks() {
+    let signed =
+        json!({"type":"thinking","thinking":"first thought","signature":"first-signature"});
+    let redacted = json!({"type":"redacted_thinking","data":"opaque-thought"});
+    let unsigned = json!({"type":"thinking","thinking":"unsigned thought"});
+    let last = json!({"type":"thinking","thinking":"last thought","signature":"last-signature"});
+    let body = json!({
+        "model":"Claude Sonnet 5", "stream":true,
+        "input":[
+            {"type":"message","role":"user","content":"start"},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-thinking:v1:{signed}")},
+            {"type":"message","role":"assistant","content":"before compress"},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-thinking:v1:{redacted}")},
+            {"type":"message","role":"assistant","content":"after compress"},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-unsigned-thinking:v1:{unsigned}")},
+            {"type":"reasoning","encrypted_content":format!("codex-mixin:anthropic-thinking:v1:{last}")},
+            {"type":"function_call","call_id":"client-call","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
+            {"type":"function_call_output","call_id":"client-call","output":"/workspace"}
+        ]
+    });
+    let original = body.clone();
+    let converted = convert_request(&body, &config()).unwrap();
+    let messages = serde_json::to_value(converted.request.messages).unwrap();
+    assert_eq!(
+        messages,
+        json!([
+            {"role":"user","content":[{"type":"text","text":"start"}]},
+            {"role":"assistant","content":[
+                signed, redacted, unsigned, last,
+                {"type":"text","text":"before compress"},
+                {"type":"text","text":"after compress"},
+                {"type":"tool_use","id":"client-call","name":"exec_command","input":{"cmd":"pwd"}}
+            ]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"client-call","content":"/workspace"}]}
+        ])
+    );
+    assert_eq!(
+        body, original,
+        "normalization must not mutate archived input"
+    );
+}
+
+#[test]
+fn thinking_normalization_preserves_valid_prefixes_and_turn_boundaries() {
+    let signed = json!({"type":"thinking","thinking":"original","signature":"signature"});
+    for blocks in [
+        vec![
+            signed.clone(),
+            signed.clone(),
+            json!({"type":"text","text":"answer"}),
+        ],
+        vec![signed.clone(), json!({"type":"text","text":"answer"})],
+        vec![json!({"type":"text","text":"answer"})],
+    ] {
+        let mut messages = vec![
+            Message {
+                role: "assistant".to_owned(),
+                content: serde_json::from_value(json!(blocks)).unwrap(),
+            },
+            Message {
+                role: "user".to_owned(),
+                content: vec![ContentBlock::Text {
+                    text: "next".to_owned(),
+                }],
+            },
+            Message {
+                role: "assistant".to_owned(),
+                content: serde_json::from_value(json!([signed])).unwrap(),
+            },
+        ];
+        let original = serde_json::to_vec(&messages).unwrap();
+        for _ in 0..2 {
+            super::content::merge_consecutive_messages(&mut messages);
+            assert_eq!(serde_json::to_vec(&messages).unwrap(), original);
+        }
+    }
+}
+
+#[test]
 fn materializes_v2_agent_message_payload_for_custom_upstream() {
     let body = json!({
         "model": "DeepSeek-V4-Flash",
