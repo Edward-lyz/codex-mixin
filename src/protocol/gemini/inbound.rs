@@ -2,9 +2,9 @@
 //!
 //! Wire contract: https://ai.google.dev/api/generate-content
 //! CLI API-key transport: google-gemini/gemini-cli packages/core/src/core/contentGenerator.ts.
-//! This is NOT full Gemini CLI compatibility: its default topK/thinkingConfig,
-//! countTokens, structured output, media, server tools, caching and CloudCode
-//! require additional capabilities; unsupported request fields fail before execution.
+//! Sampling and thinking use canonical options across protocols. Exact Gemini
+//! generation options survive a Gemini upstream roundtrip. Media, server tools,
+//! caching and CloudCode still require their own supported wire contracts.
 use crate::error::GatewayError;
 use crate::protocol::sse::SseDecoder;
 use crate::protocol::{CollectedResponse, ResponseStream};
@@ -181,11 +181,18 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
     Ok(converted)
 }
 
-fn options(body: &Value, converted: &mut Value) -> Result<(), GatewayError> {
+fn generation_options(body: &Value, converted: &mut Value) -> Result<(), GatewayError> {
     if let Some(config) = body.get("generationConfig") {
         fields(
             config,
-            &["temperature", "topP", "maxOutputTokens", "candidateCount"],
+            &[
+                "temperature",
+                "topP",
+                "topK",
+                "maxOutputTokens",
+                "candidateCount",
+                "thinkingConfig",
+            ],
             "generationConfig",
         )?;
         if config.get("candidateCount").is_some_and(|v| v != &json!(1)) {
@@ -205,7 +212,66 @@ fn options(body: &Value, converted: &mut Value) -> Result<(), GatewayError> {
             }
             converted["max_output_tokens"] = value.clone();
         }
+        if let Some(value) = config.get("topK") {
+            if value.as_u64().is_none_or(|n| n == 0) {
+                return Err(bad("topK must be a positive integer"));
+            }
+            converted["top_k"] = value.clone();
+        }
+        thinking_options(config, converted)?;
+        converted["__mixin_gemini_generation_config"] = config.clone();
     }
+    Ok(())
+}
+
+fn thinking_options(config: &Value, converted: &mut Value) -> Result<(), GatewayError> {
+    if let Some(thinking) = config.get("thinkingConfig") {
+        fields(
+            thinking,
+            &["includeThoughts", "thinkingBudget", "thinkingLevel"],
+            "thinkingConfig",
+        )?;
+        if thinking
+            .get("includeThoughts")
+            .is_some_and(|v| !v.is_boolean())
+        {
+            return Err(bad("includeThoughts must be a boolean"));
+        }
+        if thinking.get("thinkingBudget").is_some() && thinking.get("thinkingLevel").is_some() {
+            return Err(bad(
+                "thinkingBudget and thinkingLevel are mutually exclusive",
+            ));
+        }
+        let effort = if let Some(budget) = thinking.get("thinkingBudget") {
+            match budget.as_i64() {
+                Some(-1) => "medium",
+                Some(0) => "none",
+                Some(1..=2048) => "low",
+                Some(2049..=8192) => "medium",
+                Some(8193..) => "high",
+                _ => return Err(bad("thinkingBudget must be -1 or nonnegative")),
+            }
+        } else if let Some(level) = thinking.get("thinkingLevel") {
+            match level.as_str() {
+                Some("MINIMAL" | "minimal") => "minimal",
+                Some("LOW" | "low") => "low",
+                Some("MEDIUM" | "medium") => "medium",
+                Some("HIGH" | "high") => "high",
+                _ => return Err(bad("invalid thinkingLevel")),
+            }
+        } else {
+            "medium"
+        };
+        converted["reasoning"] = json!({"effort":effort});
+        if thinking.get("includeThoughts").and_then(Value::as_bool) == Some(true) {
+            converted["reasoning"]["summary"] = json!("auto");
+        }
+    }
+    Ok(())
+}
+
+fn options(body: &Value, converted: &mut Value) -> Result<(), GatewayError> {
+    generation_options(body, converted)?;
     if let Some(tools) = body.get("tools") {
         let tools = tools
             .as_array()
@@ -557,10 +623,10 @@ mod tests {
         for (key, value) in [
             ("safetySettings", json!([])),
             ("cachedContent", json!("cache")),
-            ("generationConfig", json!({"topK":64})),
+            ("generationConfig", json!({"topK":0})),
             (
                 "generationConfig",
-                json!({"thinkingConfig":{"includeThoughts":true}}),
+                json!({"thinkingConfig":{"thinkingBudget":-2}}),
             ),
         ] {
             let mut body = base.clone();
@@ -576,6 +642,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn cli_sampling_and_thinking_survive_native_and_cross_protocol_conversion() {
+        let config = json!({"temperature":0.4,"topP":0.8,"topK":64,"maxOutputTokens":4096,"thinkingConfig":{"includeThoughts":true,"thinkingBudget":512}});
+        let converted = to_responses(
+            &json!({"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":config}),
+            "gemini-test",
+        )
+        .unwrap();
+        assert_eq!(converted["top_k"], 64);
+        assert_eq!(converted["reasoning"]["effort"], "low");
+        let native = crate::protocol::gemini::responses_to_gemini(&converted, None).unwrap();
+        assert_eq!(native.request["generationConfig"], config);
+        let chat = crate::protocol::openai_chat::responses_to_openai_chat(&converted, &|| {
+            Err(bad("unused"))
+        })
+        .unwrap();
+        assert_eq!(chat.request["top_k"], 64);
+        assert_eq!(chat.request["reasoning_effort"], "low");
+        assert!(
+            chat.request
+                .get("__mixin_gemini_generation_config")
+                .is_none()
+        );
+        for thinking in [
+            json!({"thinkingBudget":-2}),
+            json!({"includeThoughts":"yes"}),
+            json!({"thinkingBudget":512,"thinkingLevel":"HIGH"}),
+            json!({"thinkingLevel":"unknown"}),
+        ] {
+            assert!(to_responses(&json!({"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":thinking}}),"model").is_err());
+        }
     }
 
     #[tokio::test]

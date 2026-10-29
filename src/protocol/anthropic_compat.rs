@@ -171,6 +171,15 @@ fn message_request_to_responses_inner(
         "max_output_tokens": request.max_tokens,
         "input": input
     });
+    if let Some(value) = request.temperature {
+        body["temperature"] = json!(value);
+    }
+    if let Some(value) = request.top_p {
+        body["top_p"] = json!(value);
+    }
+    if let Some(value) = request.top_k {
+        body["top_k"] = json!(value);
+    }
     if let Some(system) = &request.system {
         let mut instructions = Vec::with_capacity(system.len());
         for block in system {
@@ -1028,6 +1037,9 @@ mod tests {
         let request = MessageRequest {
             model: "backend".to_owned(),
             max_tokens: 1024,
+            temperature: None,
+            top_p: None,
+            top_k: None,
             stream: true,
             speed: None,
             messages: vec![crate::anthropic::Message {

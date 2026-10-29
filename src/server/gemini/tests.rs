@@ -33,6 +33,8 @@ async fn fixture() -> (Router, tokio::task::JoinHandle<()>) {
     provider.selected_models = vec!["vendor/model".to_owned()];
     provider.cached_models = vec![ProviderModel {
         id: "vendor/model".to_owned(),
+        context_window: Some(64_000),
+        max_output_tokens: Some(4_096),
         ..ProviderModel::default()
     }];
     let config = GatewayConfig {
@@ -160,6 +162,59 @@ async fn gemini_http_rejects_unsupported_fields_actions_and_auth() {
                 Request::post("/v1beta/models/vendor/model:generateContent")
                     .header("x-goog-api-key", "wrong")
                     .body(Body::from("invalid json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn gemini_token_estimates_and_muse_discovery_do_not_generate() {
+    let (app, task) = fixture().await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/muse-code/models")
+                .header("authorization", "Bearer client-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let model = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| {
+            m["id"]
+                .as_str()
+                .is_some_and(|id| id.contains("vendor/model"))
+        })
+        .unwrap();
+    let meta = &model["metadata"]["muse-code"];
+    assert_eq!(meta["is_hidden"], false);
+    assert_eq!(meta["limit"]["context"], 64_000);
+    assert_eq!(meta["limit"]["output"], 4_096);
+    let model_id = model["id"].as_str().unwrap();
+    let response = request(
+        &app,
+        &format!("/v1beta/models/{model_id}:countTokens"),
+        json!({"contents":[{"parts":[{"text":"estimate this input without calling the model"}]}]}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-codex-mixin-token-count"], "estimated");
+    assert!(json_body(response).await["totalTokens"].as_u64().unwrap() > 0);
+    if cfg!(feature = "client-auth") {
+        let response = app
+            .oneshot(
+                Request::get("/muse-code/models")
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await

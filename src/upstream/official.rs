@@ -106,6 +106,10 @@ impl UpstreamAccess {
 
 pub(crate) fn normalize_official_responses_body(mut body: Value) -> Result<Value, GatewayError> {
     if let Some(body) = body.as_object_mut() {
+        if body.contains_key("top_k") {
+            return Err(GatewayError::BadRequest("the official Responses API does not support topK; disable topK or choose a provider that supports it".to_owned()));
+        }
+        body.remove("__mixin_gemini_generation_config");
         body.remove("max_output_tokens");
         if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
             input.retain(|item| !is_foreign_reasoning(item));

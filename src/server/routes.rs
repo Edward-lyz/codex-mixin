@@ -24,6 +24,7 @@ pub fn router(state: AppState) -> Router {
         // Empryo probes its configured base URL before fetching /models.
         .route("/v1", get(models))
         .route("/v1/models", get(models))
+        .route("/muse-code/models", get(muse_models))
         .route("/v1beta/models", get(super::gemini::models))
         .route(
             "/v1beta/models/{*model_action}",
@@ -196,6 +197,41 @@ async fn models(
     check_gateway_auth(&state, &headers).await?;
     let models = state.fetch_models().await?;
     Ok(Json(json!({"object":"list","data":models})).into_response())
+}
+
+async fn muse_models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    let data: Vec<_> = state
+        .fetch_models()
+        .await?
+        .into_iter()
+        .map(|model| {
+            let context = model.context_window.filter(|n| *n > 0).unwrap_or(128_000);
+            let output = model
+                .max_output_tokens
+                .filter(|n| *n > 0)
+                .unwrap_or(32_000)
+                .min(context);
+            let images = model.supports_image == Some(true);
+            let inputs = if images {
+                vec!["text", "image"]
+            } else {
+                vec!["text"]
+            };
+            let name = model.display_name.as_deref().unwrap_or(&model.id);
+            json!({"id":model.id,"object":"model","created":0,"owned_by":model.owned_by,
+            "metadata":{"muse-code":{"name":name,"family":model.owned_by,"is_hidden":false,
+                "attachment":images,"reasoning":model.supports_thinking == Some(true),
+                "temperature":false,"tool_call":model.supports_function_tools != Some(false),
+                "modalities":{"input":inputs,"output":["text"]},"options":{"include":[]},
+                "variants":{},"description":format!("{name} via Codex Mixin"),
+                "limit":{"context":context,"output":output}}}})
+        })
+        .collect();
+    Ok(Json(json!({"object":"list","data":data})).into_response())
 }
 
 async fn codex_model_catalog(

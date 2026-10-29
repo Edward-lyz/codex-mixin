@@ -265,6 +265,9 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
         request: MessageRequest {
             model,
             max_tokens,
+            temperature: body.get("temperature").and_then(Value::as_f64),
+            top_p: body.get("top_p").and_then(Value::as_f64),
+            top_k: body.get("top_k").and_then(Value::as_u64),
             stream: true,
             speed,
             messages,

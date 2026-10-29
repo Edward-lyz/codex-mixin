@@ -349,6 +349,9 @@ async fn stream_openai_responses(
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
     let mut upstream_body = body.clone();
+    if let Some(fields) = upstream_body.as_object_mut() {
+        fields.remove("__mixin_gemini_generation_config");
+    }
     upstream_body["model"] = Value::String(upstream_model_id.to_owned());
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let observation = record_provider_prefix(

@@ -74,9 +74,6 @@ pub fn name(id: &str) -> anyhow::Result<&'static str> {
 
 pub fn limitation(id: &str) -> Option<&'static str> {
     match id {
-        "gemini" => Some(
-            "Gemini Developer API ingress is available, but the CLI's topK/thinkingConfig and countTokens paths are not yet supported end to end.",
-        ),
         "zed" => Some(
             "Requires an OS credential-store adapter; writing settings alone does not install its API key.",
         ),
@@ -88,9 +85,6 @@ pub fn limitation(id: &str) -> Option<&'static str> {
             Some("Requires the running app API for its keychain-encrypted provider catalog.")
         }
         "aside" => Some("Requires Aside's native runtime connection and staging API."),
-        "muse" => Some(
-            "Requires the Muse discovery endpoint /muse-code/models and an authenticated transport adapter.",
-        ),
         _ => None,
     }
 }
@@ -186,7 +180,7 @@ pub fn install(
 pub fn launch_environment(
     id: &str,
     manifest: &Path,
-) -> anyhow::Result<(Vec<(String, String)>, Option<String>)> {
+) -> anyhow::Result<(std::collections::BTreeMap<String, String>, Option<String>)> {
     name(id)?;
     anyhow::ensure!(
         status(id, manifest)?.state == "managed",
@@ -194,7 +188,7 @@ pub fn launch_environment(
     );
     let path = manifest.with_extension("launch.json");
     if !path.exists() {
-        return Ok((Vec::new(), None));
+        return Ok((std::collections::BTreeMap::new(), None));
     }
     let record = engine::read_config(&path, engine::Format::Json)?;
     let environment = record["environment"]
@@ -224,7 +218,7 @@ pub fn launch_environment(
             );
             Ok((name.clone(), value.to_owned()))
         })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
     Ok((
         environment,
         record

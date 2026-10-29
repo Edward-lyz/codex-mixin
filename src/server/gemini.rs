@@ -35,7 +35,7 @@ pub(super) async fn models(
     }
     let models = state.fetch_models().await?;
     let models: Vec<_> = models.iter().map(|model| model.id.as_str()).map(|id| json!({
-        "name":format!("models/{id}"),"displayName":id,"supportedGenerationMethods":["generateContent","streamGenerateContent"]
+        "name":format!("models/{id}"),"displayName":id,"supportedGenerationMethods":["generateContent","streamGenerateContent","countTokens"]
     })).collect();
     Ok(Json(json!({"models":models})).into_response())
 }
@@ -54,10 +54,11 @@ pub(super) async fn generate(
         .ok_or_else(|| GatewayError::BadRequest("missing Gemini model action".to_owned()))?;
     let streaming = match action {
         "generateContent" => false,
+        "countTokens" => false,
         "streamGenerateContent" => true,
         _ => {
             return Err(GatewayError::BadRequest(
-                "unsupported Gemini action (including countTokens/CloudCode)".to_owned(),
+                "unsupported Gemini action".to_owned(),
             ));
         }
     };
@@ -77,6 +78,29 @@ pub(super) async fn generate(
     }
     let body = super::request_body::parse_json(body).await?;
     let converted = inbound::to_responses(&body, model)?;
+    if action == "countTokens" {
+        state.gateway.resolve_model_route(model).await?;
+        let input = converted["input"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(crate::context::estimate_item_tokens)
+            .fold(0_u64, u64::saturating_add);
+        let tools = converted
+            .get("tools")
+            .map(|tools| crate::context::estimate_text_tokens(&tools.to_string()))
+            .unwrap_or(0);
+        let system = converted
+            .get("instructions")
+            .and_then(Value::as_str)
+            .map(crate::context::estimate_text_tokens)
+            .unwrap_or(0);
+        return Ok((
+            [("x-codex-mixin-token-count", "estimated")],
+            Json(json!({"totalTokens":input.saturating_add(tools).saturating_add(system)})),
+        )
+            .into_response());
+    }
     let route = state.gateway.resolve_model_route(model).await?;
     let stream = if route == ResolvedModelRoute::Official {
         state

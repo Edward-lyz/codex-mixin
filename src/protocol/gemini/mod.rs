@@ -313,6 +313,12 @@ fn extract_hosted_search(
 }
 
 fn build_generation_config(body: &Value, model: &str) -> Option<Value> {
+    if let Some(config) = body
+        .get("__mixin_gemini_generation_config")
+        .filter(|v| v.is_object())
+    {
+        return Some(config.clone());
+    }
     let mut generation_config = serde_json::Map::new();
     let mut max_tokens = body
         .get("max_output_tokens")
@@ -324,6 +330,9 @@ fn build_generation_config(body: &Value, model: &str) -> Option<Value> {
     }
     if let Some(top_p) = body.get("top_p") {
         generation_config.insert("topP".to_owned(), top_p.clone());
+    }
+    if let Some(top_k) = body.get("top_k") {
+        generation_config.insert("topK".to_owned(), top_k.clone());
     }
 
     let effort = body

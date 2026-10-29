@@ -18,6 +18,10 @@ pub fn zed_write(server: &str, password: Option<&str>) -> anyhow::Result<()> {
         },
         password,
     )?;
+    anyhow::ensure!(
+        zed_read(server)?.as_deref() == password,
+        "native Zed credential change was not confirmed"
+    );
     Ok(())
 }
 
@@ -134,6 +138,8 @@ fn zed_credential(
 // Neither the JSON input nor the returned password is written to a log.
 const WINDOWS_CREDENTIAL: &str = r#"
 $ErrorActionPreference='Stop'
+[Console]::InputEncoding=New-Object Text.UTF8Encoding($false)
+[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -151,13 +157,14 @@ $target=[string]$inputValue.target
 if($inputValue.operation -eq 'read') {
  $pointer=[IntPtr]::Zero
  if([ZedCredential]::Read($target,1,0,[ref]$pointer)) {
-  try { $credential=[Runtime.InteropServices.Marshal]::PtrToStructure($pointer,[type][ZedCredential+Credential]); $value=[Runtime.InteropServices.Marshal]::PtrToStringUni($credential.CredentialBlob,[int]($credential.CredentialBlobSize/2)); ConvertTo-Json -InputObject $value -Compress } finally { [ZedCredential]::CredFree($pointer) }
+  try { $credential=[Runtime.InteropServices.Marshal]::PtrToStructure($pointer,[type][ZedCredential+Credential]); $bytes=New-Object byte[] $credential.CredentialBlobSize; [Runtime.InteropServices.Marshal]::Copy($credential.CredentialBlob,$bytes,0,$bytes.Length); $value=[Text.Encoding]::UTF8.GetString($bytes); ConvertTo-Json -InputObject $value -Compress } finally { [ZedCredential]::CredFree($pointer) }
  } elseif([Runtime.InteropServices.Marshal]::GetLastWin32Error() -eq 1168) { 'null' } else { throw 'credential read failed' }
 } elseif($inputValue.operation -eq 'delete') {
  if(-not [ZedCredential]::Delete($target,1,0) -and [Runtime.InteropServices.Marshal]::GetLastWin32Error() -ne 1168) { throw 'credential delete failed' }; 'null'
 } else {
  $value=[string]$inputValue.password
- $pointer=[Runtime.InteropServices.Marshal]::StringToCoTaskMemUni($value)
- try { $credential=New-Object ZedCredential+Credential; $credential.Type=1; $credential.TargetName=$target; $credential.CredentialBlobSize=[Text.Encoding]::Unicode.GetByteCount($value); $credential.CredentialBlob=$pointer; $credential.Persist=2; $credential.UserName='Bearer'; if(-not [ZedCredential]::Write([ref]$credential,0)) { throw 'credential write failed' }; 'null' } finally { [Runtime.InteropServices.Marshal]::ZeroFreeCoTaskMemUnicode($pointer) }
+ $bytes=[Text.Encoding]::UTF8.GetBytes($value)
+ $pointer=[Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
+ try { [Runtime.InteropServices.Marshal]::Copy($bytes,0,$pointer,$bytes.Length); $credential=New-Object ZedCredential+Credential; $credential.Type=1; $credential.TargetName=$target; $credential.CredentialBlobSize=$bytes.Length; $credential.CredentialBlob=$pointer; $credential.Persist=2; $credential.UserName='Bearer'; if(-not [ZedCredential]::Write([ref]$credential,0)) { throw 'credential write failed' }; 'null' } finally { for($i=0;$i -lt $bytes.Length;$i++) { [Runtime.InteropServices.Marshal]::WriteByte($pointer,$i,0) }; [Runtime.InteropServices.Marshal]::FreeHGlobal($pointer) }
 }
 "#;

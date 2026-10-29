@@ -222,6 +222,9 @@ mod tests {
         MessageRequest {
             model: "model-live".to_owned(),
             max_tokens: 128,
+            temperature: None,
+            top_p: None,
+            top_k: None,
             stream: true,
             speed: None,
             messages: vec![Message {

@@ -73,7 +73,7 @@ pub(super) async fn run(command: AgentCommand) -> anyhow::Result<()> {
 
 async fn run_agent(id: &str, arguments: &[String]) -> anyhow::Result<()> {
     let (environment, model) = if is_legacy(id) {
-        (Vec::new(), None)
+        (std::collections::BTreeMap::new(), None)
     } else {
         let (manifest, _) = integration_paths(id)?;
         codex_mixin::clients::frameworks::launch_environment(id, &manifest)?

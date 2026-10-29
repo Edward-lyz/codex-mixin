@@ -64,6 +64,9 @@ mod tests {
         MessageRequest {
             model: "provider-model".to_owned(),
             max_tokens: 64,
+            temperature: None,
+            top_p: None,
+            top_k: None,
             stream: true,
             speed: None,
             messages: vec![Message {

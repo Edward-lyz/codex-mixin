@@ -5,6 +5,12 @@ use serde_json::Value;
 pub struct MessageRequest {
     pub model: String,
     pub max_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u64>,
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<String>,

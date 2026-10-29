@@ -328,6 +328,9 @@ pub(super) fn normalize_message_request(
     Ok(MessageRequest {
         model: upstream_model.to_owned(),
         max_tokens,
+        temperature: body.get("temperature").and_then(Value::as_f64),
+        top_p: body.get("top_p").and_then(Value::as_f64),
+        top_k: body.get("top_k").and_then(Value::as_u64),
         stream: body_stream_requested(body),
         speed: body.get("speed").and_then(Value::as_str).map(str::to_owned),
         messages,
