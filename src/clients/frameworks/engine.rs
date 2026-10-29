@@ -79,6 +79,38 @@ fn read(path: &Path) -> anyhow::Result<Option<String>> {
     }
 }
 
+pub(super) fn read_record(path: &Path) -> anyhow::Result<Option<Value>> {
+    read(path)?
+        .map(|text| {
+            anyhow::ensure!(
+                text.len() <= 1_048_576,
+                "native integration record is too large"
+            );
+            serde_json::from_str(&text).context("invalid native integration record")
+        })
+        .transpose()
+}
+
+pub(super) fn write_record(path: &Path, value: &Value) -> anyhow::Result<()> {
+    validate_path(path)?;
+    ensure_owner_only_dir(path.parent().context("native record has no parent")?)?;
+    let bytes = serde_json::to_vec(value)?;
+    anyhow::ensure!(
+        bytes.len() <= 1_048_576,
+        "native integration record is too large"
+    );
+    write_owner_only(path, &bytes)
+}
+
+pub(super) fn remove_record(path: &Path) -> anyhow::Result<()> {
+    validate_path(path)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).context("remove native integration record"),
+    }
+}
+
 // JSONC is normalized on write; exact original bytes are restored when possible.
 pub(super) fn parse_jsonc(text: &str) -> anyhow::Result<Value> {
     let mut bytes = text.as_bytes().to_vec();

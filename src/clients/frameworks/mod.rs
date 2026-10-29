@@ -5,9 +5,12 @@ use std::path::{Path, PathBuf};
 use crate::clients::IntegrationStatus;
 use serde_json::{Value, json};
 
+mod aside;
+mod cindy;
 mod dotenv;
 mod engine;
 mod schemas;
+mod zed;
 
 const PROVIDER: &str = "codex-mixin";
 const DETAIL: &str = "Disconnect restores the saved managed fields and preserves unrelated settings. Restart the agent after changing its configuration. Edited managed fields require manual reconciliation before disconnect.";
@@ -74,17 +77,10 @@ pub fn name(id: &str) -> anyhow::Result<&'static str> {
 
 pub fn limitation(id: &str) -> Option<&'static str> {
     match id {
-        "zed" => Some(
-            "Requires an OS credential-store adapter; writing settings alone does not install its API key.",
-        ),
         "alma" => Some("Requires Alma's running local API for provider import and removal."),
-        "cindy" => Some(
-            "Requires cindy://provider/import with user confirmation; its provider database is encrypted.",
-        ),
         "hanako" => {
             Some("Requires the running app API for its keychain-encrypted provider catalog.")
         }
-        "aside" => Some("Requires Aside's native runtime connection and staging API."),
         _ => None,
     }
 }
@@ -106,6 +102,20 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
 
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     name(id)?;
+    let native_status = match id {
+        "zed" => Some(zed::status(manifest)),
+        "aside" => Some(aside::status(manifest)),
+        "cindy" => Some(cindy::status(manifest)),
+        _ => None,
+    };
+    if let Some(result) = native_status {
+        return Ok(result.unwrap_or_else(|error| IntegrationStatus {
+            state: "error",
+            mode: Some("native_app"),
+            detail: "Native integration could not be inspected.",
+            error: Some(format!("{error:#}")),
+        }));
+    }
     let native = matches!(id, "cursor" | "copilot" | "devin");
     if let Some(detail) = limitation(id).filter(|_| !manifest.exists()) {
         return Ok(IntegrationStatus {
@@ -143,6 +153,12 @@ pub fn install(
     models: &[FrameworkModel],
 ) -> anyhow::Result<()> {
     require_supported(id)?;
+    match id {
+        "zed" => return zed::install(manifest, base, key, models),
+        "aside" => return aside::install(manifest, base, key, models),
+        "cindy" => return cindy::install(manifest, base, key),
+        _ => {}
+    }
     if manifest.exists() {
         anyhow::ensure!(engine::is_managed(manifest)?, "integration is not managed");
         return Ok(());
@@ -319,7 +335,12 @@ fn native_model_at(
 
 pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
     name(id)?;
-    engine::remove(manifest)
+    match id {
+        "zed" => zed::remove(manifest),
+        "aside" => aside::remove(manifest),
+        "cindy" => cindy::remove(manifest),
+        _ => engine::remove(manifest),
+    }
 }
 
 /// Configuration presence is useful detection for apps with no CLI. The

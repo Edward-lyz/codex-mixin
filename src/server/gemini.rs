@@ -84,16 +84,16 @@ pub(super) async fn generate(
             .as_array()
             .into_iter()
             .flatten()
-            .map(crate::context::estimate_item_tokens)
+            .map(crate::context::types::estimate_item_tokens)
             .fold(0_u64, u64::saturating_add);
         let tools = converted
             .get("tools")
-            .map(|tools| crate::context::estimate_text_tokens(&tools.to_string()))
+            .map(|tools| crate::context::types::estimate_text_tokens(&tools.to_string()))
             .unwrap_or(0);
         let system = converted
             .get("instructions")
             .and_then(Value::as_str)
-            .map(crate::context::estimate_text_tokens)
+            .map(crate::context::types::estimate_text_tokens)
             .unwrap_or(0);
         return Ok((
             [("x-codex-mixin-token-count", "estimated")],

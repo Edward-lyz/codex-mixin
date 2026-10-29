@@ -255,11 +255,16 @@ fn connect_command(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<C
 async fn disconnect(id: &str) -> anyhow::Result<()> {
     agent_name(id)?;
     if !is_legacy(id) {
-        let _lock = integration_lock()?;
         let (manifest, _) = integration_paths(id)?;
-        codex_mixin::clients::frameworks::remove(id, &manifest)?;
         let client = framework_client(id)?;
-        codex_mixin::config::revoke_gateway_client_key(client)?;
+        let owned_id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let _lock = integration_lock()?;
+            codex_mixin::clients::frameworks::remove(&owned_id, &manifest)?;
+            codex_mixin::config::revoke_gateway_client_key(client)
+        })
+        .await
+        .context("native disconnect worker failed")??;
         return verify_integration(id, "unmanaged").await;
     }
     let id = id.to_owned();
@@ -277,11 +282,22 @@ async fn disconnect(id: &str) -> anyhow::Result<()> {
 
 async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
     let (path, key) = integration_paths(id)?;
-    let state = if is_legacy(id) {
-        integration_status(id, &path, key.as_deref())?
-    } else {
-        codex_mixin::clients::frameworks::status(id, &path)?
-    };
+    let owned_id = id.to_owned();
+    let state = tokio::task::spawn_blocking(move || {
+        if is_legacy(&owned_id) {
+            integration_status(&owned_id, &path, key.as_deref())
+        } else {
+            codex_mixin::clients::frameworks::status(&owned_id, &path)
+        }
+    })
+    .await
+    .context("native status worker failed")??;
+    if (expected == "managed" && state.state == "pending")
+        || (expected == "unmanaged" && state.state == "pending_removal")
+    {
+        super::progress_step(state.detail);
+        return Ok(());
+    }
     anyhow::ensure!(
         state.state == expected,
         "{id} integration did not become {expected}: {}",
@@ -309,7 +325,14 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
     frameworks::require_supported(id)?;
     let _lock = integration_lock()?;
     let (manifest, _) = integration_paths(id)?;
-    if frameworks::status(id, &manifest)?.state == "managed" {
+    let inspected_id = id.to_owned();
+    let inspected_path = manifest.clone();
+    if tokio::task::spawn_blocking(move || frameworks::status(&inspected_id, &inspected_path))
+        .await
+        .context("native status worker failed")??
+        .state
+        == "managed"
+    {
         return Ok(());
     }
     if matches!(id, "cursor" | "copilot" | "devin") {

@@ -16,6 +16,98 @@ use wait_timeout::ChildExt;
 /// Lines of command output kept in a failure message.
 const FAILURE_TAIL_LINES: usize = 3;
 
+/// Zed follows its own native configuration convention, including ~/.config
+/// on macOS rather than Application Support.
+pub(crate) fn zed_settings_path() -> anyhow::Result<PathBuf> {
+    let root = if cfg!(windows) {
+        super::framework_app_root()?
+    } else if cfg!(target_os = "macos") {
+        super::home_dir_required()?.join(".config")
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or(super::home_dir_required()?.join(".config"))
+    };
+    anyhow::ensure!(
+        root.is_absolute(),
+        "Zed configuration root must be absolute"
+    );
+    Ok(root.join("zed/settings.json"))
+}
+
+/// A bounded Aside runtime call. The marker carries only a model selection;
+/// credentials stay in Aside's private provider file.
+pub(crate) fn aside_default_model(
+    account: &str,
+    selection: Option<&serde_json::Value>,
+) -> anyhow::Result<serde_json::Value> {
+    anyhow::ensure!(
+        account.starts_with('u')
+            && account.len() > 1
+            && account[1..].bytes().all(|byte| byte.is_ascii_digit()),
+        "invalid Aside account"
+    );
+    let program = find_command("aside").context("Aside executable is not installed")?;
+    let mut command = super::launcher_command(&program);
+    let mut expression = String::new();
+    if let Some(selection) = selection {
+        expression.push_str(&format!(
+            "aside.settings.set('defaultModel',{});",
+            serde_json::to_string(selection)?
+        ));
+    }
+    expression.push_str("console.log('CODEX_MIXIN_ASIDE_STATE '+JSON.stringify(aside.settings.get('defaultModel')??null))");
+    command.args(["repl", "--account", account, "--host", "local", &expression]);
+    let outcome = run_command(command, Duration::from_secs(3), "Aside runtime").map_err(|_| {
+        anyhow::anyhow!("Aside runtime is unavailable; configuration remains staged")
+    })?;
+    let line = outcome
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("CODEX_MIXIN_ASIDE_STATE "))
+        .context("Aside returned no confirmed model selection")?;
+    let actual: serde_json::Value =
+        serde_json::from_str(line).context("invalid Aside model selection")?;
+    if let Some(selection) = selection {
+        anyhow::ensure!(
+            actual == *selection,
+            "Aside did not confirm the requested model selection"
+        );
+    }
+    Ok(actual)
+}
+
+/// Open a private handoff page instead of putting the key-bearing Cindy URI
+/// on a command line. Cindy performs its own final import confirmation.
+pub(crate) fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        page.is_absolute()
+            && uri.starts_with("cindy://provider/import?v=1&data=")
+            && uri
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b":/?=&_-".contains(&byte)),
+        "invalid Cindy import handoff"
+    );
+    super::ensure_owner_only_dir(page.parent().context("Cindy handoff has no parent")?)?;
+    let html = format!(
+        "<!doctype html><meta charset=utf-8><title>Codex Mixin import</title><p>Import the gateway provider, then confirm in Cindy.</p><a href=\"{}\">Continue in Cindy</a>",
+        uri.replace('&', "&amp;")
+    );
+    super::write_owner_only(page, html.as_bytes())?;
+    let mut command = if cfg!(target_os = "macos") {
+        Command::new("open")
+    } else if cfg!(windows) {
+        let mut command = Command::new("rundll32.exe");
+        command.arg("url.dll,FileProtocolHandler");
+        command
+    } else {
+        Command::new("xdg-open")
+    };
+    command.arg(page);
+    run_command(command, Duration::from_secs(10), "Cindy import handoff")?;
+    Ok(())
+}
+
 /// Desktop apps whose installed version the Agents page shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DesktopApp {
