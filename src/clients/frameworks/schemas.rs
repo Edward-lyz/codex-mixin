@@ -1376,11 +1376,34 @@ mod tests {
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().canonicalize().unwrap();
             let manifest = root.join("journal.json");
-            let patches =
+            let mut patches =
                 keyless_at(id, &root, "http://127.0.0.1:8787/v1", &model_fixture()).unwrap();
             let paths: Vec<_> = patches.iter().map(|p| p.path.clone()).collect();
             for path in &paths {
                 std::fs::write(path, r#"{"unrelated":"keep"}"#).unwrap();
+            }
+            let mut expected_environment = std::collections::BTreeMap::new();
+            if id == "commandcode" {
+                expected_environment.insert("CMD_LOCAL_ONLY".to_owned(), "1".to_owned());
+            }
+            if cfg!(feature = "client-auth") {
+                expected_environment.insert(
+                    format!("CODEX_MIXIN_{}_API_KEY", id.to_uppercase()),
+                    "fixture-key".to_owned(),
+                );
+            }
+            if !expected_environment.is_empty() {
+                patches.push(Patch {
+                    path: manifest.with_extension("launch.json"),
+                    format: Format::Json,
+                    fields: vec![(
+                        vec![],
+                        json!({
+                            "environment":expected_environment,
+                            "model":"provider/model.with.dots"
+                        }),
+                    )],
+                });
             }
             super::super::engine::apply(&manifest, patches).unwrap();
             let serialized = paths
@@ -1395,7 +1418,14 @@ mod tests {
                 super::super::status(id, &manifest).unwrap().state,
                 "managed"
             );
+            let (environment, model) = super::super::launch_environment(id, &manifest).unwrap();
+            assert_eq!(environment, expected_environment);
+            assert_eq!(
+                model.as_deref(),
+                (!expected_environment.is_empty()).then_some("provider/model.with.dots")
+            );
             super::super::remove(id, &manifest).unwrap();
+            assert!(!manifest.with_extension("launch.json").exists());
             for path in paths {
                 assert_eq!(
                     std::fs::read_to_string(path).unwrap(),
