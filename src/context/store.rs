@@ -549,9 +549,9 @@ impl Store {
                 {
                     coverage.next();
                 }
-                !coverage
+                coverage
                     .peek()
-                    .is_some_and(|segment| segment.position <= entry.position)
+                    .is_none_or(|segment| segment.position > entry.position)
             })
             .collect();
         let changed = divergence < history.len() || !uncovered.is_empty();

@@ -597,10 +597,10 @@ fn rewrite_named_unpaired_function_outputs(body: &mut serde_json::Value) -> usiz
             || object
                 .get("call_id")
                 .is_some_and(|call_id| !call_id.is_null())
-            || !object
+            || object
                 .get("name")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|name| !name.is_empty())
+                .is_none_or(str::is_empty)
         {
             continue;
         }
