@@ -75,8 +75,13 @@ async fn run_agent(id: &str, arguments: &[String]) -> anyhow::Result<()> {
     let (environment, model) = if is_legacy(id) {
         (std::collections::BTreeMap::new(), None)
     } else {
-        let (manifest, _) = integration_paths(id)?;
-        codex_mixin::clients::frameworks::launch_environment(id, &manifest)?
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let (manifest, _) = integration_paths(&id)?;
+            codex_mixin::clients::frameworks::launch_environment(&id, &manifest)
+        })
+        .await
+        .context("managed launch inspection worker failed")??
     };
     let program = if id == "cursor-local" {
         codex_mixin::platform::agent_cli::cursor_editor_program()?
@@ -102,7 +107,9 @@ async fn run_agent(id: &str, arguments: &[String]) -> anyhow::Result<()> {
         .status()
         .await
         .context("start managed agent session")?;
-    anyhow::ensure!(status.success(), "{id} exited with {status}");
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
     Ok(())
 }
 

@@ -14,6 +14,7 @@ mod engine;
 mod hanako;
 mod native_http;
 mod schemas;
+mod startup;
 mod zed;
 
 const PROVIDER: &str = "codex-mixin";
@@ -137,13 +138,22 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
                 "managed launch environment is missing; disconnect and reconnect this agent"
             );
         }
-        Ok(managed)
+        let startup_ready = !managed || !launch_required || startup::is_installed(manifest)?;
+        Ok((managed, startup_ready))
     });
     Ok(match managed {
-        Ok(managed) => IntegrationStatus {
-            state: if managed { "managed" } else { "unmanaged" },
+        Ok((managed, startup_ready)) => IntegrationStatus {
+            state: if managed && !startup_ready {
+                "pending"
+            } else if managed {
+                "managed"
+            } else {
+                "unmanaged"
+            },
             mode: native.then_some("native_models"),
-            detail: if native {
+            detail: if managed && !startup_ready {
+                "Reconnect to install terminal startup entries, then open a new terminal. The explicit agent run command remains available."
+            } else if native {
                 "Native vendor model management; this agent does not expose a custom gateway endpoint."
             } else {
                 DETAIL
@@ -194,9 +204,12 @@ pub fn install(
     }
     if manifest.exists() {
         anyhow::ensure!(
-            status(id, manifest)?.state == "managed",
+            matches!(status(id, manifest)?.state, "managed" | "pending"),
             "integration requires attention; disconnect and reconnect this agent"
         );
+        if startup::required(id) {
+            startup::install(id, manifest)?;
+        }
         return Ok(());
     }
     anyhow::ensure!(
@@ -227,7 +240,20 @@ pub fn install(
             fields: vec![(vec![],json!({"environment":environment,"model":if id=="agy" {format!("{PROVIDER}/{}",models[0].id)} else {models[0].id.clone()}}))],
         });
     }
-    engine::apply(manifest, patches)
+    engine::apply(manifest, patches)?;
+    let startup_result = if startup::required(id) {
+        startup::install(id, manifest)
+    } else {
+        Ok(())
+    };
+    if let Err(error) = startup_result {
+        startup::remove(manifest)
+            .context("recover terminal startup entries after failed install")?;
+        engine::remove(manifest)
+            .context("recover agent configuration after failed startup install")?;
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Only managed launchers read this private record; callers never print it.
@@ -236,8 +262,9 @@ pub fn launch_environment(
     manifest: &Path,
 ) -> anyhow::Result<(std::collections::BTreeMap<String, String>, Option<String>)> {
     name(id)?;
+    let state = status(id, manifest)?.state;
     anyhow::ensure!(
-        status(id, manifest)?.state == "managed",
+        state == "managed" || (state == "pending" && startup::required(id)),
         "connect {id} before starting a managed session"
     );
     let path = manifest.with_extension("launch.json");
@@ -380,7 +407,10 @@ pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
         "cindy" => cindy::remove(manifest),
         "alma" => alma::remove(manifest),
         "hanako" => hanako::remove(manifest),
-        _ => engine::remove(manifest),
+        _ => {
+            startup::remove(manifest)?;
+            engine::remove(manifest)
+        }
     }
 }
 

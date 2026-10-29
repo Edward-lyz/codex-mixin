@@ -126,9 +126,24 @@ fn install_at(
                     ],
                     json!({"api_url":server,"available_models":entries}),
                 ),
+                field(&["agent", "default_model", "provider"], json!(PROVIDER)),
+                field(&["agent", "default_model", "model"], json!(first.id)),
                 field(
-                    &["agent", "default_model"],
-                    json!({"provider":PROVIDER,"model":first.id}),
+                    &["agent", "default_model", "enable_thinking"],
+                    json!(!first.efforts.is_empty()),
+                ),
+                field(
+                    &["agent", "default_model", "effort"],
+                    json!(if first.efforts.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            ["high", "medium", "low", "minimal"]
+                                .into_iter()
+                                .find(|level| first.efforts.iter().any(|effort| effort == level))
+                                .unwrap_or("high"),
+                        )
+                    }),
                 ),
             ],
         }],
@@ -241,5 +256,34 @@ mod tests {
         assert_eq!(std::fs::read(&settings).unwrap(), original);
         assert_eq!(credential.borrow().as_deref(), Some("original-key"));
         assert!(!manifest.exists());
+        install_at(
+            &manifest,
+            &settings,
+            ("http://127.0.0.1:8080", "managed-key"),
+            &models,
+            read,
+            write,
+        )
+        .unwrap();
+        let mut current = engine::read_config(&settings, engine::Format::Json).unwrap();
+        assert_eq!(current["agent"]["default_model"]["enable_thinking"], true);
+        assert_eq!(current["agent"]["default_model"]["effort"], "high");
+        current["agent"]["default_model"]["native_parameter"] = json!("keep");
+        std::fs::write(&settings, serde_json::to_vec(&current).unwrap()).unwrap();
+        assert_eq!(status_with(&manifest, read).unwrap().state, "managed");
+        current["agent"]["default_model"]["model"] = json!("user-selected");
+        std::fs::write(&settings, serde_json::to_vec(&current).unwrap()).unwrap();
+        assert_eq!(status_with(&manifest, read).unwrap().state, "drift");
+        assert!(remove_with(&manifest, read, write).is_err());
+        current["agent"]["default_model"]["model"] = json!("provider/model");
+        std::fs::write(&settings, serde_json::to_vec(&current).unwrap()).unwrap();
+        remove_with(&manifest, read, write).unwrap();
+        let restored = engine::read_config(&settings, engine::Format::Json).unwrap();
+        assert_eq!(restored["agent"]["default_model"]["provider"], "native");
+        assert_eq!(restored["agent"]["default_model"]["model"], "old");
+        assert_eq!(
+            restored["agent"]["default_model"]["native_parameter"],
+            "keep"
+        );
     }
 }

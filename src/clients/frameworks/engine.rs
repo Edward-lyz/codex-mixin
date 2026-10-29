@@ -42,7 +42,7 @@ struct Journal {
     entries: Vec<Entry>,
 }
 
-fn validate_path(path: &Path) -> anyhow::Result<()> {
+pub(super) fn validate_path(path: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(
         path.is_absolute(),
         "configuration path must be absolute: {}",

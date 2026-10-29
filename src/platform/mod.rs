@@ -59,6 +59,7 @@ pub mod update;
 
 pub mod agent_cli;
 pub mod agent_credentials;
+pub(crate) mod agent_startup;
 
 pub mod installation;
 

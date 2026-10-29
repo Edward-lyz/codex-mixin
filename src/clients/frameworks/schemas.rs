@@ -50,7 +50,7 @@ pub(super) fn patches(
     let first = &models[0];
     let v1 = format!("{base}/v1");
     Ok(match id {
-        "gemini" => gemini_at(&home_path("", ".gemini")?, base, key, first),
+        "gemini" => gemini_at(&home_path("", ".gemini")?, base, key, models),
         "agy" => agy_at(&home_path("", ".gemini/antigravity-cli")?, models),
         "muse" => muse_at(&config_home()?.join("muse"), &v1, first)?,
         "cursor-local" => Vec::new(),
@@ -136,19 +136,30 @@ pub(super) fn patches(
     })
 }
 
-fn gemini_at(dir: &Path, base: &str, key: &str, model: &FrameworkModel) -> Vec<Patch> {
-    vec![
-        patch(
-            dir.join("settings.json"),
-            Format::Json,
-            vec![
-                field(
-                    &["security", "auth", "selectedType"],
-                    json!("gemini-api-key"),
-                ),
-                field(&["model", "name"], json!(model.id)),
-            ],
+fn gemini_at(dir: &Path, base: &str, key: &str, models: &[FrameworkModel]) -> Vec<Patch> {
+    let mut settings = vec![
+        field(
+            &["security", "auth", "selectedType"],
+            json!("gemini-api-key"),
         ),
+        field(&["model", "name"], json!(models[0].id)),
+        field(&["experimental", "dynamicModelConfiguration"], json!(true)),
+    ];
+    for model in models {
+        settings.push(field(
+            &["modelConfigs", "modelDefinitions", &model.id],
+            json!({"displayName":format!("Codex Mixin: {}", model.name),
+                "tier":"custom","family":"custom","isVisible":true,
+                "features":{"thinking":!model.efforts.is_empty()}}),
+        ));
+        settings.push(field(
+            &["modelConfigs", "customAliases", &model.id],
+            json!({"modelConfig":{"model":model.id,
+                "generateContentConfig":{"maxOutputTokens":model.max_tokens}}}),
+        ));
+    }
+    vec![
+        patch(dir.join("settings.json"), Format::Json, settings),
         patch(
             dir.join(".env"),
             Format::Env,
@@ -1084,19 +1095,18 @@ mod tests {
         let dir = temp.path().canonicalize().unwrap();
         let settings = dir.join("settings.json");
         let environment = dir.join(".env");
-        let before =
-            "{\"security\":{\"auth\":{\"selectedType\":\"oauth-personal\"}},\"unrelated\":true}\n";
+        let before = "{\"security\":{\"auth\":{\"selectedType\":\"oauth-personal\"}},\"modelConfigs\":{\"modelDefinitions\":{\"native\":{\"displayName\":\"Keep\"}}},\"experimental\":{\"dynamicModelConfiguration\":false},\"unrelated\":true}\n";
         std::fs::write(&settings, before).unwrap();
         std::fs::write(&environment, "# preserve\nOTHER=value\n").unwrap();
         let journal = dir.join("journal.json");
+        let mut models = model_fixture();
+        let mut second = model_fixture().remove(0);
+        second.id = "provider/second-model".into();
+        second.max_tokens = 2_048;
+        models.push(second);
         super::super::engine::apply(
             &journal,
-            gemini_at(
-                &dir,
-                "http://127.0.0.1:8787",
-                "fixture-key",
-                &model_fixture()[0],
-            ),
+            gemini_at(&dir, "http://127.0.0.1:8787", "fixture-key", &models),
         )
         .unwrap();
         let value = read_config(&settings, Format::Json).unwrap();
@@ -1107,6 +1117,22 @@ mod tests {
         assert_eq!(
             value.pointer("/model/name").unwrap(),
             "provider/model.with.dots"
+        );
+        assert_eq!(value["experimental"]["dynamicModelConfiguration"], true);
+        for model in &models {
+            let definition = &value["modelConfigs"]["modelDefinitions"][&model.id];
+            assert_eq!(definition["isVisible"], true);
+            assert_eq!(definition["tier"], "custom");
+            let alias = &value["modelConfigs"]["customAliases"][&model.id]["modelConfig"];
+            assert_eq!(alias["model"], model.id);
+            assert_eq!(
+                alias["generateContentConfig"]["maxOutputTokens"],
+                model.max_tokens
+            );
+        }
+        assert_eq!(
+            value["modelConfigs"]["modelDefinitions"]["native"]["displayName"],
+            "Keep"
         );
         let values = read_config(&environment, Format::Env).unwrap();
         assert_eq!(values["GEMINI_API_KEY"], "fixture-key");
@@ -1414,6 +1440,18 @@ mod tests {
                 assert!(serialized.contains(&format!("CODEX_MIXIN_{}_API_KEY", id.to_uppercase())));
             }
             assert!(super::super::engine::is_managed(&manifest).unwrap());
+            if super::super::startup::required(id) {
+                assert_eq!(
+                    super::super::status(id, &manifest).unwrap().state,
+                    "pending"
+                );
+                super::super::startup::install_at(
+                    id,
+                    &manifest,
+                    vec![(root.join("profile"), format!("# owned startup {id}\n"))],
+                )
+                .unwrap();
+            }
             assert_eq!(
                 super::super::status(id, &manifest).unwrap().state,
                 "managed"

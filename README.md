@@ -383,7 +383,9 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
 
 **原生应用前提。** Alma、Hanako 需要保持运行；Zed 使用系统凭据存储。Aside 离线时先暂存配置，待原生运行时确认后才显示已接入。Cindy 需要在应用内确认导入和手动删除提供商；等待删除时，断开操作已撤销网关访问。
 
-**受托管启动。** agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante，通过 `codex-mixin agent run <id>` 启动；也可用 `codex-mixin agent launch <id>` 打开受托管终端。Cursor 启动前需完全退出已有进程。密钥只进入私有托管记录和子进程环境，不修改 shell 配置文件。
+**必须从终端启动。** 接入 agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante 后，请重新打开终端，再照常输入 `agy`、`cursor`、`muse`、`command-code` 等命令。Mixin 在 zsh、bash、fish 或 PowerShell 的用户启动配置中加入可恢复的入口，自动注入托管环境；无需手动使用 `agent run`。Cursor 必须先完全退出已有进程，再从终端执行 `cursor`，Dock、开始菜单和桌面图标启动不受托管；Windows 的 cmd 也不加载这些入口。密钥只保存在私有托管记录和子进程环境中，启动配置只保存 Mixin 路径与配置文件路径。断开后重新打开终端，原生命令恢复。也可显式使用 `codex-mixin agent run <id> -- <参数>` 或 `codex-mixin agent launch <id>`。
+
+**Gemini 模型选择。** 接入后重启 Gemini，在 `/model` 的手动选择中查看标为 `Codex Mixin:` 的自定义模型。旧版接入请先断开再重新接入，以更新原生模型目录。
 
 **厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。接入时沿用已有的厂商原生模型；尚未选择时，先用上述命令指定模型。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
 
