@@ -16,11 +16,10 @@ use wait_timeout::ChildExt;
 /// Lines of command output kept in a failure message.
 const FAILURE_TAIL_LINES: usize = 3;
 
-/// Zed follows its own native configuration convention, including ~/.config
-/// on macOS rather than Application Support.
+/// Devin follows XDG on Unix and the native roaming configuration on Windows.
 pub(crate) fn devin_settings_path() -> anyhow::Result<PathBuf> {
     let root = if cfg!(windows) {
-        super::framework_app_root("devin")?
+        super::framework_app_root()?.join("devin")
     } else {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -34,6 +33,7 @@ pub(crate) fn devin_settings_path() -> anyhow::Result<PathBuf> {
     Ok(root.join("config.json"))
 }
 
+/// Zed uses ~/.config on macOS rather than Application Support.
 pub(crate) fn zed_settings_path() -> anyhow::Result<PathBuf> {
     let root = if cfg!(windows) {
         super::framework_app_root()?

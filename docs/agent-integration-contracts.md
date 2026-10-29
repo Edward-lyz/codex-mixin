@@ -52,7 +52,7 @@ codex-mixin agent model devin --model VENDOR_MODEL_VARIANT
 codex-mixin agent disconnect cursor
 ```
 
-Writes touch only native model fields and use the existing private undo journal. Repeated selections preserve unrelated user edits; disconnect restores the original model and leaves vendor credentials intact. Cursor CLI writes `~/.cursor/cli-config.json`; Copilot writes `~/.copilot/settings.json`; Devin writes `$XDG_CONFIG_HOME/devin/config.json` or `~/.config/devin/config.json`.
+Writes touch only native model fields and use the existing private undo journal. Repeated selections preserve unrelated user edits; disconnect restores the original model and leaves vendor credentials intact.
 
 ## Managed process environments
 
