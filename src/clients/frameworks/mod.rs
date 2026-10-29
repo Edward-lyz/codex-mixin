@@ -5,10 +5,13 @@ use std::path::{Path, PathBuf};
 use crate::clients::IntegrationStatus;
 use serde_json::{Value, json};
 
+mod alma;
 mod aside;
 mod cindy;
 mod dotenv;
 mod engine;
+mod hanako;
+mod native_http;
 mod schemas;
 mod zed;
 
@@ -75,14 +78,8 @@ pub fn name(id: &str) -> anyhow::Result<&'static str> {
     })
 }
 
-pub fn limitation(id: &str) -> Option<&'static str> {
-    match id {
-        "alma" => Some("Requires Alma's running local API for provider import and removal."),
-        "hanako" => {
-            Some("Requires the running app API for its keychain-encrypted provider catalog.")
-        }
-        _ => None,
-    }
+pub fn limitation(_id: &str) -> Option<&'static str> {
+    None
 }
 
 pub fn require_supported(id: &str) -> anyhow::Result<()> {
@@ -106,6 +103,8 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
         "zed" => Some(zed::status(manifest)),
         "aside" => Some(aside::status(manifest)),
         "cindy" => Some(cindy::status(manifest)),
+        "alma" => Some(alma::status(manifest)),
+        "hanako" => Some(hanako::status(manifest)),
         _ => None,
     };
     if let Some(result) = native_status {
@@ -157,6 +156,8 @@ pub fn install(
         "zed" => return zed::install(manifest, base, key, models),
         "aside" => return aside::install(manifest, base, key, models),
         "cindy" => return cindy::install(manifest, base, key),
+        "alma" => return alma::install(manifest, base, key, models),
+        "hanako" => return hanako::install(manifest, base, key, models),
         _ => {}
     }
     if manifest.exists() {
@@ -339,6 +340,8 @@ pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
         "zed" => zed::remove(manifest),
         "aside" => aside::remove(manifest),
         "cindy" => cindy::remove(manifest),
+        "alma" => alma::remove(manifest),
+        "hanako" => hanako::remove(manifest),
         _ => engine::remove(manifest),
     }
 }
