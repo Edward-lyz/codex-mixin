@@ -226,6 +226,7 @@ struct ProviderView: Decodable {
     let baiduAuthBridge: BaiduAuthBridgeMode?
     let baiduCodeReport: Bool?
     let selectedModels: [String]
+    let modelOrder: ProviderModelOrder
     let newModels: [String]
     let unavailableSelectedModels: [String]
     let cachedModels: [ProviderModelView]
@@ -264,6 +265,7 @@ struct ProviderView: Decodable {
         case baiduAuthBridge = "baidu_auth_bridge"
         case baiduCodeReport = "baidu_code_report"
         case selectedModels = "selected_models"
+        case modelOrder = "model_order"
         case newModels = "new_models"
         case unavailableSelectedModels = "unavailable_selected_models"
         case cachedModels = "cached_models"
@@ -307,6 +309,7 @@ struct ProviderView: Decodable {
         baiduAuthBridge = try values.decodeIfPresent(BaiduAuthBridgeMode.self, forKey: .baiduAuthBridge)
         baiduCodeReport = try values.decodeIfPresent(Bool.self, forKey: .baiduCodeReport)
         selectedModels = try values.decode([String].self, forKey: .selectedModels)
+        modelOrder = try values.decodeIfPresent(ProviderModelOrder.self, forKey: .modelOrder) ?? .family
         newModels = try values.decode([String].self, forKey: .newModels)
         unavailableSelectedModels = try values.decode([String].self, forKey: .unavailableSelectedModels)
         cachedModels = try values.decode([ProviderModelView].self, forKey: .cachedModels)
@@ -575,37 +578,6 @@ func formatContextWindow(_ value: UInt64) -> String {
 
 func providerModelSelectionKey(providerID: String, modelID: String) -> String {
     "\(providerID)\u{1f}\(modelID)"
-}
-
-func selectedProviderModelKeys(_ providers: [ProviderView]) -> Set<String> {
-    Set(providers.flatMap { provider in
-        provider.selectedModels.map {
-            providerModelSelectionKey(providerID: provider.id, modelID: $0)
-        }
-    })
-}
-
-func providerModelSelections(
-    _ providers: [ProviderView],
-    selectedKeys: Set<String>,
-    additionalModelIDs: [String: Set<String>] = [:]
-) -> [String: [String]] {
-    Dictionary(uniqueKeysWithValues: providers.map { provider in
-        let modelIDs = (
-            provider.modelItems.map(\.id)
-                + provider.unavailableSelectedModels
-                + Array(additionalModelIDs[provider.id] ?? [])
-        )
-            .filter { modelID in
-                selectedKeys.contains(
-                    providerModelSelectionKey(providerID: provider.id, modelID: modelID)
-                )
-            }
-            .reduce(into: [String]()) { modelIDs, modelID in
-                if !modelIDs.contains(modelID) { modelIDs.append(modelID) }
-            }
-        return (provider.id, modelIDs)
-    })
 }
 
 struct ProviderTestResponse: Decodable {

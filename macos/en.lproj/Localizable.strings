@@ -333,6 +333,16 @@
 "context.validation.contextWindowTokens" = "Context window must be a positive whole number.";
 
 "provider.includeModel" = "Include";
+"provider.modelOrder.title" = "Model order";
+"provider.modelOrder.family" = "Family and version";
+"provider.modelOrder.manual" = "Manual";
+"provider.modelOrder.position" = "Order";
+"provider.modelOrder.up" = "Move model up";
+"provider.modelOrder.down" = "Move model down";
+"provider.modelOrder.drag" = "Drag to reorder selected models";
+"provider.modelOrder.defaultHelp" = "Family and version ordering takes effect after applying changes.";
+"provider.modelOrder.emptySelection" = "Select at least one model before applying changes.";
+"provider.modelOrder.noChanges" = "There are no model changes to save.";
 "provider.reviewModelOverride" = "Codex review model override";
 "provider.reviewModel" = "Review model";
 "provider.reviewModelOverrideDetail" = "Choose a review model independently. Turn off to use the default route.";

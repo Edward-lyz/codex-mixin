@@ -31,7 +31,8 @@ fusion_settings|1|||FusionSettingsLogic.swift tests/FusionSettingsLogicTests.swi
 launch_agent_bootstrap|0|||LaunchAgentBootstrapSupport.swift LaunchAtLoginSupport.swift tests/LaunchAgentBootstrapTests.swift
 model_change_notification|0||UserNotifications|ModelChangeNotification.swift tests/ModelChangeNotificationTests.swift
 process_output_collector|0|||ProcessOutputCollector.swift tests/ProcessOutputCollectorTests.swift
-provider_support|1|||ProviderSupport.swift tests/ProviderSupportTests.swift
+provider_support|1|||ProviderModelSelectionSupport.swift ProviderSupport.swift tests/ProviderSupportTests.swift
+provider_model_selection|1|||ProviderModelSelectionSupport.swift ProviderSupport.swift tests/ProviderModelSelectionTests.swift
 quota_support|1|||QuotaSupport.swift ConsoleUsageSupport.swift tests/QuotaSupportTests.swift
 status_refresh_coordinator|0|||RefreshTimerSupport.swift StatusRefreshCoordinator.swift tests/StatusRefreshCoordinatorTests.swift
 update_watchdog|0||Cocoa CryptoKit|UpdateWatchdog.swift AppDataDirectory.swift tests/UpdateWatchdogTests.swift
