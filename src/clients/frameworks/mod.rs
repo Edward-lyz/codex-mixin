@@ -388,8 +388,16 @@ mod native_tests {
     fn native_model_updates_preserve_vendor_credentials_and_unrelated_edits() {
         for id in ["cursor", "copilot", "devin"] {
             let directory = tempfile::tempdir().unwrap();
-            let path = directory.path().join("settings.json");
-            let manifest = directory.path().join("integration.json");
+            let path = directory
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("settings.json");
+            let manifest = directory
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("integration.json");
             let original = match id {
                 "cursor" => json!({"model":{"modelId":"old"},"hasChangedDefaultModel":false}),
                 "copilot" => json!({"model":"old","effortLevel":"low"}),
@@ -425,7 +433,11 @@ mod native_tests {
     fn private_launch_environment_requires_managed_fields_and_allowlisted_variables() {
         for variable in ["CODEX_MIXIN_FX_API_KEY", "LD_PRELOAD"] {
             let directory = tempfile::tempdir().unwrap();
-            let manifest = directory.path().join("integration.json");
+            let manifest = directory
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("integration.json");
             let path = manifest.with_extension("launch.json");
             engine::apply(
                 &manifest,

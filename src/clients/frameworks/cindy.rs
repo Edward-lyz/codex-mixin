@@ -170,7 +170,7 @@ fn remove_at(manifest: &Path, directories: &[PathBuf]) -> anyhow::Result<()> {
         return Ok(());
     };
     let added = imported(&record, directories)?;
-    // Revocation is performed by the existing caller after this succeeds.
+    // The CLI revokes access before native cleanup can remain pending.
     record["disconnecting"] = json!(true);
     engine::write_record(manifest, &record)?;
     engine::remove_record(&manifest.with_extension("import.html"))?;
@@ -187,14 +187,14 @@ mod tests {
     #[test]
     fn confirmation_and_removal_are_observed_read_only() {
         let directory = tempfile::tempdir().unwrap();
-        let roots = vec![directory.path().join("Cindy")];
+        let roots = vec![directory.path().canonicalize().unwrap().join("Cindy")];
         std::fs::create_dir_all(&roots[0]).unwrap();
         let database = roots[0].join("cindy-account.db");
         let connection = rusqlite::Connection::open(&database).unwrap();
         connection
             .execute_batch("CREATE TABLE custom_providers(id TEXT,name TEXT,runtimes TEXT)")
             .unwrap();
-        let manifest = directory.path().join("cindy.json");
+        let manifest = directory.path().canonicalize().unwrap().join("cindy.json");
         let record = json!({"id":"codex-mixin-fixture","base":"http://127.0.0.1:8080","key":"fixture-key","disconnecting":false});
         engine::write_record(&manifest, &record).unwrap();
         let before = std::fs::read(&database).unwrap();
@@ -228,7 +228,15 @@ mod tests {
     #[test]
     fn unreadable_schema_is_unknown_instead_of_a_successful_import() {
         let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("cindy-broken.db"), b"not sqlite").unwrap();
+        std::fs::write(
+            directory
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("cindy-broken.db"),
+            b"not sqlite",
+        )
+        .unwrap();
         let record = json!({"id":"fixture","base":"http://127.0.0.1:8080"});
         assert!(imported(&record, &[directory.path().to_path_buf()]).is_err());
         let value =

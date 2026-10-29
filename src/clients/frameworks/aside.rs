@@ -217,13 +217,17 @@ mod tests {
     #[test]
     fn offline_staging_tracks_the_captured_account_and_restores_exact_files() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().join("aside");
+        let root = directory.path().canonicalize().unwrap().join("aside");
         let account = root.join("u/17");
         std::fs::create_dir_all(&account).unwrap();
         std::fs::write(root.join("accounts.json"), r#"{"currentAccountId":"u17"}"#).unwrap();
         let original = r#"{"defaultModel":{"provider":"native","modelId":"old"},"theme":"dark"}"#;
         std::fs::write(account.join("settings.json"), original).unwrap();
-        let manifest = directory.path().join("manifest.json");
+        let manifest = directory
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("manifest.json");
         let models = vec![FrameworkModel {
             id: "p/m".into(),
             name: "M".into(),

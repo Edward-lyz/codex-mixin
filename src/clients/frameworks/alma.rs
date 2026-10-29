@@ -454,7 +454,7 @@ mod tests {
         let state = fixture.state.clone();
         tokio::task::spawn_blocking(move || {
             let directory=tempfile::tempdir().unwrap();
-            let manifest=directory.path().join("alma.json");
+            let manifest=directory.path().canonicalize().unwrap().join("alma.json");
             install_at(&manifest,&endpoint,("http://127.0.0.1:8080","fixture-key"),&models()).unwrap();
             assert_eq!(status_at(&manifest).unwrap().state,"managed");
             install_at(&manifest,&endpoint,("http://127.0.0.1:8080","fixture-key"),&models()).unwrap();
@@ -481,7 +481,7 @@ mod tests {
         let state = fixture.state.clone();
         tokio::task::spawn_blocking(move || {
             let directory = tempfile::tempdir().unwrap();
-            let manifest = directory.path().join("alma.json");
+            let manifest = directory.path().canonicalize().unwrap().join("alma.json");
             let error = install_at(
                 &manifest,
                 &endpoint,

@@ -383,7 +383,7 @@ All 50 catalog entries have a supported integration or native model manager. The
 
 **Native app prerequisites.** Keep Alma and Hanako running; Zed uses the system credential store. Aside may remain staged until its runtime confirms the selection. Cindy requires in-app import confirmation and manual provider removal; disconnect revokes gateway access while removal is pending.
 
-**Managed launch.** Start agy, Cursor, Muse, and authenticated Command Code / fx / Empryo / Ante sessions with `codex-mixin agent run <id>`. Use `codex-mixin agent launch <id>` to open a managed terminal. Fully quit Cursor before launching it with the managed environment. Keys stay in private managed state and child environments; shell profiles are not changed.
+**Managed launch.** Start agy, Cursor, Muse, Command Code, and authenticated fx / Empryo / Ante sessions with `codex-mixin agent run <id>`. Use `codex-mixin agent launch <id>` to open a managed terminal. Fully quit Cursor before launching it with the managed environment. Keys stay in private managed state and child environments; shell profiles are not changed.
 
 **Vendor-native models.** For example, `codex-mixin agent model cursor --model <vendor-model-id>`; use `copilot` or `devin` for their native settings. Copilot also accepts `--effort high`. These commands do not create a gateway credential or require selected gateway models. See [Agent contracts](docs/agent-integration-contracts.md) for exact prerequisites, restoration, and estimated Gemini token counts.
 

@@ -191,8 +191,12 @@ mod tests {
     #[test]
     fn settings_and_credentials_restore_without_overwriting_user_edits() {
         let directory = tempfile::tempdir().unwrap();
-        let manifest = directory.path().join("zed.json");
-        let settings = directory.path().join("settings.json");
+        let manifest = directory.path().canonicalize().unwrap().join("zed.json");
+        let settings = directory
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("settings.json");
         let original = b"{\"agent\":{\"default_model\":{\"provider\":\"native\",\"model\":\"old\"}},\"theme\":\"custom\"}";
         std::fs::write(&settings, original).unwrap();
         let credential = RefCell::new(Some("original-key".to_owned()));

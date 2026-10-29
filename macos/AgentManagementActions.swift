@@ -82,8 +82,6 @@ extension AppDelegate {
             )
         ) { progress in
             progress.advance(to: 0)
-            let status = try await ensureGatewayReady()
-            applyGatewayStatus(status)
             progress.advance(to: 1)
             _ = try await runGatewayStreaming(
                 agentConnectArguments(id: entry.id, mode: mode)

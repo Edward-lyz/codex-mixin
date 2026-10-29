@@ -383,7 +383,7 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
 
 **原生应用前提。** Alma、Hanako 需要保持运行；Zed 使用系统凭据存储。Aside 离线时先暂存配置，待原生运行时确认后才显示已接入。Cindy 需要在应用内确认导入和手动删除提供商；等待删除时，断开操作已撤销网关访问。
 
-**受托管启动。** agy、Cursor、Muse，以及开启客户端鉴权的 Command Code / fx / Empryo / Ante，通过 `codex-mixin agent run <id>` 启动；也可用 `codex-mixin agent launch <id>` 打开受托管终端。Cursor 启动前需完全退出已有进程。密钥只进入私有托管记录和子进程环境，不修改 shell 配置文件。
+**受托管启动。** agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante，通过 `codex-mixin agent run <id>` 启动；也可用 `codex-mixin agent launch <id>` 打开受托管终端。Cursor 启动前需完全退出已有进程。密钥只进入私有托管记录和子进程环境，不修改 shell 配置文件。
 
 **厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
 

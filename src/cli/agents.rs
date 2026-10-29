@@ -260,6 +260,11 @@ async fn disconnect(id: &str) -> anyhow::Result<()> {
         let owned_id = id.to_owned();
         tokio::task::spawn_blocking(move || {
             let _lock = integration_lock()?;
+            // Manual native cleanup can outlive this command. Revoke access
+            // before publishing its pending-removal state.
+            if matches!(owned_id.as_str(), "cindy" | "hanako") {
+                codex_mixin::config::revoke_gateway_client_key(client)?;
+            }
             codex_mixin::clients::frameworks::remove(&owned_id, &manifest)?;
             codex_mixin::config::revoke_gateway_client_key(client)
         })

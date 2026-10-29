@@ -359,7 +359,7 @@ mod tests {
 
     async fn fixture() -> Fixture {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path();
+        let root = directory.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("agents/primary")).unwrap();
         std::fs::create_dir_all(root.join("user")).unwrap();
         std::fs::write(
@@ -477,7 +477,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_catalog_is_not_touched_and_native_failures_can_resume_removal() {
         let fixture = fixture().await;
-        let root = fixture.directory.path().to_path_buf();
+        let root = fixture.directory.path().canonicalize().unwrap();
         let state = fixture.state.clone();
         tokio::task::spawn_blocking(move || {
             let manifest = root.join("integration.json");
@@ -537,7 +537,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn no_restore_model_requires_native_user_action_before_provider_removal() {
         let fixture = fixture().await;
-        let root = fixture.directory.path().to_path_buf();
+        let root = fixture.directory.path().canonicalize().unwrap();
         let state = fixture.state.clone();
         tokio::task::spawn_blocking(move || {
             let manifest = root.join("integration.json");
