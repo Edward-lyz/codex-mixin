@@ -167,23 +167,40 @@ pub(super) fn filter_official_catalog(
     catalog: &mut Value,
     selected_models: Option<&[String]>,
 ) -> anyhow::Result<()> {
-    let Some(selected_models) = selected_models else {
-        return Ok(());
-    };
-    let selected_models = selected_models
-        .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
     let models = catalog
         .get_mut("models")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| anyhow::anyhow!("official Codex catalog has no models array"))?;
-    models.retain(|model| {
-        model
-            .get("slug")
-            .and_then(Value::as_str)
-            .is_some_and(|slug| selected_models.contains(slug))
-    });
+    if let Some(selected_models) = selected_models {
+        let positions = selected_models
+            .iter()
+            .enumerate()
+            .map(|(index, model)| (model.as_str(), index))
+            .collect::<std::collections::HashMap<_, _>>();
+        models.retain(|model| {
+            model
+                .get("slug")
+                .and_then(Value::as_str)
+                .is_some_and(|slug| positions.contains_key(slug))
+        });
+        models.sort_by_key(|model| {
+            model
+                .get("slug")
+                .and_then(Value::as_str)
+                .and_then(|slug| positions.get(slug))
+                .copied()
+        });
+    } else {
+        models.sort_by(|left, right| {
+            codex_mixin::provider::compare_model_ids(
+                left["slug"].as_str().unwrap_or_default(),
+                right["slug"].as_str().unwrap_or_default(),
+            )
+        });
+    }
+    for (index, model) in models.iter_mut().enumerate() {
+        model["priority"] = serde_json::json!(index);
+    }
     Ok(())
 }
 
@@ -192,20 +209,21 @@ pub(super) fn available_official_ids(models: &[ProviderModel]) -> HashSet<&str> 
 }
 
 fn filter_selected_models(
-    models: Vec<ProviderModel>,
+    mut models: Vec<ProviderModel>,
     selected_models: Option<&[String]>,
 ) -> Vec<ProviderModel> {
     let Some(selected_models) = selected_models else {
+        models.sort_by(|left, right| codex_mixin::provider::compare_model_ids(&left.id, &right.id));
         return models;
     };
-    let selected_models = selected_models
+    let positions = selected_models
         .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
+        .enumerate()
+        .map(|(index, model)| (model.as_str(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    models.retain(|model| positions.contains_key(model.id.as_str()));
+    models.sort_by_key(|model| positions.get(model.id.as_str()).copied());
     models
-        .into_iter()
-        .filter(|model| selected_models.contains(model.id.as_str()))
-        .collect()
 }
 
 fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderModel>> {
@@ -272,6 +290,24 @@ fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderM
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn model_order_regression_official_selection_controls_codex_priority() {
+        let mut catalog = serde_json::json!({"models":[
+            {"slug":"gpt-older","priority":1},
+            {"slug":"gpt-newer","priority":9}
+        ]});
+        super::filter_official_catalog(
+            &mut catalog,
+            Some(&["gpt-newer".to_owned(), "gpt-older".to_owned()]),
+        )
+        .unwrap();
+        assert_eq!(catalog["models"][0]["slug"], "gpt-newer");
+        assert!(
+            catalog["models"][0]["priority"].as_u64().unwrap()
+                < catalog["models"][1]["priority"].as_u64().unwrap()
+        );
+    }
+
     #[test]
     fn account_catalog_requires_matching_account_and_api_source() {
         let catalog = serde_json::json!({

@@ -1140,6 +1140,7 @@ mod tests {
             quota_parser: ProviderQuotaParser::Generic,
             request_policy: ProviderRequestPolicy::default(),
             selected_models: Vec::new(),
+            model_order: Default::default(),
             new_models: Vec::new(),
             cached_models: Vec::new(),
             model_context_overrides: BTreeMap::new(),

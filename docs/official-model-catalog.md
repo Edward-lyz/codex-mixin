@@ -34,6 +34,27 @@ OpenAI 模型列表；不会用公共模板代替账号的模型集合。未登�
 账号未提供的窗口字段保留模板值，显式 `null` 则清除原值；非法数值或窗口超过最大窗口时
 报错，不写入生成的托管目录。
 
+## 模型顺序
+
+默认按模型家族分组、版本号从新到旧排列。`Claude`、`Opus`、`Sonnet`、`Haiku` 归为
+同一家族，同版本按 Opus、Sonnet、Haiku 排列；`auto` 放在列表末尾。已有配置未指定排序
+模式时也使用此默认顺序。
+
+在「模型与服务」中拖动已选模型，或使用上移、下移按钮（键盘 Alt + ↑/↓），然后点击
+「保存模型选择」。保存后，模型顺序会同步到 Codex 目录的 `priority`；后续模型刷新保留
+手动顺序，新发现并自动加入的模型追加到末尾。更多菜单可恢复家族与版本默认顺序，
+同样需要保存。表头的测速、上下文等排序只用于查看，不改变保存的模型顺序。
+
+CLI 使用相同能力，可在仓库根或任意已安装 CLI 的目录运行：
+
+```bash
+codex-mixin --no-tui providers select <provider-id> --model-order manual --model <first-model> --model <second-model>
+codex-mixin --no-tui providers select <provider-id> --model-order family
+```
+
+`<provider-id>` 也可以是 `official`。只传 `--model-order` 时保留已选模型集合；显式传入
+模型列表且省略排序模式时，按传入顺序保存为手动模式。单独修改上下文不会改变排序模式。
+
 官方模型的 `official_model_contexts` 覆盖同时用于 Codex 和其他托管客户端的
 模型配置，包括 Pi、OpenCode、DSH、Claude Code 和 Claude Desktop。覆盖值必须
 大于 0，且不能超过官方清单的 `max_context_window`；清除覆盖后恢复清单中的

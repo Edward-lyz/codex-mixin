@@ -213,6 +213,7 @@ impl ProviderSpec {
             quota_parser: self.quota_parser,
             request_policy: (self.request_policy)(),
             selected_models,
+            model_order: Default::default(),
             new_models: Vec::new(),
             cached_models,
             model_context_overrides: Default::default(),

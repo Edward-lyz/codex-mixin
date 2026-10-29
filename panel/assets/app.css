@@ -1150,6 +1150,12 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 .svc-table tbody tr:nth-child(even) td { background: var(--ink-03); }
 .svc-table tbody tr:hover td { background: var(--ink-05); }
 .svc-table .c-check { width: 56px; }
+.svc-table .c-order { min-width: 84px; }
+.model-order-controls { display: inline-flex; align-items: center; gap: 2px; }
+.model-order-controls .svc-grip { cursor: grab; }
+.model-order-controls .btn { width: 24px; min-width: 24px; height: 24px; }
+.svc-table tr.is-dragging { opacity: 0.4; }
+.svc-table tr.is-drop-target td { box-shadow: inset 0 2px var(--c-accent); }
 .svc-table { min-width: 760px; }
 .svc-table .c-model { width: 100%; min-width: 240px; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .svc-table .c-model .badge { margin-left: 8px; height: 18px; padding: 0 7px; }

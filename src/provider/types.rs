@@ -227,6 +227,8 @@ pub struct ProviderDefinition {
     #[serde(default)]
     pub selected_models: Vec<String>,
     #[serde(default)]
+    pub model_order: super::ModelOrder,
+    #[serde(default)]
     pub new_models: Vec<String>,
     #[serde(default)]
     pub cached_models: Vec<ProviderModel>,
@@ -244,6 +246,12 @@ pub struct ProviderDefinition {
 }
 
 impl ProviderDefinition {
+    pub fn apply_model_order(&mut self) {
+        self.cached_models
+            .sort_by(|left, right| super::compare_model_ids(&left.id, &right.id));
+        self.model_order.apply(&mut self.selected_models);
+    }
+
     /// Whether this provider's model catalog declares real per-model
     /// capabilities. Capability and web-search probes are paid completions,
     /// so such providers are never probed.

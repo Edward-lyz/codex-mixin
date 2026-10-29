@@ -223,6 +223,30 @@ fn fixed_actions_map_to_their_cli_commands() {
 }
 
 #[test]
+fn model_order_action_preserves_the_cli_order_and_validates_the_mode() {
+    let value = json!({"action":"provider_select","params":{
+        "id":"p","models":["Opus 5.5","Claude Haiku 5.5"],"model_order":"manual"
+    }});
+    assert_eq!(
+        action(value).invocation().unwrap().args,
+        [
+            "providers",
+            "select",
+            "p",
+            "--model-order=manual",
+            "--model=Opus 5.5",
+            "--model=Claude Haiku 5.5"
+        ]
+    );
+    assert!(
+        serde_json::from_value::<PanelAction>(json!({"action":"provider_select", "params":{
+            "id":"p", "models":["m"], "model_order":"invalid"
+        }}))
+        .is_err()
+    );
+}
+
+#[test]
 fn context_settings_map_to_the_context_cli() {
     let preset = action(json!({"action":"context_configure", "params": {
         "enabled": true, "compression_mode": "aggressive", "context_window_tokens": "none"

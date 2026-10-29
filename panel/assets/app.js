@@ -1262,7 +1262,7 @@ const svc = {
   benchMode: 1,
   benchTimeout: 60,
   manualOpen: false,
-  drafts: {}, // provider id -> { models:Set, contexts:{id:tokens|null}, manual:Set }
+  drafts: {}, // provider id -> { models:Set, order, contexts:{id:tokens|null}, manual:Set }
 };
 
 function configuredProviders() {
@@ -1294,7 +1294,7 @@ function providerHealth(provider) {
 
 function draftFor(provider) {
   if (!svc.drafts[provider.id]) {
-    svc.drafts[provider.id] = { models: new Set(provider.selected_models || []), contexts: {}, manual: new Set() };
+    svc.drafts[provider.id] = { models: new Set(provider.selected_models || []), order: provider.model_order || "family", contexts: {}, manual: new Set() };
   }
   return svc.drafts[provider.id];
 }
@@ -1307,7 +1307,33 @@ function modelChanges(provider) {
   let count = Object.keys(draft.contexts).length;
   for (const id of draft.models) if (!saved.has(id)) count += 1;
   for (const id of saved) if (!draft.models.has(id)) count += 1;
+  const savedOrder = provider.selected_models || [];
+  if (draft.order !== (provider.model_order || "family") ||
+      (draft.order === "manual" && count === 0 && [...draft.models].some((id, index) => id !== savedOrder[index]))) count += 1;
   return count;
+}
+
+function selectedModelIds(provider) {
+  const draft = draftFor(provider);
+  if (draft.order === "manual") return [...draft.models];
+  const known = (provider.cached_models || []).map((model) => typeof model === "string" ? model : model.id);
+  const seen = new Set(known);
+  return [...known.filter((id) => draft.models.has(id)), ...[...draft.models].filter((id) => !seen.has(id))];
+}
+
+function moveModel(provider, id, target) {
+  const models = selectedModelIds(provider);
+  const from = models.indexOf(id);
+  if (from < 0 || target < 0 || target >= models.length || from === target) return;
+  models.splice(from, 1);
+  models.splice(target, 0, id);
+  const draft = draftFor(provider);
+  draft.models = new Set(models);
+  draft.order = "manual";
+  svc.sort = { key: "selected", reversed: false };
+  render({ animate: false });
+  const row = [...($(".svc-table tbody")?.children || [])].find((row) => row.dataset.model === id);
+  row?.querySelector("input[type=checkbox]")?.focus();
 }
 
 // Small popover menu anchored to a button; closes on outside click or Esc.
@@ -1509,6 +1535,7 @@ function capabilityIcons(model) {
 
 function modelRows(provider) {
   const draft = draftFor(provider);
+  const selectedPositions = new Map(selectedModelIds(provider).map((id, index) => [id, index]));
   const saved = new Set(provider.selected_models || []);
   const fresh = new Set(provider.new_models || []);
   const unavailable = new Set(provider.unavailable_selected_models || []);
@@ -1522,6 +1549,8 @@ function modelRows(provider) {
     const draftContext = draft.contexts[model.id];
     rows.push({
       model,
+      familyPosition: rows.length,
+      selectedPosition: selectedPositions.get(model.id),
       selected: draft.models.has(model.id),
       savedSelected: saved.has(model.id),
       isNew: fresh.has(model.id),
@@ -1549,7 +1578,7 @@ function rowMatches(row) {
 
 const SORTERS = {
   selected: (row) => (row.selected ? 0 : 1),
-  model: (row) => row.model.id,
+  model: (row) => row.familyPosition,
   ttft: (row) => row.bench?.ttft_ms ?? Infinity,
   tps: (row) => -(row.bench?.tps ?? -Infinity),
   context: (row) => -(row.context ?? 0),
@@ -1562,7 +1591,9 @@ function sortRows(rows) {
   return rows.sort((a, b) => {
     const left = key(a);
     const right = key(b);
-    if (left === right) return a.model.id.localeCompare(b.model.id);
+    if (left === right) return svc.sort.key === "selected" && a.selected && b.selected
+      ? a.selectedPosition - b.selectedPosition
+      : a.familyPosition - b.familyPosition;
     return (left < right ? -1 : 1) * direction;
   });
 }
@@ -1639,6 +1670,13 @@ function modelsTab(provider) {
     { label: "全选当前结果", run: () => { visibleIds.forEach((id) => draft.models.add(id)); render({ animate: false }); } },
     { label: "取消选择当前结果", run: () => { visibleIds.forEach((id) => draft.models.delete(id)); render({ animate: false }); } },
     { label: "手动添加模型…", run: () => { svc.manualOpen = true; render({ animate: false }); $("#svc-manual")?.focus(); } },
+    "-",
+    { label: "恢复家族与版本默认顺序", checked: draft.order === "family", run: () => {
+      draft.order = "family";
+      draft.models = new Set(selectedModelIds(provider));
+      svc.sort = { key: "selected", reversed: false };
+      render({ animate: false });
+    } },
   ], "btn btn-ghost btn-sm");
   more.querySelector("button").textContent = "\u22ef \u25be";
 
@@ -1663,13 +1701,15 @@ function modelsTab(provider) {
       })()
     : null;
 
-  const columns = [["selected", "是否加入"], ["model", "模型"], ["ttft", "首 Token"], ["tps", "生成速度"], ["context", "上下文"], ...(showRatio ? [["ratio", "倍率"]] : []), ["caps", "能力"]];
+  const columns = [["selected", "是否加入"], ["order", "顺序"], ["model", "模型"], ["ttft", "首 Token"], ["tps", "生成速度"], ["context", "上下文"], ...(showRatio ? [["ratio", "倍率"]] : []), ["caps", "能力"]];
   const head = h("tr", null, ...columns.map(([key, label]) => {
-    if (key === "caps") return h("th", { scope: "col", text: label });
+    if (key === "caps" || key === "order") return h("th", { scope: "col", text: label });
     const active = svc.sort.key === key;
     return h("th", { scope: "col", class: key === "model" ? null : "r", "aria-sort": active ? (svc.sort.reversed ? "descending" : "ascending") : "none" },
       h("button", { class: `th-sort ${active ? "is-active" : ""}`.trim(), type: "button", text: `${label}${active ? (svc.sort.reversed ? " \u2191" : " \u2193") : ""}`, onclick: () => { svc.sort = { key, reversed: active ? !svc.sort.reversed : false }; render({ animate: false }); } }));
   }));
+  const ordered = selectedModelIds(provider);
+  let dragged = null;
   const body = h("tbody", null, ...rows.map((row) => {
     const check = h("input", { class: "check", type: "checkbox", checked: row.selected, "aria-label": `将 ${row.model.id} 加入 Codex` });
     check.addEventListener("change", () => {
@@ -1681,8 +1721,18 @@ function modelsTab(provider) {
     if (row.isNew) tags.push(h("span", { class: "badge badge-ok", text: "新增" }));
     if (row.unavailable) tags.push(h("span", { class: "badge badge-bad", text: "不可用" }));
     if (row.selected !== row.savedSelected) tags.push(h("span", { class: "badge", text: row.selected ? "待加入" : "待移除" }));
-    return h("tr", { "data-model": row.model.id, class: row.selected ? "is-selected" : null, title: row.model.description || null },
+    const position = ordered.indexOf(row.model.id);
+    const controls = row.selected ? h("span", { class: "model-order-controls" },
+      h("span", { class: "svc-grip", "aria-hidden": "true", draggable: !state.busy ? "true" : null,
+        title: "拖动排序；Alt + ↑/↓ 也可调整顺序" }),
+      ...[[-1, "\u2191", "上移"], [1, "\u2193", "下移"]].map(([delta, arrow, label]) =>
+        h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", text: arrow,
+          "aria-label": `${label} ${row.model.id}`, title: `${label} ${row.model.id}`,
+          disabled: state.busy || position + delta < 0 || position + delta >= ordered.length,
+          onclick: () => moveModel(provider, row.model.id, position + delta) }))) : null;
+    const tr = h("tr", { "data-model": row.model.id, class: row.selected ? "is-selected" : null, title: row.model.description || null },
       h("td", { class: "c-check" }, check),
+      h("td", { class: "c-order" }, controls),
       h("td", { class: "c-model" }, h("span", { class: "mono", text: row.model.id }), ...tags),
       h("td", { class: "r mono", text: fixed(row.bench?.ttft_ms, 0, " ms").replace("\u2014", "-") }),
       h("td", { class: "r mono", text: fixed(row.bench?.tps, 1, " t/s").replace("\u2014", "-") }),
@@ -1690,6 +1740,35 @@ function modelsTab(provider) {
       showRatio ? h("td", { class: "r mono", title: row.model.price_type || null, text: row.model.ratio || "-" }) : null,
       h("td", null, capabilityIcons(row.model)),
     );
+    if (row.selected) {
+      tr.addEventListener("keydown", (event) => {
+        if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+          event.preventDefault();
+          moveModel(provider, row.model.id, position + (event.key === "ArrowUp" ? -1 : 1));
+        }
+      });
+      tr.addEventListener("dragstart", (event) => {
+        if (event.target.closest("input, button")) { event.preventDefault(); return; }
+        dragged = row.model.id;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.model.id);
+        tr.classList.add("is-dragging");
+      });
+      tr.addEventListener("dragend", () => { dragged = null; tr.classList.remove("is-dragging"); });
+      tr.addEventListener("dragover", (event) => {
+        if (!dragged) return;
+        event.preventDefault();
+        tr.classList.add("is-drop-target");
+      });
+      tr.addEventListener("dragleave", () => tr.classList.remove("is-drop-target"));
+      tr.addEventListener("drop", (event) => {
+        event.preventDefault();
+        tr.classList.remove("is-drop-target");
+        if (dragged) moveModel(provider, dragged, position);
+        dragged = null;
+      });
+    }
+    return tr;
   }));
   return [
     h("div", { class: "svc-toolbar" }, h("div", { class: "toolbar-search" }, search), filter, more, h("div", { class: "card-actions svc-toolbar-end" }, bench, save)),
@@ -1702,7 +1781,7 @@ function modelsTab(provider) {
 
 async function saveModels(provider, button) {
   const draft = draftFor(provider);
-  const params = { id: provider.id, models: [...draft.models], model_contexts: {}, clear_model_contexts: [] };
+  const params = { id: provider.id, models: selectedModelIds(provider), model_order: draft.order, model_contexts: {}, clear_model_contexts: [] };
   for (const [model, tokens] of Object.entries(draft.contexts)) {
     if (tokens === null) {
       if (provider.model_context_overrides?.[model] !== undefined) params.clear_model_contexts.push(model);

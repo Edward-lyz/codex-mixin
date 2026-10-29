@@ -12,6 +12,7 @@ fn interface_exposes_provider_catalog() {
         .unwrap();
     assert!(output.status.success());
     let interface: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(interface["capabilities"]["model_ordering"], true);
     let catalog = &interface["provider_catalog"];
     let presets = catalog["presets"]
         .as_array()
