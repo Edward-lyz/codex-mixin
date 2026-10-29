@@ -283,6 +283,7 @@ pub(crate) async fn select_models(
     models: Vec<String>,
     model_contexts: Vec<String>,
     clear_model_contexts: Vec<String>,
+    model_order: Option<codex_mixin::provider::ModelOrder>,
 ) -> anyhow::Result<()> {
     let models = normalize_model_ids(models)?;
     let model_contexts = parse_model_contexts(model_contexts)?;
@@ -315,11 +316,30 @@ pub(crate) async fn select_models(
             )?;
             apply_official_context_overrides(&mut catalog, &model_contexts)?;
         }
-        let context_only =
-            models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
+        let context_only = models.is_empty()
+            && (!model_contexts.is_empty()
+                || !clear_model_contexts.is_empty()
+                || model_order.is_some());
         mutate_and_invalidate(|config| {
+            if let Some(order) = model_order {
+                config.official_model_order = order;
+            } else if !context_only {
+                config.official_model_order = codex_mixin::provider::ModelOrder::Manual;
+            }
             if !context_only {
                 config.official_selected_models = Some(models);
+            } else if model_order == Some(codex_mixin::provider::ModelOrder::Manual)
+                && config.official_selected_models.is_none()
+            {
+                let mut selected = available_models
+                    .iter()
+                    .map(|model| model.id.clone())
+                    .collect::<Vec<_>>();
+                codex_mixin::provider::ModelOrder::Family.apply(&mut selected);
+                config.official_selected_models = Some(selected);
+            }
+            if let Some(models) = &mut config.official_selected_models {
+                config.official_model_order.apply(models);
             }
             config.official_model_contexts.extend(model_contexts);
             for model in clear_model_contexts {
@@ -327,26 +347,33 @@ pub(crate) async fn select_models(
             }
             Ok(())
         })?;
-        if context_only {
+        if context_only && model_order.is_some() {
+            println!("official model order and settings updated");
+        } else if context_only {
             println!("official model context windows updated");
         } else {
             println!("provider models selected: {id} ({selected_count})");
         }
         return sync_model_clients().await;
     }
-    let context_only =
-        models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
+    let context_only = models.is_empty()
+        && (!model_contexts.is_empty()
+            || !clear_model_contexts.is_empty()
+            || model_order.is_some());
     let models_to_probe = codex_mixin::application::provider::models::select_provider_models(
         id,
         models,
         model_contexts,
         clear_model_contexts,
+        model_order,
     )?;
     if !models_to_probe.is_empty() {
         probe_new_models(id, &models_to_probe, false).await?;
     }
     sync_model_clients().await?;
-    if context_only {
+    if context_only && model_order.is_some() {
+        println!("provider model order and settings updated: {id}");
+    } else if context_only {
         println!("provider model context windows updated: {id}");
     } else {
         println!("provider models selected: {id} ({selected_count})");

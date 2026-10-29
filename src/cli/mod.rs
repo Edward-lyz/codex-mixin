@@ -695,9 +695,19 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::Select {
                 id,
                 models,
+                model_order,
                 model_contexts,
                 clear_model_contexts,
-            } => select_models(&id, models, model_contexts, clear_model_contexts).await,
+            } => {
+                select_models(
+                    &id,
+                    models,
+                    model_contexts,
+                    clear_model_contexts,
+                    model_order,
+                )
+                .await
+            }
         },
         Command::Service { command } => match command {
             ServiceCommand::Ensure { json } => {

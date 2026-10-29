@@ -125,6 +125,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "baidu_auth_bridge": provider.request_policy.baidu_auth_bridge,
                     "baidu_code_report": provider.request_policy.baidu_code_report,
                     "selected_models": provider.selected_models,
+                    "model_order": provider.model_order,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
                     "cached_models": provider.cached_models,
@@ -245,6 +246,8 @@ fn official_provider_view(
     config: &StoredGatewayConfig,
     mut cached_models: Vec<ProviderModel>,
 ) -> serde_json::Value {
+    cached_models
+        .sort_by(|left, right| codex_mixin::provider::compare_model_ids(&left.id, &right.id));
     for model in &mut cached_models {
         model.source_context_window = model.context_window;
         if let Some(&context_window) = config.official_model_contexts.get(&model.id) {
@@ -255,10 +258,11 @@ fn official_provider_view(
         .iter()
         .map(|model| model.id.as_str())
         .collect::<HashSet<_>>();
-    let selected_models = config.official_selected_models.as_ref().map_or_else(
+    let mut selected_models = config.official_selected_models.as_ref().map_or_else(
         || cached_models.iter().map(|model| model.id.clone()).collect(),
         Clone::clone,
     );
+    config.official_model_order.apply(&mut selected_models);
     let unavailable_selected_models = selected_models
         .iter()
         .filter(|model| !available_models.contains(model.as_str()))
@@ -292,6 +296,7 @@ fn official_provider_view(
         "baidu_auth_bridge": null,
         "baidu_code_report": false,
         "selected_models": selected_models,
+        "model_order": config.official_model_order,
         "new_models": [],
         "unavailable_selected_models": unavailable_selected_models,
         "cached_models": cached_models,

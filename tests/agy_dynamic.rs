@@ -82,6 +82,7 @@ fn agy_requires_live_discovery() {
 #[test]
 fn agy_preserves_selection_intent() {
     let mut provider = agy_provider("agy", "");
+    provider.model_order = codex_mixin::provider::ModelOrder::Manual;
     provider.cached_models = vec![model("kept"), model("gone")];
     provider.selected_models = vec!["kept".to_owned(), "gone".to_owned()];
     provider.models_refreshed_at_ms = Some(1);

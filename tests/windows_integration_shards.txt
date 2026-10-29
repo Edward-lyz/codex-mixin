@@ -13,6 +13,7 @@ integration-c|context_cli.rs
 integration-c|cors.rs
 integration-c|cors_cli.rs
 integration-c|local_oauth_discovery.rs
+integration-c|model_order.rs
 integration-c|gateway_startup.rs
 integration-c|gemini_regressions.rs
 integration-c|oauth_discovery.rs

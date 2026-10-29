@@ -758,6 +758,7 @@ pub fn apply_discovered_models(
         provider.new_models = changes.added.clone();
     }
     provider.cached_models = models;
+    provider.model_order.apply(&mut provider.selected_models);
     provider.models_refreshed_at_ms =
         Some(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64);
     provider.models_refresh_error = None;
@@ -801,12 +802,7 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
             }
         }
     }
-    models.sort_by(|left, right| {
-        left.id
-            .to_ascii_lowercase()
-            .cmp(&right.id.to_ascii_lowercase())
-            .then_with(|| left.id.cmp(&right.id))
-    });
+    models.sort_by(|left, right| super::compare_model_ids(&left.id, &right.id));
     models.dedup_by(|left, right| left.id == right.id);
 }
 
@@ -814,6 +810,69 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
 mod tests {
     use super::*;
     use crate::provider::ProviderRegistry;
+
+    #[test]
+    fn model_order_regression_first_discovery_groups_families_and_newer_versions() {
+        let mut provider = crate::provider::custom_provider("test", "key");
+        provider.base_url = "https://example.test".to_owned();
+        let models = [
+            "auto",
+            "Claude Haiku 5.5",
+            "GLM-5.3",
+            "Opus 4.8",
+            "Opus 5.5",
+            "Claude Sonnet 5.5",
+            "Opus 5",
+        ]
+        .into_iter()
+        .map(|id| ProviderModel {
+            id: id.to_owned(),
+            ..Default::default()
+        })
+        .collect();
+        apply_discovered_models(&mut provider, models).unwrap();
+        assert_eq!(
+            provider.selected_models,
+            [
+                "Opus 5.5",
+                "Claude Sonnet 5.5",
+                "Claude Haiku 5.5",
+                "Opus 5",
+                "Opus 4.8",
+                "GLM-5.3",
+                "auto"
+            ]
+        );
+    }
+
+    #[test]
+    fn discovery_keeps_manual_order_and_appends_new_models() {
+        let mut provider = crate::provider::custom_provider("test", "key");
+        provider.base_url = "https://example.test".to_owned();
+        provider.models_refreshed_at_ms = Some(1);
+        provider.model_order = crate::provider::ModelOrder::Manual;
+        provider.selected_models = vec!["Claude Haiku 5.5".to_owned(), "Opus 5.5".to_owned()];
+        provider.cached_models = provider
+            .selected_models
+            .iter()
+            .map(|id| ProviderModel {
+                id: id.clone(),
+                ..Default::default()
+            })
+            .collect();
+        let models = ["Opus 5.5", "Claude Sonnet 5.5", "Claude Haiku 5.5"]
+            .into_iter()
+            .map(|id| ProviderModel {
+                id: id.to_owned(),
+                ..Default::default()
+            })
+            .collect();
+        apply_discovered_models(&mut provider, models).unwrap();
+        assert_eq!(
+            provider.selected_models,
+            ["Claude Haiku 5.5", "Opus 5.5", "Claude Sonnet 5.5"]
+        );
+    }
 
     #[test]
     fn discovery_accepts_zero_token_limits() {
@@ -1208,7 +1267,8 @@ mod tests {
 
         assert_eq!(
             provider.selected_models,
-            (0..10)
+            (2..12)
+                .rev()
                 .map(|index| format!("model-{index:02}"))
                 .collect::<Vec<_>>()
         );
@@ -1259,6 +1319,7 @@ mod tests {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
         provider.models_refreshed_at_ms = Some(1);
+        provider.model_order = crate::provider::ModelOrder::Manual;
         provider.cached_models = vec![model("flap")];
         provider.selected_models = vec!["flap".to_owned()];
 

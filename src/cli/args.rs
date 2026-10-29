@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use codex_mixin::provider::ProviderPreset;
+use codex_mixin::provider::{ModelOrder, ProviderPreset};
 
 use super::InteractiveStart;
 use super::codex::InstallCodexOptions;
@@ -770,6 +770,9 @@ pub(super) enum ProviderCommand {
         id: String,
         #[arg(long = "model")]
         models: Vec<String>,
+        /// Default family/version order, or preserve the supplied model order.
+        #[arg(long, value_name = "family|manual")]
+        model_order: Option<ModelOrder>,
         #[arg(long = "model-context", value_name = "MODEL=TOKENS")]
         model_contexts: Vec<String>,
         #[arg(long = "clear-model-context", value_name = "MODEL")]

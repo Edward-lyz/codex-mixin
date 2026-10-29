@@ -52,6 +52,8 @@ pub(super) enum PanelAction {
         #[serde(default)]
         models: Vec<String>,
         #[serde(default)]
+        model_order: Option<codex_mixin::provider::ModelOrder>,
+        #[serde(default)]
         model_contexts: BTreeMap<String, u64>,
         #[serde(default)]
         clear_model_contexts: Vec<String>,
@@ -395,10 +397,14 @@ impl PanelAction {
             Self::ProviderSelect {
                 id,
                 models,
+                model_order,
                 model_contexts,
                 clear_model_contexts,
             } => {
                 let mut invocation = provider_id_command("select", id)?;
+                if let Some(order) = model_order {
+                    invocation.push_value("model-order", order.as_str())?;
+                }
                 ensure_list_size("models", models)?;
                 ensure_list_size("clear model contexts", clear_model_contexts)?;
                 for model in models {

@@ -55,6 +55,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_aws_bedrock_sigv4_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
+        parsed.apply_model_order();
         super::validate_cors_origins(&parsed.cors_allowed_origins)?;
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
@@ -88,6 +89,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
     upgrade_opencode_go_transport(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
     backfill_data_report_executable(&mut migrated);
+    migrated.apply_model_order();
     Ok(migrated)
 }
 
@@ -336,6 +338,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         official_ech_fallback_reason: None,
         official_ech_proxy: false,
         official_selected_models: None,
+        official_model_order: Default::default(),
         official_model_contexts: Default::default(),
         fusion_profiles: legacy.fusion_profiles,
         providers: vec![provider],

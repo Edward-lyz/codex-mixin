@@ -123,6 +123,7 @@ impl GatewayConfig {
         // Local AGY/Kiro logins join the runtime view without being saved.
         stored_config.providers =
             crate::provider::local_oauth::runtime_providers(stored_config.providers)?;
+        stored_config.apply_model_order();
         if stored_config.providers.is_empty()
             && !crate::provider::official_auth_available(&default_codex_auth_path())?
         {
@@ -219,6 +220,8 @@ pub struct StoredGatewayConfig {
     pub compaction_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub official_selected_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub official_model_order: crate::provider::ModelOrder,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub official_model_contexts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,6 +229,17 @@ pub struct StoredGatewayConfig {
     #[serde(default, skip_serializing_if = "ContextSettings::is_default")]
     pub context: ContextSettings,
     pub providers: Vec<ProviderDefinition>,
+}
+
+impl StoredGatewayConfig {
+    pub(crate) fn apply_model_order(&mut self) {
+        for provider in &mut self.providers {
+            provider.apply_model_order();
+        }
+        if let Some(models) = &mut self.official_selected_models {
+            self.official_model_order.apply(models);
+        }
+    }
 }
 
 impl Default for StoredGatewayConfig {
@@ -240,6 +254,7 @@ impl Default for StoredGatewayConfig {
             official_ech_fallback_reason: None,
             official_ech_proxy: false,
             official_selected_models: None,
+            official_model_order: Default::default(),
             official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
             context: ContextSettings::default(),
@@ -289,6 +304,7 @@ mod tests {
             official_ech_fallback_reason: None,
             official_ech_proxy: false,
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
+            official_model_order: Default::default(),
             official_model_contexts: BTreeMap::from([("gpt-5.6-sol".to_owned(), 500_000)]),
             fusion_profiles: Vec::new(),
             context: ContextSettings::default(),

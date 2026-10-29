@@ -88,6 +88,7 @@ pub fn apply_model_selection(
         .model_context_overrides
         .retain(|model, _| available.contains(model.as_str()));
     provider.selected_models = models;
+    provider.apply_model_order();
     provider.new_models.clear();
     provider.prune_stale_auto_review_model();
     if provider
@@ -106,6 +107,7 @@ pub fn select_provider_models(
     models: Vec<String>,
     model_contexts: BTreeMap<String, u64>,
     clear_model_contexts: Vec<String>,
+    model_order: Option<crate::provider::ModelOrder>,
 ) -> Result<Vec<String>, OperationError> {
     for model in &clear_model_contexts {
         if model_contexts.contains_key(model) {
@@ -117,8 +119,15 @@ pub fn select_provider_models(
     commit_provider_change(|config| {
         require_providers(config)?;
         let provider = provider_mut(config, id)?;
-        let context_only =
-            models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
+        let context_only = models.is_empty()
+            && (!model_contexts.is_empty()
+                || !clear_model_contexts.is_empty()
+                || model_order.is_some());
+        if let Some(order) = model_order {
+            provider.model_order = order;
+        } else if !context_only {
+            provider.model_order = crate::provider::ModelOrder::Manual;
+        }
         let selection = if context_only {
             provider.selected_models.clone()
         } else {
