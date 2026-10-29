@@ -260,29 +260,27 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
         .context("invalid Alma integration record")?
         .to_owned();
     let provider = owned_provider(&record, providers(&endpoint)?)?;
-    if record["phase"] == "managed" {
-        if let Some(provider) = &provider {
-            let actual: std::collections::BTreeSet<_> = provider["models"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|model| {
-                    model
-                        .as_str()
-                        .or_else(|| model.get("id").and_then(Value::as_str))
-                })
-                .collect();
-            let expected: std::collections::BTreeSet<_> = record["models"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
-            anyhow::ensure!(
-                actual == expected,
-                "Alma owned model list was edited; refusing to remove it"
-            );
-        }
+    if let Some(provider) = provider.as_ref().filter(|_| record["phase"] == "managed") {
+        let actual: std::collections::BTreeSet<_> = provider["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|model| {
+                model
+                    .as_str()
+                    .or_else(|| model.get("id").and_then(Value::as_str))
+            })
+            .collect();
+        let expected: std::collections::BTreeSet<_> = record["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        anyhow::ensure!(
+            actual == expected,
+            "Alma owned model list was edited; refusing to remove it"
+        );
     }
     let mut current = settings(&endpoint)?;
     let selected = current.pointer("/chat/defaultModel");
