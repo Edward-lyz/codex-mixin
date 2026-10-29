@@ -52,10 +52,10 @@ fn provider_catalog() -> Value {
             let spec = preset.spec();
             let (auth_mode, credential_url) = match preset {
                 ProviderPreset::Custom => ("api_key", None),
-                ProviderPreset::Official | ProviderPreset::Agy => ("local_oauth", None),
-                ProviderPreset::AgyBusiness | ProviderPreset::Kiro => {
-                    ("local_session", spec.website_url)
+                ProviderPreset::Official | ProviderPreset::Agy | ProviderPreset::AgyBusiness => {
+                    ("local_oauth", None)
                 }
+                ProviderPreset::Kiro => ("local_session", spec.website_url),
                 ProviderPreset::AwsBedrock => ("aws_sigv4", spec.website_url),
                 ProviderPreset::BaiduOneApi => {
                     ("api_key", Some("https://oneapi-comate.baidu-int.com/token"))

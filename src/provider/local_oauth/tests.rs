@@ -15,6 +15,11 @@ impl Sandbox {
         let agy = self.home.path().join(AGY_FILE);
         Locations {
             agy: agy.is_file().then_some(agy),
+            business: vec![
+                self.home.path().join("oauth/agy-business.json"),
+                self.home.path().join(AGY_FILE),
+                self.home.path().join("adc.json"),
+            ],
             kiro: self.home.path().join(KIRO_FILE),
             kiro_cli: None,
             ignore: self.home.path().join("oauth/discovery-ignored.json"),
@@ -72,6 +77,31 @@ fn broken_expired_and_business_logins_are_not_discovered() {
         r#"{"accessToken":"x","expiresAt":"2020-01-01T00:00:00Z"}"#,
     );
     assert!(discover_at(&sandbox.at(), &[]).unwrap().is_empty());
+}
+
+#[test]
+fn business_login_is_reusable_only_by_its_explicit_preset() {
+    let sandbox = Sandbox::new();
+    sandbox.write(AGY_FILE, r#"{"auth_method":"gcp","token":{"access_token":"fixture-business","expiry":"2099-01-01T00:00:00Z"}}"#);
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_some());
+    assert!(inspect(ProviderPreset::Agy, &sandbox.at()).is_none());
+    assert!(discover_at(&sandbox.at(), &[]).unwrap().is_empty());
+    sandbox.write(AGY_FILE, r#"{"auth_method":"gcp","token":{"refresh_token":"fixture-refresh","client_id":"fixture-client","client_secret":"fixture-secret"}}"#);
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_some());
+    sandbox.write(
+        AGY_FILE,
+        r#"{"auth_method":"gcp","token":{"refresh_token":"fixture-refresh"}}"#,
+    );
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_none());
+    sandbox.write("adc.json", r#"{"type":"authorized_user","refresh_token":"fixture-adc","client_id":"fixture-client","client_secret":"fixture-secret"}"#);
+    // A matching but unusable native session is repaired explicitly first.
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_none());
+    std::fs::remove_file(sandbox.home.path().join(AGY_FILE)).unwrap();
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_some());
+    sandbox.write("oauth/agy-business.json", "{broken");
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_none());
+    sandbox.write("oauth/agy-business.json", r#"{"auth_method":"consumer","token":{"access_token":"fixture","expiry":"2099-01-01T00:00:00Z"}}"#);
+    assert!(inspect(ProviderPreset::AgyBusiness, &sandbox.at()).is_none());
 }
 
 #[test]

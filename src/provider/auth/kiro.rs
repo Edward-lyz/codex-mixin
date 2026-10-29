@@ -94,7 +94,10 @@ pub(crate) async fn session(
     force_refresh: bool,
 ) -> anyhow::Result<KiroSession> {
     let _guard = SESSION_LOCK.lock().await;
-    let lock = tokio::task::spawn_blocking(|| crate::platform::oauth::lock_oauth("kiro")).await??;
+    let lock = tokio::task::spawn_blocking(|| {
+        crate::platform::oauth::lock_oauth(&crate::platform::oauth::oauth_path("kiro"))
+    })
+    .await??;
     if let Some(path) = crate::platform::oauth::kiro_cli_auth_path() {
         let cli_path = path.clone();
         let cli = tokio::task::spawn_blocking(move || cli_credentials(&cli_path)).await??;

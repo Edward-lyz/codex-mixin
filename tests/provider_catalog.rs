@@ -31,6 +31,12 @@ fn interface_exposes_provider_catalog() {
     let agy = presets.iter().find(|entry| entry["id"] == "agy").unwrap();
     assert_eq!(agy["auth_mode"], "local_oauth");
     assert_eq!(agy["api_key_required"], false);
+    let business = presets
+        .iter()
+        .find(|entry| entry["id"] == "agy-business")
+        .unwrap();
+    assert_eq!(business["auth_mode"], "local_oauth");
+    assert_eq!(business["api_key_required"], false);
     let protocols = catalog["protocols"].as_array().unwrap();
     assert!(protocols.iter().any(|entry| entry["id"] == "google_gemini"));
     assert!(

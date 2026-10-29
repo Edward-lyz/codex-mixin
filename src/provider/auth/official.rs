@@ -106,9 +106,10 @@ pub(crate) async fn headers(
             path == crate::platform::oauth::oauth_path("official"),
             "local Codex OAuth access token expired; refresh the official session or run providers add --preset openai for independent renewal"
         );
-        let _refresh_lock =
-            tokio::task::spawn_blocking(|| crate::platform::oauth::lock_oauth("official"))
-                .await??;
+        let _refresh_lock = tokio::task::spawn_blocking(|| {
+            crate::platform::oauth::lock_oauth(&crate::platform::oauth::oauth_path("official"))
+        })
+        .await??;
         let latest_path = path.clone();
         document = tokio::task::spawn_blocking(move || read_document(&latest_path))
             .await??

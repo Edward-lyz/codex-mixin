@@ -431,12 +431,12 @@ if (realCli is not null)
             var agy = presets.Single(row => Json.Text(row, "id") == "agy");
             Assert(Json.Text(agy, "auth_mode") == "local_oauth" && !Json.Flag(agy, "api_key_required"),
                 "Antigravity must support local OAuth without an API key");
-            foreach (var id in new[] { "kiro", "agy-business" })
-            {
-                var preset = presets.Single(row => Json.Text(row, "id") == id);
-                Assert(Json.Text(preset, "auth_mode") == "local_session" && !Json.Flag(preset, "api_key_required"),
-                    $"{id} must support a local session without an API key");
-            }
+            var business = presets.Single(row => Json.Text(row, "id") == "agy-business");
+            Assert(Json.Text(business, "auth_mode") == "local_oauth" && !Json.Flag(business, "api_key_required"),
+                "Antigravity Business must support browser OAuth without an API key");
+            var kiro = presets.Single(row => Json.Text(row, "id") == "kiro");
+            Assert(Json.Text(kiro, "auth_mode") == "local_session" && !Json.Flag(kiro, "api_key_required"),
+                "Kiro must support a local session without an API key");
             var invalidAuth = System.Text.Json.Nodes.JsonNode.Parse(metadata.GetRawText())!;
             invalidAuth["provider_catalog"]!["presets"]![0]!["auth_mode"] = "unsupported";
             await Failure(() => { Json.Interface(JsonSerializer.SerializeToElement(invalidAuth)); return Task.CompletedTask; });

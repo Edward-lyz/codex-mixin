@@ -72,10 +72,10 @@ pub(crate) async fn login(
 }
 
 async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<()> {
-    let google = provider == "agy";
+    let google = matches!(provider, "agy" | "agy-business");
     ensure!(
         google || provider == "official",
-        "OAuth login requires agy or official"
+        "OAuth login requires agy, agy-business or official"
     );
     let (client_id, secret) = if google {
         let (id, secret) = super::agy::oauth_client()?;
@@ -128,10 +128,23 @@ async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<
     } else {
         "https://auth.openai.com/oauth/authorize"
     })?;
+    let scope = match provider {
+        "agy-business" => {
+            "https://www.googleapis.com/auth/aicode https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email"
+        }
+        "agy" => {
+            "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email"
+        }
+        _ => "openid profile email offline_access",
+    };
     url.query_pairs_mut().extend_pairs([
-        ("client_id", client_id.as_str()), ("response_type", "code"), ("redirect_uri", redirect.as_str()),
-        ("code_challenge", challenge.as_str()), ("code_challenge_method", "S256"), ("state", state.as_str()),
-        ("scope", if google { "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email" } else { "openid profile email offline_access" }),
+        ("client_id", client_id.as_str()),
+        ("response_type", "code"),
+        ("redirect_uri", redirect.as_str()),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("state", state.as_str()),
+        ("scope", scope),
     ]);
     if google {
         url.query_pairs_mut()
@@ -172,11 +185,14 @@ async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<
         &fields,
     )
     .await?;
-    let document = login_document(google, tokens)?;
+    let document = login_document(provider, tokens)?;
     let path = crate::platform::oauth::oauth_path(provider);
     let bytes = serde_json::to_vec(&document)?;
-    tokio::task::spawn_blocking(move || crate::platform::oauth::save_oauth(&path, &bytes))
-        .await??;
+    tokio::task::spawn_blocking(move || {
+        let _lock = crate::platform::oauth::lock_oauth(&path)?;
+        crate::platform::oauth::save_oauth(&path, &bytes)
+    })
+    .await??;
     if google {
         super::agy::invalidate_agy_cache().await;
     }
@@ -188,6 +204,7 @@ pub(super) async fn token_request(
     fields: &[(&str, &str)],
 ) -> anyhow::Result<Value> {
     let mut response = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
+        .redirect(reqwest::redirect::Policy::none())
         .build()?
         .post(endpoint)
         .timeout(Duration::from_secs(20))
@@ -215,7 +232,7 @@ pub(super) fn jwt_claims(token: &str) -> Option<Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn login_document(google: bool, mut tokens: Value) -> anyhow::Result<Value> {
+pub(super) fn login_document(provider: &str, mut tokens: Value) -> anyhow::Result<Value> {
     ensure!(
         tokens["access_token"]
             .as_str()
@@ -228,7 +245,7 @@ fn login_document(google: bool, mut tokens: Value) -> anyhow::Result<Value> {
             .is_some_and(|token| !token.is_empty()),
         "OAuth response is missing refresh_token"
     );
-    if google {
+    if matches!(provider, "agy" | "agy-business") {
         let seconds = tokens["expires_in"]
             .as_i64()
             .filter(|seconds| *seconds > 0)
@@ -242,7 +259,19 @@ fn login_document(google: bool, mut tokens: Value) -> anyhow::Result<Value> {
                 .context("OAuth expiry is out of range")?
                 .to_rfc3339()
         );
-        return Ok(json!({"auth_method":"consumer","token":tokens}));
+        let method = if provider == "agy-business" {
+            // Persist the actual client with owned credentials so refresh never
+            // depends on another application's ADC or native token metadata.
+            if tokens.get("client_id").is_none() && tokens.get("client_secret").is_none() {
+                let (client_id, client_secret) = super::agy::oauth_client()?;
+                tokens["client_id"] = json!(client_id);
+                tokens["client_secret"] = json!(client_secret);
+            }
+            "gcp"
+        } else {
+            "consumer"
+        };
+        return Ok(json!({"auth_method":method,"token":tokens}));
     }
     let claims = tokens["id_token"]
         .as_str()
@@ -331,13 +360,48 @@ mod tests {
     }
     #[test]
     fn credentials_require_refresh_and_identity() {
-        assert!(login_document(true, json!({"access_token":"fixture"})).is_err());
+        assert!(login_document("agy", json!({"access_token":"fixture"})).is_err());
         assert!(
             login_document(
-                false,
+                "official",
                 json!({"access_token":"fixture","refresh_token":"fixture"})
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn business_login_documents_keep_the_refresh_client_and_session_kind() {
+        let tokens = json!({"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":3600});
+        let business = login_document("agy-business", tokens.clone()).unwrap();
+        assert_eq!(business["auth_method"], "gcp");
+        assert_eq!(business["token"]["refresh_token"], "fixture-refresh");
+        assert!(
+            business["token"]["client_id"]
+                .as_str()
+                .unwrap()
+                .ends_with(".apps.googleusercontent.com")
+        );
+        assert!(
+            !business["token"]["client_secret"]
+                .as_str()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(business["token"]["expiry"].as_str().unwrap())
+                .unwrap()
+                > chrono::Utc::now()
+        );
+        let consumer = login_document("agy", tokens).unwrap();
+        assert_eq!(consumer["auth_method"], "consumer");
+        assert!(consumer["token"].get("client_id").is_none());
+        for tokens in [
+            json!({"access_token":"fixture","expires_in":3600}),
+            json!({"refresh_token":"fixture","expires_in":3600}),
+            json!({"access_token":"fixture","refresh_token":"fixture","expires_in":0}),
+        ] {
+            assert!(login_document("agy-business", tokens).is_err());
+        }
     }
 }

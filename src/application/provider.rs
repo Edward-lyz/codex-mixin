@@ -229,10 +229,10 @@ pub fn runtime_providers(
     crate::provider::local_oauth::runtime_providers(stored)
 }
 
-/// Whether a usable AGY login already exists on this machine.
-pub fn local_agy_login_available() -> bool {
+/// Whether a usable login for the selected AGY preset already exists.
+pub fn local_agy_login_available(preset: ProviderPreset) -> bool {
     crate::provider::local_oauth::inspect(
-        ProviderPreset::Agy,
+        preset,
         &crate::provider::local_oauth::Locations::current(),
     )
     .is_some()

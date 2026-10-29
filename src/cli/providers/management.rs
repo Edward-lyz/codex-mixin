@@ -58,13 +58,16 @@ async fn add_provider_inner(options: AddProviderOptions) -> anyhow::Result<()> {
     }
     // A usable local AGY login is reused; the browser only opens when none
     // exists or the user asked to sign in again.
-    let browser_oauth = preset == codex_mixin::provider::ProviderPreset::Agy
-        && options
-            .key
-            .as_deref()
-            .is_none_or(|key| key.trim().is_empty())
+    let browser_oauth = matches!(
+        preset,
+        codex_mixin::provider::ProviderPreset::Agy
+            | codex_mixin::provider::ProviderPreset::AgyBusiness
+    ) && options
+        .key
+        .as_deref()
+        .is_none_or(|key| key.trim().is_empty())
         && (options.reauthorize
-            || !codex_mixin::application::provider::local_agy_login_available());
+            || !codex_mixin::application::provider::local_agy_login_available(preset));
     let mut prepared = codex_mixin::application::provider::build::create_provider(options)?;
     if browser_oauth {
         anyhow::ensure!(

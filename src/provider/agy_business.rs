@@ -54,7 +54,14 @@ fn validate_provider(provider: &ProviderRuntime) -> anyhow::Result<()> {
 async fn auth_headers(provider: &ProviderRuntime, force: bool) -> anyhow::Result<HeaderMap> {
     validate_provider(provider)?;
     let mut headers = if provider.definition().auth.api_key.trim().is_empty() {
-        super::auth::agy_business::headers(force).await?
+        super::auth::agy_business::headers(
+            force,
+            &crate::platform::oauth::oauth_path("agy-business"),
+            &crate::platform::oauth::agy_external_token_paths(),
+            &crate::platform::oauth::google_adc_path(),
+            "https://oauth2.googleapis.com/token",
+        )
+        .await?
     } else {
         let mut headers = HeaderMap::new();
         headers.insert(

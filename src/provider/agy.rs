@@ -78,10 +78,55 @@ pub(crate) async fn project_id(
             return Ok(project.clone());
         }
     }
-    let value = fetch_json(client, provider, Some(headers.clone()), "loadCodeAssist", serde_json::json!({"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}})).await?;
-    let project = value.get("cloudaicompanionProject").or_else(|| value.get("antigravityProjectId")).or_else(|| value.get("projectId"))
-        .and_then(|value| value.as_str().or_else(|| value.get("id").and_then(Value::as_str)))
-        .filter(|project| !project.trim().is_empty()).context("AGY account has no Cloud Code project; complete account onboarding before using the provider")?.to_owned();
+    let mut project = None;
+    // Some accounts expose their project only through the account list.
+    // Query it only after a successful load response without a usable project.
+    for (operation, body) in [
+        (
+            "loadCodeAssist",
+            serde_json::json!({"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}),
+        ),
+        ("listCloudAICompanionProjects", serde_json::json!({})),
+    ] {
+        let value = fetch_json(client, provider, Some(headers.clone()), operation, body).await?;
+        ensure!(
+            value.is_object(),
+            "invalid AGY {operation} project response"
+        );
+        project = std::iter::once(&value)
+            .chain(
+                ["projects", "projectIds", "cloudaicompanionProjects"]
+                    .into_iter()
+                    .filter_map(|field| value.get(field).and_then(Value::as_array))
+                    .flatten(),
+            )
+            .flat_map(|entry| {
+                entry.as_str().into_iter().chain(
+                    [
+                        "antigravityProjectId",
+                        "projectId",
+                        "backendProjectId",
+                        "userDefinedCloudaicompanionProject",
+                        "cloudaicompanionProject",
+                        "project",
+                    ]
+                    .into_iter()
+                    .filter_map(|field| entry.get(field))
+                    .filter_map(|value| {
+                        value
+                            .as_str()
+                            .or_else(|| value.get("id").and_then(Value::as_str))
+                    }),
+                )
+            })
+            .map(str::trim)
+            .find(|project| !project.is_empty() && !project.chars().any(char::is_control))
+            .map(str::to_owned);
+        if project.is_some() {
+            break;
+        }
+    }
+    let project = project.context("AGY account has no Cloud Code project in loadCodeAssist or listCloudAICompanionProjects; complete account onboarding before using the provider")?;
     let mut cache = PROJECTS
         .lock()
         .map_err(|_| anyhow::anyhow!("AGY project cache lock failed"))?;

@@ -147,6 +147,235 @@ async fn projects_are_bound_to_the_credential() {
     server.abort();
 }
 
+#[tokio::test]
+async fn projects_missing_from_load_are_resolved_from_the_account_list() {
+    use axum::{Json, Router, http::HeaderMap, routing::post};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let loads = std::sync::Arc::new(AtomicUsize::new(0));
+    let lists = std::sync::Arc::new(AtomicUsize::new(0));
+    let load_count = loads.clone();
+    let list_count = lists.clone();
+    let app = Router::new()
+        .route(
+            "/v1internal:loadCodeAssist",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let count = load_count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(headers["authorization"], "Bearer account");
+                    assert_eq!(body["metadata"]["ideType"], "ANTIGRAVITY");
+                    Json(json!({"currentTier":{"id":"fixture-tier"}}))
+                }
+            }),
+        )
+        .route(
+            "/v1internal:listCloudAICompanionProjects",
+            post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let count = list_count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(headers["authorization"], "Bearer account");
+                    assert_eq!(body, json!({}));
+                    Json(json!({"projects":[{"projectId":"listed-project"}]}))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut definition = super::super::agy_provider("fixture", "fixture");
+    definition.base_url = format!("http://{address}");
+    let provider = ProviderRuntime::new(definition, &|_| None).unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("authorization", "Bearer account".parse().unwrap());
+    let client = reqwest::Client::new();
+
+    for _ in 0..2 {
+        assert_eq!(
+            project_id(&client, &provider, &headers).await.unwrap(),
+            "listed-project"
+        );
+    }
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(lists.load(Ordering::SeqCst), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn project_reports_support_native_aliases_and_account_lists() {
+    use axum::{Json, Router, routing::post};
+
+    let reports = [
+        (
+            json!({"backendProjectId":" backend-project "}),
+            "backend-project",
+        ),
+        (
+            json!({"userDefinedCloudaicompanionProject":{"id":"managed-project"}}),
+            "managed-project",
+        ),
+        (json!({"project":"direct-project"}), "direct-project"),
+        (
+            json!({"cloudaicompanionProject":{"id":"nested-project"}}),
+            "nested-project",
+        ),
+        (
+            json!({"antigravityProjectId":null,"projectId":"valid-project"}),
+            "valid-project",
+        ),
+        (
+            json!({"cloudaicompanionProject":"","projectId":"valid-project"}),
+            "valid-project",
+        ),
+        (
+            json!({"projectId":"bad\nid","backendProjectId":"safe-project"}),
+            "safe-project",
+        ),
+        (
+            json!({"projects":[{}, {"projectId":false}, "", {"project":{"id":"listed-project"}}]}),
+            "listed-project",
+        ),
+        (json!({"projectIds":["", "listed-string"]}), "listed-string"),
+        (
+            json!({"cloudaicompanionProjects":[{"cloudaicompanionProject":{"id":"listed-nested"}}]}),
+            "listed-nested",
+        ),
+    ];
+    for (index, (report, expected)) in reports.into_iter().enumerate() {
+        let app = Router::new().route(
+            "/v1internal:loadCodeAssist",
+            post(move || {
+                let report = report.clone();
+                async move { Json(report) }
+            }),
+        );
+        // No list route: an already-resolved project must not trigger another request.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut definition = super::super::agy_provider("fixture", "fixture");
+        definition.base_url = format!("http://{address}");
+        let provider = ProviderRuntime::new(definition, &|_| None).unwrap();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            format!("Bearer report-{index}").parse().unwrap(),
+        );
+        assert_eq!(
+            project_id(&reqwest::Client::new(), &provider, &headers)
+                .await
+                .unwrap(),
+            expected
+        );
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn project_discovery_failures_stay_errors_and_are_not_cached() {
+    use axum::{Json, Router, http::StatusCode, routing::post};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    for (index, (load_status, load_body, list_status, expected_error, list_calls)) in [
+        (
+            StatusCode::FORBIDDEN,
+            json!({"error":"private-upstream-body"}),
+            StatusCode::OK,
+            "AGY loadCodeAssist returned 403",
+            0,
+        ),
+        (
+            StatusCode::OK,
+            json!([]),
+            StatusCode::OK,
+            "invalid AGY loadCodeAssist project response",
+            0,
+        ),
+        (
+            StatusCode::OK,
+            json!({}),
+            StatusCode::UNAUTHORIZED,
+            "AGY listCloudAICompanionProjects returned 401",
+            1,
+        ),
+        (
+            StatusCode::OK,
+            json!({}),
+            StatusCode::OK,
+            "AGY account has no Cloud Code project",
+            1,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let loads = Arc::new(AtomicUsize::new(0));
+        let lists = Arc::new(AtomicUsize::new(0));
+        let load_count = loads.clone();
+        let list_count = lists.clone();
+        let app = Router::new()
+            .route(
+                "/v1internal:loadCodeAssist",
+                post(move || {
+                    let count = load_count.clone();
+                    let body = load_body.clone();
+                    async move {
+                        if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                            (load_status, Json(body))
+                        } else {
+                            (
+                                StatusCode::OK,
+                                Json(json!({"projectId":"recovered-project"})),
+                            )
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/v1internal:listCloudAICompanionProjects",
+                post(move || {
+                    let count = list_count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        (
+                            list_status,
+                            Json(json!({"projects":[], "error":"private-upstream-body"})),
+                        )
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut definition = super::super::agy_provider("fixture", "fixture");
+        definition.base_url = format!("http://{address}");
+        let provider = ProviderRuntime::new(definition, &|_| None).unwrap();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            format!("Bearer retry-{index}").parse().unwrap(),
+        );
+        let client = reqwest::Client::new();
+        let error = project_id(&client, &provider, &headers)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected_error), "{error}");
+        assert!(!error.contains("private-upstream-body"));
+        assert_eq!(
+            project_id(&client, &provider, &headers).await.unwrap(),
+            "recovered-project"
+        );
+        assert_eq!(loads.load(Ordering::SeqCst), 2);
+        assert_eq!(lists.load(Ordering::SeqCst), list_calls);
+        server.abort();
+    }
+}
+
 #[test]
 fn native_search_membership() {
     for (ids, expected) in [

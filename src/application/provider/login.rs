@@ -9,6 +9,7 @@ pub async fn authorize_add(
     let profile = match preset {
         ProviderPreset::Official => "official",
         ProviderPreset::Agy => "agy",
+        ProviderPreset::AgyBusiness => "agy-business",
         _ => anyhow::bail!("this provider preset does not use browser OAuth"),
     };
     crate::provider::auth::oauth::login(profile, timeout_seconds, show_url).await?;
@@ -19,7 +20,8 @@ pub async fn authorize_add(
         // Native AGY providers share this OAuth session. Do not retain
         // another account's routable directory after an explicit login.
         for provider in config.providers.iter_mut().filter(|provider| {
-            provider.preset_id.as_deref() == Some("agy") && provider.auth.api_key.trim().is_empty()
+            provider.preset_id.as_deref() == Some(profile)
+                && provider.auth.api_key.trim().is_empty()
         }) {
             provider.cached_models.clear();
             provider.models_refreshed_at_ms = None;

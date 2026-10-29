@@ -8,9 +8,20 @@ macOS, Windows and the Web panel consume the same CLI responses.
 The AGY preset starts without seed models. `providers discover <id>` directly
 calls `v1internal:fetchAvailableModels`. OAuth authentication, token renewal,
 project discovery and inference run in Rust; no AGY executable is required.
-For native OAuth, `loadCodeAssist` resolves the account's Cloud Code project,
-which is cached by endpoint and credential and shared with inference/probes.
+For native OAuth, `loadCodeAssist` resolves the account's Cloud Code project.
+If that successful response has no usable project, core queries
+`listCloudAICompanionProjects` with the same credentials. Both responses accept
+the native project field aliases, nested project IDs and account project lists.
+Only a real, nonempty project from those responses is cached by endpoint and
+credential and shared with inference/probes. Failed discovery is not cached;
+authentication, HTTP and invalid-response errors remain errors. Mixin does not
+invent a project ID or automatically onboard an account. If both reports have
+no project, complete the account's onboarding; Business credentials use the
+separate `agy-business` preset and its license discovery.
 Explicit provider keys never borrow the local OAuth account.
+
+The additional project report formats and read-only listing follow
+[Pi's AGY Business adapter](https://github.com/vini1006/pi-antigravity-business/blob/9e73ed6ab7280db2988cb90b0d3b5b3ce9937ccc/src/client/client.ts).
 
 The running gateway refreshes enabled AGY providers every 15 minutes. Failures
 back off to that interval and retain the last successful catalog, timestamp

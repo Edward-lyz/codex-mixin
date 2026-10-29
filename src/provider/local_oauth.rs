@@ -24,6 +24,7 @@ const AUTO_PRESETS: [ProviderPreset; 2] = [ProviderPreset::Agy, ProviderPreset::
 #[derive(Clone, Debug)]
 pub(crate) struct Locations {
     agy: Option<PathBuf>,
+    business: Vec<PathBuf>,
     kiro: PathBuf,
     kiro_cli: Option<PathBuf>,
     ignore: PathBuf,
@@ -33,6 +34,10 @@ impl Locations {
     pub(crate) fn current() -> Self {
         Self {
             agy: crate::platform::oauth::agy_auth_path(),
+            business: std::iter::once(crate::platform::oauth::oauth_path("agy-business"))
+                .chain(crate::platform::oauth::agy_external_token_paths())
+                .chain(std::iter::once(crate::platform::oauth::google_adc_path()))
+                .collect(),
             kiro: crate::platform::oauth::kiro_auth_path(),
             kiro_cli: crate::platform::oauth::kiro_cli_auth_path(),
             ignore: crate::platform::oauth::oauth_path(IGNORE_FILE),
@@ -51,6 +56,34 @@ pub(crate) struct LocalCredential {
 pub(crate) fn inspect(preset: ProviderPreset, at: &Locations) -> Option<LocalCredential> {
     match preset {
         ProviderPreset::Agy => inspect_agy(at.agy.as_deref()?),
+        ProviderPreset::AgyBusiness => {
+            // An owned login takes precedence even when broken: explicit
+            // authorization must repair it instead of selecting another account.
+            let paths = match at.business.first() {
+                Some(path) if path.exists() => std::slice::from_ref(path),
+                _ => at.business.get(1..)?,
+            };
+            let document = paths.iter().find_map(|path| {
+                let document = read_json(path)?;
+                (matches!(
+                    text(&document, "auth_method"),
+                    Some("gcp" | "business" | "oauth-business")
+                ) || (at.business.last() == Some(path)
+                    && text(&document, "type") == Some("authorized_user")))
+                .then_some(document)
+            })?;
+            let token = document.get("token").unwrap_or(&document);
+            let access = text(token, "access_token");
+            let refresh = text(token, "refresh_token").filter(|_| {
+                text(token, "client_id").is_some() && text(token, "client_secret").is_some()
+            });
+            if refresh.is_none() && !(access.is_some() && unexpired(token, "expiry")) {
+                return None;
+            }
+            Some(LocalCredential {
+                fingerprint: fingerprint(&["agy-business", refresh.or(access)?]),
+            })
+        }
         ProviderPreset::Kiro => at
             .kiro_cli
             .as_deref()

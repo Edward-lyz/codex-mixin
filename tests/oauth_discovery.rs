@@ -2,6 +2,72 @@ mod common;
 
 use serde_json::{Value, json};
 
+#[tokio::test]
+async fn business_authorization_reaches_the_bounded_browser_workflow() {
+    let error = codex_mixin::application::provider::login::authorize_add(
+        codex_mixin::provider::ProviderPreset::AgyBusiness,
+        0,
+        |_| panic!("invalid timeout must not start browser authorization"),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("OAuth timeout"), "{error:#}");
+}
+
+#[test]
+fn business_add_reuses_owned_credentials_and_preserves_other_sessions() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let oauth = root.join("oauth");
+    std::fs::create_dir(&oauth).unwrap();
+    let owned = br#"{"auth_method":"gcp","token":{"access_token":"fixture-business","expiry":"2099-01-01T00:00:00Z"}}"#;
+    let personal = br#"{"auth_method":"consumer","token":{"access_token":"fixture-personal","expiry":"2099-01-01T00:00:00Z"}}"#;
+    std::fs::write(oauth.join("agy-business.json"), owned).unwrap();
+    std::fs::write(oauth.join("agy.json"), personal).unwrap();
+    let output = common::cli(root)
+        .args([
+            "--no-tui",
+            "--json-errors",
+            "providers",
+            "add",
+            "--preset",
+            "agy-business",
+        ])
+        .env("PATH", "")
+        .env(
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            root.join("absent-adc.json"),
+        )
+        .output()
+        .unwrap();
+    // Outbound traffic is blocked by tests/common. Reaching discovery proves
+    // the owned enterprise token was accepted without opening a browser.
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(!stderr.contains("Open this URL"), "{stderr}");
+    assert!(
+        !stderr.contains("AGY Business credentials are missing"),
+        "{stderr}"
+    );
+    let error: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    assert_eq!(error["error"]["committed"], true, "{stderr}");
+    assert_eq!(error["error"]["stage"], "model discovery");
+    let config = codex_mixin::config::load_stored_config_from_path(&root.join("config.json"))
+        .unwrap()
+        .unwrap();
+    assert!(
+        config
+            .providers
+            .iter()
+            .any(|provider| provider.preset_id.as_deref() == Some("agy-business"))
+    );
+    assert_eq!(
+        std::fs::read(oauth.join("agy-business.json")).unwrap(),
+        owned
+    );
+    assert_eq!(std::fs::read(oauth.join("agy.json")).unwrap(), personal);
+}
+
 #[test]
 fn oauth_is_an_add_preset_with_a_bounded_timeout() {
     let directory = tempfile::tempdir().unwrap();

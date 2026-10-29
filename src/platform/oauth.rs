@@ -124,10 +124,10 @@ pub(crate) fn save_oauth(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn lock_oauth(provider: &str) -> anyhow::Result<std::fs::File> {
+pub(crate) fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
     use fs2::FileExt;
     use std::time::{Duration, Instant};
-    let path = oauth_path(provider).with_extension("lock");
+    let path = credentials.with_extension("lock");
     let parent = path
         .parent()
         .context("OAuth lock has no parent directory")?;
