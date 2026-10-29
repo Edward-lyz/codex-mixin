@@ -531,6 +531,10 @@ fn pi_like(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::
     } else {
         home_path("SENPI_CODING_AGENT_DIR", ".omo/agent")?
     };
+    Ok(pi_like_at(id, &dir, v1, key, models))
+}
+
+fn pi_like_at(id: &str, dir: &Path, v1: &str, key: &str, models: &[FrameworkModel]) -> Vec<Patch> {
     let mut patches = vec![patch(
         dir.join("models.json"),
         Format::Json,
@@ -549,7 +553,7 @@ fn pi_like(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::
             ],
         ));
     }
-    Ok(patches)
+    patches
 }
 
 fn crush(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
@@ -1089,6 +1093,84 @@ fn zcode(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omo_imported_pi_provider_has_an_independent_owned_binding() {
+        for imported in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().canonicalize().unwrap();
+            let pi = root.join("pi");
+            let omo = root.join("omo");
+            std::fs::create_dir_all(&pi).unwrap();
+            std::fs::create_dir_all(&omo).unwrap();
+            let inherited = json!({"name":"Codex Mixin","baseUrl":"http://127.0.0.1:9999/v1",
+                "api":"openai-responses","apiKey":"!cat '/fixture/pi-key'",
+                "models":[{"id":"pi-model","name":"Pi model"}]});
+            let pi_models =
+                serde_json::to_string(&json!({"providers":{"codex-mixin":inherited}})).unwrap();
+            let pi_settings = "{\"defaultProvider\":\"codex-mixin\",\"defaultModel\":\"pi-model\",\"unrelated\":true}\n";
+            std::fs::write(pi.join("models.json"), &pi_models).unwrap();
+            std::fs::write(pi.join("settings.json"), pi_settings).unwrap();
+            if imported {
+                for name in ["models.json", "settings.json"] {
+                    std::fs::copy(pi.join(name), omo.join(name)).unwrap();
+                }
+            }
+            let auth = b"{\"native\":{\"type\":\"oauth\",\"refresh\":\"fixture-refresh\"}}";
+            std::fs::write(omo.join("auth.json"), auth).unwrap();
+            let journal = root.join("omo-journal.json");
+            let patches = || {
+                pi_like_at(
+                    "omo",
+                    &omo,
+                    "http://127.0.0.1:8787/v1",
+                    "omo-fixture-key",
+                    &model_fixture(),
+                )
+            };
+            super::super::engine::apply(&journal, patches()).unwrap();
+            super::super::engine::apply(&journal, patches()).unwrap();
+            let value = read_config(&omo.join("models.json"), Format::Json).unwrap();
+            assert_eq!(
+                value["providers"]["codex-mixin-omo"]["apiKey"],
+                "omo-fixture-key"
+            );
+            assert_eq!(
+                value["providers"]["codex-mixin-omo"]["models"][0]["id"],
+                "provider/model.with.dots"
+            );
+            if imported {
+                assert_eq!(value["providers"]["codex-mixin"], inherited);
+            }
+            let settings = read_config(&omo.join("settings.json"), Format::Json).unwrap();
+            assert_eq!(settings["defaultProvider"], "codex-mixin-omo");
+            assert_eq!(settings["defaultModel"], "provider/model.with.dots");
+            super::super::engine::remove(&journal).unwrap();
+            if imported {
+                assert_eq!(
+                    std::fs::read_to_string(omo.join("models.json")).unwrap(),
+                    pi_models
+                );
+                assert_eq!(
+                    std::fs::read_to_string(omo.join("settings.json")).unwrap(),
+                    pi_settings
+                );
+            } else {
+                assert!(!omo.join("models.json").exists());
+                assert!(!omo.join("settings.json").exists());
+            }
+            assert_eq!(std::fs::read(omo.join("auth.json")).unwrap(), auth);
+            assert_eq!(
+                std::fs::read_to_string(pi.join("models.json")).unwrap(),
+                pi_models
+            );
+            assert_eq!(
+                std::fs::read_to_string(pi.join("settings.json")).unwrap(),
+                pi_settings
+            );
+        }
+    }
+
     #[test]
     fn gemini_configuration_preserves_oauth_and_restores_original_files() {
         let temp = tempfile::tempdir().unwrap();

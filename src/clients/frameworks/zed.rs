@@ -31,12 +31,14 @@ fn status_with(
     let key = record["after"]
         .as_str()
         .context("invalid Zed credential record")?;
-    let managed = engine::is_managed(manifest)? && read(server)?.as_deref() == Some(key);
+    let settings = engine::is_managed(manifest);
+    let managed =
+        settings.as_ref().is_ok_and(|managed| *managed) && read(server)?.as_deref() == Some(key);
     Ok(IntegrationStatus {
         state: if managed { "managed" } else if record["phase"] == "preparing" { "pending" } else { "drift" },
         mode: Some("native_credentials"),
         detail: DETAIL,
-        error: (!managed).then(|| "Zed credential or settings require reconciliation; reconnect to finish an interrupted install.".to_owned()),
+        error: settings.err().map(|error| error.to_string()).or_else(|| (!managed).then(|| "Zed credential or settings require reconciliation; reconnect to finish an interrupted install.".to_owned())),
     })
 }
 
