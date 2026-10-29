@@ -385,7 +385,7 @@ Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服
 
 **受托管启动。** agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante，通过 `codex-mixin agent run <id>` 启动；也可用 `codex-mixin agent launch <id>` 打开受托管终端。Cursor 启动前需完全退出已有进程。密钥只进入私有托管记录和子进程环境，不修改 shell 配置文件。
 
-**厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
+**厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。接入时沿用已有的厂商原生模型；尚未选择时，先用上述命令指定模型。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
 
 
 

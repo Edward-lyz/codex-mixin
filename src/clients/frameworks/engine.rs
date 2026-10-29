@@ -386,6 +386,9 @@ pub(super) fn is_managed(manifest: &Path) -> anyhow::Result<bool> {
         return Ok(false);
     };
     let journal: Journal = serde_json::from_str(&text).context("parse framework undo journal")?;
+    if !journal.entries.iter().any(|entry| !entry.fields.is_empty()) {
+        return Ok(false);
+    }
     for entry in journal.entries {
         let value = read_config(&entry.path, entry.format)?;
         anyhow::ensure!(

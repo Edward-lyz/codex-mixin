@@ -124,7 +124,21 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
             error: None,
         });
     }
-    Ok(match engine::is_managed(manifest) {
+    let launch_required = matches!(id, "agy" | "cursor-local" | "muse" | "commandcode")
+        || (cfg!(feature = "client-auth") && matches!(id, "fx" | "empryo" | "ante"));
+    let managed = engine::is_managed(manifest).and_then(|managed| {
+        if managed && launch_required {
+            let journal = engine::read_record(manifest)?.context("missing integration journal")?;
+            anyhow::ensure!(
+                journal["entries"].as_array().is_some_and(|entries| entries
+                    .iter()
+                    .any(|entry| entry["path"] == json!(manifest.with_extension("launch.json")))),
+                "managed launch environment is missing; disconnect and reconnect this agent"
+            );
+        }
+        Ok(managed)
+    });
+    Ok(match managed {
         Ok(managed) => IntegrationStatus {
             state: if managed { "managed" } else { "unmanaged" },
             mode: native.then_some("native_models"),
@@ -160,12 +174,29 @@ pub fn install(
         "hanako" => return hanako::install(manifest, base, key, models),
         _ => {}
     }
-    if manifest.exists() {
-        anyhow::ensure!(engine::is_managed(manifest)?, "integration is not managed");
+    if matches!(id, "cursor" | "copilot" | "devin") {
+        let selected = native_model(id, manifest, None, None)?;
+        if selected["managed"] == true {
+            return Ok(());
+        }
+        let model = selected["model"]
+            .as_str()
+            .filter(|model| !model.is_empty())
+            .context("select a vendor-native model with agent model --model before connecting")?;
+        native_model(
+            id,
+            manifest,
+            Some(model),
+            selected["effort"].as_str().filter(|_| id == "copilot"),
+        )?;
         return Ok(());
     }
-    if matches!(id, "cursor" | "copilot" | "devin") {
-        return engine::apply(manifest, Vec::new());
+    if manifest.exists() {
+        anyhow::ensure!(
+            status(id, manifest)?.state == "managed",
+            "integration requires attention; disconnect and reconnect this agent"
+        );
+        return Ok(());
     }
     anyhow::ensure!(
         !models.is_empty(),
@@ -432,6 +463,65 @@ fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
 #[cfg(test)]
 mod native_tests {
     use super::*;
+
+    #[test]
+    fn empty_native_journals_do_not_claim_model_ownership() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let manifest = root.join("cursor.json");
+        let settings = root.join("settings.json");
+        engine::write_record(&manifest, &json!({"entries":[]})).unwrap();
+        assert_eq!(status("cursor", &manifest).unwrap().state, "unmanaged");
+        assert!(!settings.exists());
+        native_model_at("cursor", &manifest, &settings, Some("vendor-native"), None).unwrap();
+        assert_eq!(status("cursor", &manifest).unwrap().state, "managed");
+        assert_eq!(
+            engine::read_config(&settings, engine::Format::Json).unwrap()["model"]["modelId"],
+            "vendor-native"
+        );
+        remove("cursor", &manifest).unwrap();
+        assert!(!settings.exists());
+    }
+
+    #[test]
+    fn old_launchless_journals_require_reconnect_and_remain_removable() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let manifest = root.join("commandcode.json");
+        let settings = root.join("settings.json");
+        engine::apply(
+            &manifest,
+            vec![engine::Patch {
+                path: settings.clone(),
+                format: engine::Format::Json,
+                fields: vec![(
+                    vec!["provider".into(), "codex-mixin".into()],
+                    json!({"apiKey":false}),
+                )],
+            }],
+        )
+        .unwrap();
+        let inspected = status("commandcode", &manifest).unwrap();
+        assert_eq!(inspected.state, "drift");
+        assert!(
+            inspected
+                .error
+                .unwrap()
+                .contains("disconnect and reconnect")
+        );
+        assert!(
+            install(
+                "commandcode",
+                &manifest,
+                "http://127.0.0.1:8080",
+                "key",
+                &[]
+            )
+            .is_err()
+        );
+        remove("commandcode", &manifest).unwrap();
+        assert!(!settings.exists());
+    }
 
     #[test]
     fn native_model_updates_preserve_vendor_credentials_and_unrelated_edits() {
