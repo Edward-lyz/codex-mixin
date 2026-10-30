@@ -30,6 +30,7 @@ struct AgentCLIInfo: Decodable, Equatable {
     let path: String
     let command: String
     let appVersion: String?
+    let appPath: String?
     let update: Bool
     let error: String?
 
@@ -40,6 +41,7 @@ struct AgentCLIInfo: Decodable, Equatable {
         case path
         case command
         case appVersion = "app_version"
+        case appPath = "app_path"
         case update
         case error
     }
@@ -52,7 +54,8 @@ struct AgentCLIInfo: Decodable, Equatable {
         command: String,
         appVersion: String?,
         update: Bool,
-        error: String?
+        error: String?,
+        appPath: String? = nil
     ) {
         self.version = version
         self.latest = latest
@@ -60,6 +63,7 @@ struct AgentCLIInfo: Decodable, Equatable {
         self.path = path
         self.command = command
         self.appVersion = appVersion
+        self.appPath = appPath
         self.update = update
         self.error = error
     }
@@ -74,13 +78,14 @@ struct AgentCLIInfo: Decodable, Equatable {
         path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
         command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
         appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
+        appPath = try container.decodeIfPresent(String.self, forKey: .appPath)
         update = try container.decode(Bool.self, forKey: .update)
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
 
-    /// The agent is configured but its command-line program is not there.
+    /// Neither a CLI nor a native desktop installation has been discovered.
     var isMissing: Bool {
-        version.isEmpty && path.isEmpty
+        version.isEmpty && path.isEmpty && appVersion == nil && appPath == nil
     }
 }
 

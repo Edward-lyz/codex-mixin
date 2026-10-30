@@ -6,6 +6,41 @@ fn dsh_registers_desktop_detection_without_requiring_a_cli() {
 }
 
 #[test]
+fn desktop_agents_register_apps_independently_of_cli_commands() {
+    for id in [
+        "cindy",
+        "alma",
+        "hanako",
+        "cursor-local",
+        "air",
+        "pencil",
+        "t3code",
+    ] {
+        let spec = spec_for(id).unwrap();
+        assert!(spec.command.is_none(), "{id}");
+        assert!(spec.desktop_app.is_some(), "{id}");
+    }
+    for id in [
+        "codex",
+        "dsh",
+        "opencode",
+        "zed",
+        "vscode",
+        "vscodium",
+        "qoder",
+        "codebuddy",
+    ] {
+        let spec = spec_for(id).unwrap();
+        assert!(spec.command.is_some(), "{id}");
+        assert!(spec.desktop_app.is_some(), "{id}");
+    }
+    assert!(
+        spec_for("cursor").unwrap().desktop_app.is_none(),
+        "Cursor editor is not Cursor CLI"
+    );
+}
+
+#[test]
 fn parses_versions_from_cli_output() {
     assert_eq!(parse_version("codex-cli 0.42.0"), Some("0.42.0".to_owned()));
     assert_eq!(
