@@ -144,6 +144,18 @@ fn chat_messages(body: &Value) -> Result<Vec<Value>, GatewayError> {
 
 fn append_chat_message(message: &Value, input: &mut Vec<Value>) -> Result<(), GatewayError> {
     let role = string(message, "role")?;
+    if let Some(reasoning) = message.get("reasoning_content").filter(|v| !v.is_null()) {
+        if role != "assistant" {
+            return Err(bad("reasoning_content requires an assistant message"));
+        }
+        let text = reasoning
+            .as_str()
+            .ok_or_else(|| bad("reasoning_content must be a string or null"))?;
+        // Keep raw thinking before its answer/tool batch. It is neither a
+        // generated summary nor a signed provider-native reasoning state.
+        input.push(json!({"type":"reasoning","summary":[],
+            "content":[{"type":"reasoning_text","text":text}]}));
+    }
     if role == "tool" {
         let content = string(message, "content")?;
         input.push(json!({"type":"function_call_output","call_id":string(message,"tool_call_id")?,"output":content}));
@@ -172,12 +184,6 @@ fn append_chat_message(message: &Value, input: &mut Vec<Value>) -> Result<(), Ga
                 .ok_or_else(|| bad("missing tool call function"))?;
             input.push(json!({"type":"function_call","call_id":string(call,"id")?,"name":string(function,"name")?,"arguments":string(function,"arguments")?}));
         }
-    }
-    if message
-        .get("reasoning_content")
-        .is_some_and(|v| !v.is_null() && v != "")
-    {
-        return Err(bad("reasoning_content replay is not supported"));
     }
     Ok(())
 }
@@ -232,6 +238,17 @@ fn finish_reason(response: &Value, used_tool: bool) -> &'static str {
 pub(crate) fn collected_to_chat(collected: CollectedResponse, model: &str) -> Value {
     let tools: Vec<Value> = collected.output.iter().filter(|i| i["type"] == "function_call").map(|i| json!({"id":i["call_id"],"type":"function","function":{"name":i["name"],"arguments":i["arguments"]}})).collect();
     let mut message = json!({"role":"assistant","content":collected.output_text});
+    let reasoning: String = collected
+        .output
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .flat_map(|item| item["content"].as_array().into_iter().flatten())
+        .filter(|part| part["type"] == "reasoning_text")
+        .filter_map(|part| part["text"].as_str())
+        .collect();
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = json!(reasoning);
+    }
     if !tools.is_empty() {
         message["tool_calls"] = json!(tools);
         if collected.output_text.is_empty() {
@@ -252,6 +269,7 @@ struct ChatStream {
     created: i64,
     tools: HashMap<String, usize>,
     text_seen: HashSet<String>,
+    reasoning_seen: HashSet<String>,
     args_seen: HashSet<String>,
 }
 
@@ -275,7 +293,10 @@ impl ChatStream {
                 }
                 out
             }
-            Some("message") if done && self.text_seen.insert(id) => {
+            Some("message") if done => {
+                if !self.text_seen.insert(id) {
+                    return Vec::new();
+                }
                 let text = item["content"]
                     .as_array()
                     .into_iter()
@@ -283,6 +304,25 @@ impl ChatStream {
                     .filter_map(|c| c["text"].as_str())
                     .collect::<String>();
                 vec![data(self.chunk(json!({"content":text}), Value::Null))]
+            }
+            Some("reasoning") if done => {
+                if !self.reasoning_seen.insert(id) {
+                    return Vec::new();
+                }
+                let text: String = item["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| part["type"] == "reasoning_text")
+                    .filter_map(|part| part["text"].as_str())
+                    .collect();
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![data(
+                        self.chunk(json!({"reasoning_content":text}), Value::Null),
+                    )]
+                }
             }
             _ => Vec::new(),
         }
@@ -295,7 +335,7 @@ pub(crate) fn responses_to_chat_stream(
     include_usage: bool,
 ) -> ResponseStream {
     async_stream::stream! {
-        let mut state = ChatStream { id:format!("chatcmpl-{}",uuid::Uuid::new_v4().simple()),model,created:chrono::Utc::now().timestamp(),tools:HashMap::new(),text_seen:HashSet::new(),args_seen:HashSet::new() };
+        let mut state = ChatStream { id:format!("chatcmpl-{}",uuid::Uuid::new_v4().simple()),model,created:chrono::Utc::now().timestamp(),tools:HashMap::new(),text_seen:HashSet::new(),reasoning_seen:HashSet::new(),args_seen:HashSet::new() };
         let mut decoder = SseDecoder::default();
         let mut upstream = upstream;
         yield Ok(data(state.chunk(json!({"role":"assistant","content":""}),Value::Null)));
@@ -315,6 +355,7 @@ pub(crate) fn responses_to_chat_stream(
                         yield Ok(data(state.chunk(json!({"content":payload["delta"]}),Value::Null)));
                     }
                     "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+                        state.reasoning_seen.insert(item_id);
                         yield Ok(data(state.chunk(json!({"reasoning_content":payload["delta"]}),Value::Null)));
                     }
                     "response.output_item.added" | "response.output_item.done" => {
@@ -373,6 +414,145 @@ mod tests {
         })
         .unwrap();
         assert_eq!(roundtrip.request["messages"][3]["tool_call_id"], "c1");
+    }
+
+    #[test]
+    fn replays_reasoning_with_text_and_parallel_tool_calls() {
+        for content in [Value::Null, json!("Checking both files.")] {
+            let body = json!({
+                "model":"deepseek-reasoner",
+                "messages":[
+                    {"role":"user","content":"Read two files."},
+                    {"role":"assistant","content":content,"reasoning_content":"  inspect\nboth files  ",
+                        "tool_calls":[
+                            {"id":"c1","type":"function","function":{"name":"read","arguments":"{\"path\":\"a\"}"}},
+                            {"id":"c2","type":"function","function":{"name":"read","arguments":"{\"path\":\"b\"}"}}
+                        ]},
+                    {"role":"tool","tool_call_id":"c1","content":"first"},
+                    {"role":"tool","tool_call_id":"c2","content":"second"},
+                    {"role":"assistant","content":"Both read.","reasoning_content":"compare results"},
+                    {"role":"user","content":"Continue."}
+                ]
+            });
+            let converted = chat_to_responses(&body).unwrap();
+            assert_eq!(converted, chat_to_responses(&body).unwrap());
+            assert_eq!(converted["input"][1]["type"], "reasoning");
+            assert_eq!(converted["input"][1]["summary"], json!([]));
+            assert_eq!(
+                converted["input"][1]["content"],
+                json!([{"type":"reasoning_text","text":"  inspect\nboth files  "}])
+            );
+            assert!(converted["input"][1].get("encrypted_content").is_none());
+
+            let roundtrip =
+                crate::protocol::openai_chat::responses_to_openai_chat(&converted, &|| {
+                    Err(GatewayError::Other(anyhow::anyhow!("unused")))
+                })
+                .unwrap();
+            let messages = roundtrip.request["messages"].as_array().unwrap();
+            assert_eq!(messages.len(), 6);
+            assert_eq!(messages[1]["reasoning_content"], "  inspect\nboth files  ");
+            assert_eq!(messages[1]["tool_calls"], body["messages"][1]["tool_calls"]);
+            if content.is_null() {
+                assert!(messages[1]["content"].is_null());
+            } else {
+                assert_eq!(messages[1]["content"][0]["text"], content);
+            }
+            assert_eq!(messages[2], body["messages"][2]);
+            assert_eq!(messages[3], body["messages"][3]);
+            assert_eq!(messages[4]["reasoning_content"], "compare results");
+            assert_eq!(messages[4]["content"][0]["text"], "Both read.");
+            assert!(messages[5].get("reasoning_content").is_none());
+        }
+    }
+
+    #[test]
+    fn accepts_empty_reasoning_but_rejects_invalid_replay() {
+        for reasoning in [Value::Null, json!("")] {
+            let converted = chat_to_responses(&json!({
+                "model":"deepseek-reasoner",
+                "messages":[{"role":"assistant","content":"answer","reasoning_content":reasoning}]
+            }))
+            .unwrap();
+            let roundtrip =
+                crate::protocol::openai_chat::responses_to_openai_chat(&converted, &|| {
+                    Err(GatewayError::Other(anyhow::anyhow!("unused")))
+                })
+                .unwrap();
+            if reasoning.is_null() {
+                assert!(
+                    roundtrip.request["messages"][0]
+                        .get("reasoning_content")
+                        .is_none()
+                );
+            } else {
+                assert_eq!(roundtrip.request["messages"][0]["reasoning_content"], "");
+            }
+        }
+        for message in [
+            json!({"role":"user","content":"hello","reasoning_content":"private"}),
+            json!({"role":"tool","tool_call_id":"c1","content":"ok","reasoning_content":"private"}),
+            json!({"role":"assistant","content":"answer","reasoning_content":{"text":"private"}}),
+            json!({"role":"assistant","content":"answer","reasoning_content":42}),
+        ] {
+            let error =
+                chat_to_responses(&json!({"model":"model","messages":[message]})).unwrap_err();
+            assert!(error.to_string().contains("reasoning_content"));
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_raw_reasoning_in_collected_and_streamed_tool_replies() {
+        let reasoning = json!({"id":"rs1","type":"reasoning","summary":[],
+            "content":[{"type":"reasoning_text","text":"check "},{"type":"reasoning_text","text":"the file"}]});
+        let call = json!({"id":"fc1","type":"function_call","call_id":"c1","name":"read","arguments":"{}"});
+        let output = vec![reasoning.clone(), call.clone()];
+        let response = json!({"id":"resp1","status":"completed","output":output});
+        let reply = collected_to_chat(
+            CollectedResponse {
+                response: response.clone(),
+                output,
+                output_text: String::new(),
+                usage: json!({}),
+            },
+            "model",
+        );
+        assert_eq!(
+            reply["choices"][0]["message"]["reasoning_content"],
+            "check the file"
+        );
+        assert!(reply["choices"][0]["message"]["content"].is_null());
+        assert_eq!(reply["choices"][0]["message"]["tool_calls"][0]["id"], "c1");
+        for with_deltas in [false, true] {
+            let mut events = Vec::new();
+            if with_deltas {
+                events.push(json!({"type":"response.reasoning_text.delta","item_id":"rs1","delta":"check "}));
+                events.push(json!({"type":"response.reasoning_text.delta","item_id":"rs1","delta":"the file"}));
+            }
+            events.push(json!({"type":"response.output_item.done","item":reasoning}));
+            events.push(json!({"type":"response.output_item.done","item":call}));
+            events.push(json!({"type":"response.completed","response":response}));
+            let upstream =
+                futures_util::stream::iter(events.into_iter().map(|event| Ok(data(event)))).boxed();
+            let bytes = responses_to_chat_stream(upstream, "model".to_owned(), false)
+                .collect::<Vec<_>>()
+                .await;
+            let mut decoder = SseDecoder::default();
+            let mut text = String::new();
+            for chunk in bytes {
+                for event in decoder.push(&chunk.unwrap()) {
+                    if event.data != "[DONE]" {
+                        let value: Value = serde_json::from_str(&event.data).unwrap();
+                        if let Some(delta) =
+                            value["choices"][0]["delta"]["reasoning_content"].as_str()
+                        {
+                            text.push_str(delta);
+                        }
+                    }
+                }
+            }
+            assert_eq!(text, "check the file");
+        }
     }
 
     #[tokio::test]

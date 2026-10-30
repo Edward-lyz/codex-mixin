@@ -10131,6 +10131,91 @@ async fn chat_endpoint_maps_real_function_calls() {
 }
 
 #[tokio::test]
+async fn chat_replays_deepseek_reasoning_through_responses_and_chat_upstreams() {
+    for protocol in [
+        ProviderProtocol::OpenAiResponses,
+        ProviderProtocol::OpenAiChat,
+    ] {
+        let (upstream, requests) = if protocol == ProviderProtocol::OpenAiChat {
+            spawn_mock_openai_chat().await
+        } else {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let app = Router::new()
+                .route(
+                    "/responses",
+                    post(
+                        |State(requests): State<Arc<Mutex<Vec<Value>>>>,
+                         Json(body): Json<Value>| async move {
+                            requests.lock().unwrap().push(body);
+                            let response = json!({"type":"response.completed","response":{
+                                "id":"resp_replay","status":"completed",
+                                "output":[{"id":"msg1","type":"message","role":"assistant",
+                                    "content":[{"type":"output_text","text":"hello"}]}]
+                            }});
+                            (
+                                [(header::CONTENT_TYPE, "text/event-stream")],
+                                format!("event: response.completed\ndata: {response}\n\n"),
+                            )
+                        },
+                    ),
+                )
+                .with_state(requests.clone());
+            (spawn_router(app).await, requests)
+        };
+        let mut config = test_config(upstream);
+        config.providers[0].protocol = protocol;
+        config.providers[0].api_path = if protocol == ProviderProtocol::OpenAiChat {
+            "/chat/completions"
+        } else {
+            "/responses"
+        }
+        .to_owned();
+        let gateway = spawn_gateway_with_config(config).await;
+        for streaming in [false, true] {
+            let response = reqwest::Client::new()
+                .post(format!("{gateway}/v1/chat/completions"))
+                .bearer_auth("gateway-key")
+                .json(&json!({
+                    "model":"DeepSeek-V4-Flash-custom","stream":streaming,
+                    "messages":[
+                        {"role":"user","content":"Read a file."},
+                        {"role":"assistant","content":null,"reasoning_content":"Inspect the file first.",
+                            "tool_calls":[{"id":"cindy_call","type":"function","function":{"name":"read_file","arguments":"{}"}}]},
+                        {"role":"tool","tool_call_id":"cindy_call","content":"synthetic file"}
+                    ],
+                    "tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let text = response.text().await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{protocol:?}: {text}");
+            assert!(text.contains("hello"), "{text}");
+        }
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        for request in sent.iter() {
+            if protocol == ProviderProtocol::OpenAiChat {
+                let messages = request["messages"].as_array().unwrap();
+                assert_eq!(messages.len(), 3);
+                assert_eq!(messages[1]["reasoning_content"], "Inspect the file first.");
+                assert_eq!(messages[1]["tool_calls"][0]["id"], "cindy_call");
+                assert_eq!(messages[2]["tool_call_id"], "cindy_call");
+            } else {
+                assert_eq!(request["input"][1]["type"], "reasoning");
+                assert_eq!(
+                    request["input"][1]["content"][0]["text"],
+                    "Inspect the file first."
+                );
+                assert_eq!(request["input"][2]["call_id"], "cindy_call");
+                assert_eq!(request["input"][3]["call_id"], "cindy_call");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn chat_rejects_unsupported_semantics_before_upstream_call() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway = spawn_gateway(upstream).await;

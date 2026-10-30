@@ -34,4 +34,23 @@ delta 不一致。tool_search 保留其独立的 item 类型。
 Codex TUI 的显示受 `show_raw_agent_reasoning` 控制；本次未验证 Desktop 的
 raw 通道展示。原生上游的 reasoning summary 或加密推理状态不会被这条路径改写。
 
+## Chat 客户端的历史回放
+
+Cindy 等 Chat Completions 客户端回传 assistant `reasoning_content` 时，
+Mixin 使用同一 `content[].reasoning_text` 表达原始推理，保留文本和消息顺序，
+不再一律返回 `reasoning_content replay is not supported`。字段接受字符串或
+null；user/tool 等非 assistant 角色携带非 null 值，以及非字符串值，明确返回 400。
+
+转发到支持 raw reasoning 的 Responses 上游时保留 reasoning item；
+转发到 Chat Completions 上游时，将推理、assistant 正文和并行工具调用还原到
+同一条 assistant 消息，工具结果紧随其后，调用 ID 不变。空字符串仍可回放。
+不把原始文本伪装成签名或加密状态，其他协议仍遵循原有跨上游推理策略。
+
+返回 Chat 客户端时，非流式响应也保留原始 `reasoning_content`；流式响应在上游
+仅提供最终 reasoning item 时补发文本，已经发送过 delta 的内容不重复发送。
+DeepSeek 的工具续轮需要完整回传推理历史，不能通过删除该字段规避校验。
+
+协议依据：[DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/)、
+[DeepSeek Responses input](https://api-docs.deepseek.com/api/create-response/)。
+
 字段依据：[OpenAI Responses streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events)。
