@@ -160,9 +160,7 @@ fn snapshot(id: &str) -> anyhow::Result<Value> {
         },
     };
     // Configuration presence and an installed program are independent facts.
-    let detected = cli.path.is_some()
-        || cli.app_version.is_some()
-        || (!is_legacy(id) && codex_mixin::clients::frameworks::detected(id)?);
+    let detected = cli.path.is_some() || cli.app_path.is_some() || cli.app_version.is_some();
     Ok(
         json!({"id": id, "name": name, "detected": detected, "integration": integration, "cli": cli}),
     )

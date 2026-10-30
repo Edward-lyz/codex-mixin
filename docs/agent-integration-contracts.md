@@ -13,7 +13,21 @@ codex-mixin agent connect reasonix
 codex-mixin agent disconnect reasonix
 ```
 
-The same connect/disconnect commands accept the IDs below. Restart the Agent after configuration changes. Installation/version detection still follows each Agent's existing installation channel; Mixin does not install a missing extension or synthesize vendor credentials.
+The same connect/disconnect commands accept the IDs below. Restart the Agent after configuration changes. Mixin does not install a missing extension or synthesize vendor credentials.
+
+## Native application discovery
+
+`agent list --json` reports installed programs independently of integration state. `cli.path` / `cli.version` describe the command-line installation; `cli.app_path` / `cli.app_version` describe the desktop installation. An application can be detected without a CLI or readable version. Saved configuration and integration journals alone do not establish that software is installed.
+
+- **macOS:** NSWorkspace resolves LaunchServices-registered bundle identifiers and application names, including user/custom installation locations; NSBundle reads the application version. The platform bridge calls these system APIs through JXA, without launching the application.
+- **Windows:** the native Registry provider reads per-user/system Uninstall and App Paths registrations, including 32-bit registrations. Executable version resources supply the version, with registered DisplayVersion when resources omit it. The PackageManager-backed `Get-AppxPackage` cmdlet covers matching per-user MSIX registrations. Stale registrations without an existing executable/package are ignored.
+- **Linux:** the system Python GIO binding (`python3-gi` on Debian/Ubuntu) uses `Gio.AppInfo` / `Gio.DesktopAppInfo` to resolve registered desktop entries and executable availability, respecting the desktop's XDG/Flatpak/Snap exports. There is no custom `.desktop` or `Exec` parser. Version is unknown unless the entry supplies `X-AppImage-Version` / `X-Version`. Missing GIO is reported as discovery unavailable, not a successful absent-app result.
+
+Desktop registration currently covers Codex/ChatGPT, Claude, DSH, OpenCode, OpenChamber, Goose, Cursor editor, Zed, VS Code/Insiders, VSCodium, Air, Reasonix, Qoder/CN, ZCode, WorkBuddy, CodeBuddy, Pencil, T3 Code, Hanako, Alma and Cindy. Vendor names/identifiers remain an explicit catalog, not substring matching against every installed product. A plugin without a separately registered desktop application is not inferred from its host editor. Unregistered portable programs may need OS registration before they can be discovered as desktop applications.
+
+CLI lookup preserves absolute PATH entry precedence, then checks standard native user/system CLI directories for desktop sessions with a reduced PATH. Relative/current-directory PATH entries and non-executable Unix files are not eligible for background version probes. Desktop paths are never used as CLI launchers or automatic CLI upgrade targets.
+
+Older pending Cindy connections used an import ID longer than Cindy accepts. Connect again to regenerate the private handoff with a valid ID, then confirm the import in Cindy. Installation detection alone does not mark that connection as managed.
 
 | ID | Actual configuration contract | Boundary and evidence |
 | --- | --- | --- |
@@ -39,7 +53,7 @@ The same connect/disconnect commands accept the IDs below. Restart the Agent aft
 | `muse` | Native `endpoint_transport`, schema version 1 and `/muse-code/models` | Discovery exposes required Muse metadata and model limits. Managed launch supplies only the gateway `META_API_KEY`, so a vendor sign-in token is not reused for the gateway. Unknown settings schema versions fail closed. |
 | `alma` | Running loopback API on port 23001 | Unique owned provider, model list and chat selection are confirmed. A durable preparing record permits retry after partial API failure without duplicate providers. Disconnect preserves unrelated settings and restores the prior default. |
 | `hanako` | Running authenticated loopback API identified through `server-info.json` | The encrypted provider catalog is never rewritten. The captured agent/model is restored through native APIs. If no replacement chat model exists, disconnect reports `pending_removal` after access revocation until the user chooses a native replacement. |
-| `cindy` | `cindy://provider/import` through a private HTML handoff | Confirm import in Cindy. Status reads the exact owned provider ID from native SQLite in read-only mode; unreadable databases remain errors. Disconnect revokes gateway access and reports `pending_removal` until the user removes the native provider. The encrypted database is never written. |
+| `cindy` | `cindy://provider/import` through a private HTML handoff | Confirm import in Cindy. Status matches the owned slug and native eight-hex ID suffix, then verifies all three runtime routes in read-only SQLite. Ambiguous imports, edited routes and unreadable databases remain errors. Disconnect revokes gateway access and reports `pending_removal` until the user removes the native provider. The encrypted database is never written. |
 
 ## Vendor-native model management
 
@@ -81,6 +95,6 @@ The existing durable integration journal preflights all files, records original 
 
 Reasonix `.env` parsing preserves comments and unrelated assignment contents, normalizing CRLF to LF when files are rewritten. Duplicate variable names, malformed lines and multiline assignments, including escaped closing quotes, fail before any write; this intentionally narrower syntax avoids ambiguous restore semantics. Existing managed-key collisions are rejected. The adapter never places the Reasonix API key in its TOML configuration.
 
-Validation runs in GitHub CI under the user's no-local-compilation constraint. Existing default and `client-auth` full-target gates, strict Clippy, architecture checks and protocol/cache E2E remain required. Adjacent non-UI tests cover native model preservation, private launch validation, Gemini options/token estimates, Muse discovery, Zed credential rollback, Aside account staging, Cindy read-only confirmation, Alma partial failures and Hanako restoration/removal. Tests use temporary paths, in-memory credential callbacks and loopback servers; they do not invoke real credential stores or vendor applications.
+Full validation runs in GitHub CI. Existing default and `client-auth` full-target gates, strict Clippy, architecture checks and protocol/cache E2E remain required. Local validation of native discovery is limited to an APP build and read-only discovery queries; it is not evidence of Windows/Linux runtime coverage or a completed Cindy import. Adjacent non-UI tests cover native model preservation, private launch validation, Gemini options/token estimates, Muse discovery, Zed credential rollback, Aside account staging, Cindy import ID migration/read-only route confirmation, Alma partial failures and Hanako restoration/removal. Tests use temporary paths, in-memory credential callbacks and loopback servers; they do not invoke real credential stores or vendor applications.
 
 Native compatibility: Gemini model picker registration uses visible custom `modelDefinitions`, `customAliases`, and `experimental.dynamicModelConfiguration`. Disconnect/reconnect older Gemini bindings to install these fields. Zed owns default-model fields individually, including native thinking/effort settings; unrelated native migration fields are preserved. Existing deprecated sidebar settings belong to Zed migration, and a real user model change remains a managed-field conflict.

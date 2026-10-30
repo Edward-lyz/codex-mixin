@@ -3,6 +3,7 @@
 //! Callers express intent through this module instead of branching on an OS.
 //! Platform-specific process flags, paths, and permission tools stay here.
 
+mod agent_apps;
 mod codex_cli;
 mod desktop;
 mod files;

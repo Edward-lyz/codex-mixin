@@ -100,11 +100,11 @@ pub const AGENT_VERSION_IDS: [&str; 50] = [
     "cindy",
 ];
 
-/// One agent's CLI state, as the Agents page shows it.
+/// One agent's CLI and native desktop installation, as the Agents page shows it.
 ///
 /// `None` means unknown, which is not "up to date": when the newest version
 /// cannot be read, `latest` stays `None` and `error` says why. A row with no
-/// `path`, no `version`, and no `error` is an agent that is not installed.
+/// `path`, no `app_path`, no `version`, and no `error` is an absent agent.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentCliInfo {
@@ -121,6 +121,8 @@ pub struct AgentCliInfo {
     /// Version of the desktop app installed beside the CLI, when the agent
     /// has one.
     pub app_version: Option<String>,
+    /// Native application location, independent of CLI presence or version.
+    pub app_path: Option<String>,
     /// `latest` is after `version` and this machine can install it.
     pub update: bool,
     /// Why something could not be read or run; every reason found, oldest
@@ -224,7 +226,7 @@ const SPECS: [AgentSpec; 50] = [
             verb: "upgrade",
             home_launcher: false,
         }),
-        desktop_app: None,
+        desktop_app: Some(DesktopApp::OpenCode),
     },
     AgentSpec {
         id: "pi",
@@ -245,7 +247,10 @@ const SPECS: [AgentSpec; 50] = [
         &["gemini-cli"],
     ),
     agent_spec("agy", Some("agy"), &[], &[]),
-    agent_spec("openchamber", Some("openchamber"), &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::OpenChamber),
+        ..agent_spec("openchamber", Some("openchamber"), &[], &[])
+    },
     agent_spec("mimocode", Some("mimo"), &[], &[]),
     agent_spec("aside", Some("aside"), &[], &[]),
     AgentSpec {
@@ -257,16 +262,37 @@ const SPECS: [AgentSpec; 50] = [
         }),
         ..agent_spec("omo", Some("omo"), &["omo-ai"], &[])
     },
-    agent_spec("goose", Some("goose"), &[], &["block-goose-cli"]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Goose),
+        ..agent_spec("goose", Some("goose"), &[], &["block-goose-cli"])
+    },
     agent_spec("cursor", Some("cursor-agent"), &[], &[]),
-    agent_spec("cursor-local", None, &[], &[]),
-    agent_spec("zed", Some("zed"), &[], &[]),
-    agent_spec("vscode", Some("code"), &[], &[]),
-    agent_spec("vscode-insiders", Some("code-insiders"), &[], &[]),
-    agent_spec("vscodium", Some("codium"), &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Cursor),
+        ..agent_spec("cursor-local", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Zed),
+        ..agent_spec("zed", Some("zed"), &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::VsCode),
+        ..agent_spec("vscode", Some("code"), &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::VsCodeInsiders),
+        ..agent_spec("vscode-insiders", Some("code-insiders"), &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::VsCodium),
+        ..agent_spec("vscodium", Some("codium"), &[], &[])
+    },
     agent_spec("copilot-jetbrains", None, &[], &[]),
     // These constructors omit Bin to avoid colliding with unrelated tools.
-    agent_spec("air", None, &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Air),
+        ..agent_spec("air", None, &[], &[])
+    },
     agent_spec(
         "copilot",
         Some("copilot"),
@@ -274,7 +300,10 @@ const SPECS: [AgentSpec; 50] = [
         &["copilot-cli"],
     ),
     agent_spec("crush", Some("crush"), &["@charmland/crush"], &["crush"]),
-    agent_spec("reasonix", Some("reasonix"), &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Reasonix),
+        ..agent_spec("reasonix", Some("reasonix"), &[], &[])
+    },
     agent_spec("commandcode", Some("command-code"), &[], &[]),
     agent_spec("fx", None, &[], &[]),
     agent_spec("omp", Some("omp"), &["@oh-my-pi/pi-coding-agent"], &[]),
@@ -289,28 +318,58 @@ const SPECS: [AgentSpec; 50] = [
     agent_spec("minimax-code", Some("mcode"), &[], &[]),
     agent_spec("droid", Some("droid"), &[], &[]),
     agent_spec("cline", Some("cline"), &["cline"], &[]),
-    agent_spec("qoder", Some("qodercli"), &[], &[]),
-    agent_spec("qoder-cn", Some("qoderclicn"), &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Qoder),
+        ..agent_spec("qoder", Some("qodercli"), &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::QoderCn),
+        ..agent_spec("qoder-cn", Some("qoderclicn"), &[], &[])
+    },
     agent_spec("grok", None, &[], &[]),
-    agent_spec("zcode", None, &[], &[]),
-    agent_spec("workbuddy", None, &[], &[]),
-    agent_spec(
-        "codebuddy",
-        Some("codebuddy"),
-        &["@tencent-ai/codebuddy-code"],
-        &[],
-    ),
-    agent_spec("pencil", None, &[], &[]),
-    agent_spec("t3code", None, &[], &[]),
-    agent_spec("hanako", None, &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::ZCode),
+        ..agent_spec("zcode", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::WorkBuddy),
+        ..agent_spec("workbuddy", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::CodeBuddy),
+        ..agent_spec(
+            "codebuddy",
+            Some("codebuddy"),
+            &["@tencent-ai/codebuddy-code"],
+            &[],
+        )
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Pencil),
+        ..agent_spec("pencil", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::T3Code),
+        ..agent_spec("t3code", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Hanako),
+        ..agent_spec("hanako", None, &[], &[])
+    },
     agent_spec(
         "atomcode",
         Some("atomcode"),
         &["@atomgit.com/atomcode"],
         &["atomcode"],
     ),
-    agent_spec("alma", None, &[], &[]),
-    agent_spec("cindy", None, &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Alma),
+        ..agent_spec("alma", None, &[], &[])
+    },
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Cindy),
+        ..agent_spec("cindy", None, &[], &[])
+    },
 ];
 
 /// Common static spec shape; empty package lists mean no verified updater.
@@ -462,7 +521,13 @@ pub async fn upgrade_agent(id: &str) -> anyhow::Result<AgentCliInfo> {
         updater,
     } = state;
     let Some(updater) = updater else {
-        let message = refusal(id, before.path.is_some());
+        let message = if before.path.is_none() && before.app_path.is_some() {
+            format!(
+                "{id} is installed as a desktop app; update it through its installation channel"
+            )
+        } else {
+            refusal(id, before.path.is_some())
+        };
         return Ok(refused(before, message));
     };
     if let Some(reason) = updater.blocked.clone() {
@@ -549,30 +614,31 @@ fn push_error(info: &mut AgentCliInfo, message: String) {
 
 /// What one agent's CLI is on this machine, without asking the network.
 fn inspect_local(spec: &AgentSpec) -> LocalState {
-    let app_version = spec.desktop_app.and_then(desktop_app_version);
-    match spec.command.and_then(|command| locate_cli(spec, command)) {
+    let installation = spec
+        .desktop_app
+        .map(platform::agent_cli::desktop_app_installation);
+    let (app_path, app_version, app_error) = match installation {
+        Some(Ok(Some((path, version)))) => {
+            (Some(path.to_string_lossy().into_owned()), version, None)
+        }
+        Some(Err(error)) => (None, None, Some(format!("{error:#}"))),
+        _ => (None, None, None),
+    };
+    let mut state = match spec.command.and_then(|command| locate_cli(spec, command)) {
         Some(bin) => inspect_cli(spec, bin, app_version),
         None => LocalState {
             info: AgentCliInfo {
                 app_version,
-                error: if spec.command.is_none() {
-                    Some(format!(
-                        "{} CLI version detection and upgrade unavailable: no verified command",
-                        spec.id
-                    ))
-                } else if spec.npm.is_empty() && spec.brew.is_empty() {
-                    Some(format!(
-                        "{} upgrade unavailable: no verified updater",
-                        spec.id
-                    ))
-                } else {
-                    None
-                },
                 ..AgentCliInfo::default()
             },
             updater: None,
         },
+    };
+    state.info.app_path = app_path;
+    if let Some(error) = app_error {
+        push_error(&mut state.info, error);
     }
+    state
 }
 
 /// What the CLI at `bin` is, with the desktop app's version already read.
@@ -613,29 +679,18 @@ fn locate_cli(spec: &AgentSpec, command: &str) -> Option<PathBuf> {
     if let Some(bin) = platform::agent_cli::find_command(command) {
         return Some(bin);
     }
+    if spec.id == "codex"
+        && let Some(candidate) = platform::codex_cli_candidates()
+            .into_iter()
+            .find(|path| path.is_file())
+    {
+        return Some(candidate);
+    }
     let home = platform::home_dir_required().ok()?;
     let candidate = home
         .join(spec.home_bin?)
         .join(platform::executable_file_name(command));
     candidate.is_file().then_some(candidate)
-}
-
-/// Version of a desktop app installed on this machine, from the first
-/// location that names one.
-fn desktop_app_version(app: DesktopApp) -> Option<String> {
-    platform::agent_cli::desktop_app_candidates(app)
-        .into_iter()
-        .find_map(|location| {
-            platform::agent_cli::desktop_app_versions(&location)
-                .into_iter()
-                .reduce(|best, version| {
-                    if newer(&version, &best) {
-                        version
-                    } else {
-                        best
-                    }
-                })
-        })
 }
 
 /// How `bin` was installed and would be updated, from where its links lead;
