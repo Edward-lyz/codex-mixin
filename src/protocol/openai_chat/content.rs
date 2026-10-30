@@ -55,7 +55,19 @@ pub(super) fn append_input_item(
                     )));
                 }
             };
-            messages.push(json!({"role":role,"content":convert_content(item.get("content"))?}));
+            let content = convert_content(item.get("content"))?;
+            if role == "assistant"
+                && let Some(previous) = messages.last_mut().filter(|message| {
+                    message["role"] == "assistant"
+                        && message.get("reasoning_content").is_some()
+                        && message["content"].is_null()
+                        && message.get("tool_calls").is_none()
+                })
+            {
+                previous["content"] = content;
+            } else {
+                messages.push(json!({"role":role,"content":content}));
+            }
         }
         "function_call" => {
             let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
@@ -183,11 +195,33 @@ pub(super) fn append_input_item(
             let output = serde_json::to_string(tools)?;
             messages.push(json!({"role":"tool","tool_call_id":call_id,"content":output}));
         }
-        "compaction_trigger"
-        | "reasoning"
-        | "web_search_call"
-        | "image_generation_call"
-        | "additional_tools" => {}
+        "reasoning" => {
+            // Only raw Chat reasoning can become reasoning_content. Opaque
+            // provider state and generated summaries keep their existing
+            // cross-provider omission semantics.
+            if let Some(content) = item.get("content").filter(|value| !value.is_null()) {
+                let parts = content.as_array().ok_or_else(|| {
+                    GatewayError::BadRequest("reasoning content must be an array".to_owned())
+                })?;
+                let mut text = String::new();
+                for part in parts {
+                    if part.get("type").and_then(Value::as_str) != Some("reasoning_text") {
+                        return Err(GatewayError::BadRequest(
+                            "unsupported reasoning content type for Chat replay".to_owned(),
+                        ));
+                    }
+                    text.push_str(part.get("text").and_then(Value::as_str).ok_or_else(|| {
+                        GatewayError::BadRequest("reasoning_text missing text".to_owned())
+                    })?);
+                }
+                if !parts.is_empty() {
+                    messages
+                        .push(json!({"role":"assistant","content":null,"reasoning_content":text}));
+                }
+            }
+        }
+        "compaction_trigger" | "web_search_call" | "image_generation_call" | "additional_tools" => {
+        }
         "agent_message" => {
             messages.push(json!({"role":"user","content":agent_message_text(item)?}));
         }
@@ -201,14 +235,19 @@ pub(super) fn append_input_item(
 }
 
 pub(super) fn append_chat_tool_call(messages: &mut Vec<Value>, tool_call: Value) {
-    if let Some(tool_calls) = messages.last_mut().and_then(|message| {
-        (message.get("role").and_then(Value::as_str) == Some("assistant")
-            && message.get("content").is_some_and(Value::is_null))
-        .then(|| message.get_mut("tool_calls").and_then(Value::as_array_mut))
-        .flatten()
+    if let Some(message) = messages.last_mut().filter(|message| {
+        message.get("role").and_then(Value::as_str) == Some("assistant")
+            && (message.get("content").is_some_and(Value::is_null)
+                || message.get("reasoning_content").is_some())
     }) {
-        tool_calls.push(tool_call);
-        return;
+        if let Some(tool_calls) = message.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            tool_calls.push(tool_call);
+            return;
+        }
+        if message.get("reasoning_content").is_some() {
+            message["tool_calls"] = json!([tool_call]);
+            return;
+        }
     }
     messages.push(json!({
         "role":"assistant",
