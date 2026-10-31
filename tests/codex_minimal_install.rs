@@ -2,7 +2,7 @@ use std::fs;
 use std::time::Duration;
 
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
-use codex_mixin::provider::{ProviderModel, ProviderModelSource, custom_provider};
+use codex_mixin::provider::{ProviderModel, ProviderModelSource, ProviderPreset};
 
 mod common;
 
@@ -24,7 +24,7 @@ async fn install_needs_only_config() {
         fs::write(home.join("state_5.sqlite"), "leave this database untouched").unwrap();
         let unavailable_cli = root.join("not-a-codex-cli");
         fs::write(&unavailable_cli, "not an executable").unwrap();
-        let mut provider = custom_provider("static", "fixture-key");
+        let mut provider = ProviderPreset::Custom.create("static", "fixture-key");
         provider.base_url = "http://127.0.0.1:9".to_owned();
         provider.model_source = ProviderModelSource::Static;
         provider.selected_models = vec!["test-model".to_owned()];

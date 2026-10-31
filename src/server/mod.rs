@@ -48,5 +48,5 @@ mod routes;
 mod state;
 mod websocket_proxy;
 
-pub use routes::{ServeExit, router, serve, serve_on_listener, serve_on_listener_with_reload};
+pub use routes::{ServeExit, router, serve, serve_on_listener};
 pub use state::{AnthropicByteStream, AppState};

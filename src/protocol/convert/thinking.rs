@@ -21,8 +21,6 @@ pub(super) fn convert_thinking(
     }
     match thinking_mode {
         ThinkingMode::Off => Ok(ThinkingSettings::default()),
-        ThinkingMode::Manual => manual_thinking(max_tokens, effort),
-        ThinkingMode::Adaptive => adaptive_thinking(effort),
         ThinkingMode::Auto => match auto_thinking_kind {
             Some(AnthropicThinkingKind::Adaptive) => adaptive_thinking(effort),
             Some(AnthropicThinkingKind::Manual) => manual_thinking(max_tokens, effort),

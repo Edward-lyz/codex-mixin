@@ -562,12 +562,6 @@ pub struct ProviderReadiness {
     pub issues: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ProviderModelKey {
-    pub provider_id: String,
-    pub upstream_model_id: String,
-}
-
 pub(crate) fn validate_provider_id(id: &str) -> anyhow::Result<()> {
     ensure!(
         !id.is_empty() && id.len() <= 64,

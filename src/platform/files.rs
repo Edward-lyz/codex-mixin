@@ -42,15 +42,6 @@ pub fn owner_only_status(metadata: &fs::Metadata) -> OwnerOnlyStatus {
     }
 }
 
-/// Whether a file is private to its owner, treating OSes without mode bits
-/// as private (their state directory is ACL-restricted instead).
-pub fn is_owner_only(path: &Path) -> std::io::Result<bool> {
-    Ok(!matches!(
-        owner_only_status(&fs::metadata(path)?),
-        OwnerOnlyStatus::TooOpen(_)
-    ))
-}
-
 /// Clear group/other permission bits (mode 0600). No-op where the OS has no
 /// POSIX mode bits. Never spawns a process, so it is safe on warm paths.
 pub fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
@@ -141,24 +132,6 @@ pub fn persist_temp_path(temporary: tempfile::TempPath, path: &Path) -> anyhow::
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     temporary.persist(path)?;
     Ok(())
-}
-
-/// Create a symbolic link to a file. Windows requires Developer Mode or an
-/// elevated token for this, so callers must handle the error.
-pub fn symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link)
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_file(target, link)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (target, link);
-        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
-    }
 }
 
 pub fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool> {

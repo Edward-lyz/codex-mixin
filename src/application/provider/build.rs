@@ -87,7 +87,6 @@ pub struct UpdateProviderInput {
 #[derive(Debug)]
 pub struct PreparedProvider {
     pub id: String,
-    pub protocol: crate::provider::ProviderProtocol,
     pub provider: ProviderDefinition,
     pub gateway_api_key: Option<String>,
     pub should_probe_protocol: bool,
@@ -257,10 +256,8 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
         .gateway_key
         .map(|value| required("gateway key", value))
         .transpose()?;
-    let protocol = provider.protocol;
     Ok(PreparedProvider {
         id,
-        protocol,
         provider,
         gateway_api_key,
         should_probe_protocol,
@@ -374,7 +371,6 @@ pub fn update_provider_from_input(
             Some(required("Codex thread title model", model).map_err(before_commit)?);
     }
     provider.validate().map_err(before_commit)?;
-    let protocol = provider.protocol;
     update_provider(
         &id,
         &snapshot,
@@ -383,7 +379,6 @@ pub fn update_provider_from_input(
     )?;
     Ok(PreparedProvider {
         id,
-        protocol,
         provider,
         gateway_api_key: None,
         should_probe_protocol,

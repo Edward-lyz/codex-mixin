@@ -7,7 +7,7 @@ use codex_mixin::clients::codex;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::{ModelOrder, ProviderModel, ProviderModelSource, custom_provider};
+use codex_mixin::provider::{ModelOrder, ProviderModel, ProviderModelSource, ProviderPreset};
 use serde_json::{Value, json};
 
 fn prepare(root: &Path, official: bool) -> std::path::PathBuf {
@@ -27,7 +27,7 @@ fn prepare(root: &Path, official: bool) -> std::path::PathBuf {
     )
     .unwrap();
     fs::write(home.join("config.toml"), codex::serialize(&document)).unwrap();
-    let mut provider = custom_provider("test", "fixture-key");
+    let mut provider = ProviderPreset::Custom.create("test", "fixture-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = [

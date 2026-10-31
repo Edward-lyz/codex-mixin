@@ -7,8 +7,8 @@ use reqwest::{RequestBuilder, Url};
 
 use super::auth::external::resolve_custom_headers_from_env;
 use super::types::{
-    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey,
-    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
+    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelSource,
+    ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
@@ -435,10 +435,6 @@ impl ProviderRegistry {
         })
     }
 
-    pub fn catalog_slugs(&self) -> impl Iterator<Item = &str> {
-        self.routes.keys().map(String::as_str)
-    }
-
     pub fn resolve(&self, catalog_slug: &str) -> Option<ResolvedProviderModel<'_>> {
         self.resolve_from(&self.routes, catalog_slug)
     }
@@ -575,15 +571,6 @@ pub struct ResolvedProviderModel<'a> {
     pub provider: &'a ProviderRuntime,
     pub upstream_model_id: &'a str,
     pub model: Option<&'a ProviderModel>,
-}
-
-impl ResolvedProviderModel<'_> {
-    pub fn key(&self) -> ProviderModelKey {
-        ProviderModelKey {
-            provider_id: self.provider.id().to_owned(),
-            upstream_model_id: self.upstream_model_id.to_owned(),
-        }
-    }
 }
 
 fn validate_catalog_slug(slug: &str) -> anyhow::Result<()> {

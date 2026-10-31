@@ -27,10 +27,6 @@ impl FusionEngine {
         self
     }
 
-    pub fn stream(self, body: Value) -> ResponseStream {
-        self.stream_with_routing(body, None)
-    }
-
     pub(crate) async fn stream_final_continuation(
         &self,
         body: Value,

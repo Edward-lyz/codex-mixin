@@ -510,7 +510,7 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
 #[tokio::test]
 #[ignore = "requires saved AGY OAuth and sends one real mixed-tool request"]
 async fn live_agy_mixed_tools() {
-    let mut provider = codex_mixin::provider::agy_provider("agy", "");
+    let mut provider = codex_mixin::provider::ProviderPreset::Agy.create("agy", "");
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
         supports_function_tools: Some(true),

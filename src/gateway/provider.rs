@@ -6,18 +6,14 @@ use crate::error::GatewayError;
 use crate::gateway::{
     CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
-use crate::protocol::convert::{
-    WebSearchTool, gateway_thinking_text,
-    responses_to_anthropic_with_model_reasoning_and_thinking_kind,
-};
+use crate::protocol::convert::{WebSearchTool, gateway_thinking_text, responses_to_anthropic};
 use crate::protocol::gemini::responses_to_gemini;
 use crate::protocol::model_reasoning::{
     anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
 };
-use crate::protocol::openai_chat::responses_to_openai_chat_streaming_with_model;
+use crate::protocol::openai_chat::responses_to_openai_chat;
 use crate::protocol::openai_events::{
-    map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes,
-    map_openai_chat_sse_with_image_routes,
+    map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes, map_openai_chat_sse,
 };
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
@@ -122,7 +118,7 @@ async fn stream_anthropic_messages(
         anthropic_thinking_kind_with_advertised(upstream_model_id, advertised_thinking);
     let reasoning = upstream_reasoning(body, advertised_thinking);
     let convert = |default_max_tokens| {
-        let mut converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+        let mut converted = responses_to_anthropic(
             body,
             Some(upstream_model_id),
             reasoning.as_ref(),
@@ -284,11 +280,8 @@ async fn stream_openai_chat(
     let downstream_body = response_metadata_request(body, downstream_model);
     let mut upstream_body = body.clone();
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let converted = responses_to_openai_chat_streaming_with_model(
-        &upstream_body,
-        Some(upstream_model_id),
-        &compaction_secret,
-    )?;
+    let converted =
+        responses_to_openai_chat(&upstream_body, Some(upstream_model_id), &compaction_secret)?;
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -325,7 +318,7 @@ async fn stream_openai_chat(
         )
         .await?);
     }
-    Ok(map_openai_chat_sse_with_image_routes(
+    Ok(map_openai_chat_sse(
         observe_upstream_cache_usage(upstream.bytes_stream(), observation),
         downstream_body,
         converted.tool_names,

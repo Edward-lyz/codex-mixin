@@ -433,18 +433,6 @@ fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
     FileExt::lock_exclusive(&lock).with_context(|| format!("lock {}", lock_path.display()))?;
     Ok(lock)
 }
-pub fn delete_stored_config() -> anyhow::Result<bool> {
-    let path = stored_config_path();
-    if !path.exists() {
-        return Ok(false);
-    }
-    fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-    let key_path = config_key_path(&path)?;
-    if key_path.exists() {
-        fs::remove_file(&key_path).with_context(|| format!("remove {}", key_path.display()))?;
-    }
-    Ok(true)
-}
 fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
     crate::platform::restrict_owner_only_dir(path)
         .with_context(|| format!("restrict permissions for {}", path.display()))

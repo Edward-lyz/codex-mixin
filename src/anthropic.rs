@@ -183,7 +183,6 @@ pub struct BaiduAvailableModel {
 #[derive(Debug, Deserialize)]
 pub struct BaiduModelCapability {
     pub supports_image: bool,
-    pub supports_thinking: bool,
     pub context_window: u64,
     pub ratio: String,
     pub model_description: String,

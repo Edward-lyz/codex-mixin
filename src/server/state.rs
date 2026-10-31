@@ -32,10 +32,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(mut config: GatewayConfig) -> anyhow::Result<Self> {
-        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
-        let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
-        Self::with_web_search_capabilities(config, web_search_capabilities)
+    pub fn new(config: GatewayConfig) -> anyhow::Result<Self> {
+        Self::with_env_lookup(config, |name| std::env::var(name).ok())
     }
 
     pub fn with_env_lookup(
@@ -44,37 +42,24 @@ impl AppState {
     ) -> anyhow::Result<Self> {
         ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
         let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
-        Self::with_web_search_capabilities_and_env(config, web_search_capabilities, env_lookup)
+        Self::build(config, web_search_capabilities, env_lookup)
     }
 
     pub fn with_web_search_capabilities(
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,
     ) -> anyhow::Result<Self> {
-        Self::with_web_search_capabilities_and_env(config, web_search_capabilities, |name| {
+        Self::build(config, web_search_capabilities, |name| {
             std::env::var(name).ok()
         })
     }
 
-    fn with_web_search_capabilities_and_env(
+    fn build(
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
-        Self::with_web_search_capabilities_and_env_and_usage(
-            config,
-            web_search_capabilities,
-            env_lookup,
-            crate::gateway::TokenUsageAggregator::try_from_default_path()?,
-        )
-    }
-
-    fn with_web_search_capabilities_and_env_and_usage(
-        config: GatewayConfig,
-        web_search_capabilities: WebSearchCapabilities,
-        env_lookup: impl Fn(&str) -> Option<String>,
-        usage: crate::gateway::TokenUsageAggregator,
-    ) -> anyhow::Result<Self> {
+        let usage = crate::gateway::TokenUsageAggregator::try_from_default_path()?;
         crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
         let websocket_proxy_env = ProxySelection::from_lookup(&env_lookup);
@@ -134,10 +119,6 @@ impl AppState {
 
     pub(super) fn websocket_proxy_env(&self) -> &ProxySelection {
         &self.websocket_proxy_env
-    }
-
-    pub fn provider(&self, provider_id: &str) -> Option<&ProviderRuntime> {
-        self.providers.provider(provider_id)
     }
 
     pub async fn probe_web_search_capabilities(

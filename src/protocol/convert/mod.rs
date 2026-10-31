@@ -17,10 +17,8 @@ pub(crate) use content::{
     encode_anthropic_unsigned_thinking, encode_baidu_unsigned_thinking, gateway_thinking_text,
     is_gateway_thinking,
 };
-pub use request::{ConvertedRequest, responses_to_anthropic};
-pub(crate) use request::{
-    native_messages_body, responses_to_anthropic_with_model_reasoning_and_thinking_kind,
-};
+pub use request::ConvertedRequest;
+pub(crate) use request::{native_messages_body, responses_to_anthropic};
 pub use tool_map::ToolNameMap;
 pub use tools::sanitize_tool_name;
 pub(crate) use tools::{WebSearchTool, collect_active_tools, custom_tool_description};

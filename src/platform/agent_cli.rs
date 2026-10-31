@@ -124,8 +124,8 @@ pub(crate) fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub use super::agent_apps::DesktopApp;
 pub(crate) use super::agent_apps::desktop_app_installation;
-pub use super::agent_apps::{DesktopApp, desktop_app_candidates, desktop_app_versions};
 
 /// What a finished command printed.
 #[derive(Debug)]

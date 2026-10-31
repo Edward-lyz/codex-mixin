@@ -50,7 +50,6 @@ pub struct Lease {
 #[derive(Clone, Debug)]
 pub struct ToolExecution {
     pub content: String,
-    pub changed: bool,
     pub revision: i64,
 }
 
@@ -80,10 +79,6 @@ impl ContextEngine {
 
     pub fn tool_definitions(&self) -> Vec<Value> {
         tools::tool_definitions()
-    }
-
-    pub fn guidance(&self) -> &'static str {
-        GUIDANCE
     }
 
     /// Takes the lease when the session is free, without waiting.
@@ -411,7 +406,6 @@ impl ContextEngine {
                 Ok(ToolExecution {
                     content: json!({"ok": true, "block_id": block_id, "revision": new_revision})
                         .to_string(),
-                    changed: true,
                     revision: new_revision,
                 })
             }
@@ -438,7 +432,6 @@ impl ContextEngine {
                             "full_refs": block.full_refs,
                         })
                         .to_string(),
-                        changed: false,
                         revision,
                     });
                 }
@@ -446,7 +439,6 @@ impl ContextEngine {
                 Ok(ToolExecution {
                     content: json!({"ok": true, "block_id": block_id, "revision": new_revision})
                         .to_string(),
-                    changed: true,
                     revision: new_revision,
                 })
             }
@@ -472,7 +464,6 @@ impl ContextEngine {
                         })).collect::<Vec<_>>(),
                     })
                     .to_string(),
-                    changed: false,
                     revision,
                 })
             }
@@ -480,7 +471,6 @@ impl ContextEngine {
                 let status = status(&store, session, revision, window_tokens, &self.settings)?;
                 Ok(ToolExecution {
                     content: serde_json::to_string(&status).context("encode context status")?,
-                    changed: false,
                     revision,
                 })
             }
