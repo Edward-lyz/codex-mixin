@@ -6,11 +6,11 @@ use codex_mixin::provider::ProviderModelSource;
 
 use codex_mixin::application::error::OperationError;
 
-use super::{
-    AddProviderOptions, UpdateProviderOptions, discover_models_with_output, sync_imagegen_skill,
-};
+use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 
-pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
+use super::{discover_models_with_output, sync_imagegen_skill};
+
+pub(crate) async fn add_provider(options: AddProviderInput) -> anyhow::Result<()> {
     let mut shutdown = codex_mixin::platform::ShutdownSignal::install()?;
     tokio::select! {
         result = add_provider_inner(options) => result,
@@ -18,7 +18,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     }
 }
 
-async fn add_provider_inner(options: AddProviderOptions) -> anyhow::Result<()> {
+async fn add_provider_inner(options: AddProviderInput) -> anyhow::Result<()> {
     let preset = codex_mixin::provider::ProviderPreset::parse(&options.preset)?;
     let timeout = options
         .oauth_timeout_seconds
@@ -130,7 +130,7 @@ async fn add_provider_inner(options: AddProviderOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
+pub(crate) async fn update_provider(options: UpdateProviderInput) -> anyhow::Result<()> {
     let mut prepared =
         codex_mixin::application::provider::build::update_provider_from_input(options)?;
     let id = prepared.id.clone();

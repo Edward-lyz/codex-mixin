@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::gateway_access::GatewayClient;
-use codex_mixin::provider::{ProviderModel, catalog_model_slug};
+use codex_mixin::provider::ProviderModel;
 
-use super::official_models::selected_official_models;
+use super::official_models::{selected_catalog_models, selected_official_models};
 use super::report_hook::reporting_enabled;
 use super::runtime::effective_gateway_bind;
 use codex_mixin::platform::write_atomic_if_changed;
@@ -127,46 +127,12 @@ fn uninstall_pi_at(
 }
 
 fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) -> Vec<Value> {
-    let mut seen = HashSet::new();
-    let mut models = Vec::new();
-    for provider in &config.providers {
-        if !provider.enabled {
-            continue;
-        }
-        for upstream_model_id in &provider.selected_models {
-            let Some(cached) = provider
-                .cached_models
-                .iter()
-                .find(|candidate| &candidate.id == upstream_model_id)
-            else {
-                continue;
-            };
-            let id = catalog_model_slug(upstream_model_id, &provider.id);
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            models.push(pi_model(
-                id,
-                format!("{upstream_model_id} · {}", provider.display_name),
-                cached,
-                config,
-            ));
-        }
-    }
-    for model in official_models {
-        if !seen.insert(model.id.clone()) {
-            continue;
-        }
-        models.push(pi_model(
-            model.id.clone(),
-            format!(
-                "{} · OpenAI",
-                model.display_name.as_deref().unwrap_or(&model.id)
-            ),
-            model,
-            config,
-        ));
-    }
+    let catalog = selected_catalog_models(config, official_models);
+    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
+    let mut models: Vec<Value> = catalog
+        .into_iter()
+        .map(|(id, name, model)| pi_model(id, name, model, config))
+        .collect();
     for profile in &config.fusion_profiles {
         let id = profile.model_slug();
         if !seen.insert(id.clone()) {

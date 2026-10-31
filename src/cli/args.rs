@@ -3,7 +3,8 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 use codex_mixin::provider::{ModelOrder, ProviderPreset};
 
 use super::InteractiveStart;
@@ -576,158 +577,9 @@ pub(super) enum ProviderCommand {
         json: bool,
     },
     /// Add a provider from a preset.
-    Add {
-        #[arg(long, value_enum)]
-        preset: CliProviderPreset,
-        /// Maximum time to wait for browser OAuth, including token exchange.
-        #[arg(long, default_value_t = codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=300))]
-        oauth_timeout_seconds: u64,
-        /// Sign in again in the browser even when a usable local login exists.
-        #[arg(long)]
-        reauthorize: bool,
-        #[arg(long, value_name = "BOOL")]
-        auxiliary_model_upstream: Option<bool>,
-        #[arg(long)]
-        id: Option<String>,
-        #[arg(long)]
-        key: Option<String>,
-        #[arg(long)]
-        aws_access_key_id: Option<String>,
-        #[arg(long)]
-        aws_secret_access_key: Option<String>,
-        #[arg(long)]
-        aws_session_token: Option<String>,
-        #[arg(long)]
-        aws_region: Option<String>,
-        #[arg(long)]
-        display_name: Option<String>,
-        #[arg(long)]
-        base_url: Option<String>,
-        #[arg(long)]
-        website_url: Option<String>,
-        #[arg(long, hide = true)]
-        protocol: Option<String>,
-        #[arg(long, hide = true)]
-        api_path: Option<String>,
-        #[arg(long, hide = true)]
-        models_path: Option<String>,
-        #[arg(long)]
-        image_generation_path: Option<String>,
-        #[arg(long)]
-        quota_url: Option<String>,
-        #[arg(long, help = "Quota username; required by the baidu-oneapi preset")]
-        quota_username: Option<String>,
-        #[arg(long, help = "OpenCode Go dashboard workspace ID")]
-        quota_workspace_id: Option<String>,
-        #[arg(long, help = "OpenCode Go dashboard auth cookie")]
-        quota_auth_cookie: Option<String>,
-        #[arg(long)]
-        quota_currency: Option<String>,
-        #[arg(long)]
-        quota_parser: Option<String>,
-        #[arg(long)]
-        gateway_key: Option<String>,
-        #[arg(long = "model")]
-        static_models: Vec<String>,
-        #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
-        header_env: Vec<String>,
-        #[arg(long, value_name = "disabled|ducx_loopback")]
-        baidu_auth_bridge: Option<String>,
-        #[arg(long, value_name = "PATH")]
-        ducx_executable: Option<PathBuf>,
-        #[arg(long, value_name = "BOOL")]
-        baidu_code_report: Option<bool>,
-    },
+    Add(AddProviderArgs),
     /// Update an existing provider.
-    Update {
-        id: String,
-        #[arg(long, value_name = "BOOL")]
-        auxiliary_model_upstream: Option<bool>,
-        #[arg(long)]
-        key: Option<String>,
-        #[arg(long, conflicts_with = "key")]
-        clear_key: bool,
-        #[arg(long)]
-        aws_access_key_id: Option<String>,
-        #[arg(long)]
-        aws_secret_access_key: Option<String>,
-        #[arg(long)]
-        aws_session_token: Option<String>,
-        #[arg(long)]
-        aws_region: Option<String>,
-        #[arg(long, conflicts_with = "aws_session_token")]
-        clear_aws_session_token: bool,
-        #[arg(
-            long,
-            conflicts_with_all = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token", "aws_region"]
-        )]
-        clear_aws_credentials: bool,
-        #[arg(long)]
-        display_name: Option<String>,
-        #[arg(long)]
-        base_url: Option<String>,
-        #[arg(long)]
-        website_url: Option<String>,
-        #[arg(long, hide = true)]
-        protocol: Option<String>,
-        #[arg(long, hide = true)]
-        api_path: Option<String>,
-        #[arg(long, hide = true)]
-        models_path: Option<String>,
-        #[arg(long)]
-        image_generation_path: Option<String>,
-        #[arg(long)]
-        clear_image_generation: bool,
-        #[arg(long)]
-        quota_url: Option<String>,
-        #[arg(long)]
-        clear_quota: bool,
-        #[arg(
-            long,
-            help = "Quota username; required by the Baidu OneAPI quota parser"
-        )]
-        quota_username: Option<String>,
-        #[arg(long, conflicts_with = "clear_quota_workspace_id")]
-        quota_workspace_id: Option<String>,
-        #[arg(long, conflicts_with = "quota_workspace_id")]
-        clear_quota_workspace_id: bool,
-        #[arg(long, conflicts_with = "clear_quota_auth_cookie")]
-        quota_auth_cookie: Option<String>,
-        #[arg(long, conflicts_with = "quota_auth_cookie")]
-        clear_quota_auth_cookie: bool,
-        #[arg(long)]
-        quota_currency: Option<String>,
-        #[arg(long)]
-        quota_parser: Option<String>,
-        #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
-        header_env: Vec<String>,
-        #[arg(long, conflicts_with = "header_env")]
-        clear_header_env: bool,
-        #[arg(long, value_name = "disabled|ducx_loopback")]
-        baidu_auth_bridge: Option<String>,
-        #[arg(long, value_name = "PATH")]
-        ducx_executable: Option<PathBuf>,
-        #[arg(long, value_name = "BOOL")]
-        baidu_code_report: Option<bool>,
-        #[arg(
-            long,
-            value_name = "MODEL",
-            conflicts_with = "clear_auto_review_model",
-            help = "Upstream model that answers Codex auto review while this provider is the auxiliary upstream"
-        )]
-        auto_review_model: Option<String>,
-        #[arg(long, conflicts_with = "auto_review_model")]
-        clear_auto_review_model: bool,
-        /// Map Codex thread-title requests to a selected upstream model.
-        #[arg(
-            long,
-            value_name = "MODEL",
-            conflicts_with = "clear_codex_thread_title_model"
-        )]
-        codex_thread_title_model: Option<String>,
-        #[arg(long, conflicts_with = "codex_thread_title_model")]
-        clear_codex_thread_title_model: bool,
-    },
+    Update(UpdateProviderArgs),
     /// Enable a provider.
     Enable { id: String },
     /// Disable a provider.
@@ -744,27 +596,7 @@ pub(super) enum ProviderCommand {
     /// Re-probe capabilities for models currently added to Codex, replacing cached results.
     Probe { id: String },
     /// Test provider authentication and model access.
-    Test {
-        id: String,
-        #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        key: Option<String>,
-        #[arg(long)]
-        aws_access_key_id: Option<String>,
-        #[arg(long)]
-        aws_secret_access_key: Option<String>,
-        #[arg(long)]
-        aws_session_token: Option<String>,
-        #[arg(long)]
-        aws_region: Option<String>,
-        #[arg(long)]
-        base_url: Option<String>,
-        #[arg(long, value_name = "disabled|ducx_loopback")]
-        baidu_auth_bridge: Option<String>,
-        #[arg(long, value_name = "PATH")]
-        ducx_executable: Option<PathBuf>,
-    },
+    Test(super::providers::TestProviderOptions),
     /// Select models exposed by a provider.
     Select {
         id: String,
@@ -778,6 +610,240 @@ pub(super) enum ProviderCommand {
         #[arg(long = "clear-model-context", value_name = "MODEL")]
         clear_model_contexts: Vec<String>,
     },
+}
+
+#[derive(Debug, Args)]
+pub(super) struct AddProviderArgs {
+    #[arg(long, value_enum)]
+    pub(super) preset: CliProviderPreset,
+    /// Maximum time to wait for browser OAuth, including token exchange.
+    #[arg(long, default_value_t = codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=300))]
+    pub(super) oauth_timeout_seconds: u64,
+    /// Sign in again in the browser even when a usable local login exists.
+    #[arg(long)]
+    pub(super) reauthorize: bool,
+    #[arg(long, value_name = "BOOL")]
+    pub(super) auxiliary_model_upstream: Option<bool>,
+    #[arg(long)]
+    pub(super) id: Option<String>,
+    #[arg(long)]
+    pub(super) key: Option<String>,
+    #[arg(long)]
+    pub(super) aws_access_key_id: Option<String>,
+    #[arg(long)]
+    pub(super) aws_secret_access_key: Option<String>,
+    #[arg(long)]
+    pub(super) aws_session_token: Option<String>,
+    #[arg(long)]
+    pub(super) aws_region: Option<String>,
+    #[arg(long)]
+    pub(super) display_name: Option<String>,
+    #[arg(long)]
+    pub(super) base_url: Option<String>,
+    #[arg(long)]
+    pub(super) website_url: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) protocol: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) api_path: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) models_path: Option<String>,
+    #[arg(long)]
+    pub(super) image_generation_path: Option<String>,
+    #[arg(long)]
+    pub(super) quota_url: Option<String>,
+    #[arg(long, help = "Quota username; required by the baidu-oneapi preset")]
+    pub(super) quota_username: Option<String>,
+    #[arg(long, help = "OpenCode Go dashboard workspace ID")]
+    pub(super) quota_workspace_id: Option<String>,
+    #[arg(long, help = "OpenCode Go dashboard auth cookie")]
+    pub(super) quota_auth_cookie: Option<String>,
+    #[arg(long)]
+    pub(super) quota_currency: Option<String>,
+    #[arg(long)]
+    pub(super) quota_parser: Option<String>,
+    #[arg(long)]
+    pub(super) gateway_key: Option<String>,
+    #[arg(long = "model")]
+    pub(super) static_models: Vec<String>,
+    #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
+    pub(super) header_env: Vec<String>,
+    #[arg(long, value_name = "disabled|ducx_loopback")]
+    pub(super) baidu_auth_bridge: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub(super) ducx_executable: Option<PathBuf>,
+    #[arg(long, value_name = "BOOL")]
+    pub(super) baidu_code_report: Option<bool>,
+}
+
+#[derive(Debug, Args)]
+pub(super) struct UpdateProviderArgs {
+    pub(super) id: String,
+    #[arg(long, value_name = "BOOL")]
+    pub(super) auxiliary_model_upstream: Option<bool>,
+    #[arg(long)]
+    pub(super) key: Option<String>,
+    #[arg(long, conflicts_with = "key")]
+    pub(super) clear_key: bool,
+    #[arg(long)]
+    pub(super) aws_access_key_id: Option<String>,
+    #[arg(long)]
+    pub(super) aws_secret_access_key: Option<String>,
+    #[arg(long)]
+    pub(super) aws_session_token: Option<String>,
+    #[arg(long)]
+    pub(super) aws_region: Option<String>,
+    #[arg(long, conflicts_with = "aws_session_token")]
+    pub(super) clear_aws_session_token: bool,
+    #[arg(
+        long,
+        conflicts_with_all = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token", "aws_region"]
+    )]
+    pub(super) clear_aws_credentials: bool,
+    #[arg(long)]
+    pub(super) display_name: Option<String>,
+    #[arg(long)]
+    pub(super) base_url: Option<String>,
+    #[arg(long)]
+    pub(super) website_url: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) protocol: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) api_path: Option<String>,
+    #[arg(long, hide = true)]
+    pub(super) models_path: Option<String>,
+    #[arg(long)]
+    pub(super) image_generation_path: Option<String>,
+    #[arg(long)]
+    pub(super) clear_image_generation: bool,
+    #[arg(long)]
+    pub(super) quota_url: Option<String>,
+    #[arg(long)]
+    pub(super) clear_quota: bool,
+    #[arg(
+        long,
+        help = "Quota username; required by the Baidu OneAPI quota parser"
+    )]
+    pub(super) quota_username: Option<String>,
+    #[arg(long, conflicts_with = "clear_quota_workspace_id")]
+    pub(super) quota_workspace_id: Option<String>,
+    #[arg(long, conflicts_with = "quota_workspace_id")]
+    pub(super) clear_quota_workspace_id: bool,
+    #[arg(long, conflicts_with = "clear_quota_auth_cookie")]
+    pub(super) quota_auth_cookie: Option<String>,
+    #[arg(long, conflicts_with = "quota_auth_cookie")]
+    pub(super) clear_quota_auth_cookie: bool,
+    #[arg(long)]
+    pub(super) quota_currency: Option<String>,
+    #[arg(long)]
+    pub(super) quota_parser: Option<String>,
+    #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
+    pub(super) header_env: Vec<String>,
+    #[arg(long, conflicts_with = "header_env")]
+    pub(super) clear_header_env: bool,
+    #[arg(long, value_name = "disabled|ducx_loopback")]
+    pub(super) baidu_auth_bridge: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub(super) ducx_executable: Option<PathBuf>,
+    #[arg(long, value_name = "BOOL")]
+    pub(super) baidu_code_report: Option<bool>,
+    #[arg(
+        long,
+        value_name = "MODEL",
+        conflicts_with = "clear_auto_review_model",
+        help = "Upstream model that answers Codex auto review while this provider is the auxiliary upstream"
+    )]
+    pub(super) auto_review_model: Option<String>,
+    #[arg(long, conflicts_with = "auto_review_model")]
+    pub(super) clear_auto_review_model: bool,
+    /// Map Codex thread-title requests to a selected upstream model.
+    #[arg(
+        long,
+        value_name = "MODEL",
+        conflicts_with = "clear_codex_thread_title_model"
+    )]
+    pub(super) codex_thread_title_model: Option<String>,
+    #[arg(long, conflicts_with = "codex_thread_title_model")]
+    pub(super) clear_codex_thread_title_model: bool,
+}
+
+impl From<AddProviderArgs> for AddProviderInput {
+    fn from(args: AddProviderArgs) -> Self {
+        Self {
+            preset: args.preset.as_str().to_owned(),
+            oauth_timeout_seconds: Some(args.oauth_timeout_seconds),
+            reauthorize: args.reauthorize,
+            auxiliary_model_upstream: args.auxiliary_model_upstream,
+            id: args.id,
+            key: args.key,
+            aws_access_key_id: args.aws_access_key_id,
+            aws_secret_access_key: args.aws_secret_access_key,
+            aws_session_token: args.aws_session_token,
+            aws_region: args.aws_region,
+            display_name: args.display_name,
+            base_url: args.base_url,
+            website_url: args.website_url,
+            protocol: args.protocol,
+            api_path: args.api_path,
+            models_path: args.models_path,
+            image_generation_path: args.image_generation_path,
+            quota_url: args.quota_url,
+            quota_username: args.quota_username,
+            quota_workspace_id: args.quota_workspace_id,
+            quota_auth_cookie: args.quota_auth_cookie,
+            quota_currency: args.quota_currency,
+            quota_parser: args.quota_parser,
+            gateway_key: args.gateway_key,
+            static_models: args.static_models,
+            header_env: args.header_env,
+            baidu_auth_bridge: args.baidu_auth_bridge,
+            ducx_executable: args.ducx_executable,
+            baidu_code_report: args.baidu_code_report,
+        }
+    }
+}
+
+impl From<UpdateProviderArgs> for UpdateProviderInput {
+    fn from(args: UpdateProviderArgs) -> Self {
+        Self {
+            id: args.id,
+            auxiliary_model_upstream: args.auxiliary_model_upstream,
+            key: args.key,
+            clear_key: args.clear_key,
+            aws_access_key_id: args.aws_access_key_id,
+            aws_secret_access_key: args.aws_secret_access_key,
+            aws_session_token: args.aws_session_token,
+            aws_region: args.aws_region,
+            clear_aws_session_token: args.clear_aws_session_token,
+            clear_aws_credentials: args.clear_aws_credentials,
+            display_name: args.display_name,
+            base_url: args.base_url,
+            website_url: args.website_url,
+            protocol: args.protocol,
+            api_path: args.api_path,
+            models_path: args.models_path,
+            image_generation_path: args.image_generation_path,
+            clear_image_generation: args.clear_image_generation,
+            quota_url: args.quota_url,
+            clear_quota: args.clear_quota,
+            quota_username: args.quota_username,
+            quota_workspace_id: args.quota_workspace_id,
+            clear_quota_workspace_id: args.clear_quota_workspace_id,
+            quota_auth_cookie: args.quota_auth_cookie,
+            clear_quota_auth_cookie: args.clear_quota_auth_cookie,
+            quota_currency: args.quota_currency,
+            quota_parser: args.quota_parser,
+            header_env: args.header_env,
+            clear_header_env: args.clear_header_env,
+            baidu_auth_bridge: args.baidu_auth_bridge,
+            ducx_executable: args.ducx_executable,
+            baidu_code_report: args.baidu_code_report,
+            auto_review_model: args.auto_review_model,
+            clear_auto_review_model: args.clear_auto_review_model,
+            codex_thread_title_model: args.codex_thread_title_model,
+            clear_codex_thread_title_model: args.clear_codex_thread_title_model,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
