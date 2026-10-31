@@ -376,6 +376,46 @@ async fn spawn_baidu_protocol_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
     (spawn_router(app).await, requests)
 }
 
+async fn spawn_deepseek_reasoning_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/v1/responses",
+            post(|State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+                requests.lock().unwrap().push(body.clone());
+                let has_replayable_reasoning = body["input"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| item["type"] == "reasoning")
+                    .all(|item| {
+                        item["content"].as_array().is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part["type"] == "reasoning_text"
+                                    && part["text"]
+                                        .as_str()
+                                        .is_some_and(|text| !text.trim().is_empty())
+                            })
+                        })
+                    });
+                if !has_replayable_reasoning {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"message":"The `reasoning_text` in the thinking mode must be passed back to the API."}})),
+                    )
+                        .into_response();
+                }
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }),
+        )
+        .with_state(requests.clone());
+    (spawn_router(app).await, requests)
+}
+
 async fn spawn_fusion_mock_upstream(
     panel_barrier: Option<Arc<tokio::sync::Barrier>>,
     failing_models: Vec<&str>,
@@ -5208,6 +5248,69 @@ async fn rewrites_named_unpaired_function_output_for_responses_provider() {
             "role": "user",
             "content": "Resume a delegated turn."
         }])
+    );
+}
+
+#[tokio::test]
+async fn normalizes_foreign_reasoning_for_deepseek_responses_provider() {
+    let (upstream_url, requests) = spawn_deepseek_reasoning_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].preset_id = Some("deepseek".to_owned());
+    config.providers[0].protocol = ProviderProtocol::OpenAiResponses;
+    config.providers[0].api_path = "/v1/responses".to_owned();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let foreign_reasoning = format!(
+        "codex-mixin:anthropic-thinking:v1:{}",
+        json!({
+            "type": "thinking",
+            "thinking": "I should inspect the failing build.",
+            "signature": "signed-state"
+        })
+    );
+    let mut request = responses_request();
+    request["model"] = json!("DeepSeek-V4-Flash-custom");
+    request["input"] = json!([
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "summary"}],
+            "encrypted_content": foreign_reasoning,
+            "content": []
+        },
+        {
+            "type": "function_call",
+            "call_id": "call-status",
+            "name": "get_status",
+            "arguments": "{\"job_id\":42}"
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-status",
+            "output": "success"
+        }
+    ]);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["input"][0],
+        json!({
+            "type": "reasoning",
+            "content": [{
+                "type": "reasoning_text",
+                "text": "I should inspect the failing build."
+            }]
+        })
     );
 }
 
