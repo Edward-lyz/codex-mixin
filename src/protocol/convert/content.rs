@@ -12,6 +12,35 @@ pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
         || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
 }
 
+/// Recover the plaintext carried by a Mixin-owned thinking token.
+///
+/// Redacted Anthropic blocks deliberately have no readable thinking text.
+pub(crate) fn gateway_thinking_text(encrypted_content: &str) -> Option<String> {
+    let payload = if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_THINKING_PREFIX) {
+        let block: ContentBlock = serde_json::from_str(payload).ok()?;
+        match block {
+            ContentBlock::Thinking { thinking, .. } => thinking,
+            ContentBlock::RedactedThinking { .. } => return None,
+            _ => return None,
+        }
+    } else if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_UNSIGNED_THINKING_PREFIX)
+    {
+        serde_json::from_str::<Value>(payload)
+            .ok()?
+            .get("thinking")?
+            .as_str()?
+            .to_owned()
+    } else {
+        let payload = encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX)?;
+        serde_json::from_str::<Value>(payload)
+            .ok()?
+            .get("thinking")?
+            .as_str()?
+            .to_owned()
+    };
+    (!payload.is_empty()).then_some(payload)
+}
+
 pub(super) fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,

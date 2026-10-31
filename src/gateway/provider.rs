@@ -7,7 +7,8 @@ use crate::gateway::{
     CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
 use crate::protocol::convert::{
-    WebSearchTool, responses_to_anthropic_with_model_reasoning_and_thinking_kind,
+    WebSearchTool, gateway_thinking_text,
+    responses_to_anthropic_with_model_reasoning_and_thinking_kind,
 };
 use crate::protocol::gemini::responses_to_gemini;
 use crate::protocol::model_reasoning::{
@@ -354,6 +355,17 @@ async fn stream_openai_responses(
     }
     upstream_body["model"] = Value::String(upstream_model_id.to_owned());
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    if is_deepseek_responses_provider(provider, upstream_model_id) {
+        let normalized = normalize_portable_responses_reasoning(&mut upstream_body);
+        if normalized > 0 {
+            tracing::debug!(
+                provider_id = provider.id(),
+                upstream_model_id,
+                normalized_reasoning_items = normalized,
+                "converted reasoning history to DeepSeek reasoning text"
+            );
+        }
+    }
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -395,6 +407,78 @@ async fn stream_openai_responses(
         upstream_model_id.to_owned(),
         downstream_model.to_owned(),
     ))
+}
+
+fn is_deepseek_responses_provider(provider: &ProviderRuntime, upstream_model_id: &str) -> bool {
+    provider.definition().preset_id.as_deref() == Some("deepseek")
+        || provider.api_url_for_model(upstream_model_id).host_str() == Some("api.deepseek.com")
+}
+
+/// DeepSeek's stateless Responses API accepts reasoning history as plain
+/// `reasoning_text` and rejects tool continuations that only carry another
+/// provider's opaque state. Recover Mixin-owned thinking tokens and use the
+/// visible summary when a native opaque item has no readable content.
+fn normalize_portable_responses_reasoning(body: &mut Value) -> usize {
+    const UNAVAILABLE_REASONING: &str =
+        "[Reasoning from a different provider was not exposed in plaintext.]";
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    let mut normalized = 0;
+    for item in input {
+        if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+            continue;
+        }
+        let text =
+            portable_reasoning_text(item).unwrap_or_else(|| UNAVAILABLE_REASONING.to_owned());
+        item["content"] = json!([{"type": "reasoning_text", "text": text}]);
+        if let Some(item) = item.as_object_mut() {
+            item.remove("encrypted_content");
+            item.remove("summary");
+        }
+        normalized += 1;
+    }
+    normalized
+}
+
+fn portable_reasoning_text(item: &Value) -> Option<String> {
+    let content_text = match item.get("content") {
+        Some(Value::String(text)) if !text.is_empty() => Some(text.to_owned()),
+        Some(Value::Array(parts)) => {
+            let text = parts
+                .iter()
+                .filter(|part| {
+                    matches!(
+                        part.get("type").and_then(Value::as_str),
+                        Some("reasoning_text" | "summary_text" | "text")
+                    )
+                })
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    };
+    content_text
+        .or_else(|| {
+            item.get("encrypted_content")
+                .and_then(Value::as_str)
+                .and_then(gateway_thinking_text)
+        })
+        .or_else(|| {
+            let text = item
+                .get("summary")
+                .and_then(Value::as_array)?
+                .iter()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("summary_text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then_some(text)
+        })
 }
 
 fn is_thought_signature_error(error_text: &str) -> bool {
@@ -653,6 +737,133 @@ mod tests {
         assert_eq!(metadata["tools"], body["tools"]);
         assert!(metadata.get("input").is_none());
         assert!(metadata.get("stream").is_none());
+    }
+
+    #[test]
+    fn converts_gateway_thinking_to_portable_deepseek_reasoning() {
+        for encrypted in [
+            crate::protocol::convert::encode_anthropic_thinking(
+                "I should inspect the failing build.",
+                "signature",
+            ),
+            crate::protocol::convert::encode_anthropic_unsigned_thinking(
+                "I should inspect the failing build.",
+            ),
+            crate::protocol::convert::encode_baidu_unsigned_thinking(
+                "Opus 5.5-baidu-oneapi",
+                "I should inspect the failing build.",
+            ),
+        ] {
+            let mut body = json!({
+                "input": [
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "summary"}],
+                        "encrypted_content": encrypted,
+                        "content": []
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "get_status",
+                        "arguments": "{\"job_id\":42}"
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": "success"
+                    }
+                ]
+            });
+
+            assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
+            assert_eq!(
+                body["input"][0],
+                json!({
+                    "type": "reasoning",
+                    "content": [{
+                        "type": "reasoning_text",
+                        "text": "I should inspect the failing build."
+                    }]
+                })
+            );
+            assert_eq!(body["input"].as_array().unwrap().len(), 3);
+        }
+    }
+
+    #[test]
+    fn uses_visible_summary_for_native_opaque_reasoning() {
+        let mut body = json!({
+            "input": [{
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "I inspected the build."}],
+                "encrypted_content": "gAAAAABprovider-specific",
+                "content": []
+            }]
+        });
+
+        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
+        assert_eq!(
+            body["input"][0],
+            json!({
+                "type": "reasoning",
+                "content": [{
+                    "type": "reasoning_text",
+                    "text": "I inspected the build."
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn converts_codex_text_parts_while_dropping_provider_metadata() {
+        let mut body = json!({
+            "input": [{
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "ignored summary"}],
+                "encrypted_content": "provider-specific",
+                "content": [{"type": "text", "text": "native reasoning"}]
+            }]
+        });
+
+        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
+        assert_eq!(
+            body["input"][0],
+            json!({
+                "type": "reasoning",
+                "content": [{
+                    "type": "reasoning_text",
+                    "text": "native reasoning"
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn marks_unrecoverable_opaque_reasoning_with_portable_placeholder() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "encrypted_content": "codex-mixin:anthropic-thinking:v1:{\"type\":\"redacted_thinking\",\"data\":\"opaque\"}",
+                    "content": []
+                },
+                {"type": "message", "role": "user", "content": "continue"}
+            ]
+        });
+
+        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
+        assert_eq!(
+            body["input"][0],
+            json!({
+                "type": "reasoning",
+                "content": [{
+                    "type": "reasoning_text",
+                    "text": "[Reasoning from a different provider was not exposed in plaintext.]"
+                }]
+            })
+        );
+        assert_eq!(body["input"].as_array().unwrap().len(), 2);
     }
 
     #[test]

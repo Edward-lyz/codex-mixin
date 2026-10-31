@@ -14,7 +14,8 @@ mod tools;
 
 pub(crate) use content::{
     agent_message_text, encode_anthropic_redacted_thinking, encode_anthropic_thinking,
-    encode_anthropic_unsigned_thinking, encode_baidu_unsigned_thinking, is_gateway_thinking,
+    encode_anthropic_unsigned_thinking, encode_baidu_unsigned_thinking, gateway_thinking_text,
+    is_gateway_thinking,
 };
 pub use request::{ConvertedRequest, responses_to_anthropic};
 pub(crate) use request::{
