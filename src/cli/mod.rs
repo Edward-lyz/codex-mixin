@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use anyhow::Context;
 use clap::Parser;
+use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 use codex_mixin::catalog::{
     apply_auto_review_override, codex_catalog_from_models_with_metadata, load_template_catalog,
 };
@@ -73,9 +74,8 @@ use opencode::{
 };
 use pi::{install_pi, sync_installed_pi_client_key, sync_installed_pi_models, uninstall_pi};
 use providers::{
-    AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
-    list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
-    set_provider_enabled, test_provider, update_provider,
+    add_provider, discover_models, list_providers, probe_selected_models, remove_provider,
+    reorder_providers, select_models, set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
 use status::{
@@ -122,10 +122,6 @@ pub(super) fn next_step_line(message: &str) {
     }
 }
 
-/// Re-render the managed model catalogs of every connected coding client
-/// (Claude Code, DSH, OpenCode, Pi) from the current provider configuration.
-/// Clients that are not installed stay untouched. Returns the display names
-/// of the clients whose configuration changed.
 /// Re-sync the gateway client key into every installed client's config.
 /// Called at client integration, key change, service start, and explicit
 /// repair -- not from the global command dispatch, so unrelated queries
@@ -140,6 +136,10 @@ pub(in crate::cli) fn sync_installed_client_keys() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Re-render the managed model catalogs of every connected coding client
+/// (Claude Code, DSH, OpenCode, Pi) from the current provider configuration.
+/// Clients that are not installed stay untouched. Returns the display names
+/// of the clients whose configuration changed.
 pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'static str>> {
     let mut refreshed = Vec::new();
     if claude_desktop::sync_installed()? {
@@ -490,158 +490,26 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Update { check, json } => update::run(check, json).await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
-            ProviderCommand::Add {
-                preset,
-                oauth_timeout_seconds,
-                reauthorize,
-                auxiliary_model_upstream,
-                id,
-                key,
-                aws_access_key_id,
-                aws_secret_access_key,
-                aws_session_token,
-                aws_region,
-                display_name,
-                base_url,
-                website_url,
-                protocol,
-                api_path,
-                models_path,
-                image_generation_path,
-                quota_url,
-                quota_username,
-                quota_workspace_id,
-                quota_auth_cookie,
-                quota_currency,
-                quota_parser,
-                gateway_key,
-                static_models,
-                header_env,
-                baidu_auth_bridge,
-                ducx_executable,
-                baidu_code_report,
-            } => {
+            ProviderCommand::Add(args) => {
+                let mut input = AddProviderInput::from(args);
                 // Auto-provision the managed DUCX install when the DUCX bridge is
                 // selected without an explicit executable.
-                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
-                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
-                    _ => ducx_executable,
-                };
-                add_provider(AddProviderOptions {
-                    preset: preset.as_str().to_owned(),
-                    oauth_timeout_seconds: Some(oauth_timeout_seconds),
-                    reauthorize,
-                    auxiliary_model_upstream,
-                    id,
-                    key,
-                    aws_access_key_id,
-                    aws_secret_access_key,
-                    aws_session_token,
-                    aws_region,
-                    display_name,
-                    base_url,
-                    website_url,
-                    protocol,
-                    api_path,
-                    models_path,
-                    image_generation_path,
-                    quota_url,
-                    quota_username,
-                    quota_workspace_id,
-                    quota_auth_cookie,
-                    quota_currency,
-                    quota_parser,
-                    gateway_key,
-                    static_models,
-                    header_env,
-                    baidu_auth_bridge,
-                    ducx_executable,
-                    baidu_code_report,
-                })
-                .await?;
+                if input.baidu_auth_bridge.as_deref() == Some("ducx_loopback")
+                    && input.ducx_executable.is_none()
+                {
+                    input.ducx_executable = Some(ensure_managed_ducx().await?);
+                }
+                add_provider(input).await?;
                 report_hook::sync_installation()
             }
-            ProviderCommand::Update {
-                id,
-                auxiliary_model_upstream,
-                key,
-                clear_key,
-                aws_access_key_id,
-                aws_secret_access_key,
-                aws_session_token,
-                aws_region,
-                clear_aws_session_token,
-                clear_aws_credentials,
-                display_name,
-                base_url,
-                website_url,
-                protocol,
-                api_path,
-                models_path,
-                image_generation_path,
-                clear_image_generation,
-                quota_url,
-                clear_quota,
-                quota_username,
-                quota_workspace_id,
-                clear_quota_workspace_id,
-                quota_auth_cookie,
-                clear_quota_auth_cookie,
-                quota_currency,
-                quota_parser,
-                header_env,
-                clear_header_env,
-                baidu_auth_bridge,
-                ducx_executable,
-                baidu_code_report,
-                auto_review_model,
-                clear_auto_review_model,
-                codex_thread_title_model,
-                clear_codex_thread_title_model,
-            } => {
-                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
-                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
-                    _ => ducx_executable,
-                };
-                update_provider(UpdateProviderOptions {
-                    id,
-                    auxiliary_model_upstream,
-                    key,
-                    clear_key,
-                    aws_access_key_id,
-                    aws_secret_access_key,
-                    aws_session_token,
-                    aws_region,
-                    clear_aws_session_token,
-                    clear_aws_credentials,
-                    display_name,
-                    base_url,
-                    website_url,
-                    protocol,
-                    api_path,
-                    models_path,
-                    image_generation_path,
-                    clear_image_generation,
-                    quota_url,
-                    clear_quota,
-                    quota_username,
-                    quota_workspace_id,
-                    clear_quota_workspace_id,
-                    quota_auth_cookie,
-                    clear_quota_auth_cookie,
-                    quota_currency,
-                    quota_parser,
-                    header_env,
-                    clear_header_env,
-                    baidu_auth_bridge,
-                    ducx_executable,
-                    baidu_code_report,
-                    auto_review_model,
-                    clear_auto_review_model,
-                    codex_thread_title_model,
-                    clear_codex_thread_title_model,
-                })
-                .await?;
+            ProviderCommand::Update(args) => {
+                let mut input = UpdateProviderInput::from(args);
+                if input.baidu_auth_bridge.as_deref() == Some("ducx_loopback")
+                    && input.ducx_executable.is_none()
+                {
+                    input.ducx_executable = Some(ensure_managed_ducx().await?);
+                }
+                update_provider(input).await?;
                 report_hook::sync_installation()
             }
             ProviderCommand::Enable { id } => {
@@ -662,35 +530,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             }
             ProviderCommand::Discover { id } => discover_models(&id).await,
             ProviderCommand::Probe { id } => probe_selected_models(&id).await,
-            ProviderCommand::Test {
-                id,
-                json,
-                key,
-                aws_access_key_id,
-                aws_secret_access_key,
-                aws_session_token,
-                aws_region,
-                base_url,
-                baidu_auth_bridge,
-                ducx_executable,
-            } => {
-                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
-                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
-                    _ => ducx_executable,
-                };
-                test_provider(TestProviderOptions {
-                    id,
-                    json,
-                    key,
-                    aws_access_key_id,
-                    aws_secret_access_key,
-                    aws_session_token,
-                    aws_region,
-                    base_url,
-                    baidu_auth_bridge,
-                    ducx_executable,
-                })
-                .await
+            ProviderCommand::Test(mut input) => {
+                if input.baidu_auth_bridge.as_deref() == Some("ducx_loopback")
+                    && input.ducx_executable.is_none()
+                {
+                    input.ducx_executable = Some(ensure_managed_ducx().await?);
+                }
+                test_provider(input).await
             }
             ProviderCommand::Select {
                 id,

@@ -5,9 +5,8 @@ use serde_yaml::{Mapping, Value};
 
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::gateway_access::GatewayClient;
-use codex_mixin::provider::catalog_model_slug;
 
-use super::official_models::selected_official_models;
+use super::official_models::{selected_catalog_models, selected_official_models};
 use super::runtime::effective_gateway_bind;
 
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
@@ -77,70 +76,13 @@ fn collect_dsh_models(
     config: &GatewayConfig,
     official_models: &[codex_mixin::provider::ProviderModel],
 ) -> Vec<Value> {
-    let mut seen = HashSet::new();
+    let catalog = selected_catalog_models(config, official_models);
+    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
     let mut models = Vec::new();
-    for provider in &config.providers {
-        if !provider.enabled {
-            continue;
-        }
-        for upstream_model_id in &provider.selected_models {
-            let Some(cached) = provider
-                .cached_models
-                .iter()
-                .find(|candidate| &candidate.id == upstream_model_id)
-            else {
-                continue;
-            };
-            let id = catalog_model_slug(upstream_model_id, &provider.id);
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            let mut entry = Mapping::new();
-            entry.insert(Value::String("id".to_owned()), Value::String(id));
-            entry.insert(
-                Value::String("name".to_owned()),
-                Value::String(format!("{upstream_model_id} · {}", provider.display_name)),
-            );
-            if cached.supports_thinking != Some(false) {
-                entry.insert(
-                    Value::String("reasoningEfforts".to_owned()),
-                    dsh_reasoning_efforts(),
-                );
-            }
-            if let Some(context_window) = cached.context_window {
-                entry.insert(
-                    Value::String("contextWindow".to_owned()),
-                    Value::Number(context_window.into()),
-                );
-            }
-            if cached.supports_image == Some(true) {
-                entry.insert(
-                    Value::String("input".to_owned()),
-                    Value::Sequence(vec![
-                        Value::String("text".to_owned()),
-                        Value::String("image".to_owned()),
-                    ]),
-                );
-            }
-            models.push(Value::Mapping(entry));
-        }
-    }
-    for model in official_models {
-        if !seen.insert(model.id.clone()) {
-            continue;
-        }
+    for (id, name, model) in catalog {
         let mut entry = Mapping::new();
-        entry.insert(
-            Value::String("id".to_owned()),
-            Value::String(model.id.clone()),
-        );
-        entry.insert(
-            Value::String("name".to_owned()),
-            Value::String(format!(
-                "{} · OpenAI",
-                model.display_name.as_deref().unwrap_or(&model.id)
-            )),
-        );
+        entry.insert(Value::String("id".to_owned()), Value::String(id));
+        entry.insert(Value::String("name".to_owned()), Value::String(name));
         if model.supports_thinking != Some(false) {
             entry.insert(
                 Value::String("reasoningEfforts".to_owned()),

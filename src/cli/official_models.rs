@@ -204,6 +204,43 @@ pub(super) fn filter_official_catalog(
     Ok(())
 }
 
+/// Models a coding client lists: each enabled provider's selected models that
+/// have cached metadata, then the official models, as
+/// `(catalog slug, display name, metadata)`. The first use of a slug wins.
+pub(super) fn selected_catalog_models<'a>(
+    config: &'a GatewayConfig,
+    official_models: &'a [ProviderModel],
+) -> Vec<(String, String, &'a ProviderModel)> {
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
+    for provider in config.providers.iter().filter(|provider| provider.enabled) {
+        for upstream_model_id in &provider.selected_models {
+            let Some(cached) = provider
+                .cached_models
+                .iter()
+                .find(|candidate| &candidate.id == upstream_model_id)
+            else {
+                continue;
+            };
+            let id = codex_mixin::provider::catalog_model_slug(upstream_model_id, &provider.id);
+            if seen.insert(id.clone()) {
+                let name = format!("{upstream_model_id} · {}", provider.display_name);
+                models.push((id, name, cached));
+            }
+        }
+    }
+    for model in official_models {
+        if seen.insert(model.id.clone()) {
+            let name = format!(
+                "{} · OpenAI",
+                model.display_name.as_deref().unwrap_or(&model.id)
+            );
+            models.push((model.id.clone(), name, model));
+        }
+    }
+    models
+}
+
 pub(super) fn available_official_ids(models: &[ProviderModel]) -> HashSet<&str> {
     models.iter().map(|model| model.id.as_str()).collect()
 }
