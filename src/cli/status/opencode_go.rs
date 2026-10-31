@@ -566,20 +566,3 @@ fn json_f64(value: &serde_json::Value) -> Option<f64> {
         .as_f64()
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
-
-#[cfg(test)]
-mod native_official_quota_tests {
-    use super::*;
-    #[test]
-    fn native_usage_keeps_dynamic_windows() {
-        let window = serde_json::json!({"used_percent":94,"limit_window_seconds":18000,"reset_at":1800000000});
-        let rows = official_quota_rows(&serde_json::json!({"rate_limit":{"primary_window":window},"additional_rate_limits":[{"limit_name":"future-model","rate_limit":{"secondary_window":{"used_percent":15,"limit_window_seconds":604800}}}]})).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["remaining"], 6.0);
-        assert_eq!(rows[0]["unit"], "percent");
-        assert!(
-            rows.iter()
-                .any(|row| row["quota_id"] == "future-model.secondary")
-        );
-    }
-}

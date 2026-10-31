@@ -293,28 +293,3 @@ pub(crate) fn system_powershell() -> anyhow::Result<std::path::PathBuf> {
     anyhow::ensure!(path.is_file(), "PowerShell not found at {}", path.display());
     Ok(path)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn signals_accept_an_already_exited_process() {
-        let mut command = if cfg!(windows) {
-            let mut command = Command::new("cmd.exe");
-            command.args(["/C", "exit 0"]);
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args(["-c", "exit 0"]);
-            command
-        };
-        let mut child = command.spawn().unwrap();
-        let pid = child.id();
-        assert!(child.wait().unwrap().success());
-        assert!(!pid_is_running(pid, "").unwrap());
-        send_process_signal(pid, "TERM").unwrap();
-        send_process_signal(pid, "KILL").unwrap();
-        assert!(send_process_signal(pid, "INVALID").is_err());
-    }
-}

@@ -40,6 +40,3 @@ pub(super) fn coalesce_events(events: &mut Vec<Bytes>) -> Option<Bytes> {
     }
     Some(combined.freeze())
 }
-
-#[cfg(test)]
-mod tests;

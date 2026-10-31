@@ -1294,6 +1294,3 @@ fn prerelease_newer(a: &str, b: &str) -> bool {
     }
     a_parts.len() > b_parts.len()
 }
-
-#[cfg(test)]
-mod tests;

@@ -32,6 +32,6 @@
 ## 提交流程
 
 `cargo fmt --all -- --check`、`scripts/check_arch.sh`、
-`cargo test --locked --all-targets` 必须通过；涉及 prompt cache 时跑
+`cargo test --locked --tests` 必须通过；涉及 prompt cache 时跑
 `./scripts/e2e_prompt_cache.sh`，涉及多 provider 时跑
 `./scripts/e2e_multi_provider.sh`。

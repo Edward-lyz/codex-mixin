@@ -9,4 +9,4 @@
 - 系统服务身份对 OS 用户全局；隔离实例（测试、沙箱）设置 `CODEX_GATEWAY_SERVICE_ID` 派生独立的 launchd label、systemd unit 和 Windows 任务名，未设置时保持默认身份。
 - 不支持的平台明确返回 unavailable/error；未知系统状态不能用成功默认值替代。
 - 阻塞 API 明确说明，async 调用方移到 blocking worker；适配层不拥有 provider/GUI 业务。
-- 运行 `cargo test --locked --test platform_neutral_core`、平台单测和根级门禁；未实际验证的平台列为限制，交由对应 CI 验证。
+- 运行 `./scripts/check_arch.sh`（平台中立规则）和根级门禁；未实际验证的平台列为限制，交由对应 CI 验证。

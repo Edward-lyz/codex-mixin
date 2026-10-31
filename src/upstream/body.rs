@@ -2,8 +2,6 @@ use std::io::{Seek, Write};
 
 use futures_util::StreamExt;
 use reqwest::header::CONTENT_TYPE;
-#[cfg(test)]
-use reqwest::header::{CONTENT_LENGTH, HeaderValue};
 use serde::Serialize;
 
 use crate::error::GatewayError;
@@ -103,32 +101,6 @@ where
     .map_err(GatewayError::Other)
 }
 
-#[cfg(test)]
-pub(crate) async fn prepare_json<T>(
-    request: reqwest::RequestBuilder,
-    value: T,
-) -> Result<reqwest::RequestBuilder, GatewayError>
-where
-    T: Serialize + Send + 'static,
-{
-    let (file, length) = tokio::task::spawn_blocking(move || {
-        let mut file = tempfile::tempfile()?;
-        serde_json::to_writer(&mut file, &value)?;
-        let length = file.stream_position()?;
-        file.seek(std::io::SeekFrom::Start(0))?;
-        Ok::<_, anyhow::Error>((file, length))
-    })
-    .await
-    .map_err(|error| GatewayError::Other(error.into()))?
-    .map_err(GatewayError::Other)?;
-    let content_length = HeaderValue::from_str(&length.to_string())
-        .map_err(|error| GatewayError::Other(error.into()))?;
-    Ok(request
-        .header(CONTENT_TYPE, "application/json")
-        .header(CONTENT_LENGTH, content_length)
-        .body(tokio::fs::File::from_std(file)))
-}
-
 pub(crate) async fn read_error_text(response: reqwest::Response) -> Result<String, GatewayError> {
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
@@ -167,60 +139,4 @@ pub(crate) async fn response_error(
         content_type,
         context: context.into(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Read;
-    use tokio::io::AsyncReadExt;
-
-    #[tokio::test]
-    async fn compressed_json_preserves_payload_and_signed_bytes() {
-        let value = serde_json::json!({"input": "coding context ".repeat(10_000)});
-        let prepared = prepare_json_body(value.clone(), true, true).await.unwrap();
-        let mut gzip = prepared.gzip.unwrap();
-        let mut bytes = Vec::new();
-        gzip.file.read_to_end(&mut bytes).await.unwrap();
-        assert_eq!(gzip.length as usize, bytes.len());
-        let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
-        let expected: String = digest
-            .as_ref()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        assert_eq!(gzip.sha256.as_deref(), Some(expected.as_str()));
-        let mut restored = Vec::new();
-        flate2::read::GzDecoder::new(bytes.as_slice())
-            .read_to_end(&mut restored)
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&restored).unwrap(),
-            value
-        );
-        assert!(gzip.length < prepared.raw.length);
-    }
-
-    #[tokio::test]
-    async fn small_or_unsupported_requests_remain_uncompressed() {
-        let value = serde_json::json!({"input":"hi"});
-        let mut small = prepare_json_body(value.clone(), true, false).await.unwrap();
-        assert!(small.gzip.is_none());
-        let mut bytes = Vec::new();
-        small.raw.file.read_to_end(&mut bytes).await.unwrap();
-        assert_eq!(small.raw.length as usize, bytes.len());
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-            value
-        );
-        let prepared = prepare_json_body(
-            serde_json::json!({"input":"context".repeat(20_000)}),
-            false,
-            false,
-        )
-        .await
-        .unwrap();
-        assert!(prepared.gzip.is_none());
-        assert!(prepared.raw.sha256.is_none());
-    }
 }

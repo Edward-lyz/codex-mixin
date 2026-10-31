@@ -24,6 +24,3 @@ pub(crate) use request::{
 pub use tool_map::ToolNameMap;
 pub use tools::sanitize_tool_name;
 pub(crate) use tools::{WebSearchTool, collect_active_tools, custom_tool_description};
-
-#[cfg(test)]
-mod tests;

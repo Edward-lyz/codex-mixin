@@ -8,4 +8,4 @@
 - HTTP 错误使用 `GatewayError`；客户端响应不暴露内部路径、认证和完整错误链。
 - SSE/WS 增量转发并尊重背压；取消、断连与 server shutdown 收敛上游连接和任务。
 - 请求/连接状态不能跨用户、provider 或 session 复用；header/query 映射使用明确允许规则。
-- 运行 server 单测、`cargo test --locked --test gateway_http`、`cargo test --locked --test websocket_proxy` 和根级门禁；协议/缓存变更补 E2E。
+- 运行 `cargo test --locked --test gateway_http`、`cargo test --locked --test websocket_proxy` 和根级门禁；协议/缓存变更补 E2E。

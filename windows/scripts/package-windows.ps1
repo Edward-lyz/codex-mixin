@@ -115,7 +115,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
   }
   if (-not $SkipCliTests) {
-    dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli $CliPath
+    dotnet run --project windows/Tests/Tests.csproj --configuration Release -- $CliPath
     if ($LASTEXITCODE -ne 0) { throw "Windows CLI contract tests failed" }
   }
   if (-not $uiPublish) {

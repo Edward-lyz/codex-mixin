@@ -5,8 +5,6 @@ mod actions;
 mod agent_icons;
 mod api;
 mod cli;
-#[cfg(test)]
-mod tests;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;

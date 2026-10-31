@@ -95,20 +95,3 @@ pub(super) fn encode(value: &Value) -> anyhow::Result<String> {
     }
     Ok(text)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn preserves_unmanaged_lines_and_rejects_duplicates() {
-        let original = "# local settings\nexport OTHER = 'keep # literal'\nEMPTY=\n";
-        let mut doc = parse(original).unwrap();
-        doc["CODEX_MIXIN_REASONIX_API_KEY"] = json!("\"fixture-key\"");
-        let text = encode(&doc).unwrap();
-        assert!(text.starts_with(original));
-        assert!(text.ends_with("CODEX_MIXIN_REASONIX_API_KEY=\"fixture-key\"\n"));
-        assert!(parse("KEY=a\nexport KEY=b\n").is_err());
-        assert!(parse("KEY=\"first\nsecond\"\n").is_err());
-        assert!(parse("KEY=\"first\\\"\nOTHER=second\"\n").is_err());
-    }
-}

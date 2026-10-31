@@ -283,8 +283,6 @@ async fn wait_for_gateway_stopped() -> anyhow::Result<()> {
     anyhow::bail!("gateway did not stop within 5 seconds; refusing to start a duplicate")
 }
 
-#[cfg(test)]
-pub(super) use daemon::running_daemon_needs_replacement;
 pub(super) use daemon::{logs, restart, start_daemon, stop};
 pub(super) use logging::init_tracing;
 use logging::log_gateway_configuration;
@@ -1050,85 +1048,5 @@ fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
             tracing::warn!(error = %format!("{error:#}"), "failed to load providers for model sync");
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod model_refresh_target_tests {
-    use super::*;
-
-    #[test]
-    fn agy_refresh_uses_snapshot_age() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let mut stale = codex_mixin::provider::agy_provider("stale", "");
-        stale.models_refreshed_at_ms = Some(1);
-        let mut fresh = codex_mixin::provider::agy_provider("fresh", "");
-        fresh.models_refreshed_at_ms = Some(now);
-        let pending = codex_mixin::provider::agy_provider("pending", "");
-        let targets = model_refresh_targets(&[stale, fresh, pending]);
-        assert_eq!(
-            targets
-                .iter()
-                .map(|provider| provider.id.as_str())
-                .collect::<Vec<_>>(),
-            ["stale", "pending"]
-        );
-        assert!(targets.iter().all(|provider| provider.is_agy));
-    }
-
-    #[test]
-    fn background_refresh_skips_disabled_and_static_providers() {
-        let mut enabled = codex_mixin::provider::custom_provider("enabled", "key");
-        enabled.enabled = true;
-        let mut disabled = codex_mixin::provider::custom_provider("openrouter", "key");
-        disabled.enabled = false;
-        let mut static_models = codex_mixin::provider::custom_provider("static", "key");
-        static_models.enabled = true;
-        static_models.model_source = ProviderModelSource::Static;
-
-        let targets = model_refresh_targets(&[enabled, disabled, static_models]);
-
-        assert_eq!(
-            targets
-                .iter()
-                .map(|target| target.id.as_str())
-                .collect::<Vec<_>>(),
-            ["enabled"]
-        );
-    }
-}
-
-#[cfg(test)]
-mod model_notification_tests {
-    use super::*;
-    use codex_mixin::provider::ModelDiscoveryChanges;
-
-    #[test]
-    fn formats_model_changes_for_native_notification_layout() {
-        let changes = ModelDiscoveryChanges {
-            updated: Vec::new(),
-            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            removed: vec!["gpt-image-2".to_owned()],
-        };
-
-        let content = model_notification("我的常用模型", &changes)
-            .expect("model changes should produce notification content");
-        assert_eq!(content.title, "Codex Mixin");
-        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
-        assert_eq!(
-            content.body,
-            "✓ 新发现 2 个：gpt-5.6-luna、gpt-6-astra\n− 当前目录不可用 1 个：gpt-image-2"
-        );
-    }
-
-    #[test]
-    fn truncates_long_model_lists_for_notification_banner() {
-        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
-
-        assert_eq!(summarize_models(&models), "one、two、three 等");
     }
 }

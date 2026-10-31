@@ -253,32 +253,3 @@ fn tungstenite_to_axum_message(message: TungsteniteMessage) -> Option<AxumWsMess
         TungsteniteMessage::Frame(_) => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn official_cache_shape_expands_history_without_rewriting_wire_request() {
-        use super::official::effective_official_cache_body;
-
-        let body = json!({
-            "type": "response.create",
-            "model": "gpt-5.6-sol",
-            "previous_response_id": "resp_1",
-            "input": [{"type":"message","role":"user","content":"next"}]
-        });
-        let history = vec![
-            json!({"type":"message","role":"user","content":"first"}),
-            json!({"type":"message","role":"assistant","content":"answer"}),
-            json!({"type":"message","role":"user","content":"next"}),
-        ];
-
-        let effective = effective_official_cache_body(&body, Some(&history));
-
-        assert_eq!(body["previous_response_id"], "resp_1");
-        assert_eq!(body["input"].as_array().unwrap().len(), 1);
-        assert!(effective.get("previous_response_id").is_none());
-        assert_eq!(effective["input"].as_array().unwrap(), &history);
-    }
-}

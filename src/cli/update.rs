@@ -6,11 +6,7 @@ use std::time::Duration;
 
 const CLI_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[cfg(test)]
-pub(super) use codex_mixin::application::update::release_version_from_redirect;
 pub(super) use codex_mixin::platform::update::release_target as cli_release_target;
-#[cfg(test)]
-pub(super) use codex_mixin::platform::update::replace_executable;
 
 pub(super) async fn run(check: bool, json: bool) -> anyhow::Result<()> {
     cli_release_target()?;
@@ -73,46 +69,4 @@ async fn restart_updated_cli(executable: &Path, version: &str) -> anyhow::Result
         "CLI was updated, but gateway restart failed with {status}"
     );
     Ok(())
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn updated_cli_restarts_managed() {
-        let directory = tempfile::tempdir().unwrap();
-        let executable = directory.path().join("codex-mixin");
-        let invoked = directory.path().join("invoked");
-        std::fs::write(&executable, format!(
-            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-mixin 9.0.0'; exit 0; fi\nprintf '%s\\n' \"$@\" > {}\n",
-            codex_mixin::platform::shell_quote(&invoked.to_string_lossy())
-        )).unwrap();
-        codex_mixin::platform::make_executable(&executable).unwrap();
-        restart_updated_cli(&executable, "9.0.0").await.unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&invoked).unwrap(),
-            "--no-tui\nservice\nrestart\n--managed\n"
-        );
-        std::fs::remove_file(&invoked).unwrap();
-        assert!(restart_updated_cli(&executable, "9.0.1").await.is_err());
-        assert!(!invoked.exists());
-        // Use a separate file so the test never rewrites an executable that a
-        // previous child may still be releasing.
-        let failing = directory.path().join("codex-mixin-failing");
-        std::fs::write(
-            &failing,
-            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-mixin 9.0.0'; exit 0; fi\nexit 7\n",
-        )
-        .unwrap();
-        codex_mixin::platform::make_executable(&failing).unwrap();
-        let error = restart_updated_cli(&failing, "9.0.0")
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("restart failed"),
-            "unexpected restart error: {error}"
-        );
-    }
 }

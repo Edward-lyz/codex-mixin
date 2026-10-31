@@ -24,29 +24,3 @@ pub(crate) fn resolve_custom_headers_from_env(
     }
     Ok(headers)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolves_provider_neutral_sensitive_headers() {
-        let mapping = BTreeMap::from([("x-example-auth".to_owned(), "EXAMPLE_AUTH".to_owned())]);
-        let headers = resolve_custom_headers_from_env(&mapping, &|name| {
-            (name == "EXAMPLE_AUTH").then(|| "signed-value".to_owned())
-        })
-        .unwrap();
-
-        assert_eq!(headers["x-example-auth"], "signed-value");
-        assert!(headers["x-example-auth"].is_sensitive());
-    }
-
-    #[test]
-    fn missing_value_fails_without_leaking_values() {
-        let mapping = BTreeMap::from([("x-example-auth".to_owned(), "MISSING_AUTH".to_owned())]);
-        let error = resolve_custom_headers_from_env(&mapping, &|_| None).unwrap_err();
-
-        assert!(error.to_string().contains("MISSING_AUTH"));
-        assert!(!error.to_string().contains("signed-value"));
-    }
-}

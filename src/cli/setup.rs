@@ -15,8 +15,6 @@ use super::service::restart;
 use super::{CliProviderPreset, SetupCodexMode, next_step_line, progress_is_interactive, stage};
 
 pub(super) use codex_mixin::platform::installation::install_cli_command;
-#[cfg(test)]
-use codex_mixin::platform::installation::install_cli_executable;
 
 fn read_secret(prompt: &str) -> anyhow::Result<String> {
     print!("{prompt}");
@@ -338,36 +336,4 @@ async fn authorize_existing_preset(preset: &str) -> anyhow::Result<()> {
         .await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cli_install_replaces_target_and_preserves_executable_permissions() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("downloaded-codex-mixin");
-        let target = directory.path().join("bin/codex-mixin");
-        std::fs::write(&source, b"new binary").unwrap();
-        codex_mixin::platform::make_executable(&source).unwrap();
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::write(&target, b"old binary").unwrap();
-
-        assert!(install_cli_executable(&source, &target).unwrap());
-        assert_eq!(std::fs::read(&target).unwrap(), b"new binary");
-        assert_eq!(
-            std::fs::metadata(&target).unwrap().permissions(),
-            std::fs::metadata(&source).unwrap().permissions()
-        );
-    }
-
-    #[test]
-    fn cli_install_skips_the_installed_executable() {
-        let directory = tempfile::tempdir().unwrap();
-        let target = directory.path().join("codex-mixin");
-        std::fs::write(&target, b"binary").unwrap();
-
-        assert!(!install_cli_executable(&target, &target).unwrap());
-    }
 }

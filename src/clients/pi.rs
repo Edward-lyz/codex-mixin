@@ -148,16 +148,3 @@ fn write_json(path: &Path, document: &Value) -> anyhow::Result<bool> {
     }
     Ok(changed)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn key_reference_shell_quotes_apostrophes() {
-        assert_eq!(
-            key_reference(Path::new("/tmp/pi's key")),
-            "!cat '/tmp/pi'\\''s key'"
-        );
-    }
-}

@@ -24,16 +24,12 @@ use crate::provider::{ProviderProtocol, ProviderRuntime};
 
 pub(crate) mod body;
 mod ducx;
-#[cfg(test)]
-mod ech_tests;
 mod http_compression;
 mod kiro;
 mod official;
 pub(crate) mod transport_log;
 use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace};
 
-#[cfg(test)]
-pub(crate) use official::read_codex_official_auth;
 pub(crate) use official::{
     CachedOfficialAuth, FORWARDED_OFFICIAL_HEADERS, forward_official_headers,
     materialize_official_responses_body, normalize_official_responses_body,

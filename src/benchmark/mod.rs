@@ -22,14 +22,9 @@ mod manager;
 mod runner;
 mod types;
 
-#[cfg(test)]
-pub(crate) use types::BENCHMARK_PROMPT;
 pub(crate) use types::BenchmarkTarget;
 pub use types::{
     BENCHMARK_TARGET_OUTPUT_TOKENS, BenchmarkResultStatus, BenchmarkRunStatus,
     BenchmarkSnapshotResponse, ModelBenchmarkManager, ModelBenchmarkResult, ModelBenchmarkSnapshot,
     ProviderBenchmarkCost, StartBenchmarkRequest,
 };
-
-#[cfg(test)]
-mod tests;

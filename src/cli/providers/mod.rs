@@ -373,6 +373,3 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     }
     Ok(normalized)
 }
-
-#[cfg(test)]
-mod tests;

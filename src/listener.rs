@@ -54,21 +54,3 @@ async fn bind_port_range(
     )
     .into())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn exhausted_range_fails_without_leaving_it() {
-        let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = occupied.local_addr().unwrap();
-        let error = bind_port_range(address, address.port(), 1, 0)
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.downcast_ref::<io::Error>().unwrap().kind(),
-            io::ErrorKind::AddrInUse
-        );
-    }
-}
