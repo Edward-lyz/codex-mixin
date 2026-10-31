@@ -189,7 +189,6 @@ xcrun swiftc \
   "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \
   "$ROOT_DIR/macos/LaunchAtLoginSupport.swift" \
   "$ROOT_DIR/macos/GatewayProcessSupport.swift" \
-  "$ROOT_DIR/macos/GatewayLaunchAgentSupport.swift" \
   "$ROOT_DIR/macos/SettingsActions.swift" \
   "$ROOT_DIR/macos/AgentManagementSupport.swift" \
   "$ROOT_DIR/macos/AgentManagementActions.swift" \
