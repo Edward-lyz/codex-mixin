@@ -36,18 +36,3 @@ pub fn database_path_with(env_lookup: impl Fn(&str) -> Option<String>) -> Result
         .context("gateway configuration path has no parent directory")?;
     Ok(parent.join("context.db"))
 }
-
-/// Opens the engine when the global switch is on.
-///
-/// Returns None when the feature is off so callers keep the existing flow.
-pub fn engine_from_stored_config() -> Result<Option<ContextEngine>> {
-    let stored = crate::config::load_stored_config().context("load gateway configuration")?;
-    let Some(stored) = stored else {
-        return Ok(None);
-    };
-    if !stored.context.enabled {
-        return Ok(None);
-    }
-    let path = database_path()?;
-    ContextEngine::open(stored.context, &path).map(Some)
-}

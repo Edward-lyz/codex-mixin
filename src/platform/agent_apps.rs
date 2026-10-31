@@ -2,7 +2,7 @@
 //! these bridges only serialize its answers for the platform-neutral core.
 //! No vendor program is launched to discover an application or its version.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -175,33 +175,6 @@ pub(crate) fn desktop_app_installation(
         inventory.errors.join("; ")
     );
     Ok(None)
-}
-
-/// Registered install locations, preferred by the native application resolver.
-pub fn desktop_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
-    match native_inventory() {
-        Ok(inventory) => inventory
-            .apps
-            .iter()
-            .filter(|entry| entry.app == app)
-            .map(|entry| entry.path.clone())
-            .collect(),
-        Err(error) => {
-            tracing::debug!(%error, "native application discovery unavailable");
-            Vec::new()
-        }
-    }
-}
-
-/// Only versions supplied by native application metadata; never execute a GUI.
-pub fn desktop_app_versions(location: &Path) -> Vec<String> {
-    native_inventory()
-        .ok()
-        .into_iter()
-        .flat_map(|inventory| &inventory.apps)
-        .filter(|entry| entry.path == location)
-        .filter_map(|entry| entry.version.clone())
-        .collect()
 }
 
 fn native_inventory() -> anyhow::Result<&'static NativeInventory> {

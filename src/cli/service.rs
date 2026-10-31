@@ -19,7 +19,7 @@ use codex_mixin::platform::{
 };
 use codex_mixin::provider::ProviderModelSource;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
-use codex_mixin::server::{AppState, ServeExit, serve_on_listener_with_reload};
+use codex_mixin::server::{AppState, ServeExit, serve_on_listener};
 use codex_mixin::web_search::WebSearchCapabilities;
 
 use super::codex::{
@@ -936,9 +936,7 @@ pub(super) async fn start(
     let mut serve_config = config;
     let mut serve_listener = listener;
     let result = loop {
-        match serve_on_listener_with_reload(serve_config, serve_listener, reload_receiver.clone())
-            .await
-        {
+        match serve_on_listener(serve_config, serve_listener, reload_receiver.clone()).await {
             Ok(ServeExit::Shutdown) => break Ok(()),
             Ok(ServeExit::Reload) => {
                 reload_receiver.borrow_and_update();

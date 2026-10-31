@@ -414,30 +414,6 @@ pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
     }
 }
 
-/// Configuration presence is useful detection for apps with no CLI. The
-/// undo journal alone is never treated as evidence of an installed app.
-pub fn detected(id: &str) -> anyhow::Result<bool> {
-    let root = crate::platform::framework_app_root()?;
-    let path = match id {
-        "vscode" => root.join("Code/User"),
-        "vscode-insiders" => root.join("Code - Insiders/User"),
-        "vscodium" => root.join("VSCodium/User"),
-        "air" => root.join("JetBrains/Air"),
-        "openchamber" => home_path("OPENCHAMBER_DATA_DIR", ".config/openchamber")?,
-        "zcode" => home_path("", ".zcode")?,
-        "pencil" => home_path("", ".pencil")?,
-        "t3code" => home_path("T3CODE_HOME", ".t3")?,
-        "workbuddy" => home_path("WORKBUDDY_CONFIG_DIR", ".workbuddy")?,
-        "grok" => home_path("GROK_HOME", ".grok")?,
-        "morph" => home_path("MISTER_MORPH_CONFIG", ".morph/config.yaml")?,
-        "copilot-jetbrains" => {
-            crate::platform::copilot_config_root()?.join("github-copilot/byok.json")
-        }
-        _ => return Ok(false),
-    };
-    Ok(path.exists())
-}
-
 fn field(keys: &[&str], value: Value) -> (Vec<String>, Value) {
     (keys.iter().map(|s| (*s).to_owned()).collect(), value)
 }

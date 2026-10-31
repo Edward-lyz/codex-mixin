@@ -7,7 +7,7 @@ use tokio::process::Command;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::custom_provider;
+use codex_mixin::provider::ProviderPreset;
 use serde_json::{Value, json};
 
 mod common;
@@ -32,7 +32,7 @@ async fn official_contexts_reach_clients() {
         &config_path,
         &StoredGatewayConfig {
             providers: vec![{
-                let mut provider = custom_provider("unused", "fixture-key");
+                let mut provider = ProviderPreset::Custom.create("unused", "fixture-key");
                 provider.base_url = "http://127.0.0.1:9".to_owned();
                 provider.enabled = false;
                 provider

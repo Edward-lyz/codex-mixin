@@ -69,14 +69,6 @@ impl Tier {
             _ => None,
         }
     }
-
-    pub fn next(self) -> Option<Self> {
-        match self {
-            Self::One => Some(Self::Two),
-            Self::Two => Some(Self::Three),
-            Self::Three => Some(Self::Three),
-        }
-    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -234,15 +226,6 @@ pub struct TurnView {
     pub estimated_tokens: u64,
     pub window_tokens: u64,
     pub protection: Protection,
-}
-
-impl TurnView {
-    pub fn pressure(&self) -> f64 {
-        if self.window_tokens == 0 {
-            return 0.0;
-        }
-        self.estimated_tokens as f64 / self.window_tokens as f64
-    }
 }
 
 pub const SESSION_SEPARATOR: char = '\u{1f}';

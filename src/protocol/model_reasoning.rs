@@ -169,10 +169,6 @@ pub fn prepare_upstream_reasoning(body: &mut Value, advertised_support: Option<b
     }
 }
 
-pub fn anthropic_thinking_kind(model: &str) -> Option<AnthropicThinkingKind> {
-    detect_model_reasoning(model).and_then(|capabilities| capabilities.anthropic_thinking)
-}
-
 pub fn anthropic_thinking_kind_with_advertised(
     model: &str,
     advertised_support: Option<bool>,

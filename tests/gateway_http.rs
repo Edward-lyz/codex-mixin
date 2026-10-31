@@ -15,8 +15,8 @@ use codex_mixin::config::{FusionMode, FusionProfile, FusionTimeRoute, PanelTools
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
-    ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
-    apply_discovered_models, aws_bedrock_aksk_provider, aws_bedrock_provider, custom_provider,
+    ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol, ProviderRegistry,
+    ProviderRequestPolicy, apply_discovered_models, aws_bedrock_aksk_provider,
     discover_provider_models,
 };
 use codex_mixin::server::{AppState, router};
@@ -160,7 +160,7 @@ fn has_native_agent_envelope(body: &Value) -> bool {
 }
 
 fn test_config(upstream_base_url: String) -> GatewayConfig {
-    let mut provider = custom_provider("custom", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("custom", "upstream-key");
     provider.base_url = upstream_base_url;
     // Most gateway fixtures still exercise the Anthropic Messages path.
     provider.protocol = ProviderProtocol::AnthropicMessages;
@@ -2084,7 +2084,7 @@ async fn http_compression_negotiates_json_responses() {
 async fn routes_aws_bedrock_preset_through_mantle_messages() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url.clone());
-    let mut provider = aws_bedrock_provider("aws-bedrock", "upstream-key");
+    let mut provider = ProviderPreset::AwsBedrock.create("aws-bedrock", "upstream-key");
     provider.base_url = upstream_url;
     config.providers = vec![provider];
     let gateway_url = spawn_gateway_with_config(config).await;
@@ -2370,7 +2370,7 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
     ))
     .await;
 
-    let mut alpha = custom_provider("alpha", "alpha-key");
+    let mut alpha = ProviderPreset::Custom.create("alpha", "alpha-key");
     alpha.base_url = alpha_url;
     alpha.protocol = ProviderProtocol::AnthropicMessages;
     alpha.api_path = "/v1/messages".to_owned();
@@ -2383,7 +2383,7 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
         })
         .collect();
     alpha.selected_models = vec!["shared".to_owned(), "broken".to_owned()];
-    let mut beta = custom_provider("beta", "beta-key");
+    let mut beta = ProviderPreset::Custom.create("beta", "beta-key");
     beta.base_url = beta_url;
     beta.protocol = ProviderProtocol::OpenAiChat;
     beta.api_path = "/v1/chat/completions".to_owned();
@@ -2562,7 +2562,8 @@ async fn opencode_go_sends_stable_session_headers() {
         }
     }))).await;
     let mut config = test_config(upstream.clone());
-    let mut provider = codex_mixin::provider::open_code_go_provider("opencode-go", "upstream-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::OpenCodeGo.create("opencode-go", "upstream-key");
     provider.base_url = upstream;
     provider.cached_models = vec![ProviderModel {
         id: "glm-5.2".to_owned(),
@@ -10252,7 +10253,7 @@ async fn mock_gemini_generate_content(
 #[tokio::test]
 async fn routes_gemini_models_through_responses_provider() {
     let (upstream_url, requests) = spawn_mock_gemini().await;
-    let mut provider = codex_mixin::provider::agy_provider("gemini-test", "test-key");
+    let mut provider = codex_mixin::provider::ProviderPreset::Agy.create("gemini-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10348,7 +10349,8 @@ async fn gemini_preserves_thought_signature_and_tool_names_across_turns() {
         .with_state(requests.clone());
     let upstream_url = spawn_router(app).await;
 
-    let mut provider = codex_mixin::provider::agy_provider("gemini-tool-test", "test-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::Agy.create("gemini-tool-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10527,7 +10529,8 @@ async fn gemini_recovers_from_corrupted_thought_signature() {
         .with_state(requests.clone());
     let upstream_url = spawn_router(app).await;
 
-    let mut provider = codex_mixin::provider::agy_provider("gemini-corrupted-test", "test-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::Agy.create("gemini-corrupted-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10604,7 +10607,7 @@ async fn agy_mixed_tools_complete() {
                 .unwrap()
         }
     ));
-    let mut provider = codex_mixin::provider::agy_provider("agy", "fixture-key");
+    let mut provider = codex_mixin::provider::ProviderPreset::Agy.create("agy", "fixture-key");
     provider.base_url = spawn_router(app).await;
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),

@@ -10,7 +10,7 @@ use axum::{Json, Router, http::StatusCode, routing::get};
 use codex_mixin::{
     application::provider::{discovery::refresh_provider_models, models::probe_provider_models},
     config::{StoredGatewayConfig, save_stored_config_to_path, stored_config_path},
-    provider::{ProviderModel, ProviderProtocol, custom_provider},
+    provider::{ProviderModel, ProviderPreset, ProviderProtocol},
 };
 use serde_json::json;
 
@@ -89,7 +89,7 @@ async fn check_repeated_refresh(case: &str) {
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let providers = PROVIDER_IDS
         .map(|id| {
-            let mut provider = custom_provider(id, "local-test-key");
+            let mut provider = ProviderPreset::Custom.create(id, "local-test-key");
             provider.base_url = format!("http://{address}");
             provider.protocol = ProviderProtocol::OpenAiChat;
             provider.api_path = "/v1/chat/completions".to_owned();

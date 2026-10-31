@@ -53,5 +53,3 @@ pub fn installed_cli_executable() -> anyhow::Result<PathBuf> {
     }
     std::env::current_exe().context("resolve codex-mixin executable")
 }
-
-pub use super::shell::shell_quote;

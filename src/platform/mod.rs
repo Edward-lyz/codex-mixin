@@ -18,20 +18,17 @@ mod signing;
 mod startup_service;
 mod terminal;
 
-pub use codex_cli::{
-    CodexCliInstaller, codex_cli_candidates, codex_cli_installer, launcher_command,
-    path_executable_candidates,
-};
+pub use codex_cli::{codex_cli_candidates, launcher_command, path_executable_candidates};
 pub use desktop::{
     DesktopNotification, NotificationDelivery, RunningDesktopApp, codex_desktop_apps,
     desktop_app_restart_hint, desktop_environment_hint, restart_desktop_app, running_desktop_app,
     show_notification,
 };
 pub use files::{
-    EXECUTABLE_SUFFIX, OwnerOnlyStatus, ensure_owner_only_dir, executable_file_name, is_owner_only,
+    EXECUTABLE_SUFFIX, OwnerOnlyStatus, ensure_owner_only_dir, executable_file_name,
     lock_exclusive, make_executable, make_private_executable, make_private_executable_on,
     owner_only_status, persist_temp_path, set_owner_only_dir_mode, set_owner_only_mode,
-    set_owner_only_mode_on, symlink_file, write_atomic_if_changed, write_owner_only,
+    set_owner_only_mode_on, write_atomic_if_changed, write_owner_only,
 };
 pub use package::{PackageTarget, package_target};
 pub use paths::{

@@ -10,7 +10,6 @@ use super::types::{
     ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRequestPolicy,
 };
 
-pub const AGY_PRESET_ID: &str = "agy";
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
 pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
@@ -134,7 +133,6 @@ pub enum ModelSourceSpec {
     Static,
     OpenAiCompatible(&'static str),
     BaiduOneApi,
-    AwsBedrock,
 }
 
 impl ModelSourceSpec {
@@ -145,7 +143,6 @@ impl ModelSourceSpec {
                 path: path.to_owned(),
             },
             Self::BaiduOneApi => ProviderModelSource::BaiduOneApi,
-            Self::AwsBedrock => ProviderModelSource::AwsBedrock,
         }
     }
 }
@@ -498,46 +495,6 @@ fn bedrock_seed_model(id: &str, display_name: &str, context_window: u64) -> Prov
     }
 }
 
-pub fn agy_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::Agy.create(id, api_key)
-}
-
-pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::Custom.create(id, api_key)
-}
-
-pub fn baidu_oneapi_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::BaiduOneApi.create(id, api_key)
-}
-
-pub fn openrouter_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::OpenRouter.create(id, api_key)
-}
-
-pub fn deepseek_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::DeepSeek.create(id, api_key)
-}
-
-pub fn open_code_go_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::OpenCodeGo.create(id, api_key)
-}
-
-pub fn aws_bedrock_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::AwsBedrock.create(id, api_key)
-}
-
 pub fn aws_bedrock_aksk_provider(
     id: impl Into<String>,
     access_key_id: impl Into<String>,
@@ -546,7 +503,7 @@ pub fn aws_bedrock_aksk_provider(
     region: impl Into<String>,
 ) -> ProviderDefinition {
     let region = region.into();
-    let mut provider = aws_bedrock_provider(id, "");
+    let mut provider = ProviderPreset::AwsBedrock.create(id, "");
     provider.display_name = "Amazon Bedrock (AK/SK)".to_owned();
     provider.base_url = aws_bedrock_runtime_base_url(&region);
     provider.auth.aws_sigv4 = Some(AwsSigV4AuthConfig {

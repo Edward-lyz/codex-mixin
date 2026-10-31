@@ -3,7 +3,7 @@ mod storage;
 mod types;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -289,10 +289,6 @@ impl ProviderCapabilities {
         }
         std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
         Ok(true)
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 }
 

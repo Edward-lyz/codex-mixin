@@ -5,7 +5,7 @@ use std::time::Duration;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider};
+use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, ProviderPreset};
 use serde::Deserialize;
 use wait_timeout::ChildExt;
 
@@ -129,7 +129,7 @@ async fn daemon_upgrade_keeps_bind_mode() {
         let runtime_path = root.join("runtime.json");
         let codex_home = root.join("codex");
         fs::create_dir_all(&codex_home).unwrap();
-        let mut provider = custom_provider("static", "upstream-key");
+        let mut provider = ProviderPreset::Custom.create("static", "upstream-key");
         provider.base_url = "http://127.0.0.1:9".to_owned();
         provider.model_source = ProviderModelSource::Static;
         provider.selected_models = vec!["test-model".to_owned()];
@@ -208,7 +208,7 @@ async fn daemon_upgrade_keeps_bind_mode() {
 async fn context_save_restarts_once_and_unchanged_save_keeps_the_gateway() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let mut provider = custom_provider("local", "fixture-key");
+    let mut provider = ProviderPreset::Custom.create("local", "fixture-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = vec!["test-model".to_owned()];
@@ -327,7 +327,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     let codex_home = directory.path().join("codex");
     let catalog_path = codex_home.join("model-catalogs").join("mixin-models.json");
     fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
-    let mut provider = custom_provider("static", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("static", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = vec!["test-model".to_owned()];
@@ -446,7 +446,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
     let claude_settings = home.join(".claude").join("settings.json");
     fs::create_dir_all(claude_settings.parent().unwrap()).unwrap();
 
-    let mut provider = custom_provider("static", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("static", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = vec!["test-model".to_owned()];
@@ -526,7 +526,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
     let home = directory.path().join("home");
     fs::create_dir_all(&home).unwrap();
 
-    let mut provider = custom_provider("static", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("static", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = vec!["test-model".to_owned()];

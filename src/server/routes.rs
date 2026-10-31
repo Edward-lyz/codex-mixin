@@ -75,22 +75,14 @@ pub fn router(state: AppState) -> Router {
 }
 
 pub async fn serve(config: GatewayConfig) -> anyhow::Result<()> {
-    let bind = config.bind;
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    serve_on_listener(config, listener).await
-}
-
-pub async fn serve_on_listener(
-    config: GatewayConfig,
-    listener: tokio::net::TcpListener,
-) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let (_reload_sender, reload_receiver) = tokio::sync::watch::channel(0_u64);
-    serve_on_listener_with_reload(config, listener, reload_receiver)
+    serve_on_listener(config, listener, reload_receiver)
         .await
         .map(|_| ())
 }
 
-pub async fn serve_on_listener_with_reload(
+pub async fn serve_on_listener(
     mut config: GatewayConfig,
     listener: tokio::net::TcpListener,
     mut reload: tokio::sync::watch::Receiver<u64>,

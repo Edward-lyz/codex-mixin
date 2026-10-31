@@ -9,26 +9,7 @@ pub struct ConvertedChatRequest {
     pub tool_names: ToolNameMap,
 }
 
-pub fn responses_to_openai_chat(
-    body: &Value,
-    compaction_secret: SecretSource<'_>,
-) -> Result<ConvertedChatRequest, GatewayError> {
-    if body.get("stream").and_then(Value::as_bool) != Some(true) {
-        return Err(GatewayError::BadRequest(
-            "Codex gateway currently requires stream=true".to_owned(),
-        ));
-    }
-    responses_to_openai_chat_streaming(body, compaction_secret)
-}
-
-pub(crate) fn responses_to_openai_chat_streaming(
-    body: &Value,
-    compaction_secret: SecretSource<'_>,
-) -> Result<ConvertedChatRequest, GatewayError> {
-    responses_to_openai_chat_streaming_with_model(body, None, compaction_secret)
-}
-
-pub(crate) fn responses_to_openai_chat_streaming_with_model(
+pub(crate) fn responses_to_openai_chat(
     body: &Value,
     model_override: Option<&str>,
     compaction_secret: SecretSource<'_>,

@@ -671,10 +671,6 @@ function textInput(name, value = "", props = {}) {
   return h("input", { class: "input", name, value, spellcheck: "false", autocomplete: "off", ...props });
 }
 
-function secretInput(name, placeholder = "") {
-  return h("input", { class: "input mono", name, type: "password", autocomplete: "new-password", spellcheck: "false", placeholder });
-}
-
 function formValues(form) {
   const values = {};
   for (const element of form.elements) {

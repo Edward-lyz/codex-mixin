@@ -1,7 +1,7 @@
 mod common;
 
 use codex_mixin::provider::{
-    ProviderModel, ProviderModelSource, agy_provider, apply_discovered_models,
+    ProviderModel, ProviderModelSource, ProviderPreset, apply_discovered_models,
 };
 
 fn model(id: &str) -> ProviderModel {
@@ -22,7 +22,7 @@ fn agy_config_remains_legacy_readable() {
         AwsBedrock,
         Static,
     }
-    let provider = agy_provider("agy", "");
+    let provider = ProviderPreset::Agy.create("agy", "");
     let stored = serde_json::to_value(&provider).unwrap();
     let source = serde_json::from_value::<LegacySource>(stored["model_source"].clone())
         .expect("AGY configuration must remain readable by the installed CLI");
@@ -47,7 +47,7 @@ fn transient_source_is_read_but_not_written() {
 fn config_load_preserves_refresh_and_selection() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.json");
-    let mut provider = agy_provider("agy", "");
+    let mut provider = ProviderPreset::Agy.create("agy", "");
     provider.cached_models = vec![model("current")];
     provider.selected_models = vec!["current".to_owned(), "unavailable".to_owned()];
     provider.models_refreshed_at_ms = Some(12345);
@@ -71,7 +71,7 @@ fn config_load_preserves_refresh_and_selection() {
 
 #[test]
 fn agy_requires_live_discovery() {
-    let provider = agy_provider("agy", "");
+    let provider = ProviderPreset::Agy.create("agy", "");
     assert_eq!(provider.model_source, ProviderModelSource::Static);
     assert!(
         provider.cached_models.is_empty(),
@@ -81,7 +81,7 @@ fn agy_requires_live_discovery() {
 
 #[test]
 fn agy_preserves_selection_intent() {
-    let mut provider = agy_provider("agy", "");
+    let mut provider = ProviderPreset::Agy.create("agy", "");
     provider.model_order = codex_mixin::provider::ModelOrder::Manual;
     provider.cached_models = vec![model("kept"), model("gone")];
     provider.selected_models = vec!["kept".to_owned(), "gone".to_owned()];
@@ -98,7 +98,7 @@ fn agy_preserves_selection_intent() {
 
 #[test]
 fn empty_catalog_stops_routing() {
-    let mut provider = agy_provider("agy", "");
+    let mut provider = ProviderPreset::Agy.create("agy", "");
     provider.cached_models = vec![model("gone")];
     provider.selected_models = vec!["gone".to_owned()];
     provider.models_refreshed_at_ms = Some(1);
@@ -115,7 +115,7 @@ fn empty_catalog_stops_routing() {
 
 #[test]
 fn model_rename_keeps_identity() {
-    let mut provider = agy_provider("agy", "");
+    let mut provider = ProviderPreset::Agy.create("agy", "");
     provider.cached_models = vec![model("kept")];
     provider.selected_models = vec!["kept".to_owned()];
     let mut updated = model("kept");
@@ -146,7 +146,7 @@ async fn explicit_keys_use_remote_models() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let mut provider = agy_provider("agy", "configured-key");
+    let mut provider = ProviderPreset::Agy.create("agy", "configured-key");
     provider.base_url = format!("http://{address}");
     let client = reqwest::Client::new();
     let models = codex_mixin::provider::discover_provider_models(&client, &provider)
@@ -201,7 +201,7 @@ async fn agent_model_groups_restore_tool_capabilities() {
         post(move || async move { Json(report) }),
     );
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let mut provider = agy_provider("agy", "fixture-key");
+    let mut provider = ProviderPreset::Agy.create("agy", "fixture-key");
     provider.base_url = format!("http://{address}");
     let models =
         codex_mixin::provider::discover_provider_models(&reqwest::Client::new(), &provider)
@@ -247,7 +247,7 @@ async fn quota_cli_returns_dynamic_rows() {
     });
     let output = tokio::task::spawn_blocking(move || {
         let directory = tempfile::tempdir().unwrap();
-        let mut provider = agy_provider("agy", "configured-key");
+        let mut provider = ProviderPreset::Agy.create("agy", "configured-key");
         provider.base_url = format!("http://{address}");
         let config = codex_mixin::config::StoredGatewayConfig {
             providers: vec![provider],
@@ -288,7 +288,7 @@ fn failed_refresh_retains_catalog() {
     let executable = directory.path().join("agy");
     std::fs::write(&executable, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.3.5; exit 0; fi\nprintf '%s' '{\"status\":\"FAILURE\"}'\n").unwrap();
     codex_mixin::platform::make_private_executable(&executable).unwrap();
-    let mut provider = agy_provider("agy", "");
+    let mut provider = ProviderPreset::Agy.create("agy", "");
     provider.cached_models = vec![model("kept")];
     provider.selected_models = vec!["kept".to_owned()];
     provider.models_refreshed_at_ms = Some(12345);
@@ -322,7 +322,7 @@ fn failed_refresh_retains_catalog() {
 #[tokio::test]
 #[ignore = "requires saved AGY OAuth credentials; direct read-only HTTP, no inference"]
 async fn live_agy_account_reports() {
-    let provider = agy_provider("agy", "");
+    let provider = ProviderPreset::Agy.create("agy", "");
     let models =
         codex_mixin::provider::discover_provider_models(&reqwest::Client::new(), &provider)
             .await

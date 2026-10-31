@@ -4,7 +4,7 @@ use super::tool_map::ToolNameMap;
 use super::tools::*;
 use super::*;
 use crate::protocol::compaction::SecretSource;
-use crate::protocol::model_reasoning::{AnthropicThinkingKind, anthropic_thinking_kind};
+use crate::protocol::model_reasoning::AnthropicThinkingKind;
 
 #[derive(Clone, Debug)]
 pub struct ConvertedRequest {
@@ -145,38 +145,9 @@ fn restore_native_block_fields(converted: &mut Value, original: &Value) {
     }
 }
 
-/// Converts a streaming Responses request with hosted web search disabled.
-pub fn responses_to_anthropic(
-    body: &Value,
-    thinking_mode: ThinkingMode,
-    default_max_tokens: u64,
-    compaction_secret: SecretSource<'_>,
-) -> Result<ConvertedRequest, GatewayError> {
-    if body.get("stream").and_then(Value::as_bool) != Some(true) {
-        return Err(GatewayError::BadRequest(
-            "Codex gateway currently requires stream=true".to_owned(),
-        ));
-    }
-    let auto_thinking_kind = body
-        .get("model")
-        .and_then(Value::as_str)
-        .and_then(anthropic_thinking_kind);
-    responses_to_anthropic_with_model_reasoning_and_thinking_kind(
-        body,
-        None,
-        normalized_reasoning(body).as_ref(),
-        thinking_mode,
-        default_max_tokens,
-        None,
-        false,
-        auto_thinking_kind,
-        compaction_secret,
-    )
-}
-
 // Each argument is an independent per-request conversion input.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+pub(crate) fn responses_to_anthropic(
     body: &Value,
     model_override: Option<&str>,
     reasoning: Option<&Value>,
@@ -285,14 +256,6 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
         tool_names,
         max_tokens_defaulted: client_max_tokens.is_none(),
     })
-}
-
-pub(super) fn normalized_reasoning(body: &Value) -> Option<Value> {
-    let mut reasoning = body.get("reasoning")?.clone();
-    if reasoning.get("effort").and_then(Value::as_str) == Some("ultra") {
-        reasoning["effort"] = Value::String("max".to_owned());
-    }
-    Some(reasoning)
 }
 
 pub(super) fn merge_anthropic_output_format(

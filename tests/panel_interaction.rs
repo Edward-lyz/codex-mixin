@@ -5,7 +5,7 @@ use std::time::Duration;
 #[cfg(unix)]
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
 #[cfg(unix)]
-use codex_mixin::provider::baidu_oneapi_provider;
+use codex_mixin::provider::ProviderPreset;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -260,7 +260,7 @@ async fn headless_ducx_qr_is_streamed_and_login_completes() {
         "printf 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIiwiaWF0IjoxNzg2NjAwMDAwfQ.signature' > \"$HOME/.comate/login-user/fixture\"\n",
     )).unwrap();
     codex_mixin::platform::make_executable(&executable).unwrap();
-    let mut provider = baidu_oneapi_provider("baidu-oneapi", "fixture-key");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu-oneapi", "fixture-key");
     provider.quota_username = Some("fixture-user".to_owned());
     save_stored_config_to_path(
         &root.path().join("config.json"),
@@ -349,7 +349,7 @@ async fn browser_disconnect_terminates_nested_login_and_releases_lock() {
     std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
     std::fs::write(&executable, "#!/bin/sh\necho $$ > \"$HOME/login.pid\"\nprintf 'waiting-for-fixture-login\\n'\nexec sleep 60\n").unwrap();
     codex_mixin::platform::make_executable(&executable).unwrap();
-    let mut provider = baidu_oneapi_provider("baidu-oneapi", "fixture-key");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu-oneapi", "fixture-key");
     provider.quota_username = Some("fixture-user".to_owned());
     save_stored_config_to_path(
         &root.path().join("config.json"),
