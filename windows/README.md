@@ -1,8 +1,6 @@
 # Codex Mixin Windows 原生端
 
-Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程、Runner、插件与补丁已移除。Rust CLI / 本地网关继续负责供应商、模型、客户端接入、配置事务和服务生命周期。
-
-已确认的流程缺口、macOS 行为差异与修复顺序见 [Windows UI 架构审查](../docs/windows-ui-audit.md)；审查保留问题发生时的基线，末尾记录本次实现范围与尚待 CI / 真机验收的项目。
+Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Rust CLI / 本地网关负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
 采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK WinUI 模块固定为 stable `1.8.260803003`，Foundation、InteractiveExperiences 和 Base 沿用 lock file 中同一发行组的版本，避免引入 preview / experimental API。
 
@@ -47,7 +45,7 @@ CLI 进程启动和 JSON 解析在后台线程执行。未显式配置 `TOKIO_WO
 | --- | --- |
 | `CodexMixin/` | WinUI 原生窗口、页面与 Windows 平台壳 |
 | `Core/` | CLI 进程、严格 JSON 契约与保存后应用配置 |
-| `Tests/` | 子进程边界、凭据、超时、取消、结构化错误与真实 CLI 契约 |
+| `Tests/` | 用真实 Rust CLI 检查 `Core/` 的契约解析 |
 | `scripts/` | 图标生成、自包含发布、NSIS、安装与卸载 |
 
 开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Visual Studio 的 WinUI 开发工具和 Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。WinUI 的 XAML 编译器必须在 Windows 执行。
@@ -64,7 +62,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 ## CI 验证与发布
 
-`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布，最后生成安装器和便携包。本次迁移按用户要求不在本机运行测试。
+`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust Clippy 与 E2E、真实 CLI 契约测试、自包含 WinUI 发布，最后生成安装器和便携包。
 
 界面通过人工操作验收；仓库不维护 UI 自动化、截图或视觉回归测试，详见根级 `AGENTS.md`。
 
@@ -74,7 +72,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 ```
 
-输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`，并在安装器旁保存 `.metrics.json`，记录展开目录、安装器和便携包的字节数。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 Flutter 或 .NET。
+输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`，并在安装器旁保存 `.metrics.json`，记录展开目录、安装器和便携包的字节数。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 .NET。
 
 安装/卸载继续保留用户配置；未发布 UI 单独可执行文件，必须使用完整应用目录。签名时覆盖随包发送的 EXE / DLL 与安装器。发布工作流沿用相同打包脚本。
 
@@ -91,5 +89,3 @@ powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 控制台与编辑页使用 SDK `SelectorBar`，窗口使用 SDK `TitleBar`，条形额度使用 `ProgressBar`。上下文启用和模型覆盖为保存后生效的 `CheckBox`，统一展示未应用状态并在切换页面前确认。执行操作期间用 `IsEnabled` 同时禁止鼠标、键盘、焦点和自动化编辑。托盘使用 `NOTIFYICON_VERSION_4` 处理键盘选择与上下文菜单，并通过 `Shell_NotifyIconGetRect` 按图标位置和任务栏边缘定位。
 
 当前 `WindowsPackageType=None`，因此采用适配现有 NSIS / ZIP 的 WinSparkle；MSIX / App Installer 的分发迁移另行评估。高对比度、文本缩放、多显示器 DPI、Narrator 和 DUCX 扫码仍需 Windows 真机验收。
-
-本次按用户要求只在本地格式化代码，构建、Rust / adapter / UIA 回归与安装升级验收交由 PR 的 Windows CI；DUCX 下载、扫码和用户网络条件仍需 Windows 真机验收。
