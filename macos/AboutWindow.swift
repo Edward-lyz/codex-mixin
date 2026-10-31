@@ -79,12 +79,12 @@ private struct AboutView: View {
                 .frame(width: 300, height: 188)
                 .accessibilityIdentifier("about.card-preview")
 
-                Text(L10n.About.cardHint)
+                Text(AppLocalization.string("about.cardHint"))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
 
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text(L10n.About.version(model.info.version))
+                    Text(AppLocalization.string("about.version", model.info.version))
                         .font(.caption.monospaced().weight(.medium))
                     Text("Build \(model.info.build)")
                         .font(.caption2.monospaced())
@@ -100,16 +100,16 @@ private struct AboutView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Codex Mixin")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text(L10n.About.slogan)
+                Text(AppLocalization.string("about.slogan"))
                     .font(.title3.weight(.medium))
-                Text(L10n.About.detail)
+                Text(AppLocalization.string("about.detail"))
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 10) {
                     Button(action: model.openRepository) {
-                        Label(L10n.About.openRepository, systemImage: "arrow.up.right.square")
+                        Label(AppLocalization.string("about.openRepository"), systemImage: "arrow.up.right.square")
                             .frame(maxWidth: .infinity)
                     }
                     .help(model.info.repositoryURL)
@@ -117,7 +117,7 @@ private struct AboutView: View {
 
                     Button(action: model.copyVersionInfo) {
                         Label(
-                            model.copied ? L10n.About.copied : L10n.About.copyVersion,
+                            model.copied ? AppLocalization.string("about.copied") : AppLocalization.string("about.copyVersion"),
                             systemImage: model.copied ? "checkmark" : "doc.on.doc"
                         )
                         .frame(maxWidth: .infinity)
@@ -169,7 +169,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = L10n.About.title
+        window.title = AppLocalization.string("about.title")
         window.titleVisibility = .hidden
         configureOpaqueWindow(window)
         window.isMovableByWindowBackground = true

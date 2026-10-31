@@ -86,9 +86,7 @@ fi
 
 cd "$ROOT_DIR"
 cargo build "${CARGO_BUILD_ARGS[@]}"
-mkdir -p "$ROOT_DIR/macos/Generated"
 "$ROOT_DIR/scripts/check_localizations.sh"
-"$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml"
 SPARKLE_DIR="$("$ROOT_DIR/scripts/fetch_sparkle.sh")"
 "$ROOT_DIR/macos/make_icon.sh"
 PACKAGE_ID="$(cargo pkgid --package codex-mixin)"
@@ -230,7 +228,6 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ContextSettingsSupport.swift" \
   "$ROOT_DIR/macos/ContextSettingsView.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
-  "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
