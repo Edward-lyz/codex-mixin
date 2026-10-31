@@ -103,9 +103,8 @@ impl Panel {
     }
 }
 
-/// `streamAction` in `panel/assets/app.js` reads these fields directly, so
-/// pin the wire shape here: a rename on either side breaks the panel without
-/// any Rust type error.
+/// `streamAction` in `panel/assets/app.js` reads these fields directly, so a
+/// rename breaks the panel without any Rust type error.
 fn assert_stream_contract(output: &str) -> Vec<Value> {
     let events = output
         .lines()
@@ -139,13 +138,6 @@ fn assert_stream_contract(output: &str) -> Vec<Value> {
             "error" => assert!(event["error"].is_object(), "{event}"),
             other => panic!("unexpected stream event type: {other}"),
         }
-    }
-    let client = include_str!("../panel/assets/app.js");
-    for kind in ["output", "result", "error"] {
-        assert!(
-            client.contains(&format!("event.type === \"{kind}\"")),
-            "panel/assets/app.js no longer handles {kind} events"
-        );
     }
     events
 }

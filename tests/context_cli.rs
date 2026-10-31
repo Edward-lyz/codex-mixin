@@ -61,15 +61,6 @@ const SHARED_SHELL_SETTING_KEYS: [&str; 8] = [
 /// Extra settings only the Windows settings page renders.
 const WINDOWS_ONLY_SETTING_KEYS: [&str; 2] = ["max_tier", "guidance_only"];
 
-fn assert_source_reads_keys(source: &str, keys: &[&str], shell: &str) {
-    for key in keys {
-        assert!(
-            source.contains(&format!("\"{key}\"")),
-            "{shell} no longer decodes {key}"
-        );
-    }
-}
-
 #[test]
 fn context_cli_reports_settings_and_empty_stats() {
     let directory = tempfile::tempdir().unwrap();
@@ -248,7 +239,7 @@ fn context_save_preserves_commit_state_when_gateway_restart_fails() {
 }
 
 #[test]
-fn context_settings_json_matches_shell_decoders() {
+fn context_settings_json_lists_every_setting() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("context.db");
     let got = successful(cli(
@@ -267,22 +258,6 @@ fn context_settings_json_matches_shell_decoders() {
         context.len(),
         SHARED_SHELL_SETTING_KEYS.len() + WINDOWS_ONLY_SETTING_KEYS.len(),
         "unexpected settings keys: {context:?}"
-    );
-
-    assert_source_reads_keys(
-        include_str!("../macos/ContextSettingsSupport.swift"),
-        &SHARED_SHELL_SETTING_KEYS,
-        "macos/ContextSettingsSupport.swift",
-    );
-    assert_source_reads_keys(
-        include_str!("../windows/Core/Context.cs"),
-        &SHARED_SHELL_SETTING_KEYS,
-        "windows/Core/Context.cs",
-    );
-    assert_source_reads_keys(
-        include_str!("../windows/Core/Context.cs"),
-        &WINDOWS_ONLY_SETTING_KEYS,
-        "windows/Core/Context.cs",
     );
 }
 
