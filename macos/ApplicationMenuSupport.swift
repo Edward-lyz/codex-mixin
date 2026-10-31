@@ -73,25 +73,25 @@ func makeApplicationMainMenu(
     let mainMenu = NSMenu()
 
     let appMenuItem = NSMenuItem()
-    let appMenu = NSMenu(title: L10n.App.name)
-    let quitItem = appMenu.addItem(withTitle: L10n.Menu.quit, action: quitAction, keyEquivalent: "q")
+    let appMenu = NSMenu(title: AppLocalization.string("app.name"))
+    let quitItem = appMenu.addItem(withTitle: AppLocalization.string("menu.quit"), action: quitAction, keyEquivalent: "q")
     quitItem.target = quitTarget
     appMenuItem.submenu = appMenu
     mainMenu.addItem(appMenuItem)
 
     let editMenuItem = NSMenuItem()
-    let editMenu = NSMenu(title: L10n.Menu.edit)
-    editMenu.addItem(withTitle: L10n.Menu.cut, action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    editMenu.addItem(withTitle: L10n.Menu.copy, action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-    editMenu.addItem(withTitle: L10n.Menu.paste, action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-    editMenu.addItem(withTitle: L10n.Menu.selectAll, action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    let editMenu = NSMenu(title: AppLocalization.string("menu.edit"))
+    editMenu.addItem(withTitle: AppLocalization.string("menu.cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: AppLocalization.string("menu.copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: AppLocalization.string("menu.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: AppLocalization.string("menu.selectAll"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenuItem.submenu = editMenu
     mainMenu.addItem(editMenuItem)
 
     let windowMenuItem = NSMenuItem()
-    let windowMenu = NSMenu(title: L10n.Menu.window)
+    let windowMenu = NSMenu(title: AppLocalization.string("menu.window"))
     let closeWindowItem = windowMenu.addItem(
-        withTitle: L10n.Menu.closeWindow,
+        withTitle: AppLocalization.string("menu.closeWindow"),
         action: closeWindowAction,
         keyEquivalent: "w"
     )
