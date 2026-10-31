@@ -46,28 +46,6 @@ struct AgentCLIInfo: Decodable, Equatable {
         case error
     }
 
-    init(
-        version: String,
-        latest: String,
-        via: String,
-        path: String,
-        command: String,
-        appVersion: String?,
-        update: Bool,
-        error: String?,
-        appPath: String? = nil
-    ) {
-        self.version = version
-        self.latest = latest
-        self.via = via
-        self.path = path
-        self.command = command
-        self.appVersion = appVersion
-        self.appPath = appPath
-        self.update = update
-        self.error = error
-    }
-
     /// The CLI serializes the version fields as nullable strings when it
     /// cannot read them, so null and a missing key both mean "unknown" here.
     init(from decoder: Decoder) throws {
