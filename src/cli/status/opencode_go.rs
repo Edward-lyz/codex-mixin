@@ -414,29 +414,11 @@ fn unix_time_plus_seconds(seconds: f64) -> String {
     unix_seconds_to_rfc3339(now + seconds.max(0.0) as u64)
 }
 
-pub(super) fn unix_seconds_to_rfc3339(seconds: u64) -> String {
-    let days = seconds / 86_400;
-    let seconds_of_day = seconds % 86_400;
-    let hour = seconds_of_day / 3_600;
-    let minute = (seconds_of_day % 3_600) / 60;
-    let second = seconds_of_day % 60;
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-fn civil_from_days(days_since_epoch: u64) -> (u64, u64, u64) {
-    let z = days_since_epoch as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let day_of_era = z - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    year += if month <= 2 { 1 } else { 0 };
-    (year as u64, month as u64, day as u64)
+fn unix_seconds_to_rfc3339(seconds: u64) -> String {
+    let seconds = i64::try_from(seconds).unwrap_or(i64::MAX);
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .unwrap_or_default()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 pub(crate) fn official_quota_rows(

@@ -9,12 +9,19 @@ extension AppDelegate {
         guard let executableURL = Bundle.main.executableURL else {
             throw GatewayError.command("Codex Mixin app executable not found")
         }
-        let plist = menuLaunchAgentPlist(
-            label: menuLaunchLabel,
-            executablePath: executableURL.path,
-            logPath: stateDir().appendingPathComponent("macos-app.log").path
-        )
-        try plist.write(to: menuLaunchAgentPath(), atomically: true, encoding: .utf8)
+        let logPath = stateDir().appendingPathComponent("macos-app.log").path
+        let plist: [String: Any] = [
+            "Label": menuLaunchLabel,
+            "ProgramArguments": [executableURL.path, "--background"],
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "ThrottleInterval": 10,
+            "ProcessType": "Interactive",
+            "StandardOutPath": logPath,
+            "StandardErrorPath": logPath,
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: menuLaunchAgentPath(), options: .atomic)
     }
 
     func menuLaunchAtLoginMarkerPath() -> URL {
