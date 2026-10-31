@@ -12,6 +12,29 @@ pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
         || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
 }
 
+/// Recover the plaintext held by Mixin's provider-compatible reasoning envelope.
+pub(crate) fn gateway_thinking_text(encrypted_content: &str) -> Option<String> {
+    if let Some(payload) = encrypted_content
+        .strip_prefix(ANTHROPIC_THINKING_PREFIX)
+        .or_else(|| encrypted_content.strip_prefix(ANTHROPIC_UNSIGNED_THINKING_PREFIX))
+    {
+        let block = serde_json::from_str::<ContentBlock>(payload).ok()?;
+        return match block {
+            ContentBlock::Thinking { thinking, .. } if !thinking.trim().is_empty() => {
+                Some(thinking)
+            }
+            _ => None,
+        };
+    }
+    let payload = encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX)?;
+    let state = serde_json::from_str::<Value>(payload).ok()?;
+    state
+        .get("thinking")
+        .and_then(Value::as_str)
+        .filter(|thinking| !thinking.trim().is_empty())
+        .map(str::to_owned)
+}
+
 pub(super) fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,

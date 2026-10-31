@@ -7,7 +7,8 @@ use crate::gateway::{
     CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
 use crate::protocol::convert::{
-    WebSearchTool, responses_to_anthropic_with_model_reasoning_and_thinking_kind,
+    WebSearchTool, gateway_thinking_text,
+    responses_to_anthropic_with_model_reasoning_and_thinking_kind,
 };
 use crate::protocol::gemini::responses_to_gemini;
 use crate::protocol::model_reasoning::{
@@ -354,6 +355,17 @@ async fn stream_openai_responses(
     }
     upstream_body["model"] = Value::String(upstream_model_id.to_owned());
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    if provider.definition().preset_id.as_deref() == Some("deepseek") {
+        let rewritten = prepare_deepseek_reasoning_replay(&mut upstream_body);
+        if rewritten > 0 {
+            tracing::debug!(
+                provider_id = provider.id(),
+                upstream_model_id = %upstream_model_id,
+                rewritten,
+                "materialized DeepSeek reasoning replay"
+            );
+        }
+    }
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -395,6 +407,79 @@ async fn stream_openai_responses(
         upstream_model_id.to_owned(),
         downstream_model.to_owned(),
     ))
+}
+
+/// DeepSeek's stateless Responses API requires prior thinking to be replayed as
+/// plaintext on tool-call continuations. Mixin's Anthropic/Baidu envelopes and
+/// Codex summaries do not use DeepSeek's `reasoning_text` shape.
+fn prepare_deepseek_reasoning_replay(body: &mut Value) -> usize {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    input
+        .iter_mut()
+        .map(materialize_deepseek_reasoning)
+        .filter(|changed| *changed)
+        .count()
+}
+
+fn materialize_deepseek_reasoning(item: &mut Value) -> bool {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+        return false;
+    }
+    let native_text = reasoning_text(item);
+    let gateway_text = item
+        .get("encrypted_content")
+        .and_then(Value::as_str)
+        .and_then(gateway_thinking_text);
+    let summary_text = reasoning_summary_text(item);
+    let content = json!([{
+        "type": "reasoning_text",
+        "text": native_text
+            .or(gateway_text)
+            .or(summary_text)
+            .unwrap_or_else(|| "Previous reasoning unavailable.".to_owned())
+    }]);
+    let changed = item.get("content") != Some(&content)
+        || item.get("encrypted_content").is_some()
+        || item.get("summary").is_some();
+    let Some(object) = item.as_object_mut() else {
+        return false;
+    };
+    object.remove("encrypted_content");
+    object.remove("summary");
+    object.insert("content".to_owned(), content);
+    changed
+}
+
+fn reasoning_text(item: &Value) -> Option<String> {
+    let text = match item.get("content")? {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(part) => part
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        Value::Bool(_) | Value::Number(_) | Value::Null => return None,
+    };
+    (!text.trim().is_empty()).then_some(text)
+}
+
+fn reasoning_summary_text(item: &Value) -> Option<String> {
+    let summary = item.get("summary")?.as_array()?;
+    let text = summary
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
 }
 
 fn is_thought_signature_error(error_text: &str) -> bool {
@@ -670,6 +755,72 @@ mod tests {
         let unsupported = json!({"reasoning":{"effort":"ultra"}});
         assert!(upstream_reasoning(&unsupported, Some(false)).is_none());
     }
+
+    #[test]
+    fn deepseek_reasoning_replay_materializes_plaintext() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "content": [],
+                    "summary": [{"type": "summary_text", "text": "summary thought"}],
+                    "encrypted_content": crate::protocol::convert::encode_anthropic_thinking(
+                        "signed thought",
+                        "signature",
+                    )
+                },
+                {
+                    "type": "reasoning",
+                    "content": null,
+                    "summary": [{"type": "summary_text", "text": "summary thought"}]
+                },
+                {
+                    "type": "reasoning",
+                    "content": [],
+                    "encrypted_content": "gAAAAABopaque"
+                },
+                {
+                    "type": "reasoning",
+                    "content": [{"type": "text", "text": "native thought"}],
+                    "summary": [{"type": "summary_text", "text": "stale summary"}],
+                    "encrypted_content": "gAAAAABstale"
+                },
+                {"type": "function_call", "call_id": "call-1", "name": "exec"}
+            ]
+        });
+
+        assert_eq!(prepare_deepseek_reasoning_replay(&mut body), 4);
+        assert_eq!(
+            body["input"][0]["content"],
+            json!([{"type": "reasoning_text", "text": "signed thought"}])
+        );
+        assert_eq!(
+            body["input"][1]["content"],
+            json!([{"type": "reasoning_text", "text": "summary thought"}])
+        );
+        assert_eq!(
+            body["input"][2]["content"],
+            json!([{
+                "type": "reasoning_text",
+                "text": "Previous reasoning unavailable."
+            }])
+        );
+        assert_eq!(
+            body["input"][3]["content"],
+            json!([{"type": "reasoning_text", "text": "native thought"}])
+        );
+        assert!(
+            body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(
+                    |item| item.get("encrypted_content").is_none() && item.get("summary").is_none()
+                )
+        );
+        assert_eq!(prepare_deepseek_reasoning_replay(&mut body), 0);
+    }
+
     #[test]
     fn agy_tool_policy_is_scoped() {
         for (preset, path, native_agy) in [

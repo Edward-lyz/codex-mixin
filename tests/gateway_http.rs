@@ -376,6 +376,46 @@ async fn spawn_baidu_protocol_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
     (spawn_router(app).await, requests)
 }
 
+async fn spawn_deepseek_reasoning_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/v1/responses",
+            post(|State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+                requests.lock().unwrap().push(body.clone());
+                let has_replayable_reasoning = body["input"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| item["type"] == "reasoning")
+                    .all(|item| {
+                        item["content"].as_array().is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part["type"] == "reasoning_text"
+                                    && part["text"]
+                                        .as_str()
+                                        .is_some_and(|text| !text.trim().is_empty())
+                            })
+                        })
+                    });
+                if !has_replayable_reasoning {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"message":"The `reasoning_text` in the thinking mode must be passed back to the API."}})),
+                    )
+                        .into_response();
+                }
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }),
+        )
+        .with_state(requests.clone());
+    (spawn_router(app).await, requests)
+}
+
 async fn spawn_fusion_mock_upstream(
     panel_barrier: Option<Arc<tokio::sync::Barrier>>,
     failing_models: Vec<&str>,
@@ -5209,6 +5249,68 @@ async fn rewrites_named_unpaired_function_output_for_responses_provider() {
             "content": "Resume a delegated turn."
         }])
     );
+}
+
+#[tokio::test]
+async fn deepseek_replays_cross_provider_reasoning_as_reasoning_text() {
+    let (upstream_url, requests) = spawn_deepseek_reasoning_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].preset_id = Some("deepseek".to_owned());
+    config.providers[0].protocol = ProviderProtocol::OpenAiResponses;
+    config.providers[0].api_path = "/v1/responses".to_owned();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("DeepSeek-V4-Flash-custom");
+    request["reasoning"] = json!({"effort": "max"});
+    request["input"] = json!([
+        {
+            "type": "reasoning",
+            "content": null,
+            "summary": [{"type": "summary_text", "text": "summary thought"}],
+            "encrypted_content": "codex-mixin:anthropic-thinking:v1:{\"type\":\"thinking\",\"thinking\":\"signed thought\",\"signature\":\"signature\"}"
+        },
+        {
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "exec_command",
+            "arguments": "{\"cmd\":\"pwd\"}"
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "/workspace"
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "continue"}]
+        }
+    ]);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let response_body = response.text().await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "unexpected response: {response_body}"
+    );
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0]["input"][0]["content"],
+        json!([{"type": "reasoning_text", "text": "signed thought"}])
+    );
+    assert!(captured[0]["input"][0].get("summary").is_none());
+    assert!(captured[0]["input"][0].get("encrypted_content").is_none());
+    assert_eq!(captured[0]["input"][1]["call_id"], "call-1");
 }
 
 #[tokio::test]
