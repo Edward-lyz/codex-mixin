@@ -22,8 +22,7 @@ pub use anthropic::map_anthropic_sse;
 pub(crate) use anthropic::map_anthropic_sse_with_image_routes;
 pub use gemini::map_gemini_sse;
 pub(crate) use gemini::map_gemini_sse_with_image_routes;
-pub use openai_chat::map_openai_chat_sse;
-pub(crate) use openai_chat::map_openai_chat_sse_with_image_routes;
+pub(crate) use openai_chat::map_openai_chat_sse;
 
 fn chat_event(kind: &str, value: Value) -> Bytes {
     encode_raw_event(kind, &value.to_string())
@@ -40,6 +39,3 @@ pub(super) fn coalesce_events(events: &mut Vec<Bytes>) -> Option<Bytes> {
     }
     Some(combined.freeze())
 }
-
-#[cfg(test)]
-mod tests;

@@ -96,7 +96,7 @@ final class FusionSettingsModel: ObservableObject {
                 for id in configuredIDs where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
                     optionsByID[id] = optionsByID[id] ?? FusionModelOption(
                         id: id,
-                        displayName: L10n.Fusion.unavailableModel,
+                        displayName: AppLocalization.string("fusion.unavailableModel"),
                         isAvailable: false
                     )
                 }
@@ -218,14 +218,14 @@ final class FusionSettingsModel: ObservableObject {
                 }
                 loadedProfile = profile
                 isBusy = false
-                status = L10n.Fusion.saveSuccess(profile.id)
+                status = AppLocalization.string("fusion.saveSuccess", profile.id)
                 statusColor = .green
             } catch {
                 isBusy = false
-                status = L10n.Fusion.saveFailed(localizedErrorDescription(error))
+                status = AppLocalization.string("fusion.saveFailed", localizedErrorDescription(error))
                 statusColor = .red
                 presentFusionAlert(
-                    title: L10n.Fusion.saveAlertTitle,
+                    title: AppLocalization.string("fusion.saveAlertTitle"),
                     message: localizedErrorDescription(error)
                 )
             }
@@ -235,8 +235,8 @@ final class FusionSettingsModel: ObservableObject {
     func disableFusion() {
         let configuredProfileID = loadedProfile.id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canDisable, confirm(
-            title: L10n.Fusion.disableConfirmTitle,
-            message: L10n.Fusion.disableConfirmMessage(configuredProfileID)
+            title: AppLocalization.string("fusion.disableConfirmTitle"),
+            message: AppLocalization.string("fusion.disableConfirmMessage", configuredProfileID)
         ) else { return }
 
         isBusy = true
@@ -266,14 +266,14 @@ final class FusionSettingsModel: ObservableObject {
                 finalModel = selection.finalModel
                 selectedPanels = []
                 isBusy = false
-                status = L10n.Fusion.disableSuccess(configuredProfileID)
+                status = AppLocalization.string("fusion.disableSuccess", configuredProfileID)
                 statusColor = .green
             } catch {
                 isBusy = false
-                status = L10n.Fusion.disableFailed(localizedErrorDescription(error))
+                status = AppLocalization.string("fusion.disableFailed", localizedErrorDescription(error))
                 statusColor = .red
                 presentFusionAlert(
-                    title: L10n.Fusion.disableAlertTitle,
+                    title: AppLocalization.string("fusion.disableAlertTitle"),
                     message: localizedErrorDescription(error)
                 )
             }
@@ -353,7 +353,7 @@ private struct FusionSettingsView: View {
                 }
                 Spacer()
                 Menu {
-                    Button(L10n.Fusion.disableButton, action: model.disableFusion)
+                    Button(AppLocalization.string("fusion.disableButton"), action: model.disableFusion)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -523,7 +523,7 @@ private struct FusionSettingsView: View {
     @ViewBuilder
     private var modelOptions: some View {
         ForEach(model.options, id: \.id) { option in
-            Text(option.isAvailable ? option.id : "\(option.id) \(L10n.Fusion.unavailable)")
+            Text(option.isAvailable ? option.id : "\(option.id) \(AppLocalization.string("fusion.unavailable"))")
                 .tag(option.id)
         }
     }
@@ -539,7 +539,7 @@ private struct FusionPanelList: View {
                 Image(systemName: "rectangle.3.group")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text(model.options.isEmpty ? L10n.Fusion.noModels : "没有匹配的模型")
+                Text(model.options.isEmpty ? AppLocalization.string("fusion.noModels") : "没有匹配的模型")
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -603,7 +603,7 @@ private struct FusionPanelRow: View {
     private var optionDetail: String {
         option.isAvailable
             ? option.displayName
-            : "\(option.displayName) · \(L10n.Fusion.unavailable)"
+            : "\(option.displayName) · \(AppLocalization.string("fusion.unavailable"))"
     }
 }
 
@@ -658,7 +658,7 @@ private func presentFusionAlert(title: String, message: String) {
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: L10n.Common.ok)
+    alert.addButton(withTitle: AppLocalization.string("common.ok"))
     presentPersistentWindow(alert.window)
     alert.runModal()
     alert.window.close()

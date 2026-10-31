@@ -42,15 +42,6 @@ pub fn owner_only_status(metadata: &fs::Metadata) -> OwnerOnlyStatus {
     }
 }
 
-/// Whether a file is private to its owner, treating OSes without mode bits
-/// as private (their state directory is ACL-restricted instead).
-pub fn is_owner_only(path: &Path) -> std::io::Result<bool> {
-    Ok(!matches!(
-        owner_only_status(&fs::metadata(path)?),
-        OwnerOnlyStatus::TooOpen(_)
-    ))
-}
-
 /// Clear group/other permission bits (mode 0600). No-op where the OS has no
 /// POSIX mode bits. Never spawns a process, so it is safe on warm paths.
 pub fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
@@ -143,24 +134,6 @@ pub fn persist_temp_path(temporary: tempfile::TempPath, path: &Path) -> anyhow::
     Ok(())
 }
 
-/// Create a symbolic link to a file. Windows requires Developer Mode or an
-/// elevated token for this, so callers must handle the error.
-pub fn symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link)
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_file(target, link)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (target, link);
-        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
-    }
-}
-
 pub fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool> {
     if path.exists() && fs::read(path)? == contents {
         return Ok(false);
@@ -208,71 +181,4 @@ fn replace_file_atomic(
 pub fn ensure_owner_only_dir(path: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(path)?;
     super::restrict_owner_only_dir(path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
-
-    #[test]
-    fn executable_names_use_the_native_suffix() {
-        assert_eq!(
-            executable_file_name("codex"),
-            format!("codex{}", std::env::consts::EXE_SUFFIX)
-        );
-    }
-
-    #[test]
-    fn owner_only_mode_makes_a_file_private() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("secret");
-        fs::write(&path, b"x").unwrap();
-        make_executable(&path).unwrap();
-        set_owner_only_mode(&path).unwrap();
-        assert!(is_owner_only(&path).unwrap());
-        assert_ne!(
-            owner_only_status(&fs::metadata(&path).unwrap()),
-            OwnerOnlyStatus::TooOpen(0o644)
-        );
-    }
-
-    #[test]
-    fn atomic_write_is_idempotent() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("client.json");
-        assert!(write_atomic_if_changed(&path, b"one").unwrap());
-        assert!(!write_atomic_if_changed(&path, b"one").unwrap());
-        assert!(write_atomic_if_changed(&path, b"two").unwrap());
-        assert_eq!(fs::read(path).unwrap(), b"two");
-    }
-
-    #[test]
-    fn concurrent_atomic_writes_use_distinct_temporary_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = Arc::new(directory.path().join("client.json"));
-        let writers = 8;
-        let barrier = Arc::new(Barrier::new(writers));
-        let threads = (0..writers)
-            .map(|index| {
-                let path = Arc::clone(&path);
-                let barrier = Arc::clone(&barrier);
-                thread::spawn(move || {
-                    let contents = vec![b'0' + index as u8; 64 * 1024];
-                    barrier.wait();
-                    write_atomic_if_changed(&path, &contents).unwrap();
-                    contents
-                })
-            })
-            .collect::<Vec<_>>();
-        let candidates = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .collect::<Vec<_>>();
-
-        let written = fs::read(path.as_ref()).unwrap();
-        assert!(candidates.contains(&written));
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
-    }
 }

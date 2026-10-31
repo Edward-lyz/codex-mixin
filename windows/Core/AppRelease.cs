@@ -8,8 +8,6 @@ internal sealed class AppRelease
     internal string Version { get; }
     internal bool IsNewer { get; }
     internal string CurrentVersion { get; }
-    internal Uri Installer => new($"https://github.com/Edward-lyz/codex-mixin/releases/download/v{Version}/codex-mixin-{Version}-windows-x86_64-setup.exe");
-    internal Uri Portable => new($"https://github.com/Edward-lyz/codex-mixin/releases/download/v{Version}/codex-mixin-{Version}-windows-x86_64.zip");
 
     private AppRelease(string version, string currentVersion, bool isNewer) { Version = version; CurrentVersion = currentVersion; IsNewer = isNewer; }
 

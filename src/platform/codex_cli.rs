@@ -1,16 +1,8 @@
-//! Where the official Codex CLI lives on each OS, how its official installer
-//! runs, and how script-based launchers are executed.
+//! Where the official Codex CLI lives on each OS and how script-based
+//! launchers are executed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-/// Official installer for the Codex CLI on this OS.
-pub struct CodexCliInstaller {
-    pub script_url: &'static str,
-    pub command: Command,
-    /// Where the installer places the CLI when that location is fixed.
-    pub installed_path: Option<PathBuf>,
-}
 
 /// Well-known Codex CLI locations, most preferred first. `PATH` entries are
 /// searched separately through [`path_executable_candidates`].
@@ -49,7 +41,7 @@ pub fn path_executable_candidates(directory: &Path, stem: &str) -> Vec<PathBuf> 
 /// `Contents/Resources/codex-cli/bin/codex` in 2026-09. Probing only the old
 /// path makes the gateway fall back to `models_cache.json`, which pins a stale
 /// client version and hides newer official models.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn app_bundle_codex_cli_candidates(bundle: &Path) -> [PathBuf; 2] {
     let resources = bundle.join("Contents/Resources");
     [
@@ -77,53 +69,6 @@ fn windows_codex_cli_candidates() -> Vec<PathBuf> {
     }
     candidates.push(PathBuf::from("C:/Program Files/OpenAI/Codex/codex.exe"));
     candidates
-}
-
-/// Build the non-interactive official installer invocation.
-pub fn codex_cli_installer() -> anyhow::Result<CodexCliInstaller> {
-    #[cfg(windows)]
-    {
-        const URL: &str = "https://chatgpt.com/codex/install.ps1";
-        let mut command = Command::new(super::system_powershell()?);
-        command
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-            ])
-            .arg(format!("Invoke-RestMethod '{URL}' | Invoke-Expression"))
-            .env("CODEX_NON_INTERACTIVE", "true")
-            .env("CODEX_INSTALLER_USE_RELEASES_OPENAI_COM", "true");
-        super::prepare_background_command(&mut command);
-        Ok(CodexCliInstaller {
-            script_url: URL,
-            command,
-            installed_path: None,
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        use anyhow::Context;
-
-        const URL: &str = "https://chatgpt.com/codex/install.sh";
-        let bin_dir = super::home_dir_required()
-            .context("a home directory is required to install Codex CLI")?
-            .join(".local/bin");
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(format!("curl -fsSL {URL} | sh"))
-            .env("CODEX_NON_INTERACTIVE", "true")
-            .env("CODEX_INSTALLER_USE_RELEASES_OPENAI_COM", "true")
-            .env("CODEX_INSTALL_DIR", bin_dir.as_os_str());
-        Ok(CodexCliInstaller {
-            script_url: URL,
-            installed_path: Some(bin_dir.join("codex")),
-            command,
-        })
-    }
 }
 
 /// Command that runs a launcher, dispatching script launchers through their
@@ -154,35 +99,4 @@ pub fn launcher_command(path: &Path) -> Command {
     };
     super::prepare_background_command(&mut command);
     command
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn app_bundle_candidates_find_the_codex_cli_layout() {
-        let directory = tempfile::tempdir().unwrap();
-        let bundle = directory.path().join("ChatGPT.app");
-        let cli = bundle.join("Contents/Resources/codex-cli/bin/codex");
-        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
-        std::fs::write(&cli, b"").unwrap();
-        let resolved = app_bundle_codex_cli_candidates(&bundle)
-            .into_iter()
-            .find(|path| path.is_file());
-        assert_eq!(resolved, Some(cli));
-    }
-
-    #[test]
-    fn app_bundle_candidates_keep_the_legacy_layout() {
-        let directory = tempfile::tempdir().unwrap();
-        let bundle = directory.path().join("Codex.app");
-        let cli = bundle.join("Contents/Resources/codex");
-        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
-        std::fs::write(&cli, b"").unwrap();
-        let resolved = app_bundle_codex_cli_candidates(&bundle)
-            .into_iter()
-            .find(|path| path.is_file());
-        assert_eq!(resolved, Some(cli));
-    }
 }

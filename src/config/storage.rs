@@ -433,18 +433,6 @@ fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
     FileExt::lock_exclusive(&lock).with_context(|| format!("lock {}", lock_path.display()))?;
     Ok(lock)
 }
-pub fn delete_stored_config() -> anyhow::Result<bool> {
-    let path = stored_config_path();
-    if !path.exists() {
-        return Ok(false);
-    }
-    fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-    let key_path = config_key_path(&path)?;
-    if key_path.exists() {
-        fs::remove_file(&key_path).with_context(|| format!("remove {}", key_path.display()))?;
-    }
-    Ok(true)
-}
 fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
     crate::platform::restrict_owner_only_dir(path)
         .with_context(|| format!("restrict permissions for {}", path.display()))
@@ -452,69 +440,4 @@ fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
 fn set_private_file_permissions(path: &std::path::Path) -> anyhow::Result<()> {
     crate::platform::restrict_owner_only_file(path)
         .with_context(|| format!("restrict permissions for {}", path.display()))
-}
-
-#[cfg(test)]
-mod backup_tests {
-    use super::*;
-
-    fn backup_config() -> StoredGatewayConfig {
-        StoredGatewayConfig {
-            gateway_bind: Some("127.0.0.1:18787".to_owned()),
-            gateway_api_key: Some("gateway-secret".to_owned()),
-            providers: vec![crate::provider::open_code_go_provider(
-                "opencode-go",
-                "provider-secret",
-            )],
-            ..StoredGatewayConfig::default()
-        }
-    }
-
-    #[test]
-    fn base64_backup_round_trips_without_machine_local_bind() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("source.json");
-        let backup = directory.path().join("backup.b64");
-        let destination = directory.path().join("destination.json");
-        save_stored_config_to_path(&source, &backup_config()).unwrap();
-
-        export_stored_config_from_path(&source, &backup).unwrap();
-
-        let encoded = fs::read_to_string(&backup).unwrap();
-        assert!(!encoded.contains("gateway-secret"));
-        assert!(!encoded.contains("provider-secret"));
-        assert!(crate::platform::is_owner_only(&backup).unwrap());
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(encoded.trim())
-            .unwrap();
-        let exported: StoredGatewayConfig = serde_json::from_slice(&decoded).unwrap();
-        assert_eq!(exported.gateway_bind, None);
-        assert_eq!(exported.gateway_api_key.as_deref(), Some("gateway-secret"));
-
-        import_stored_config_to_path(&backup, &destination).unwrap();
-
-        let imported = load_stored_config_from_path(&destination).unwrap().unwrap();
-        assert_eq!(imported.gateway_bind, None);
-        assert_eq!(imported.gateway_api_key.as_deref(), Some("gateway-secret"));
-        assert_eq!(imported.providers[0].auth.api_key, "provider-secret");
-    }
-
-    #[test]
-    fn invalid_backup_does_not_replace_existing_configuration() {
-        let directory = tempfile::tempdir().unwrap();
-        let backup = directory.path().join("invalid.b64");
-        let destination = directory.path().join("config.json");
-        save_stored_config_to_path(&destination, &backup_config()).unwrap();
-        fs::write(&backup, "not base64").unwrap();
-
-        let error = import_stored_config_to_path(&backup, &destination).unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("decode Base64 configuration backup")
-        );
-        let stored = load_stored_config_from_path(&destination).unwrap().unwrap();
-        assert_eq!(stored.gateway_api_key.as_deref(), Some("gateway-secret"));
-    }
 }

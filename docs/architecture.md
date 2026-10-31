@@ -1,7 +1,7 @@
 # Codex Mixin 架构
 
-本文档描述本次 SOLID 重构后的模块职责、依赖方向与组件模型。静态边界由
-`scripts/check_arch.sh` 强制，在 CI 的 fmt 之后执行。
+本文档描述模块职责、依赖方向与组件模型。静态边界由 `scripts/check_arch.sh`
+强制，在 CI 的 fmt 之后执行。
 
 ## 模块职责
 
@@ -18,7 +18,7 @@
 | `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `context` | 原始消息归档、压缩视图、会话 revision、检索与导出 | `config`（仅取配置路径），不依赖 `server`/`gateway`/`cli` |
-| `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
+| `clients` | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
 | `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
 | `macos` / `panel` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
@@ -35,10 +35,9 @@
 codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 （计划任务、taskkill、ACL、Windows Terminal）上分别实现。
 
-`tests/platform_neutral_core.rs` 扫描 `src/` 与 `panel/` 中 `src/platform`
-以外的生产代码，发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、
-`launchctl`、`USERPROFILE`、`/usr/`、权限位等平台片段即失败。测试专用代码
-（`#[cfg(test)]` 项与 `tests.rs`）可以按平台准备 fixture。
+`scripts/check_arch.sh` 扫描 `src/` 与 `panel/` 中 `src/platform` 以外的代码，
+发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、`launchctl`、
+`USERPROFILE`、`/usr/`、权限位等平台片段即失败。
 
 ## 壳与 CLI 的契约
 
@@ -90,16 +89,6 @@ provider 管理用例把网络操作放在锁外，先提交主配置，再执�
 失败退出码保持不变；后续阶段可通过 `provider refresh` 等入口重试，不会重复
 创建 provider，也不会吞掉错误。
 
-## 行为修正
-
-- 客户端密钥同步不再从全局命令分发执行；接入、密钥变更、服务启动与明确
-  修复流程才会同步，`doctor` 报告损坏的托管配置，无关查询不受损坏客户端影响。
-- Anthropic Messages 使用与其他协议一致的模型级端点（`api_url_for_model`），
-  保留 Baidu 路由、AWS SigV4 签名与 DUCX 头部。
-- 提交后失败准确表达阶段与“配置已保存”。
-
-详见 `docs/behavior-changes.md`。
-
 ## 架构检查
 
 `scripts/check_arch.sh` 是粗粒度静态源码检查，不宣称完整的 Rust 语义分析；
@@ -114,3 +103,5 @@ clippy 与测试仍是权威检查。当前规则：
 - 底层模块不得引用 `FusionEngine` 或网关执行器。
 - `server` 不得引用 `crate::cli`。
 - core/CLI 不得引用具体 `panel` 壳；面板不得访问 CLI 私有实现。
+- `src/platform` 以外的代码不得出现平台条件编译、平台工具名、平台路径或平台
+  环境变量。

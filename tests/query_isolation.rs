@@ -1,7 +1,7 @@
 use std::fs;
 
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
-use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider};
+use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, ProviderPreset};
 
 mod common;
 
@@ -16,7 +16,7 @@ fn info_and_provider_list_ignore_corrupted_managed_client_config() {
         "# codex-mixin managed config.\n[model_providers",
     )
     .unwrap();
-    let mut provider = custom_provider("static", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("static", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     provider.model_source = ProviderModelSource::Static;
     provider.selected_models = vec!["model".to_owned()];

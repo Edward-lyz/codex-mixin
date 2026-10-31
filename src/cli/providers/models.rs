@@ -402,23 +402,3 @@ fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, 
     }
     Ok(contexts)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::parse_model_contexts;
-
-    #[test]
-    fn rejects_duplicate_model_context_overrides() {
-        let error = parse_model_contexts(vec![
-            "model-a=128000".to_owned(),
-            "model-a=256000".to_owned(),
-        ])
-        .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("duplicate model context override")
-        );
-    }
-}

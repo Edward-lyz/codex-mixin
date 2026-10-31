@@ -283,18 +283,6 @@ EVAL_TASKS=3 EVAL_ROUNDS=2 EVAL_CHUNKS=48 EVAL_WINDOW=16000 \
 「上下文」页，以及 macOS 控制台与 Windows 独立窗口的「上下文」设置区；四组消融
 实验脚本见 `scripts/evaluate_context.mjs`，跑法与结果见上文「消融评估」。
 
-## 原版决策回归
-
-`tests/fixtures/context_nudge/expected.json` 包含从上述固定版本的真实 `nudgeNode`
-生成的 256 个决策与状态样本，Rust 单测同时比较所选层级和持久化戳。重新生成方式：
-
-```bash
-# 仓库根目录；Bun 和对应版本的原版 checkout 必须已存在。
-bun tests/fixtures/context_nudge/generate.ts /path/to/billion-context > tests/fixtures/context_nudge/expected.json
-cargo test --locked --lib context::guidance::tests::matches_upstream_nudge_decisions
-```
-
-这些测试验证触发规则和状态演进，不衡量真实模型摘要质量，也不证明完整 kernel 行为等价。
 ## 工具调用边界校验
 
 压缩范围必须同时包含 `function_call` / `custom_tool_call` 和对应的

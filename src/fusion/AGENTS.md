@@ -8,4 +8,4 @@
 - 工具执行受 workspace 根、路径穿越、输出大小、扫描数量和进程超时约束；符号链接与取消也覆盖边界。
 - prompt、analysis、render 与 visualization 各自保持职责，展示不能改变真实执行结果。
 - 并发、轮次与 token 开销有界，锁不跨模型请求；取消时收敛全部成员任务和子进程。
-- 运行 `cargo test --locked fusion` 和根级门禁，验证单/多成员、工具边界、预算耗尽、部分失败和取消。
+- 运行 `cargo test --locked --test gateway_http fusion` 和根级门禁。

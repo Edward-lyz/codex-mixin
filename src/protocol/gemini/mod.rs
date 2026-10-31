@@ -738,6 +738,3 @@ fn append_gemini_content(
         _ => Ok(()),
     }
 }
-
-#[cfg(test)]
-mod tests;

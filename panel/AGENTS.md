@@ -7,4 +7,4 @@
 - 用户输入在 `actions` 校验：以 `--flag=value` 传值，位置参数拒绝 `-` 开头与控制字符，拒绝 `@env:` 字面值；密钥只经子进程环境变量与 `@env:NAME` 传递，不进 argv、日志或响应。可执行路径、header env 等高风险参数不对 Web 开放。
 - 变更动作串行执行，并发返回 409；子进程有超时，断连或超时即终止。错误沿用 CLI envelope 的 `committed` 与 `stage`，未知提交状态为 null。
 - 前端为无构建步骤的 HTML/CSS/原生 JS，遵守 CSP（无内联脚本/样式属性、无外部网络资源）；配色每个主题不超过 4 种基础色，其余色阶只由透明度派生；额度圆环另有 `--ring-1..4` 四个数据可视化色，仅用于区分同心圆，不含告警红；动画尊重 `prefers-reduced-motion`；保持键盘可达、ARIA 标注与 AA 对比度。
-- 运行 `cargo test --locked --bin codex-mixin`（含 `panel/tests.rs`）与根级门禁；界面改动需在真实浏览器中检查明暗主题与窄屏布局。
+- 运行 `cargo test --locked --test panel_interaction` 与根级门禁；界面改动需在真实浏览器中检查明暗主题与窄屏布局。

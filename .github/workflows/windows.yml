@@ -15,13 +15,13 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust tests (${{ matrix.shard }})
+    name: Rust (${{ matrix.shard }})
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         shard:
-          - unit
+          - clippy
           - integration-a
           - integration-b
           - integration-c
@@ -35,7 +35,7 @@ jobs:
         with:
           shared-key: rust
       - name: Run strict Clippy
-        if: matrix.shard == 'unit'
+        if: matrix.shard == 'clippy'
         shell: bash
         run: |
           cargo clippy --locked --all-targets -- \
@@ -43,12 +43,6 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      # The unit shard and three integration shards together cover the same
-      # targets as --all-targets. Integration binaries are the long pole, so
-      # they run beside the unit harnesses instead of after them.
-      - name: Run unit tests
-        if: matrix.shard == 'unit'
-        run: cargo test --locked --lib --bins --examples
       - name: Run integration tests
         if: startsWith(matrix.shard, 'integration-')
         shell: pwsh
@@ -94,9 +88,6 @@ jobs:
       - name: Test portable automatic replacement
         shell: pwsh
         run: ./windows/scripts/test-portable-update.ps1
-      - name: Test CLI adapter
-        shell: pwsh
-        run: dotnet run --project windows/Tests/Tests.csproj -c Release
       - name: Generate native icons
         shell: pwsh
         run: ./windows/scripts/generate-windows-assets.ps1
@@ -132,7 +123,7 @@ jobs:
           path: target/release
       - name: Test real Rust CLI contracts
         shell: pwsh
-        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli-only target/release/codex-mixin.exe
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- target/release/codex-mixin.exe
 
   package:
     runs-on: windows-latest

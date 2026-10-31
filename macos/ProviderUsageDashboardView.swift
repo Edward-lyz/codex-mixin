@@ -538,7 +538,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
 
     func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
         model.quotaUsages = usages
-        model.quotaStatusTitle = L10n.Provider.quotaEmpty
+        model.quotaStatusTitle = AppLocalization.string("provider.quotaEmpty")
         model.quotaStatusDetail = nil
         model.normalizeSelection()
         scheduleContentHeightUpdate()

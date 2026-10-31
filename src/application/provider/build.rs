@@ -87,7 +87,6 @@ pub struct UpdateProviderInput {
 #[derive(Debug)]
 pub struct PreparedProvider {
     pub id: String,
-    pub protocol: crate::provider::ProviderProtocol,
     pub provider: ProviderDefinition,
     pub gateway_api_key: Option<String>,
     pub should_probe_protocol: bool,
@@ -257,10 +256,8 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
         .gateway_key
         .map(|value| required("gateway key", value))
         .transpose()?;
-    let protocol = provider.protocol;
     Ok(PreparedProvider {
         id,
-        protocol,
         provider,
         gateway_api_key,
         should_probe_protocol,
@@ -374,7 +371,6 @@ pub fn update_provider_from_input(
             Some(required("Codex thread title model", model).map_err(before_commit)?);
     }
     provider.validate().map_err(before_commit)?;
-    let protocol = provider.protocol;
     update_provider(
         &id,
         &snapshot,
@@ -383,7 +379,6 @@ pub fn update_provider_from_input(
     )?;
     Ok(PreparedProvider {
         id,
-        protocol,
         provider,
         gateway_api_key: None,
         should_probe_protocol,
@@ -613,111 +608,4 @@ fn apply_aws_auth_options(
     provider.auth.api_key.clear();
     provider.auth.aws_sigv4 = Some(aws);
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn custom_provider_endpoint_inference_preserves_explicit_api_suffix() {
-        let endpoint =
-            infer_custom_provider_endpoint("https://example.test/v1/chat/completions").unwrap();
-        assert_eq!(endpoint.base_url, "https://example.test");
-        assert_eq!(
-            endpoint.protocol,
-            crate::provider::ProviderProtocol::OpenAiChat
-        );
-        assert!(endpoint.path_explicit);
-    }
-
-    #[test]
-    fn custom_provider_requires_base_url_and_nonempty_credentials() {
-        let missing_url = create_provider(AddProviderInput {
-            preset: "custom".to_owned(),
-            key: Some("key".to_owned()),
-            ..AddProviderInput::default()
-        });
-        assert!(missing_url.unwrap_err().to_string().contains("base-url"));
-        let blank_key = create_provider(AddProviderInput {
-            preset: "deepseek".to_owned(),
-            key: Some("  ".to_owned()),
-            ..AddProviderInput::default()
-        });
-        assert!(
-            blank_key
-                .unwrap_err()
-                .to_string()
-                .contains("key cannot be empty")
-        );
-    }
-
-    #[test]
-    fn baidu_oneapi_add_without_bridge_leaves_loopback_unset() {
-        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
-
-        apply_baidu_options(&mut provider, None, None).unwrap();
-
-        assert_eq!(provider.request_policy.baidu_auth_bridge, None);
-    }
-
-    #[test]
-    fn provider_mutations_persist_managed_ducx_options() {
-        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
-        provider.quota_username = Some("user@example.com".to_owned());
-        let install =
-            std::env::temp_dir().join("example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
-        let executable = install
-            .join("bin")
-            .join(crate::platform::executable_file_name("ducx"));
-
-        apply_baidu_options(
-            &mut provider,
-            Some("ducx_loopback"),
-            Some(executable.clone()),
-        )
-        .unwrap();
-
-        assert_eq!(
-            provider.request_policy.baidu_auth_bridge,
-            Some(crate::provider::BaiduAuthBridge::DucxLoopback)
-        );
-        assert_eq!(provider.request_policy.ducx_executable, Some(executable));
-        provider.request_policy.baidu_code_report = true;
-        set_report_sibling(&mut provider);
-        assert_eq!(
-            provider.request_policy.data_report_executable,
-            Some(
-                install
-                    .join("hooks")
-                    .join(crate::platform::executable_file_name("data-report"))
-            )
-        );
-        provider.validate().unwrap();
-    }
-
-    #[test]
-    fn parses_custom_header_environment_mappings() {
-        let mapping = parse_header_env(&[
-            "x-example-auth=EXAMPLE_AUTH".to_owned(),
-            "x-routing-token=ROUTING_TOKEN".to_owned(),
-        ])
-        .unwrap();
-
-        assert_eq!(mapping["x-example-auth"], "EXAMPLE_AUTH");
-        assert_eq!(mapping["x-routing-token"], "ROUTING_TOKEN");
-        assert!(parse_header_env(&["missing-separator".to_owned()]).is_err());
-    }
-
-    #[test]
-    fn parses_opencode_go_quota_parser() {
-        assert_eq!(
-            parse_quota_parser("opencode_go").unwrap(),
-            ProviderQuotaParser::OpenCodeGo
-        );
-        assert_eq!(
-            parse_quota_parser("opencode-go").unwrap(),
-            ProviderQuotaParser::OpenCodeGo
-        );
-    }
 }

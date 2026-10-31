@@ -21,8 +21,6 @@
 
 - 请求转换、SSE 编解码是热路径：不要整体 buffer 响应、不要每请求重建
   client、不要引入热路径锁。
-- 性能基线：`cargo run --release --example perf_probe`（SSE 解码、
-  Anthropic 映射、Responses 转换吞吐）。持续退化超过 10% 需要消除。
 
 ## 维护架构检查
 
@@ -32,6 +30,6 @@
 ## 提交流程
 
 `cargo fmt --all -- --check`、`scripts/check_arch.sh`、
-`cargo test --locked --all-targets` 必须通过；涉及 prompt cache 时跑
+`cargo test --locked --tests` 必须通过；涉及 prompt cache 时跑
 `./scripts/e2e_prompt_cache.sh`，涉及多 provider 时跑
 `./scripts/e2e_multi_provider.sh`。

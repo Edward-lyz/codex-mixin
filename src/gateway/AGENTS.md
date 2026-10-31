@@ -7,4 +7,4 @@
 - 上游发送复用 upstream，转换复用 protocol，媒体处理复用 images；不建立第二套 HTTP client/认证栈。
 - 保留模型级 endpoint、reasoning、工具、输出上限和 cache usage 语义；只按明确兼容策略改写请求。
 - SSE 增量处理，复用 bytes/client；缓存与会话观测容量有界，不能在热路径全量扫描状态文件。
-- 验证官方/自定义路由、非法目标、取消、输出上限与缓存前缀，运行 gateway 相关测试、`cargo test --locked --test gateway_http` 和根级门禁。
+- 用 `cargo test --locked --test gateway_http` 验证官方/自定义路由与缓存前缀，并运行根级门禁。

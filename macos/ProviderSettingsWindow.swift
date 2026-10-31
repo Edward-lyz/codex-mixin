@@ -318,10 +318,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         return loaded
     }
 
-    private func loadSelectedProvider() {
-        model.selectProvider(model.selectedProviderID)
-    }
-
     private func showBanner(title: String, message: String, isError: Bool) {
         bannerHideWorkItem?.cancel()
         let text = message.isEmpty ? title : "\(title)：\(message)"
@@ -556,20 +552,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         showAlert(
             title: AppLocalization.string("providerSettings.opencodeGoQuotaCredentialsRequired"),
             message: AppLocalization.string("providerSettings.opencodeGoRequiresBothTheWorkspaceID")
-        )
-    }
-
-    func saveProvider() {
-        guard let provider = selectedProvider, provider.kind == .configured,
-              !model.isBusy, !benchmarkModel.isBusy
-        else { return }
-        guard let plan = providerUpdatePlan(for: provider) else { return }
-        performMutation(
-            plan.arguments,
-            status: "正在保存 \(provider.id)…",
-            selecting: provider.id,
-            requiresBaiduBridge: plan.requiresBaiduBridge,
-            codexSkillChanged: plan.codexSkillChanged
         )
     }
 

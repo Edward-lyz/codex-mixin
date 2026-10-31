@@ -1,12 +1,5 @@
 import Cocoa
 
-func baiduBridgeDisplayName(_ mode: BaiduAuthBridgeMode) -> String {
-    switch mode {
-    case .disabled: return AppLocalization.string("providerSettings.authBridge2")
-    case .ducxLoopback: return "DUCX"
-    }
-}
-
 func appendBaiduAuthBridgeArguments(
     _ arguments: inout [String],
     mode: BaiduAuthBridgeMode,

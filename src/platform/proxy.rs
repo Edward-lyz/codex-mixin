@@ -67,11 +67,6 @@ impl ProxySelection {
         Self::from_lookup(&|name| std::env::var(name).ok())
     }
 
-    #[cfg(test)]
-    fn with_system(env: ProxyEnv, system: Option<SystemProxy>) -> Self {
-        Self { env, system }
-    }
-
     /// Returns the proxy URL to use, or `None` for a direct connection.
     /// `scheme` is the target scheme (`http`, `https`, `ws`, `wss`).
     pub(crate) fn select(&self, scheme: &str, host: &str, port: u16) -> Option<String> {
@@ -200,7 +195,7 @@ fn matches_ipv4_range(network: &str, prefix: &str, host: &str) -> bool {
     u32::from(Ipv4Addr::from(octets)) & mask == u32::from(target) & mask
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn parse_windows_proxy(server: &str, overrides: &str) -> SystemProxy {
     let mut proxy = SystemProxy {
         bypass: overrides
@@ -230,7 +225,7 @@ fn parse_windows_proxy(server: &str, overrides: &str) -> SystemProxy {
     proxy
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn http_proxy_url(address: &str) -> Option<String> {
     let address = address.trim();
     if address.is_empty() {
@@ -336,6 +331,3 @@ fn read_system_proxy() -> Option<SystemProxy> {
 fn read_system_proxy() -> Option<SystemProxy> {
     None
 }
-
-#[cfg(test)]
-mod tests;

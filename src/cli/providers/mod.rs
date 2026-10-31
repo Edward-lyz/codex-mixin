@@ -16,7 +16,6 @@ use super::codex::{
     resolve_codex_config_path,
 };
 use super::official_models::{load_official_models, official_models_cache_path};
-use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 use codex_mixin::application::provider::required;
 mod management;
 mod models;
@@ -28,20 +27,26 @@ pub(super) use models::{
     select_models, test_provider,
 };
 
-pub(super) type AddProviderOptions = AddProviderInput;
-pub(super) type UpdateProviderOptions = UpdateProviderInput;
-
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, clap::Args)]
 pub(super) struct TestProviderOptions {
     pub(super) id: String,
+    #[arg(long)]
     pub(super) json: bool,
+    #[arg(long)]
     pub(super) key: Option<String>,
+    #[arg(long)]
     pub(super) aws_access_key_id: Option<String>,
+    #[arg(long)]
     pub(super) aws_secret_access_key: Option<String>,
+    #[arg(long)]
     pub(super) aws_session_token: Option<String>,
+    #[arg(long)]
     pub(super) aws_region: Option<String>,
+    #[arg(long)]
     pub(super) base_url: Option<String>,
+    #[arg(long, value_name = "disabled|ducx_loopback")]
     pub(super) baidu_auth_bridge: Option<String>,
+    #[arg(long, value_name = "PATH")]
     pub(super) ducx_executable: Option<PathBuf>,
 }
 
@@ -373,6 +378,3 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     }
     Ok(normalized)
 }
-
-#[cfg(test)]
-mod tests;

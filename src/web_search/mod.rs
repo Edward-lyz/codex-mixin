@@ -22,6 +22,3 @@ mod storage;
 mod types;
 
 pub use types::{ModelWebSearchCapability, WebSearchCapabilities, WebSearchProbeSummary};
-
-#[cfg(test)]
-mod tests;

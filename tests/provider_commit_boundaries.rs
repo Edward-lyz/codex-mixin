@@ -3,7 +3,7 @@ use std::fs;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::baidu_oneapi_provider;
+use codex_mixin::provider::ProviderPreset;
 
 mod common;
 
@@ -11,7 +11,7 @@ mod common;
 fn provider_update_expands_panel_secret_references() {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("config.json");
-    let mut provider = baidu_oneapi_provider("baidu-oneapi", "original-key");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu-oneapi", "original-key");
     provider.quota_username = Some("test-user".to_owned());
     save_stored_config_to_path(
         &config_path,

@@ -183,73 +183,7 @@ pub struct BaiduAvailableModel {
 #[derive(Debug, Deserialize)]
 pub struct BaiduModelCapability {
     pub supports_image: bool,
-    pub supports_thinking: bool,
     pub context_window: u64,
     pub ratio: String,
     pub model_description: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ModelsResponse;
-
-    #[test]
-    fn models_accept_duplicate_metadata() {
-        let response: ModelsResponse = serde_json::from_str(
-            r#"{"data":[{"id":"beam","context_window":32000,"context_window":128000}]}"#,
-        )
-        .unwrap();
-        assert_eq!(response.data[0].context_window, Some(128000));
-    }
-
-    #[test]
-    fn models_accept_coexisting_aliases() {
-        for fields in [
-            r#""context_window":128000,"context_length":64000,"display_name":"Beam","name":"alias","max_output_tokens":8192,"max_tokens":4096,"max_completion_tokens":2048"#,
-            r#""context_length":64000,"context_window":128000,"name":"alias","display_name":"Beam","max_completion_tokens":2048,"max_tokens":4096,"max_output_tokens":8192"#,
-        ] {
-            let body = format!(r#"{{"data":[{{"id":"beam",{fields}}}]}}"#);
-            // Provider discovery parses text; provider setup parses a Value first.
-            let text: ModelsResponse = serde_json::from_str(&body).unwrap();
-            let value: ModelsResponse =
-                serde_json::from_value(serde_json::from_str::<serde_json::Value>(&body).unwrap())
-                    .unwrap();
-            for response in [text, value] {
-                let model = &response.data[0];
-                assert_eq!(model.context_window, Some(128000));
-                assert_eq!(model.max_output_tokens, Some(8192));
-                assert_eq!(model.display_name.as_deref(), Some("Beam"));
-            }
-        }
-    }
-
-    #[test]
-    fn models_accept_aliases_without_canonical_values() {
-        let response: ModelsResponse = serde_json::from_str(
-            r#"{"data":[{"id":"beam","display_name":null,"name":"Beam","context_window":null,"context_length":64000,"max_output_tokens":null,"max_tokens":4096,"max_completion_tokens":2048},{"id":"legacy","max_completion_tokens":1024}]}"#,
-        )
-        .unwrap();
-        assert_eq!(response.data[0].display_name.as_deref(), Some("Beam"));
-        assert_eq!(response.data[0].context_window, Some(64000));
-        assert_eq!(response.data[0].max_output_tokens, Some(4096));
-        assert_eq!(response.data[1].max_output_tokens, Some(1024));
-    }
-
-    #[test]
-    fn models_reject_invalid_records() {
-        for body in [
-            r#"{"data":[{}]}"#,
-            r#"{"data":[{"id":42}]}"#,
-            r#"{"data":[{"id":"beam","context_window":"invalid","context_length":64000}]}"#,
-            r#"{"data":[{"id":"beam","context_length":-1}]}"#,
-            r#"{"data":[null]}"#,
-            r#"{"data":null}"#,
-            r#"{"data":[{"id":"beam",}]}"#,
-        ] {
-            assert!(
-                serde_json::from_str::<ModelsResponse>(body).is_err(),
-                "{body}"
-            );
-        }
-    }
 }

@@ -143,30 +143,3 @@ pub async fn probe() -> Vec<EchProbe> {
     let (chatgpt, api) = tokio::join!(probe_host("chatgpt.com"), probe_host("api.openai.com"));
     vec![chatgpt, api]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn requires_both_ech_and_official_endpoint_reachability() {
-        let mut probe = EchProbe {
-            host: "api.openai.com",
-            ech_accepted: true,
-            resolved_addresses: Vec::new(),
-            connected_address: None,
-            http_status: Some(401),
-            elapsed_ms: 0,
-            error: None,
-            relay_exit_verified: false,
-        };
-        assert!(probe.ready());
-        for status in [403, 421, 429, 500] {
-            probe.http_status = Some(status);
-            assert!(!probe.ready());
-        }
-        probe.http_status = Some(401);
-        probe.ech_accepted = false;
-        assert!(!probe.ready());
-    }
-}

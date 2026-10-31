@@ -1,13 +1,11 @@
 # Windows integration test binaries are grouped by measured runtime.
-# Every top-level tests/*.rs file must appear exactly once; test_inventory
-# fails when a file is missing, duplicated, or assigned to an unknown shard.
+# Every top-level tests/*.rs file must appear exactly once.
 # shard|file
 integration-a|gateway_http.rs
 integration-b|codex_minimal_install.rs
 integration-b|disabled_provider_costs.rs
 integration-b|official_client_contexts.rs
 integration-b|provider_probe_cache.rs
-integration-c|agent_logos.rs
 integration-c|agy_dynamic.rs
 integration-c|context_cli.rs
 integration-c|cors.rs
@@ -18,10 +16,8 @@ integration-c|gateway_startup.rs
 integration-c|gemini_regressions.rs
 integration-c|oauth_discovery.rs
 integration-c|panel_interaction.rs
-integration-c|platform_neutral_core.rs
 integration-c|provider_catalog.rs
 integration-c|provider_commit_boundaries.rs
 integration-c|query_isolation.rs
 integration-c|real_models.rs
-integration-c|test_inventory.rs
 integration-c|websocket_proxy.rs

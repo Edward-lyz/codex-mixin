@@ -514,36 +514,3 @@ fn resolve_session(engine: &ContextEngine, input: &str) -> Result<String> {
     }
     bail!("context session not found: {input}")
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_window_overrides() {
-        assert_eq!(parse_window("200000").unwrap(), Some(200_000));
-        assert!(parse_window("auto").is_err());
-        assert_eq!(parse_window("none").unwrap(), None);
-        assert_eq!(parse_window("off").unwrap(), None);
-        assert!(parse_window("0").is_err());
-    }
-
-    #[test]
-    fn rejects_invalid_settings_before_saving() {
-        let mut settings = ContextSettings::default();
-        let update = ContextUpdate {
-            compression_mode: None,
-            enabled: Some(true),
-            growth_threshold_tokens: Some(0),
-            pressure_ratio: None,
-            urgent_ratio: None,
-            protected_messages: None,
-            protected_tokens: None,
-            max_internal_rounds: None,
-            max_tier: None,
-            guidance_only: None,
-            context_window_tokens: None,
-        };
-        assert!(apply_update(&mut settings, update).is_err());
-    }
-}

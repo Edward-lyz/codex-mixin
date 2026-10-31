@@ -1,6 +1,6 @@
-//! Locating and driving coding-agent CLIs on each OS: `PATH` lookup with the
-//! native launcher names, real-path resolution, bounded command runs,
-//! desktop-app version reading, and the cross-process update lock.
+//! Locating and driving coding-agent CLIs on each OS: executable lookup with
+//! native launcher names, real-path resolution, bounded command runs and the
+//! cross-process update lock. Desktop registration lives in `agent_apps`.
 //!
 //! Functions here touch the file system and start processes; async callers
 //! use `spawn_blocking`.
@@ -124,16 +124,8 @@ pub(crate) fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Desktop apps whose installed version the Agents page shows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DesktopApp {
-    /// The Codex desktop app, `ChatGPT.app` on macOS.
-    Codex,
-    /// The Claude desktop app.
-    ClaudeDesktop,
-    /// The DeepSeek Harness desktop app.
-    Dsh,
-}
+pub use super::agent_apps::DesktopApp;
+pub(crate) use super::agent_apps::desktop_app_installation;
 
 /// What a finished command printed.
 #[derive(Debug)]
@@ -145,17 +137,62 @@ pub struct CommandOutcome {
     pub text: String,
 }
 
-/// Where a command name is on `PATH`, native launcher names included.
+/// Where a command name is on `PATH`, native launcher names included. Desktop
+/// apps inherit a smaller PATH than terminal sessions, so also check the
+/// platform's standard user/system CLI installation directories afterwards.
 pub fn find_command(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        if directory.as_os_str().is_empty() {
+    if name.is_empty() || name.contains(['/', '\\']) || name == "." || name == ".." {
+        return None;
+    }
+    let mut directories: Vec<_> = std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .collect();
+    if let Ok(home) = super::home_dir_required() {
+        directories.extend([
+            home.join(".local/bin"),
+            home.join(".cargo/bin"),
+            home.join(".bun/bin"),
+        ]);
+    }
+    #[cfg(windows)]
+    for variable in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(root) = std::env::var_os(variable).filter(|value| !value.is_empty()) {
+            let root = PathBuf::from(root);
+            directories.extend([root.join("npm"), root.join("Microsoft/WinGet/Links")]);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    directories.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]);
+    #[cfg(target_os = "linux")]
+    directories.extend([
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/snap/bin"),
+    ]);
+    for directory in directories {
+        // A current-directory PATH entry must not make an untrusted project
+        // binary eligible for background version/upgrade probes.
+        if !directory.is_absolute() {
             continue;
         }
         for candidate in super::path_executable_candidates(&directory, name) {
-            if candidate.is_file() {
-                return Some(candidate);
+            if !candidate.is_file() {
+                continue;
             }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if !std::fs::metadata(&candidate)
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+                {
+                    continue;
+                }
+            }
+            return Some(candidate);
         }
     }
     None
@@ -452,146 +489,6 @@ fn same_path_text(left: &Path, right: &Path) -> bool {
     }
 }
 
-/// Install locations of a desktop app, most preferred first.
-pub fn desktop_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        macos_app_candidates(app)
-    }
-    #[cfg(windows)]
-    {
-        windows_app_candidates(app)
-    }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    {
-        let _ = app;
-        Vec::new()
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
-    let bundles: &[&str] = match app {
-        DesktopApp::Codex => &["/Applications/ChatGPT.app", "/Applications/Codex.app"],
-        DesktopApp::ClaudeDesktop => &["/Applications/Claude.app"],
-        DesktopApp::Dsh => &["/Applications/DeepSeek Harness.app"],
-    };
-    let mut candidates: Vec<PathBuf> = bundles
-        .iter()
-        .map(|bundle| PathBuf::from(*bundle))
-        .collect();
-    if let Ok(home) = super::home_dir_required() {
-        candidates.extend(
-            bundles
-                .iter()
-                .map(|bundle| home.join(bundle.trim_start_matches('/'))),
-        );
-    }
-    candidates
-}
-
-#[cfg(windows)]
-fn windows_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
-    let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) else {
-        return Vec::new();
-    };
-    let local = PathBuf::from(local);
-    match app {
-        DesktopApp::Codex => vec![
-            local.join("Programs").join("ChatGPT"),
-            local.join("Programs").join("OpenAI").join("Codex"),
-        ],
-        DesktopApp::ClaudeDesktop => vec![local.join("AnthropicClaude")],
-        DesktopApp::Dsh => vec![local.join("Programs").join("DeepSeek Harness")],
-    }
-}
-
-/// Version strings of the desktop app installed at `location`: the bundle's
-/// `CFBundleShortVersionString` on macOS, the Squirrel `app-<version>`
-/// folders on Windows. Empty when the app is absent or names no version.
-pub fn desktop_app_versions(location: &Path) -> Vec<String> {
-    #[cfg(target_os = "macos")]
-    {
-        macos_bundle_version(location).into_iter().collect()
-    }
-    #[cfg(windows)]
-    {
-        let versions = squirrel_app_versions(location);
-        if !versions.is_empty() {
-            return versions;
-        }
-        let executable = location.join("DeepSeek Harness.exe");
-        if !executable.is_file() {
-            return Vec::new();
-        }
-        // DSH's Electron installer does not use Squirrel's app-version folders.
-        let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", "(Get-Item -LiteralPath $env:CODEX_MIXIN_APP_EXE -ErrorAction Stop).VersionInfo.ProductVersion"])
-            .env("CODEX_MIXIN_APP_EXE", &executable);
-        run_command(command, Duration::from_secs(5), "read DSH app version")
-            .ok()
-            .map(|outcome| outcome.stdout.trim().to_owned())
-            .filter(|version| !version.is_empty())
-            .into_iter()
-            .collect()
-    }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    {
-        let _ = location;
-        Vec::new()
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_bundle_version(bundle: &Path) -> Option<String> {
-    let plist = bundle.join("Contents").join("Info.plist");
-    let bytes = std::fs::read(&plist).ok()?;
-    if !bytes.starts_with(b"bplist") {
-        return plist_key_string(
-            &String::from_utf8_lossy(&bytes),
-            "CFBundleShortVersionString",
-        );
-    }
-    // A binary property list needs the system tool to read one key.
-    let mut command = Command::new("/usr/bin/plutil");
-    command
-        .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
-        .arg(&plist);
-    let outcome = run_command(command, Duration::from_secs(5), "read the app's version").ok()?;
-    let version = outcome.stdout.trim();
-    (!version.is_empty()).then(|| version.to_owned())
-}
-
-/// The `<string>` value of `key` in an XML property list, when present.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn plist_key_string(plist: &str, key: &str) -> Option<String> {
-    let marker = format!("<key>{key}</key>");
-    let rest = &plist[plist.find(&marker)? + marker.len()..];
-    let open = rest.find("<string>")? + "<string>".len();
-    let close = rest[open..].find("</string>")? + open;
-    let value = rest[open..close].trim();
-    (!value.is_empty()).then(|| value.to_owned())
-}
-
-/// Versions named by Squirrel's `app-<version>` folders under `root`.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn squirrel_app_versions(root: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut versions = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(version) = name.to_str().and_then(|name| name.strip_prefix("app-")) else {
-            continue;
-        };
-        if !version.is_empty() && entry.path().is_dir() {
-            versions.push(version.to_owned());
-        }
-    }
-    versions
-}
-
 /// Cross-process lock held while one agent's CLI is updated, so the CLI and
 /// the menu app never upgrade the same agent at once.
 pub struct AgentUpdateLock {
@@ -642,125 +539,5 @@ impl AgentUpdateLock {
 impl Drop for AgentUpdateLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn dsh_desktop_bundle_is_detected_without_a_cli() {
-        let candidates = desktop_app_candidates(DesktopApp::Dsh);
-        assert!(candidates.contains(&PathBuf::from("/Applications/DeepSeek Harness.app")));
-        let root = tempfile::tempdir().unwrap();
-        let bundle = root.path().join("DeepSeek Harness.app");
-        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
-        std::fs::write(bundle.join("Contents/Info.plist"), "<plist><dict><key>CFBundleShortVersionString</key><string>0.2.1-rc.2</string></dict></plist>").unwrap();
-        assert_eq!(desktop_app_versions(&bundle), vec!["0.2.1-rc.2"]);
-    }
-
-    #[test]
-    fn last_lines_keeps_the_tail_without_colour() {
-        let text = "\u{1b}[31mfirst\u{1b}[0m\n\nsecond\nthird\nfourth\n";
-        assert_eq!(last_lines(text, 2), "third · fourth");
-        assert_eq!(last_lines("\n \n", 2), "");
-    }
-
-    #[test]
-    fn plist_key_string_reads_the_value() {
-        let plist = r#"<plist><dict>
-            <key>CFBundleName</key><string>Claude</string>
-            <key>CFBundleShortVersionString</key>
-            <string>0.11.6</string>
-        </dict></plist>"#;
-        assert_eq!(
-            plist_key_string(plist, "CFBundleShortVersionString").as_deref(),
-            Some("0.11.6")
-        );
-        assert_eq!(plist_key_string(plist, "CFBundleVersion"), None);
-        assert_eq!(
-            plist_key_string("<plist/>", "CFBundleShortVersionString"),
-            None
-        );
-    }
-
-    #[test]
-    fn squirrel_app_versions_reads_app_folders() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(directory.path().join("app-0.11.6")).unwrap();
-        std::fs::create_dir_all(directory.path().join("app-0.12.0")).unwrap();
-        std::fs::create_dir_all(directory.path().join("other")).unwrap();
-        std::fs::write(directory.path().join("app-9.9.9"), b"").unwrap();
-        let mut versions = squirrel_app_versions(directory.path());
-        versions.sort();
-        assert_eq!(versions, vec!["0.11.6".to_owned(), "0.12.0".to_owned()]);
-        assert!(squirrel_app_versions(&directory.path().join("absent")).is_empty());
-    }
-
-    #[test]
-    fn agent_update_lock_is_exclusive_within_a_process() {
-        let directory = tempfile::tempdir().unwrap();
-        let first = AgentUpdateLock::try_acquire_in(directory.path(), "codex")
-            .unwrap()
-            .expect("first lock");
-        assert!(
-            AgentUpdateLock::try_acquire_in(directory.path(), "codex")
-                .unwrap()
-                .is_none(),
-            "a second process must not take the same agent"
-        );
-        assert!(
-            AgentUpdateLock::try_acquire_in(directory.path(), "claude")
-                .unwrap()
-                .is_some(),
-            "another agent is a different lock"
-        );
-        drop(first);
-        assert!(
-            AgentUpdateLock::try_acquire_in(directory.path(), "codex")
-                .unwrap()
-                .is_some(),
-            "the lock is free after release"
-        );
-    }
-
-    #[test]
-    fn agent_update_lock_rejects_unknown_ids() {
-        let directory = tempfile::tempdir().unwrap();
-        assert!(AgentUpdateLock::try_acquire_in(directory.path(), "../codex").is_err());
-        assert!(AgentUpdateLock::try_acquire_in(directory.path(), "").is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_command_reports_the_exit_status_and_output_tail() {
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "echo boom >&2; exit 3"]);
-        let error = run_command(command, Duration::from_secs(10), "sh test").unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("boom"), "{message}");
-        assert!(message.contains('3'), "{message}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_command_kills_a_child_that_times_out() {
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 30"]);
-        let error = run_command(command, Duration::from_millis(300), "sh test").unwrap_err();
-        assert!(format!("{error:#}").contains("timed out"), "{error:#}");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn run_command_reports_the_exit_status_and_output_tail() {
-        let mut command = Command::new("cmd.exe");
-        command.args(["/d", "/c", "echo boom 1>&2 & exit /b 3"]);
-        let error = run_command(command, Duration::from_secs(10), "cmd test").unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("boom"), "{message}");
-        assert!(message.contains('3'), "{message}");
     }
 }

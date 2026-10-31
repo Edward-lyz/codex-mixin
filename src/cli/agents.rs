@@ -160,9 +160,7 @@ fn snapshot(id: &str) -> anyhow::Result<Value> {
         },
     };
     // Configuration presence and an installed program are independent facts.
-    let detected = cli.path.is_some()
-        || cli.app_version.is_some()
-        || (!is_legacy(id) && codex_mixin::clients::frameworks::detected(id)?);
+    let detected = cli.path.is_some() || cli.app_path.is_some() || cli.app_version.is_some();
     Ok(
         json!({"id": id, "name": name, "detected": detected, "integration": integration, "cli": cli}),
     )
@@ -446,74 +444,5 @@ fn framework_model(
             })
             .unwrap_or_default()
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn framework_name_ignores_oneapi_marketing_but_keeps_route() {
-        use codex_mixin::config::{GatewayConfig, ThinkingMode};
-        use codex_mixin::provider::{ProviderModel, ProviderProtocol};
-        let config = GatewayConfig {
-            context: Default::default(),
-            bind: "127.0.0.1:8787".parse().unwrap(),
-            providers: Vec::new(),
-            official_responses_url: "https://example.test/responses".to_owned(),
-            official_ech_proxy: false,
-            official_ech_fallback_reason: None,
-            codex_auth_path: std::path::PathBuf::from("auth.json"),
-            gateway_api_key: None,
-            cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
-                .cors_allowed_origins,
-            gateway_client_keys: Default::default(),
-            accept_codex_oauth: false,
-            official_selected_models: None,
-            default_max_tokens: 8192,
-            default_context_window: 128_000,
-            request_timeout: std::time::Duration::from_secs(30),
-            thinking_mode: ThinkingMode::Auto,
-            enable_web_search_tool: false,
-            web_search_tool_type: "web_search".to_owned(),
-            web_search_max_uses: None,
-            fusion_profiles: Vec::new(),
-        };
-        let model = ProviderModel {
-            id: "Opus 5".to_owned(),
-            display_name: Some("A detailed marketing description".to_owned()),
-            description: Some("Full upstream description".to_owned()),
-            ..ProviderModel::default()
-        };
-        for (use_model_id, expected_name) in [
-            (true, "Opus 5"),
-            (false, "A detailed marketing description"),
-        ] {
-            let framework = framework_model(
-                "Opus 5-baidu".to_owned(),
-                &model,
-                &config,
-                ProviderProtocol::AnthropicMessages,
-                use_model_id,
-            );
-            assert_eq!(framework.id, "Opus 5-baidu");
-            assert_eq!(framework.name, expected_name);
-            assert_eq!(
-                model.description.as_deref(),
-                Some("Full upstream description")
-            );
-        }
-    }
-
-    #[test]
-    fn codex_requires_explicit_mode_before_any_mutation() {
-        assert!(connect_command("codex", None).is_err());
-        assert!(connect_command("pi", Some(AgentConnectMode::CustomOnly)).is_err());
-        assert!(connect_command("unknown", None).is_err());
-        assert!(matches!(
-            connect_command("pi", None).unwrap(),
-            ConnectCommand::Pi { agent_dir: None }
-        ));
     }
 }

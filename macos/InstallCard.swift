@@ -62,10 +62,6 @@ final class CardIdentityStore {
         return identity
     }
 
-    func reset() {
-        defaults.removeObject(forKey: key)
-    }
-
     private func save(_ identity: CardIdentityV1) {
         if let data = try? JSONEncoder().encode(identity) {
             defaults.set(data, forKey: key)
@@ -98,10 +94,8 @@ struct CardWallpaper: Codable, Equatable {
     let fileName: String
     let title: String
     let credit: String
-    let sourceURL: String
     let width: Int
     let height: Int
-    let sha256: String
 }
 
 private struct CardWallpaperManifest: Codable {
@@ -126,10 +120,6 @@ enum CardWallpaperCatalog {
 
     static var issue: String {
         manifest?.issue ?? "SPACE ARCHIVE"
-    }
-
-    static var sourcePage: String? {
-        manifest?.sourcePage
     }
 
     static var wallpapers: [CardWallpaper] {

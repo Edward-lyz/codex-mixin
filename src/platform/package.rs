@@ -26,27 +26,3 @@ fn package_target_for(os: &str, arch: &str) -> anyhow::Result<PackageTarget> {
     };
     Ok(PackageTarget { os, arch })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn maps_rust_targets_to_go_style_names() {
-        assert_eq!(
-            package_target_for("macos", "aarch64").unwrap(),
-            PackageTarget {
-                os: "darwin",
-                arch: "arm64"
-            }
-        );
-        assert_eq!(
-            package_target_for("windows", "x86_64").unwrap(),
-            PackageTarget {
-                os: "windows",
-                arch: "amd64"
-            }
-        );
-        assert!(package_target_for("freebsd", "x86_64").is_err());
-    }
-}

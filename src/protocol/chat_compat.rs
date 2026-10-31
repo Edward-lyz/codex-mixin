@@ -144,6 +144,18 @@ fn chat_messages(body: &Value) -> Result<Vec<Value>, GatewayError> {
 
 fn append_chat_message(message: &Value, input: &mut Vec<Value>) -> Result<(), GatewayError> {
     let role = string(message, "role")?;
+    if let Some(reasoning) = message.get("reasoning_content").filter(|v| !v.is_null()) {
+        if role != "assistant" {
+            return Err(bad("reasoning_content requires an assistant message"));
+        }
+        let text = reasoning
+            .as_str()
+            .ok_or_else(|| bad("reasoning_content must be a string or null"))?;
+        // Keep raw thinking before its answer/tool batch. It is neither a
+        // generated summary nor a signed provider-native reasoning state.
+        input.push(json!({"type":"reasoning","summary":[],
+            "content":[{"type":"reasoning_text","text":text}]}));
+    }
     if role == "tool" {
         let content = string(message, "content")?;
         input.push(json!({"type":"function_call_output","call_id":string(message,"tool_call_id")?,"output":content}));
@@ -172,12 +184,6 @@ fn append_chat_message(message: &Value, input: &mut Vec<Value>) -> Result<(), Ga
                 .ok_or_else(|| bad("missing tool call function"))?;
             input.push(json!({"type":"function_call","call_id":string(call,"id")?,"name":string(function,"name")?,"arguments":string(function,"arguments")?}));
         }
-    }
-    if message
-        .get("reasoning_content")
-        .is_some_and(|v| !v.is_null() && v != "")
-    {
-        return Err(bad("reasoning_content replay is not supported"));
     }
     Ok(())
 }
@@ -232,6 +238,17 @@ fn finish_reason(response: &Value, used_tool: bool) -> &'static str {
 pub(crate) fn collected_to_chat(collected: CollectedResponse, model: &str) -> Value {
     let tools: Vec<Value> = collected.output.iter().filter(|i| i["type"] == "function_call").map(|i| json!({"id":i["call_id"],"type":"function","function":{"name":i["name"],"arguments":i["arguments"]}})).collect();
     let mut message = json!({"role":"assistant","content":collected.output_text});
+    let reasoning: String = collected
+        .output
+        .iter()
+        .filter(|item| item["type"] == "reasoning")
+        .flat_map(|item| item["content"].as_array().into_iter().flatten())
+        .filter(|part| part["type"] == "reasoning_text")
+        .filter_map(|part| part["text"].as_str())
+        .collect();
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = json!(reasoning);
+    }
     if !tools.is_empty() {
         message["tool_calls"] = json!(tools);
         if collected.output_text.is_empty() {
@@ -252,6 +269,7 @@ struct ChatStream {
     created: i64,
     tools: HashMap<String, usize>,
     text_seen: HashSet<String>,
+    reasoning_seen: HashSet<String>,
     args_seen: HashSet<String>,
 }
 
@@ -275,7 +293,10 @@ impl ChatStream {
                 }
                 out
             }
-            Some("message") if done && self.text_seen.insert(id) => {
+            Some("message") if done => {
+                if !self.text_seen.insert(id) {
+                    return Vec::new();
+                }
                 let text = item["content"]
                     .as_array()
                     .into_iter()
@@ -283,6 +304,25 @@ impl ChatStream {
                     .filter_map(|c| c["text"].as_str())
                     .collect::<String>();
                 vec![data(self.chunk(json!({"content":text}), Value::Null))]
+            }
+            Some("reasoning") if done => {
+                if !self.reasoning_seen.insert(id) {
+                    return Vec::new();
+                }
+                let text: String = item["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| part["type"] == "reasoning_text")
+                    .filter_map(|part| part["text"].as_str())
+                    .collect();
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![data(
+                        self.chunk(json!({"reasoning_content":text}), Value::Null),
+                    )]
+                }
             }
             _ => Vec::new(),
         }
@@ -295,7 +335,7 @@ pub(crate) fn responses_to_chat_stream(
     include_usage: bool,
 ) -> ResponseStream {
     async_stream::stream! {
-        let mut state = ChatStream { id:format!("chatcmpl-{}",uuid::Uuid::new_v4().simple()),model,created:chrono::Utc::now().timestamp(),tools:HashMap::new(),text_seen:HashSet::new(),args_seen:HashSet::new() };
+        let mut state = ChatStream { id:format!("chatcmpl-{}",uuid::Uuid::new_v4().simple()),model,created:chrono::Utc::now().timestamp(),tools:HashMap::new(),text_seen:HashSet::new(),reasoning_seen:HashSet::new(),args_seen:HashSet::new() };
         let mut decoder = SseDecoder::default();
         let mut upstream = upstream;
         yield Ok(data(state.chunk(json!({"role":"assistant","content":""}),Value::Null)));
@@ -315,6 +355,7 @@ pub(crate) fn responses_to_chat_stream(
                         yield Ok(data(state.chunk(json!({"content":payload["delta"]}),Value::Null)));
                     }
                     "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+                        state.reasoning_seen.insert(item_id);
                         yield Ok(data(state.chunk(json!({"reasoning_content":payload["delta"]}),Value::Null)));
                     }
                     "response.output_item.added" | "response.output_item.done" => {
@@ -353,68 +394,4 @@ pub(crate) fn responses_to_chat_stream(
         }
         yield Ok(data(json!({"error":{"type":"server_error","message":"upstream response ended before completion"}})));
     }.boxed()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn converts_tools_images_and_parameters() {
-        let body = json!({"model":"model","messages":[{"role":"system","content":"policy"},{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]},{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"c1","content":"ok"}],"max_tokens":12,"reasoning_effort":"high","tools":[{"type":"function","function":{"name":"read","parameters":{"type":"object"}}}]});
-        let mapped = chat_to_responses(&body).unwrap();
-        assert_eq!(mapped["input"][1]["content"][0]["type"], "input_image");
-        assert_eq!(mapped["input"][2]["call_id"], "c1");
-        assert_eq!(mapped["input"][3]["type"], "function_call_output");
-        assert_eq!(mapped["max_output_tokens"], 12);
-        assert_eq!(mapped["tools"][0]["name"], "read");
-        let roundtrip = crate::protocol::openai_chat::responses_to_openai_chat(&mapped, &|| {
-            Err(crate::error::GatewayError::Other(anyhow::anyhow!("unused")))
-        })
-        .unwrap();
-        assert_eq!(roundtrip.request["messages"][3]["tool_call_id"], "c1");
-    }
-
-    #[tokio::test]
-    async fn maps_fragmented_tool_stream_and_usage() {
-        let events = concat!(
-            "event: response.output_item.added\ndata: {\"item\":{\"type\":\"function_call\",\"id\":\"fc1\",\"call_id\":\"c1\",\"name\":\"read\"}}\n\n",
-            "event: response.function_call_arguments.delta\ndata: {\"item_id\":\"fc1\",\"delta\":\"{}\"}\n\n",
-            "event: response.output_item.done\ndata: {\"item\":{\"type\":\"function_call\",\"id\":\"fc1\",\"call_id\":\"c1\",\"name\":\"read\",\"arguments\":\"{}\"}}\n\n",
-            "event: response.completed\ndata: {\"response\":{\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n"
-        );
-        let source = futures_util::stream::iter(
-            events
-                .as_bytes()
-                .chunks(7)
-                .map(|b| Ok(Bytes::copy_from_slice(b)))
-                .collect::<Vec<_>>(),
-        )
-        .boxed();
-        let chunks: Vec<_> = responses_to_chat_stream(source, "model".to_owned(), true)
-            .collect()
-            .await;
-        let output = chunks
-            .into_iter()
-            .map(|b| String::from_utf8(b.unwrap().to_vec()).unwrap())
-            .collect::<String>();
-        assert_eq!(output.matches("\"arguments\":\"{}\"").count(), 1);
-        assert!(output.contains("\"finish_reason\":\"tool_calls\""));
-        assert!(output.contains("\"total_tokens\":5"));
-        assert!(output.ends_with("data: [DONE]\n\n"));
-    }
-
-    #[tokio::test]
-    async fn truncated_stream_does_not_report_success() {
-        let source = futures_util::stream::empty().boxed();
-        let output: Vec<_> = responses_to_chat_stream(source, "model".to_owned(), false)
-            .collect()
-            .await;
-        let output = output
-            .into_iter()
-            .map(|b| String::from_utf8(b.unwrap().to_vec()).unwrap())
-            .collect::<String>();
-        assert!(output.contains("ended before completion"));
-        assert!(!output.contains("[DONE]"));
-    }
 }

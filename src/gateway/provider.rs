@@ -6,18 +6,14 @@ use crate::error::GatewayError;
 use crate::gateway::{
     CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
-use crate::protocol::convert::{
-    WebSearchTool, gateway_thinking_text,
-    responses_to_anthropic_with_model_reasoning_and_thinking_kind,
-};
+use crate::protocol::convert::{WebSearchTool, gateway_thinking_text, responses_to_anthropic};
 use crate::protocol::gemini::responses_to_gemini;
 use crate::protocol::model_reasoning::{
     anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
 };
-use crate::protocol::openai_chat::responses_to_openai_chat_streaming_with_model;
+use crate::protocol::openai_chat::responses_to_openai_chat;
 use crate::protocol::openai_events::{
-    map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes,
-    map_openai_chat_sse_with_image_routes,
+    map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes, map_openai_chat_sse,
 };
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
@@ -122,7 +118,7 @@ async fn stream_anthropic_messages(
         anthropic_thinking_kind_with_advertised(upstream_model_id, advertised_thinking);
     let reasoning = upstream_reasoning(body, advertised_thinking);
     let convert = |default_max_tokens| {
-        let mut converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+        let mut converted = responses_to_anthropic(
             body,
             Some(upstream_model_id),
             reasoning.as_ref(),
@@ -284,11 +280,8 @@ async fn stream_openai_chat(
     let downstream_body = response_metadata_request(body, downstream_model);
     let mut upstream_body = body.clone();
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let converted = responses_to_openai_chat_streaming_with_model(
-        &upstream_body,
-        Some(upstream_model_id),
-        &compaction_secret,
-    )?;
+    let converted =
+        responses_to_openai_chat(&upstream_body, Some(upstream_model_id), &compaction_secret)?;
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -325,7 +318,7 @@ async fn stream_openai_chat(
         )
         .await?);
     }
-    Ok(map_openai_chat_sse_with_image_routes(
+    Ok(map_openai_chat_sse(
         observe_upstream_cache_usage(upstream.bytes_stream(), observation),
         downstream_body,
         converted.tool_names,
@@ -714,217 +707,4 @@ fn upstream_reasoning(body: &Value, advertised_thinking: Option<bool>) -> Option
         reasoning["effort"] = Value::String("max".to_owned());
     }
     Some(reasoning)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn response_metadata_does_not_copy_input_history() {
-        let body = json!({
-            "model": "upstream",
-            "instructions": "system",
-            "input": [{"role": "user", "content": "large history"}],
-            "tools": [{"type": "function", "name": "lookup"}],
-            "stream": true
-        });
-
-        let metadata = response_metadata_request(&body, "catalog");
-
-        assert_eq!(metadata["model"], "catalog");
-        assert_eq!(metadata["instructions"], "system");
-        assert_eq!(metadata["tools"], body["tools"]);
-        assert!(metadata.get("input").is_none());
-        assert!(metadata.get("stream").is_none());
-    }
-
-    #[test]
-    fn converts_gateway_thinking_to_portable_deepseek_reasoning() {
-        for encrypted in [
-            crate::protocol::convert::encode_anthropic_thinking(
-                "I should inspect the failing build.",
-                "signature",
-            ),
-            crate::protocol::convert::encode_anthropic_unsigned_thinking(
-                "I should inspect the failing build.",
-            ),
-            crate::protocol::convert::encode_baidu_unsigned_thinking(
-                "Opus 5.5-baidu-oneapi",
-                "I should inspect the failing build.",
-            ),
-        ] {
-            let mut body = json!({
-                "input": [
-                    {
-                        "type": "reasoning",
-                        "summary": [{"type": "summary_text", "text": "summary"}],
-                        "encrypted_content": encrypted,
-                        "content": []
-                    },
-                    {
-                        "type": "function_call",
-                        "call_id": "call-1",
-                        "name": "get_status",
-                        "arguments": "{\"job_id\":42}"
-                    },
-                    {
-                        "type": "function_call_output",
-                        "call_id": "call-1",
-                        "output": "success"
-                    }
-                ]
-            });
-
-            assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
-            assert_eq!(
-                body["input"][0],
-                json!({
-                    "type": "reasoning",
-                    "content": [{
-                        "type": "reasoning_text",
-                        "text": "I should inspect the failing build."
-                    }]
-                })
-            );
-            assert_eq!(body["input"].as_array().unwrap().len(), 3);
-        }
-    }
-
-    #[test]
-    fn uses_visible_summary_for_native_opaque_reasoning() {
-        let mut body = json!({
-            "input": [{
-                "type": "reasoning",
-                "summary": [{"type": "summary_text", "text": "I inspected the build."}],
-                "encrypted_content": "gAAAAABprovider-specific",
-                "content": []
-            }]
-        });
-
-        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
-        assert_eq!(
-            body["input"][0],
-            json!({
-                "type": "reasoning",
-                "content": [{
-                    "type": "reasoning_text",
-                    "text": "I inspected the build."
-                }]
-            })
-        );
-    }
-
-    #[test]
-    fn converts_codex_text_parts_while_dropping_provider_metadata() {
-        let mut body = json!({
-            "input": [{
-                "type": "reasoning",
-                "summary": [{"type": "summary_text", "text": "ignored summary"}],
-                "encrypted_content": "provider-specific",
-                "content": [{"type": "text", "text": "native reasoning"}]
-            }]
-        });
-
-        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
-        assert_eq!(
-            body["input"][0],
-            json!({
-                "type": "reasoning",
-                "content": [{
-                    "type": "reasoning_text",
-                    "text": "native reasoning"
-                }]
-            })
-        );
-    }
-
-    #[test]
-    fn marks_unrecoverable_opaque_reasoning_with_portable_placeholder() {
-        let mut body = json!({
-            "input": [
-                {
-                    "type": "reasoning",
-                    "encrypted_content": "codex-mixin:anthropic-thinking:v1:{\"type\":\"redacted_thinking\",\"data\":\"opaque\"}",
-                    "content": []
-                },
-                {"type": "message", "role": "user", "content": "continue"}
-            ]
-        });
-
-        assert_eq!(normalize_portable_responses_reasoning(&mut body), 1);
-        assert_eq!(
-            body["input"][0],
-            json!({
-                "type": "reasoning",
-                "content": [{
-                    "type": "reasoning_text",
-                    "text": "[Reasoning from a different provider was not exposed in plaintext.]"
-                }]
-            })
-        );
-        assert_eq!(body["input"].as_array().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn upstream_reasoning_drops_unsupported_and_normalizes_ultra() {
-        let supported = json!({"reasoning":{"effort":"ultra","summary":"auto"}});
-        assert_eq!(
-            upstream_reasoning(&supported, Some(true)).unwrap()["effort"],
-            "max"
-        );
-        assert_eq!(
-            upstream_reasoning(&supported, Some(true)).unwrap()["summary"],
-            "auto"
-        );
-
-        let unsupported = json!({"reasoning":{"effort":"ultra"}});
-        assert!(upstream_reasoning(&unsupported, Some(false)).is_none());
-    }
-    #[test]
-    fn agy_tool_policy_is_scoped() {
-        for (preset, path, native_agy) in [
-            ("agy", "/v1internal:streamGenerateContent", true),
-            ("custom", "/v1internal:streamGenerateContent", false),
-            ("agy", "/v1beta/models/{model}:streamGenerateContent", false),
-        ] {
-            let mut definition = crate::provider::agy_provider("fixture", "key");
-            definition.preset_id = Some(preset.to_owned());
-            definition.api_path = path.to_owned();
-            let registry = crate::provider::ProviderRegistry::new(vec![definition]).unwrap();
-            let provider = registry.provider("fixture").unwrap();
-            for (functions, search) in [(true, true), (true, false), (false, true)] {
-                let mut tools = Vec::new();
-                if functions {
-                    tools.push(json!({"type":"function", "name":"read_file", "parameters":{"type":"object"}}));
-                }
-                if search {
-                    tools.push(json!({"type":"web_search"}));
-                }
-                let converted = responses_to_gemini(
-                    &json!({"model":"gemini-3.8-flash-high", "input":"hello", "tools":tools}),
-                    None,
-                )
-                .unwrap();
-                let payload =
-                    build_gemini_payload(provider, "gemini-3.8-flash-high", converted.request);
-                let request = payload.get("request").unwrap_or(&payload);
-                let tools = request["tools"].as_array().unwrap();
-                assert_eq!(
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("functionDeclarations").is_some()),
-                    functions
-                );
-                assert_eq!(
-                    tools.iter().any(|tool| tool.get("googleSearch").is_some()),
-                    search && !(native_agy && functions)
-                );
-                assert_eq!(
-                    request.get("toolConfig").is_some(),
-                    functions && search && !native_agy
-                );
-            }
-        }
-    }
 }

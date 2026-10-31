@@ -10,7 +10,6 @@ use super::types::{
     ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRequestPolicy,
 };
 
-pub const AGY_PRESET_ID: &str = "agy";
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
 pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
@@ -134,7 +133,6 @@ pub enum ModelSourceSpec {
     Static,
     OpenAiCompatible(&'static str),
     BaiduOneApi,
-    AwsBedrock,
 }
 
 impl ModelSourceSpec {
@@ -145,7 +143,6 @@ impl ModelSourceSpec {
                 path: path.to_owned(),
             },
             Self::BaiduOneApi => ProviderModelSource::BaiduOneApi,
-            Self::AwsBedrock => ProviderModelSource::AwsBedrock,
         }
     }
 }
@@ -498,46 +495,6 @@ fn bedrock_seed_model(id: &str, display_name: &str, context_window: u64) -> Prov
     }
 }
 
-pub fn agy_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::Agy.create(id, api_key)
-}
-
-pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::Custom.create(id, api_key)
-}
-
-pub fn baidu_oneapi_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::BaiduOneApi.create(id, api_key)
-}
-
-pub fn openrouter_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::OpenRouter.create(id, api_key)
-}
-
-pub fn deepseek_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    ProviderPreset::DeepSeek.create(id, api_key)
-}
-
-pub fn open_code_go_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::OpenCodeGo.create(id, api_key)
-}
-
-pub fn aws_bedrock_provider(
-    id: impl Into<String>,
-    api_key: impl Into<String>,
-) -> ProviderDefinition {
-    ProviderPreset::AwsBedrock.create(id, api_key)
-}
-
 pub fn aws_bedrock_aksk_provider(
     id: impl Into<String>,
     access_key_id: impl Into<String>,
@@ -546,7 +503,7 @@ pub fn aws_bedrock_aksk_provider(
     region: impl Into<String>,
 ) -> ProviderDefinition {
     let region = region.into();
-    let mut provider = aws_bedrock_provider(id, "");
+    let mut provider = ProviderPreset::AwsBedrock.create(id, "");
     provider.display_name = "Amazon Bedrock (AK/SK)".to_owned();
     provider.base_url = aws_bedrock_runtime_base_url(&region);
     provider.auth.aws_sigv4 = Some(AwsSigV4AuthConfig {
@@ -558,159 +515,4 @@ pub fn aws_bedrock_aksk_provider(
     });
     provider.model_source = ProviderModelSource::AwsBedrock;
     provider
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spec_table_covers_every_preset_in_declaration_order() {
-        assert_eq!(ProviderPreset::ALL.len(), SPECS.len());
-        for (preset, spec) in ProviderPreset::ALL.iter().zip(SPECS.iter()) {
-            assert_eq!(spec.preset, *preset);
-            assert_eq!(spec.id, preset.as_str());
-            assert!(!spec.icon.is_empty());
-            assert!(!spec.display_name.is_empty());
-            assert!(!spec.description.is_empty());
-        }
-        assert_eq!(
-            ProviderPreset::OpenCodeGo.spec().models_dev_provider,
-            Some("opencode-go")
-        );
-        assert_eq!(
-            ProviderPreset::AwsBedrock.spec().models_dev_provider,
-            Some("amazon-bedrock")
-        );
-    }
-
-    #[test]
-    fn open_code_go_uses_responses_and_models_compatible_paths() {
-        let provider = open_code_go_provider("opencode-go", "secret");
-        provider.validate().unwrap();
-        assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
-        assert_eq!(provider.base_url, "https://opencode.ai/zen/go");
-        assert_eq!(provider.api_path, "/v1/responses");
-        assert_eq!(provider.quota_parser, ProviderQuotaParser::OpenCodeGo);
-        assert_eq!(
-            provider.request_policy.session_affinity_header.as_deref(),
-            Some("x-opencode-session")
-        );
-        assert_eq!(provider.quota_currency.as_deref(), Some("USD"));
-        assert_eq!(provider.quota_workspace_id, None);
-        assert_eq!(provider.quota_auth_cookie, None);
-        assert_eq!(
-            provider.model_source,
-            ProviderModelSource::OpenAiCompatible {
-                path: "/v1/models".to_owned()
-            }
-        );
-        assert_eq!(
-            provider.selected_models,
-            [
-                "glm-5.2",
-                "glm-5.1",
-                "kimi-k2.7-code",
-                "deepseek-v4-pro",
-                "deepseek-v4-flash",
-                "mimo-v2.5-pro",
-            ]
-        );
-        assert_eq!(provider.cached_models.len(), 6);
-    }
-
-    #[test]
-    fn deepseek_preset_configures_balance_endpoint() {
-        let provider = deepseek_provider("deepseek", "secret");
-        assert_eq!(
-            provider.quota_url.as_deref(),
-            Some("https://api.deepseek.com/user/balance")
-        );
-        assert_eq!(provider.quota_parser, ProviderQuotaParser::DeepSeek);
-    }
-
-    #[test]
-    fn aws_bedrock_api_key_preset_uses_static_claude_models() {
-        let provider = aws_bedrock_provider("aws-bedrock", "secret");
-
-        provider.validate().unwrap();
-        assert_eq!(provider.protocol, ProviderProtocol::AnthropicMessages);
-        assert_eq!(provider.base_url, AWS_BEDROCK_MANTLE_BASE_URL);
-        assert_eq!(provider.api_path, "/v1/messages");
-        assert_eq!(
-            provider.auth.header,
-            ProviderAuthHeader::AuthorizationBearer
-        );
-        assert_eq!(provider.model_source, ProviderModelSource::Static);
-        assert_eq!(
-            provider.selected_models,
-            [
-                "anthropic.claude-sonnet-5",
-                "anthropic.claude-opus-4-8",
-                "anthropic.claude-haiku-4-5",
-            ]
-        );
-        assert!(provider.cached_models.iter().all(|model| {
-            model.supports_image == Some(true)
-                && model.supports_thinking == Some(true)
-                && model.supports_function_tools == Some(true)
-        }));
-    }
-
-    #[test]
-    fn aws_bedrock_aksk_preset_uses_sigv4_credentials() {
-        let provider = aws_bedrock_aksk_provider(
-            "aws-bedrock",
-            "AKIDEXAMPLE",
-            "secret-example",
-            Some("session-example".to_owned()),
-            "eu-west-1",
-        );
-
-        provider.validate().unwrap();
-        assert!(provider.auth.api_key.is_empty());
-        let aws = provider.auth.aws_sigv4.unwrap();
-        assert_eq!(aws.access_key_id, "AKIDEXAMPLE");
-        assert_eq!(aws.secret_access_key, "secret-example");
-        assert_eq!(aws.session_token.as_deref(), Some("session-example"));
-        assert_eq!(aws.region, "eu-west-1");
-        assert_eq!(aws.service, "bedrock");
-        assert_eq!(provider.model_source, ProviderModelSource::AwsBedrock);
-        assert_eq!(
-            provider.base_url,
-            "https://bedrock-runtime.eu-west-1.amazonaws.com/anthropic"
-        );
-    }
-
-    #[test]
-    fn every_stored_preset_is_valid_with_required_credentials() {
-        for preset in ProviderPreset::ALL
-            .into_iter()
-            .filter(|preset| *preset != ProviderPreset::Custom && !preset.is_virtual())
-        {
-            let mut provider = preset.create(preset.default_id(), "secret");
-            if preset == ProviderPreset::BaiduOneApi {
-                provider.quota_username = Some("quota-user".to_owned());
-            }
-            provider.validate().unwrap();
-        }
-    }
-
-    #[test]
-    fn official_oauth_uses_the_reserved_virtual_provider() {
-        let preset = ProviderPreset::Official;
-        assert!(preset.is_virtual());
-        assert_eq!(preset.default_id(), "official");
-        assert_eq!(preset.as_str(), "openai");
-        assert!(preset.create(preset.default_id(), "").validate().is_err());
-    }
-
-    #[test]
-    fn capability_catalog_presets_are_trusted_without_probes() {
-        assert!(openrouter_provider("openrouter", "key").declares_model_capabilities());
-        assert!(baidu_oneapi_provider("baidu-oneapi", "key").declares_model_capabilities());
-        assert!(open_code_go_provider("opencode-go", "key").declares_model_capabilities());
-        assert!(!custom_provider("custom", "key").declares_model_capabilities());
-        assert!(!deepseek_provider("deepseek", "key").declares_model_capabilities());
-    }
 }

@@ -1,13 +1,13 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::provider::custom_provider;
+use codex_mixin::provider::ProviderPreset;
 use codex_mixin::server::{AppState, router};
 use std::time::Duration;
 use tower::ServiceExt;
 const ORIGIN: &str = "http://10.252.145.171:8723";
 fn config() -> GatewayConfig {
-    let mut provider = custom_provider("custom", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("custom", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     GatewayConfig {
         context: Default::default(),

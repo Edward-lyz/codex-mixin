@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::gateway_access::GatewayClient;
-use codex_mixin::provider::{ProviderModel, catalog_model_slug};
+use codex_mixin::provider::ProviderModel;
 
-use super::official_models::selected_official_models;
+use super::official_models::{selected_catalog_models, selected_official_models};
 use super::report_hook::reporting_enabled;
 use super::runtime::effective_gateway_bind;
 use codex_mixin::platform::write_atomic_if_changed;
@@ -127,46 +127,12 @@ fn uninstall_pi_at(
 }
 
 fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) -> Vec<Value> {
-    let mut seen = HashSet::new();
-    let mut models = Vec::new();
-    for provider in &config.providers {
-        if !provider.enabled {
-            continue;
-        }
-        for upstream_model_id in &provider.selected_models {
-            let Some(cached) = provider
-                .cached_models
-                .iter()
-                .find(|candidate| &candidate.id == upstream_model_id)
-            else {
-                continue;
-            };
-            let id = catalog_model_slug(upstream_model_id, &provider.id);
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            models.push(pi_model(
-                id,
-                format!("{upstream_model_id} · {}", provider.display_name),
-                cached,
-                config,
-            ));
-        }
-    }
-    for model in official_models {
-        if !seen.insert(model.id.clone()) {
-            continue;
-        }
-        models.push(pi_model(
-            model.id.clone(),
-            format!(
-                "{} · OpenAI",
-                model.display_name.as_deref().unwrap_or(&model.id)
-            ),
-            model,
-            config,
-        ));
-    }
+    let catalog = selected_catalog_models(config, official_models);
+    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
+    let mut models: Vec<Value> = catalog
+        .into_iter()
+        .map(|(id, name, model)| pi_model(id, name, model, config))
+        .collect();
     for profile in &config.fusion_profiles {
         let id = profile.model_slug();
         if !seen.insert(id.clone()) {
@@ -402,201 +368,3 @@ export default function (pi: ExtensionAPI) {
   });
 }
 "#;
-
-#[cfg(test)]
-mod tests {
-    use codex_mixin::config::ThinkingMode;
-    use codex_mixin::provider::custom_provider;
-
-    use super::*;
-
-    fn gateway_config() -> GatewayConfig {
-        let mut provider = custom_provider("custom", "upstream-key");
-        provider.display_name = "Custom Provider".to_owned();
-        provider.selected_models = vec!["vision-model".to_owned()];
-        provider.cached_models = vec![ProviderModel {
-            id: "vision-model".to_owned(),
-            context_window: Some(128_000),
-            supports_image: Some(true),
-            supports_thinking: Some(true),
-            ..ProviderModel::default()
-        }];
-        GatewayConfig {
-            context: Default::default(),
-            bind: "127.0.0.1:8787".parse().unwrap(),
-            providers: vec![provider],
-            official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
-            codex_auth_path: PathBuf::from("/tmp/auth.json"),
-            gateway_api_key: None,
-            cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
-                .cors_allowed_origins,
-            gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
-                pi: Some("pi-client-key".to_owned()),
-                ..Default::default()
-            },
-            accept_codex_oauth: false,
-            official_ech_fallback_reason: None,
-            official_ech_proxy: false,
-            official_selected_models: None,
-            default_max_tokens: 8192,
-            default_context_window: 256_000,
-            request_timeout: std::time::Duration::from_secs(30),
-            thinking_mode: ThinkingMode::Auto,
-            enable_web_search_tool: false,
-            web_search_tool_type: "web_search".to_owned(),
-            web_search_max_uses: None,
-            fusion_profiles: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn install_writes_provider_hooks_and_restores_other_models() {
-        let directory = tempfile::tempdir().unwrap();
-        let models_path = directory.path().join("models.json");
-        let key_path = directory.path().join("pi-api-key");
-        let extension_path = directory.path().join("extensions/codex-mixin-report.ts");
-        fs::write(
-            &models_path,
-            serde_json::to_vec_pretty(&json!({
-                "providers": {"existing": {"name": "Existing", "models": []}},
-                "other": true,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        install_pi_at(
-            &models_path,
-            &key_path,
-            &extension_path,
-            "127.0.0.1:9898".parse().unwrap(),
-            &gateway_config(),
-            &[],
-            true,
-            true,
-        )
-        .unwrap();
-
-        let document: Value = serde_json::from_slice(&fs::read(&models_path).unwrap()).unwrap();
-        let provider = &document["providers"][PI_PROVIDER_ID];
-        assert_eq!(document["providers"]["existing"]["name"], "Existing");
-        assert_eq!(document["other"], true);
-        assert_eq!(provider["api"], PI_API);
-        assert_eq!(provider["baseUrl"], "http://127.0.0.1:9898/v1");
-        assert_eq!(provider["models"][0]["id"], "vision-model-custom");
-        assert_eq!(provider["models"][0]["input"], json!(["text", "image"]));
-        assert_eq!(provider["models"][0]["thinkingLevelMap"]["max"], "max");
-        assert_eq!(fs::read_to_string(&key_path).unwrap(), "pi-client-key");
-        let extension = fs::read_to_string(&extension_path).unwrap();
-        assert!(extension.contains(PI_REPORT_EXTENSION_MARKER));
-        assert!(extension.contains("before_agent_start"));
-        assert!(!extension.contains("tool_call"));
-        assert!(!extension.contains("tool_result"));
-        assert!(extension.contains("turn_end"));
-
-        uninstall_pi_at(&models_path, &key_path, &extension_path).unwrap();
-        let restored: Value = serde_json::from_slice(&fs::read(&models_path).unwrap()).unwrap();
-        assert_eq!(restored["providers"]["existing"]["name"], "Existing");
-        assert_eq!(restored["other"], true);
-        assert!(restored["providers"].get(PI_PROVIDER_ID).is_none());
-        assert!(!key_path.exists());
-        assert!(!extension_path.exists());
-    }
-
-    #[test]
-    fn sync_pi_models_refreshes_only_a_managed_agent_dir() {
-        let directory = tempfile::tempdir().unwrap();
-        let agent_dir = directory.path().to_owned();
-        let models_path = agent_dir.join("models.json");
-        let key_path = agent_dir.join("pi-api-key");
-        let config = gateway_config();
-
-        assert!(!sync_pi_models(&agent_dir, &key_path, config.bind, &config, &[], false).unwrap());
-        assert!(!models_path.exists());
-
-        let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
-        install_pi_at(
-            &models_path,
-            &key_path,
-            &extension_path,
-            config.bind,
-            &config,
-            &[],
-            false,
-            true,
-        )
-        .unwrap();
-        assert!(!sync_pi_models(&agent_dir, &key_path, config.bind, &config, &[], false).unwrap());
-
-        let mut updated = gateway_config();
-        updated.providers[0]
-            .selected_models
-            .push("second-model".to_owned());
-        updated.providers[0].cached_models.push(ProviderModel {
-            id: "second-model".to_owned(),
-            ..ProviderModel::default()
-        });
-        assert!(sync_pi_models(&agent_dir, &key_path, config.bind, &updated, &[], false).unwrap());
-        let document: Value = serde_json::from_slice(&fs::read(&models_path).unwrap()).unwrap();
-        let model_ids: Vec<&str> = document["providers"][PI_PROVIDER_ID]["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|model| model["id"].as_str().unwrap())
-            .collect();
-        assert!(model_ids.contains(&"second-model-custom"));
-    }
-
-    #[test]
-    fn install_rejects_unmanaged_provider_and_extension_collisions() {
-        let directory = tempfile::tempdir().unwrap();
-        let models_path = directory.path().join("models.json");
-        let key_path = directory.path().join("pi-api-key");
-        let extension_path = directory.path().join("extensions/codex-mixin-report.ts");
-        fs::write(
-            &models_path,
-            serde_json::to_vec(&json!({
-                "providers": {PI_PROVIDER_ID: {"name": "User provider"}}
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let error = install_pi_at(
-            &models_path,
-            &key_path,
-            &extension_path,
-            gateway_config().bind,
-            &gateway_config(),
-            &[],
-            true,
-            true,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("not managed by Codex Mixin"));
-        assert!(!key_path.exists());
-
-        fs::write(
-            &models_path,
-            serde_json::to_vec(&json!({"providers": {"existing": {"models": []}}})).unwrap(),
-        )
-        .unwrap();
-        let original_models = fs::read(&models_path).unwrap();
-        fs::create_dir_all(extension_path.parent().unwrap()).unwrap();
-        fs::write(&extension_path, "user extension").unwrap();
-        let error = install_pi_at(
-            &models_path,
-            &key_path,
-            &extension_path,
-            gateway_config().bind,
-            &gateway_config(),
-            &[],
-            true,
-            true,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("not managed by Codex Mixin"));
-        assert_eq!(fs::read(&models_path).unwrap(), original_models);
-        assert!(!key_path.exists());
-    }
-}

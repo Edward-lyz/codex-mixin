@@ -15,8 +15,8 @@ use codex_mixin::config::{FusionMode, FusionProfile, FusionTimeRoute, PanelTools
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
-    ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
-    apply_discovered_models, aws_bedrock_aksk_provider, aws_bedrock_provider, custom_provider,
+    ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol, ProviderRegistry,
+    ProviderRequestPolicy, apply_discovered_models, aws_bedrock_aksk_provider,
     discover_provider_models,
 };
 use codex_mixin::server::{AppState, router};
@@ -160,7 +160,7 @@ fn has_native_agent_envelope(body: &Value) -> bool {
 }
 
 fn test_config(upstream_base_url: String) -> GatewayConfig {
-    let mut provider = custom_provider("custom", "upstream-key");
+    let mut provider = ProviderPreset::Custom.create("custom", "upstream-key");
     provider.base_url = upstream_base_url;
     // Most gateway fixtures still exercise the Anthropic Messages path.
     provider.protocol = ProviderProtocol::AnthropicMessages;
@@ -2084,7 +2084,7 @@ async fn http_compression_negotiates_json_responses() {
 async fn routes_aws_bedrock_preset_through_mantle_messages() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url.clone());
-    let mut provider = aws_bedrock_provider("aws-bedrock", "upstream-key");
+    let mut provider = ProviderPreset::AwsBedrock.create("aws-bedrock", "upstream-key");
     provider.base_url = upstream_url;
     config.providers = vec![provider];
     let gateway_url = spawn_gateway_with_config(config).await;
@@ -2370,7 +2370,7 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
     ))
     .await;
 
-    let mut alpha = custom_provider("alpha", "alpha-key");
+    let mut alpha = ProviderPreset::Custom.create("alpha", "alpha-key");
     alpha.base_url = alpha_url;
     alpha.protocol = ProviderProtocol::AnthropicMessages;
     alpha.api_path = "/v1/messages".to_owned();
@@ -2383,7 +2383,7 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
         })
         .collect();
     alpha.selected_models = vec!["shared".to_owned(), "broken".to_owned()];
-    let mut beta = custom_provider("beta", "beta-key");
+    let mut beta = ProviderPreset::Custom.create("beta", "beta-key");
     beta.base_url = beta_url;
     beta.protocol = ProviderProtocol::OpenAiChat;
     beta.api_path = "/v1/chat/completions".to_owned();
@@ -2562,7 +2562,8 @@ async fn opencode_go_sends_stable_session_headers() {
         }
     }))).await;
     let mut config = test_config(upstream.clone());
-    let mut provider = codex_mixin::provider::open_code_go_provider("opencode-go", "upstream-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::OpenCodeGo.create("opencode-go", "upstream-key");
     provider.base_url = upstream;
     provider.cached_models = vec![ProviderModel {
         id: "glm-5.2".to_owned(),
@@ -10131,6 +10132,91 @@ async fn chat_endpoint_maps_real_function_calls() {
 }
 
 #[tokio::test]
+async fn chat_replays_deepseek_reasoning_through_responses_and_chat_upstreams() {
+    for protocol in [
+        ProviderProtocol::OpenAiResponses,
+        ProviderProtocol::OpenAiChat,
+    ] {
+        let (upstream, requests) = if protocol == ProviderProtocol::OpenAiChat {
+            spawn_mock_openai_chat().await
+        } else {
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let app = Router::new()
+                .route(
+                    "/responses",
+                    post(
+                        |State(requests): State<Arc<Mutex<Vec<Value>>>>,
+                         Json(body): Json<Value>| async move {
+                            requests.lock().unwrap().push(body);
+                            let response = json!({"type":"response.completed","response":{
+                                "id":"resp_replay","status":"completed",
+                                "output":[{"id":"msg1","type":"message","role":"assistant",
+                                    "content":[{"type":"output_text","text":"hello"}]}]
+                            }});
+                            (
+                                [(header::CONTENT_TYPE, "text/event-stream")],
+                                format!("event: response.completed\ndata: {response}\n\n"),
+                            )
+                        },
+                    ),
+                )
+                .with_state(requests.clone());
+            (spawn_router(app).await, requests)
+        };
+        let mut config = test_config(upstream);
+        config.providers[0].protocol = protocol;
+        config.providers[0].api_path = if protocol == ProviderProtocol::OpenAiChat {
+            "/chat/completions"
+        } else {
+            "/responses"
+        }
+        .to_owned();
+        let gateway = spawn_gateway_with_config(config).await;
+        for streaming in [false, true] {
+            let response = reqwest::Client::new()
+                .post(format!("{gateway}/v1/chat/completions"))
+                .bearer_auth("gateway-key")
+                .json(&json!({
+                    "model":"DeepSeek-V4-Flash-custom","stream":streaming,
+                    "messages":[
+                        {"role":"user","content":"Read a file."},
+                        {"role":"assistant","content":null,"reasoning_content":"Inspect the file first.",
+                            "tool_calls":[{"id":"cindy_call","type":"function","function":{"name":"read_file","arguments":"{}"}}]},
+                        {"role":"tool","tool_call_id":"cindy_call","content":"synthetic file"}
+                    ],
+                    "tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]
+                }))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let text = response.text().await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{protocol:?}: {text}");
+            assert!(text.contains("hello"), "{text}");
+        }
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        for request in sent.iter() {
+            if protocol == ProviderProtocol::OpenAiChat {
+                let messages = request["messages"].as_array().unwrap();
+                assert_eq!(messages.len(), 3);
+                assert_eq!(messages[1]["reasoning_content"], "Inspect the file first.");
+                assert_eq!(messages[1]["tool_calls"][0]["id"], "cindy_call");
+                assert_eq!(messages[2]["tool_call_id"], "cindy_call");
+            } else {
+                assert_eq!(request["input"][1]["type"], "reasoning");
+                assert_eq!(
+                    request["input"][1]["content"][0]["text"],
+                    "Inspect the file first."
+                );
+                assert_eq!(request["input"][2]["call_id"], "cindy_call");
+                assert_eq!(request["input"][3]["call_id"], "cindy_call");
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn chat_rejects_unsupported_semantics_before_upstream_call() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway = spawn_gateway(upstream).await;
@@ -10167,7 +10253,7 @@ async fn mock_gemini_generate_content(
 #[tokio::test]
 async fn routes_gemini_models_through_responses_provider() {
     let (upstream_url, requests) = spawn_mock_gemini().await;
-    let mut provider = codex_mixin::provider::agy_provider("gemini-test", "test-key");
+    let mut provider = codex_mixin::provider::ProviderPreset::Agy.create("gemini-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10263,7 +10349,8 @@ async fn gemini_preserves_thought_signature_and_tool_names_across_turns() {
         .with_state(requests.clone());
     let upstream_url = spawn_router(app).await;
 
-    let mut provider = codex_mixin::provider::agy_provider("gemini-tool-test", "test-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::Agy.create("gemini-tool-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10442,7 +10529,8 @@ async fn gemini_recovers_from_corrupted_thought_signature() {
         .with_state(requests.clone());
     let upstream_url = spawn_router(app).await;
 
-    let mut provider = codex_mixin::provider::agy_provider("gemini-corrupted-test", "test-key");
+    let mut provider =
+        codex_mixin::provider::ProviderPreset::Agy.create("gemini-corrupted-test", "test-key");
     // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
@@ -10519,7 +10607,7 @@ async fn agy_mixed_tools_complete() {
                 .unwrap()
         }
     ));
-    let mut provider = codex_mixin::provider::agy_provider("agy", "fixture-key");
+    let mut provider = codex_mixin::provider::ProviderPreset::Agy.create("agy", "fixture-key");
     provider.base_url = spawn_router(app).await;
     provider.cached_models = vec![codex_mixin::provider::ProviderModel {
         id: "gemini-3.8-flash-high".to_owned(),
