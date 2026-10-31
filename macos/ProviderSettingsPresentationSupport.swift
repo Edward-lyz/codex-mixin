@@ -106,44 +106,6 @@ func providerPrimaryStatus(_ provider: ProviderView) -> String {
     return "已加入 \(provider.selectedModels.count) 个模型 · 配置就绪"
 }
 
-func auxiliaryModelDefaultTooltip(for codexInstallMode: ManagedCodexInstallMode?) -> String {
-    switch codexInstallMode {
-    case .customOnly:
-        return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe")
-    case .codexOAuthProxy:
-        return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe2")
-    case nil:
-        return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe3")
-    }
-}
-
-func auxiliaryModelTooltip(for provider: ProviderView, codexInstallMode: ManagedCodexInstallMode?) -> String {
-    let capability: String
-    switch (codexInstallMode, provider.auxiliaryModelSupport) {
-    case (.customOnly, .none):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsNeitherAutoReviewNor")
-    case (.customOnly, .autoReviewOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnlyVoice")
-    case (.customOnly, .voiceOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnlyAutoReview")
-    case (.codexOAuthProxy, .none):
-        capability = AppLocalization.string("providerSettings.thisProviderOffersNeitherAutoReviewNor")
-    case (.codexOAuthProxy, .autoReviewOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderOffersAutoReviewOnlyVoice")
-    case (.codexOAuthProxy, .voiceOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderOffersVoiceOnlyAutoReview")
-    case (_, .none):
-        capability = AppLocalization.string("providerSettings.theCurrentModelCacheContainsNoAuto")
-    case (_, .autoReviewOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnly")
-    case (_, .voiceOnly):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnly")
-    case (_, .autoReviewAndVoice):
-        capability = AppLocalization.string("providerSettings.thisProviderSupportsBothAutoReviewAnd")
-    }
-    return "\(capability)\n\n\(auxiliaryModelDefaultTooltip(for: codexInstallMode))"
-}
-
 func auxiliaryModelStatus(for provider: ProviderView, codexInstallMode: ManagedCodexInstallMode?) -> String? {
     switch (codexInstallMode, provider.auxiliaryModelSupport) {
     case (.customOnly, .none):

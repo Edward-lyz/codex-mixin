@@ -158,10 +158,6 @@ final class ModelBenchmarkModel: ObservableObject {
         isSavingSelections || isProbingCapabilities || isLaunchingBenchmark || snapshot?.status == "running"
     }
 
-    var selectedVisibleCount: Int {
-        visibleRows.filter { selectedModelKeys.contains($0.id) && $0.model.isAvailable }.count
-    }
-
     var appliedModelCount: Int {
         selectedProvider?.selectedModels.count ?? 0
     }
@@ -173,13 +169,6 @@ final class ModelBenchmarkModel: ObservableObject {
     func stopPolling() {
         pollingTask?.cancel()
         pollingTask = nil
-    }
-
-    func resetForPresentation() {
-        stopPolling()
-        resultCache.removeAll()
-        applySnapshot(nil)
-        reloadProviders()
     }
 
     func refreshFromGatewayForPresentation() async {
@@ -1370,13 +1359,6 @@ struct ModelBenchmarkRootView: View {
     }
 }
 
-private func compareOptionalNumbers<T: BinaryInteger>(
-    _ left: T?,
-    _ right: T?
-) -> ComparisonResult {
-    compareOptionalNumbers(left.map(Double.init), right.map(Double.init))
-}
-
 private func capabilityDescription(title: String, supported: Bool?, error: String?) -> String {
     let status: String
     switch supported {
@@ -1393,20 +1375,6 @@ private func capabilityColor(_ supported: Bool?) -> Color {
     case true: return .accentColor
     case false: return Color(nsColor: .tertiaryLabelColor)
     case nil: return .orange
-    }
-}
-
-private func compareOptionalNumbers(
-    _ left: Double?,
-    _ right: Double?
-) -> ComparisonResult {
-    switch (left, right) {
-    case (nil, nil): return .orderedSame
-    case (nil, _): return .orderedDescending
-    case (_, nil): return .orderedAscending
-    case let (left?, right?):
-        if left == right { return .orderedSame }
-        return left < right ? .orderedAscending : .orderedDescending
     }
 }
 

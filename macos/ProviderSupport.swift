@@ -11,77 +11,6 @@ func modelContextTokens(fromK contextK: UInt64) -> UInt64 {
     min(max(contextK, 1), UInt64.max / modelContextTokensPerK) * modelContextTokensPerK
 }
 
-func modelCapabilityProbeCounts(_ progress: String) -> (completed: Int, total: Int)? {
-    guard
-        progress.hasPrefix("Probing capabilities for "),
-        let counterStart = progress.range(of: ": ", options: .backwards)?.upperBound,
-        let counterEnd = progress.range(of: " complete", range: counterStart..<progress.endIndex)?
-            .lowerBound
-    else {
-        return nil
-    }
-    let counts = progress[counterStart..<counterEnd].split(separator: "/", maxSplits: 1)
-    guard
-        counts.count == 2,
-        let completed = Int(counts[0]),
-        let total = Int(counts[1]),
-        completed >= 0,
-        total > 0,
-        completed <= total
-    else {
-        return nil
-    }
-    return (completed, total)
-}
-
-private func managedPackageVersion(
-    at versionFile: URL,
-    fileManager: FileManager
-) -> String? {
-    guard fileManager.isReadableFile(atPath: versionFile.path),
-          let contents = try? String(contentsOf: versionFile, encoding: .utf8)
-    else {
-        return nil
-    }
-    let version = contents.trimmingCharacters(in: .whitespacesAndNewlines)
-    let components = version.split(
-        separator: ".",
-        omittingEmptySubsequences: false
-    )
-    guard components.count >= 3,
-          components.allSatisfy({
-              !$0.isEmpty && $0.allSatisfy(\.isNumber)
-          })
-    else {
-        return nil
-    }
-    return version
-}
-
-func isManagedVersion(_ candidate: String, newerThan installed: String) -> Bool {
-    guard let candidateParts = managedVersionComponents(candidate),
-          let installedParts = managedVersionComponents(installed)
-    else {
-        return false
-    }
-    let count = max(candidateParts.count, installedParts.count)
-    for index in 0..<count {
-        let candidatePart = index < candidateParts.count ? candidateParts[index] : 0
-        let installedPart = index < installedParts.count ? installedParts[index] : 0
-        if candidatePart != installedPart {
-            return candidatePart > installedPart
-        }
-    }
-    return false
-}
-
-private func managedVersionComponents(_ version: String) -> [UInt64]? {
-    let parts = version.split(separator: ".", omittingEmptySubsequences: false)
-    guard parts.count >= 3 else { return nil }
-    let components = parts.compactMap { UInt64($0) }
-    return components.count == parts.count ? components : nil
-}
-
 enum BaiduAuthBridgeMode: String, Decodable, Equatable {
     case disabled
     case ducxLoopback = "ducx_loopback"
@@ -327,10 +256,6 @@ struct ProviderView: Decodable {
         baiduAuthBridge
     }
 
-    var modelsPath: String? {
-        modelSource.path
-    }
-
     var supportsAutoReview: Bool {
         if modelSource.kind == "baidu_oneapi" {
             return true
@@ -377,24 +302,6 @@ struct ProviderView: Decodable {
             ProviderModelListItem(model: $0, isAvailable: true, isNew: newModelIDs.contains($0.id))
         }
     }
-
-    var needsInitialModelDiscovery: Bool {
-        kind == .configured
-            && enabled
-            && modelsRefreshedAtMilliseconds == nil
-            && cachedModels.isEmpty
-    }
-
-    var supportsModelRefresh: Bool {
-        kind == .configured || kind == .official
-    }
-}
-
-func isAuxiliaryModelUpstreamSelectable(
-    for provider: ProviderView,
-    codexInstallMode: ManagedCodexInstallMode?
-) -> Bool {
-    codexInstallMode != .customOnly || provider.auxiliaryModelSupport != .none
 }
 
 struct ProviderModelSourceView: Decodable {
@@ -451,7 +358,6 @@ struct ProviderModelListItem {
     var priceType: String? { model.priceType }
     var contextWindow: UInt64? { model.contextWindow }
     var sourceContextWindow: UInt64? { model.sourceContextWindow }
-    var protocolID: String? { model.protocolID }
     var supportsImage: Bool? { model.supportsImage }
     var supportsThinking: Bool? { model.supportsThinking }
     var supportsWebSearch: Bool? { model.supportsWebSearch }
@@ -526,26 +432,6 @@ struct ProviderPickerOption {
     let displayName: String
 }
 
-struct ModelBenchmarkColumnDefinition: Equatable {
-    let id: String
-    let title: String
-    let width: Double
-    let minimumWidth: Double
-    let defaultAscending: Bool
-}
-
-func modelBenchmarkColumnDefinitions() -> [ModelBenchmarkColumnDefinition] {
-    [
-        .init(id: "selected", title: "Codex", width: 64, minimumWidth: 56, defaultAscending: false),
-        .init(id: "model", title: "模型", width: 520, minimumWidth: 260, defaultAscending: true),
-        .init(id: "ttft", title: "首 Token", width: 104, minimumWidth: 84, defaultAscending: true),
-        .init(id: "tps", title: "生成速度", width: 112, minimumWidth: 92, defaultAscending: false),
-        .init(id: "context", title: "上下文", width: 104, minimumWidth: 84, defaultAscending: false),
-        .init(id: "ratio", title: "倍率", width: 86, minimumWidth: 70, defaultAscending: true),
-        .init(id: "capabilities", title: "能力", width: 170, minimumWidth: 150, defaultAscending: false),
-    ]
-}
-
 func benchmarkRatioValue(_ ratio: String?) -> Double? {
     guard let ratio else { return nil }
     return Double(
@@ -560,20 +446,6 @@ func modelSelectionProviderOptions(_ providers: [ProviderView]) -> [ProviderPick
     providers.map {
         ProviderPickerOption(id: $0.id, displayName: $0.displayName)
     }
-}
-
-func shouldShowModelRatioColumn(for provider: ProviderView?) -> Bool {
-    provider?.presetID == "baidu-oneapi"
-}
-
-func formatContextWindow(_ value: UInt64) -> String {
-    if value >= 1_000_000 {
-        return String(format: "%.1fM", Double(value) / 1_000_000)
-    }
-    if value >= 1_000 {
-        return String(format: "%.0fK", Double(value) / 1_000)
-    }
-    return "\(value)"
 }
 
 func providerModelSelectionKey(providerID: String, modelID: String) -> String {

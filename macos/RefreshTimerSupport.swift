@@ -13,10 +13,6 @@ final class RefreshTimerController {
         self.handler = handler
     }
 
-    var isRunning: Bool {
-        timer?.isValid == true
-    }
-
     func start() {
         stop()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -29,17 +25,9 @@ final class RefreshTimerController {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func restart() {
-        start()
-    }
-
     func stop() {
         timer?.invalidate()
         timer = nil
-    }
-
-    func fireForTesting() {
-        handler()
     }
 
     deinit {

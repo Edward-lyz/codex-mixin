@@ -892,10 +892,6 @@ private struct ProviderDetailForm: View {
         }
     }
 
-    private var connectionSummary: String {
-        formState.connectionDirty ? "连接设置已修改" : "已保存"
-    }
-
     private var operationsBusy: Bool {
         isBusy || benchmarkModel.isBusy
     }

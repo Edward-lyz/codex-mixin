@@ -24,7 +24,7 @@ internal sealed class Operations(CliClient cli)
             try { await cli.RunAsync(["config", "apply"], cancellation, progress: progress); applied = true; }
             catch (Exception error) when (error is CliFailure or OperationCanceledException)
             {
-                throw new CliFailure($"配置已保存，但应用配置失败：{error.Message}", true, "config apply", (error as CliFailure)?.ExitCode);
+                throw new CliFailure($"配置已保存，但应用配置失败：{error.Message}", true, (error as CliFailure)?.ExitCode);
             }
             return output;
         }

@@ -4,15 +4,14 @@ using System.Text.Json;
 
 namespace CodexMixin;
 
-internal sealed class CliFailure(string message, bool? committed = null, string? stage = null, int? exitCode = null)
+internal sealed class CliFailure(string message, bool? committed = null, int? exitCode = null)
     : Exception(message)
 {
     internal bool? Committed { get; } = committed;
-    internal string? Stage { get; } = stage;
     internal int? ExitCode { get; } = exitCode;
 }
 
-internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix = null)
+internal sealed class CliClient(string executable)
 {
     private const int OutputLimit = 8 * 1024 * 1024;
     private static readonly TimeSpan PipeTimeout = TimeSpan.FromSeconds(3);
@@ -137,7 +136,6 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         // Mutation/service commands keep their normal environment and daemon capacity.
         if (readOnly && !start.Environment.ContainsKey("TOKIO_WORKER_THREADS"))
             start.Environment["TOKIO_WORKER_THREADS"] = QueryWorkerThreads;
-        foreach (var argument in prefix ?? []) start.ArgumentList.Add(argument);
         start.ArgumentList.Add("--no-tui");
         start.ArgumentList.Add("--json-errors");
         foreach (var argument in args) start.ArgumentList.Add(argument);
@@ -245,8 +243,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
                 if (!document.RootElement.TryGetProperty("error", out var error)) continue;
                 var committed = error.TryGetProperty("committed", out var flag) &&
                     flag.ValueKind is JsonValueKind.True or JsonValueKind.False ? flag.GetBoolean() : (bool?)null;
-                var stage = Json.OptionalText(error, "stage");
-                return new CliFailure(Json.Text(error, "message"), committed, stage, exitCode);
+                return new CliFailure(Json.Text(error, "message"), committed, exitCode);
             }
             catch (JsonException) { /* Non-JSON diagnostic lines precede the structured error. */ }
         }

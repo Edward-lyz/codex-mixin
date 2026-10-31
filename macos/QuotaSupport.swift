@@ -58,16 +58,6 @@ struct ProviderQuotaUsage: Decodable {
         }
         return displayName
     }
-
-    var providerLabel: String {
-        guard let providerDisplayName = providerDisplayName?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !providerDisplayName.isEmpty
-        else {
-            return menuLabel
-        }
-        return providerDisplayName
-    }
 }
 
 func parseProviderQuotaUsage(_ rawJSON: String) throws -> [ProviderQuotaUsage] {

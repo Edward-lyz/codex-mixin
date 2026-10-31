@@ -20,14 +20,6 @@ final class InstallProgressModel: ObservableObject {
         self.detail = detail
     }
 
-    func update(phase rawPhase: String) {
-        let display = localizedProgressLabel(rawPhase)
-        phase = display
-        if let index = phases.firstIndex(of: display) ?? phases.firstIndex(of: rawPhase) {
-            currentPhaseIndex = index
-        }
-    }
-
     func advanceStreamedPhase(_ rawPhase: String) {
         let display = localizedProgressLabel(rawPhase)
         phase = display
@@ -202,13 +194,8 @@ final class InstallProgressWindowController: NSWindowController, NSWindowDelegat
         }
     }
 
-    func update(phase: String) { model.update(phase: phase) }
     func advanceStreamedPhase(_ rawPhase: String) { model.advanceStreamedPhase(rawPhase) }
     func advance(to index: Int) { model.advance(to: index) }
-
-    func setDeterminateProgress(fraction: Double) {
-        model.determinateProgress = min(max(fraction, 0), 1)
-    }
 
     func setPhases(_ phases: [String]) {
         model.setPhases(phases)
@@ -307,24 +294,12 @@ final class OperationProgress {
         window.present()
     }
 
-    func update(phase: String) {
-        onMain { self.window.update(phase: phase) }
-    }
-
     func advance(to index: Int) {
         onMain { self.window.advance(to: index) }
     }
 
     func advanceStreamedPhase(_ rawPhase: String) {
         onMain { self.window.advanceStreamedPhase(rawPhase) }
-    }
-
-    func setDeterminateProgress(fraction: Double) {
-        onMain { self.window.setDeterminateProgress(fraction: fraction) }
-    }
-
-    func finish() {
-        onMain { self.window.finish() }
     }
 
     func finishAndWait() async {

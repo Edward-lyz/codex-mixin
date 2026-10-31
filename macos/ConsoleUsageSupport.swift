@@ -84,7 +84,6 @@ struct DailyUsageRecord: Decodable, Equatable {
     }
 
     var totalTokens: UInt64 { inputTokens + cacheReadTokens + cacheCreationTokens + outputTokens }
-    var date: Date { Date(timeIntervalSince1970: Double(day) * 86_400) }
 }
 
 /// Totals shown above the charts for the current filter.

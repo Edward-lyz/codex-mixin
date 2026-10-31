@@ -991,7 +991,6 @@ public sealed partial class MainWindow : Window
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
-    private Task EditProviderAsync(JsonElement provider) => ProviderDialogAsync(provider);
 
     private async Task ProviderDialogAsync(JsonElement? provider, bool inline = false)
     {
