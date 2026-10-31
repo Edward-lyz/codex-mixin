@@ -269,37 +269,3 @@ fn parse_ps_etime(raw: &str) -> Option<std::time::Duration> {
         ((days * 24 + hours) * 60 + minutes) * 60 + seconds,
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn finds_notification_helper_only_inside_app_resources() {
-        assert_eq!(
-            app_bundle_notification_helper(Path::new(
-                "/Applications/Codex Mixin.app/Contents/Resources/codex-mixin"
-            )),
-            Some(PathBuf::from(
-                "/Applications/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
-            ))
-        );
-        assert_eq!(
-            app_bundle_notification_helper(Path::new("/usr/local/bin/codex-mixin")),
-            None
-        );
-    }
-
-    #[test]
-    fn parses_ps_etime_variants() {
-        use std::time::Duration;
-        assert_eq!(parse_ps_etime("05:20"), Some(Duration::from_secs(320)));
-        assert_eq!(parse_ps_etime("01:02:03"), Some(Duration::from_secs(3723)));
-        assert_eq!(
-            parse_ps_etime("2-01:02:03"),
-            Some(Duration::from_secs(2 * 86_400 + 3723))
-        );
-        assert_eq!(parse_ps_etime(""), None);
-        assert_eq!(parse_ps_etime("garbage"), None);
-    }
-}

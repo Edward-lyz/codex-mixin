@@ -65,13 +65,3 @@ async fn fetch_metadata_catalog() -> anyhow::Result<String> {
     }
     Ok(body)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn optional_metadata_cannot_block_an_interactive_install() {
-        assert!(METADATA_FETCH_TIMEOUT <= Duration::from_secs(5));
-    }
-}

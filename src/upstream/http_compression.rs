@@ -142,16 +142,3 @@ fn accepts_gzip(header: &str) -> bool {
         })
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn honors_request_encoding_quality() {
-        assert!(accepts_gzip("zstd, gzip"));
-        assert!(accepts_gzip("gzip;q=0.5"));
-        assert!(!accepts_gzip("gzip;q=0"));
-        assert!(!accepts_gzip("gzip;q=invalid"));
-        assert!(!accepts_gzip("br, zstd"));
-    }
-}

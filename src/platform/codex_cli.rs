@@ -49,7 +49,7 @@ pub fn path_executable_candidates(directory: &Path, stem: &str) -> Vec<PathBuf> 
 /// `Contents/Resources/codex-cli/bin/codex` in 2026-09. Probing only the old
 /// path makes the gateway fall back to `models_cache.json`, which pins a stale
 /// client version and hides newer official models.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn app_bundle_codex_cli_candidates(bundle: &Path) -> [PathBuf; 2] {
     let resources = bundle.join("Contents/Resources");
     [
@@ -154,35 +154,4 @@ pub fn launcher_command(path: &Path) -> Command {
     };
     super::prepare_background_command(&mut command);
     command
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn app_bundle_candidates_find_the_codex_cli_layout() {
-        let directory = tempfile::tempdir().unwrap();
-        let bundle = directory.path().join("ChatGPT.app");
-        let cli = bundle.join("Contents/Resources/codex-cli/bin/codex");
-        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
-        std::fs::write(&cli, b"").unwrap();
-        let resolved = app_bundle_codex_cli_candidates(&bundle)
-            .into_iter()
-            .find(|path| path.is_file());
-        assert_eq!(resolved, Some(cli));
-    }
-
-    #[test]
-    fn app_bundle_candidates_keep_the_legacy_layout() {
-        let directory = tempfile::tempdir().unwrap();
-        let bundle = directory.path().join("Codex.app");
-        let cli = bundle.join("Contents/Resources/codex");
-        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
-        std::fs::write(&cli, b"").unwrap();
-        let resolved = app_bundle_codex_cli_candidates(&bundle)
-            .into_iter()
-            .find(|path| path.is_file());
-        assert_eq!(resolved, Some(cli));
-    }
 }

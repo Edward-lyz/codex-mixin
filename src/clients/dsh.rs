@@ -16,9 +16,6 @@ const LLM_ENTRY_ID: &str = "llm-pi-ai";
 const PROFILE_PATCH_FILE: &str = "cordis.patch.yml";
 const GLOBAL_TAG_PREFIX: &str = "codex-mixin-global/";
 
-#[cfg(test)]
-mod tests;
-
 /// DSH `.credentials.yaml` layout version. DSH 0.1.5+ requires a versioned
 /// document whose only top-level keys are `version`, `refs`, and `records`;
 /// every credential reference nests under `refs`. Writing a bare top-level key

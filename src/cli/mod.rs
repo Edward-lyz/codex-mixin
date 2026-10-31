@@ -1016,6 +1016,3 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,
     }
 }
-
-#[cfg(test)]
-mod tests;

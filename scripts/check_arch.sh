@@ -84,6 +84,12 @@ check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|p
     src/web_search src/images src/clients src/server src/cli
 check_no_match "panel shell must not reach CLI internals" 'crate::cli\b|super::super::cli' panel
 
+# Every OS difference lives behind src/platform; the rest of the code only
+# expresses intent through the platform API.
+check_no_match "platform-specific code must live in src/platform" \
+    '^\s*[^/\s].*(cfg!?\((not\()?(unix|windows)|any\((unix|windows)|target_os|target_family|std::os::(unix|windows)|consts::(OS|EXE_SUFFIX)|\.exe"|USERPROFILE|LOCALAPPDATA|"APPDATA|var(_os)?\("HOME"\)|env\("HOME"|launchctl|osascript|codesign|plutil|/Applications/|Library/|systemctl|schtasks|taskkill|tasklist|powershell|cmd\.exe|icacls|"/usr/|"/bin/|process_group\(0|kill_process_group|PermissionsExt|from_mode\()' \
+    --glob '*.rs' --glob '!src/platform/**' src panel
+
 # Tests that run the real binary must use the hermetic launcher; a bare
 # spawn would stop the developer's real gateway through the shared service.
 check_no_match "tests must spawn codex-mixin through tests/common" 'CARGO_BIN_EXE' --glob '*.rs' --glob '!tests/common/**' tests

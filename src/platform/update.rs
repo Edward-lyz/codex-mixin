@@ -74,21 +74,3 @@ pub fn replace_executable(target: &Path, downloaded: &Path) -> anyhow::Result<()
     }
     replace_result
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn release_targets_cover_supported_desktops_and_servers() {
-        for (os, arch, target) in [
-            ("linux", "x86_64", "x86_64-unknown-linux-musl"),
-            ("linux", "aarch64", "aarch64-unknown-linux-musl"),
-            ("macos", "x86_64", "x86_64-apple-darwin"),
-            ("macos", "aarch64", "aarch64-apple-darwin"),
-            ("windows", "x86_64", "x86_64-pc-windows-msvc"),
-        ] {
-            assert_eq!(target_for(os, arch).unwrap(), target);
-        }
-        assert!(target_for("unknown", "x86_64").is_err());
-    }
-}

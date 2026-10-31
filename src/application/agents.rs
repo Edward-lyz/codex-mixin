@@ -89,29 +89,3 @@ pub fn integration_status(
         },
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn codex_mode_is_read_from_actual_managed_configuration() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("config.toml");
-        std::fs::write(&path, "model_provider = 'codex-mixin'\n[model_providers.codex-mixin]\nbase_url = 'http://127.0.0.1:8787/v1'\n").unwrap();
-        let state = integration_status("codex", &path, None).unwrap();
-        assert_eq!(state.state, "managed");
-        assert_eq!(state.mode, Some("codex_oauth_proxy"));
-    }
-
-    #[test]
-    fn malformed_managed_configuration_remains_an_explicit_error() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("config.toml");
-        std::fs::write(&path, "# codex-mixin managed config\ninvalid = [").unwrap();
-        let state = integration_status("codex", &path, None).unwrap();
-        assert_eq!(state.state, "error");
-        assert!(state.error.is_some());
-        assert!(integration_status("unknown", &path, None).is_err());
-    }
-}

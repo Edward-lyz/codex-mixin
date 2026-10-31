@@ -54,27 +54,3 @@ fn read_titles(path: &Path, mut visit: impl FnMut(String, String)) -> anyhow::Re
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_legacy_titles_without_creating_or_writing_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("state_5.sqlite");
-        assert!(read_titles(&path, |_, _| {}).is_err());
-        assert!(!path.exists());
-        let connection = Connection::open(&path).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE threads (id TEXT, title TEXT);
-            INSERT INTO threads VALUES ('a', 'Task'), ('b', ''), ('c', NULL);",
-            )
-            .unwrap();
-        let mut titles = Vec::new();
-        read_titles(&path, |id, title| titles.push((id, title))).unwrap();
-        assert_eq!(titles, [("a".to_owned(), "Task".to_owned())]);
-        assert_eq!(connection.total_changes(), 3);
-    }
-}

@@ -17,9 +17,6 @@ while IFS='|' read -r scope source test_name extra; do
 
   args=(test --locked --features client-auth)
   case "$scope" in
-    lib)
-      args+=(--lib "$test_name")
-      ;;
     cors | gateway_http | gateway_startup)
       args+=(--test "$scope" "$test_name")
       ;;

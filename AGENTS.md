@@ -40,13 +40,13 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 | `src/benchmark/`、`src/web_search/`、`src/images/`、`src/ech/` | 专用能力 | 按 `src/AGENTS.md` 处理探测、媒体或连接；不引用上层控制面 |
 | `macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
 
-`src/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达。测试 fixture 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
+`src/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达（`check_arch.sh` 检查）。`tests/` 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
 
 可见性默认 private，跨兄弟模块按最小需要使用 `pub(super)` / `pub(crate)`。新增对外 `pub` API、protocol 字段或扩展点先说明使用方与契约并取得确认，不为测试随意公开内部实现。
 
 ### 何时提取抽象
 
-- 只调用一次且 1–3 行的机械 helper 保持内联；两处相似实现先保持局部。三处以上重复、严格共同变化、领域概念、复杂边界或明确测试入口才提取。
+- 只调用一次且 1–3 行的机械 helper 保持内联；两处相似实现先保持局部。三处以上重复、严格共同变化、领域概念或复杂边界才提取。
 - 使用已有具体组件，只有真实多实现需求才引入 trait、registry、strategy、factory 或 plugin。一个实现不需要继承树或“未来扩展框架”。
 - 不创建无语义的 service/controller/helper 层。每个边界应拥有明确输入、输出、失败语义或资源生命周期。
 - 新抽象说明删除它会丢失什么实际能力、验证路径及成本；性能优化给出前后行为和量化依据。
@@ -71,17 +71,19 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 - 锁只覆盖状态变更，不跨网络 await。取消、超时、退出必须收敛相关任务、连接和子进程；GUI 超时不代表 CLI 操作已回滚。
 - 保持 release 的 `lto = "thin"` 与 `codegen-units = 1`。不把每次编译后的 `cargo clean` 当门禁；仅在有空间压力或明确需要时清理已确认的项目产物，避免破坏增量缓存与并行任务。
 
-## 禁止 UI 自动化测试
+## 测试范围
 
+- 测试只验证端到端的正常行为：`tests/` 驱动真实 CLI、HTTP/WS 与存储路径，CI 另跑 `scripts/e2e_*.sh`、Windows 真实 CLI 契约与安装/升级脚本。
+- 不写单元测试、逐分支的实现细节测试，也不写扫描源码或登记表的元测试；结构约束交给 `check_arch.sh`。
 - 全仓库禁止新增、恢复或引入 UI 测试项目、用例、脚本、依赖和 CI 任务，适用于 macOS、Windows、Web 面板及受管理客户端。包括窗口/控件交互、导航、布局/主题、截图/视觉回归、浏览器自动化，以及以源码断言形式维护的 UI 行为测试。
-- 界面变更通过构建、资源检查和人工操作验收；非 UI 的 Rust/CLI、HTTP/API、协议、安全、进程适配与纯逻辑测试继续保留和执行。不得以本规则为由删除这些测试。
+- 界面变更通过构建、资源检查和人工操作验收。
 - 子目录规范和测试清单必须遵守此规则，不得重新要求 UI 自动化门禁。
 
 ## 验证与交付
 
 实现前读相邻源码、契约和测试；若提供 LSP，优先用于定位引用。没有可用 LSP 接口时使用文件搜索与原生读取，不宣称执行了语义分析。
 
-验证命令默认从仓库根运行，Windows .NET 命令另标工作目录。修 bug 先写复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
+验证命令默认从仓库根运行，Windows .NET 命令另标工作目录。修 bug 先写 E2E 复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
 
 Rust/分层改动的门禁：
 
@@ -92,16 +94,15 @@ cargo clippy --locked --all-targets -- \
   -D clippy::redundant_closure_for_method_calls \
   -D clippy::redundant_pattern_matching -D warnings
 ./scripts/check_arch.sh
-./scripts/test_check_arch.sh
-cargo test --locked --all-targets
+cargo test --locked --tests
 ```
 
-CI 还运行 `client-auth` 的严格 Clippy 和全目标测试，以及 `./scripts/e2e_prompt_cache.sh`。鉴权、feature 条件、请求转换、流式和缓存前缀改动必须覆盖相应路径；窄范围测试不替代最终 CI 门禁。具体 GUI、资源、打包检查见目录规范。
+CI 还运行 `client-auth` 的严格 Clippy 与 `./scripts/test_client_auth.sh`，以及 `./scripts/e2e_multi_provider.sh`、`./scripts/e2e_prompt_cache.sh`。鉴权、feature 条件、请求转换、流式和缓存前缀改动必须覆盖相应路径；窄范围测试不替代最终 CI 门禁。具体 GUI、资源、打包检查见目录规范。
 
 文档/规范单独改动至少检查 `git diff --check`、本地链接/命令存在性、规范继承与架构检查；没有源码或构建配置变化时可不重编译 Rust/GUI，但汇报中必须明确未运行哪些检查及原因。
 
-单测就近放 `#[cfg(test)] mod tests` 或模块 `tests.rs`；跨组件行为放 `tests/`。允许确定性的本地测试服务器与 fixture，但必须驱动真实生产路径，不能以 mock 结果冒充线上成功或删掉安全断言。
+测试只放在 `tests/`。允许确定性的本地测试服务器与 fixture，但必须驱动真实生产路径，不能以 mock 结果冒充线上成功。
 
-`check_arch.sh` 是粗粒度文本门禁，不是完整语义检查。不要通过别名、重导出或修改断言规避边界；扩大门禁时补充其负例测试。
+`check_arch.sh` 是粗粒度文本门禁，不是完整语义检查。不要通过别名、重导出或修改断言规避边界。
 
 一次改动聚焦一个目标，保留用户已有工作。验证后按最小闭包 commit，不 push 或触发发布，除非用户明确要求。汇报修改内容、实际命令、结果、跳过项和剩余限制，不用“应该通过”代替实际输出。

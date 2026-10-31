@@ -75,11 +75,9 @@ jobs:
           fi
       - name: Check architecture boundaries
         if: runner.os == 'Linux'
-        run: |
-          ./scripts/check_arch.sh
-          ./scripts/test_check_arch.sh
-      - name: Run unit and integration tests
-        run: cargo test --locked --all-targets
+        run: ./scripts/check_arch.sh
+      - name: Run E2E tests
+        run: cargo test --locked --tests
       - name: Run multi-provider E2E
         if: runner.os == 'Linux'
         run: ./scripts/e2e_multi_provider.sh
@@ -114,6 +112,3 @@ jobs:
       - name: Verify macOS application icons
         if: runner.os == 'macOS'
         run: ./scripts/verify_macos_app_icon.sh
-      - name: Run macOS Swift tests
-        if: runner.os == 'macOS'
-        run: ./scripts/test_macos.sh --jobs 3

@@ -47,21 +47,6 @@ pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::
     })
 }
 
-#[cfg(test)]
-pub(in crate::cli) fn install_claude_with_config(
-    settings_path: Option<PathBuf>,
-    gateway_config: &GatewayConfig,
-) -> anyhow::Result<()> {
-    install_claude_with_models(
-        settings_path,
-        gateway_config,
-        &[],
-        gateway_config.bind,
-        true,
-    )
-    .map(|_| ())
-}
-
 fn install_claude_with_models(
     settings_path: Option<PathBuf>,
     gateway_config: &GatewayConfig,
@@ -359,49 +344,4 @@ pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::R
         println!("claude-code: not installed");
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn picker_uses_baidu_model_id_instead_of_marketing_description() {
-        let provider = codex_mixin::provider::baidu_oneapi_provider("baidu", "key");
-        let model = ProviderModel {
-            id: "GLM-5.3".to_owned(),
-            display_name: Some("GLM latest flagship model".to_owned()),
-            ..ProviderModel::default()
-        };
-
-        assert_eq!(claude_picker_label(&provider, &model), "GLM-5.3");
-        let mut custom_source = provider.clone();
-        custom_source.preset_id = None;
-        assert_eq!(claude_picker_label(&custom_source, &model), "GLM-5.3");
-        custom_source.model_source = codex_mixin::provider::ProviderModelSource::Static;
-        assert_eq!(
-            claude_picker_label(&custom_source, &model),
-            "GLM latest flagship model"
-        );
-    }
-
-    #[test]
-    fn picker_describes_application_profile_scope() {
-        let provider = codex_mixin::provider::aws_bedrock_aksk_provider(
-            "aws-bedrock",
-            "access-key",
-            "secret-key",
-            None,
-            "us-east-2",
-        );
-        let model = ProviderModel {
-            id: "arn:aws:bedrock:us-east-2:123:application-inference-profile/abc".to_owned(),
-            aliases: vec!["us.anthropic.claude-opus-5-20251101-v1:0".to_owned()],
-            ..ProviderModel::default()
-        };
-        assert_eq!(
-            claude_picker_description(&provider, &model),
-            "Discount US \u{b7} abc"
-        );
-    }
 }

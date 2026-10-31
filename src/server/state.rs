@@ -56,22 +56,6 @@ impl AppState {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_usage_aggregator(
-        config: GatewayConfig,
-        usage: crate::gateway::TokenUsageAggregator,
-    ) -> anyhow::Result<Self> {
-        let mut config = config;
-        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
-        let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
-        Self::with_web_search_capabilities_and_env_and_usage(
-            config,
-            web_search_capabilities,
-            |name| std::env::var(name).ok(),
-            usage,
-        )
-    }
-
     fn with_web_search_capabilities_and_env(
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,

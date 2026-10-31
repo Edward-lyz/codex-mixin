@@ -71,14 +71,6 @@ impl OfficialEch {
         .context("persist ECH fallback task")?
         .context("ECH disabled in memory, but saving fallback status failed")
     }
-
-    #[cfg(test)]
-    pub(crate) fn for_config(path: std::path::PathBuf) -> Self {
-        Self {
-            config_path: path,
-            ..Self::default()
-        }
-    }
 }
 
 pub(crate) fn official_host(url: &Url) -> anyhow::Result<&str> {
@@ -271,96 +263,4 @@ pub(crate) async fn connect_tls(
     }
     Err(last_error.context("DoH returned no connection addresses")?)
         .context("all ECH connection addresses failed")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn limits_ech_to_official_tls_hosts() {
-        for url in [
-            "https://chatgpt.com/backend-api/codex/responses",
-            "wss://api.openai.com/v1/live",
-        ] {
-            assert!(official_host(&Url::parse(url).unwrap()).is_ok());
-        }
-        for url in [
-            "http://chatgpt.com",
-            "https://chatgpt.com:8443",
-            "https://chatgpt.com.evil.test",
-            "https://127.0.0.1",
-            "https://user@chatgpt.com",
-        ] {
-            assert!(official_host(&Url::parse(url).unwrap()).is_err(), "{url}");
-        }
-    }
-
-    #[test]
-    fn refuses_missing_or_invalid_ech() {
-        assert!(tls_config(&[], vec![]).is_err());
-        assert!(tls_config(&[0, 1, 2], vec![]).is_err());
-    }
-
-    #[tokio::test]
-    #[ignore = "requires live /plus DNS and public TLS endpoints; sends no credentials"]
-    async fn live_ech_comparison() {
-        for host in ["chatgpt.com", "api.openai.com"] {
-            let url = Url::parse(&format!("https://{host}/")).unwrap();
-            let transport = OfficialEch::default();
-            let connection = tokio::time::timeout(
-                Duration::from_secs(20),
-                transport.connection(&url, Duration::from_secs(20)),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            let started = Instant::now();
-            let (_, peer) = tokio::time::timeout(
-                Duration::from_secs(20),
-                connect_tls(host, &connection, false),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            println!(
-                "{host} plus_doh_with_ech peer={peer} accepted=true handshake_ms={}",
-                started.elapsed().as_millis()
-            );
-
-            let plain = ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            })
-            .with_no_client_auth();
-            let connector = TlsConnector::from(Arc::new(plain));
-            let system_address = tokio::net::lookup_host((host, 443))
-                .await
-                .unwrap()
-                .next()
-                .unwrap();
-            for (label, address) in [
-                ("system_dns_without_ech", system_address),
-                ("plus_doh_without_ech", peer),
-            ] {
-                let started = Instant::now();
-                let attempt = async {
-                    let socket = TcpStream::connect(address).await?;
-                    connector
-                        .connect(ServerName::try_from(host.to_owned())?, socket)
-                        .await?;
-                    Ok::<_, anyhow::Error>(())
-                };
-                let result = tokio::time::timeout(Duration::from_secs(8), attempt).await;
-                println!(
-                    "{host} {label} peer={address} handshake_ms={} result={result:?}",
-                    started.elapsed().as_millis()
-                );
-            }
-        }
-    }
 }

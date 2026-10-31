@@ -6,20 +6,13 @@ import Cocoa
 /// directly, so per-app language overrides in System Settings are respected.
 enum AppLocalization {
     static let bundle = Bundle.main
-    private static let testStrings: [String: String]? = {
-        guard let path = ProcessInfo.processInfo.environment["CODEX_MIXIN_LOCALIZATION_DIR"] else {
-            return nil
-        }
-        return NSDictionary(contentsOfFile: "\(path)/en.lproj/Localizable.strings") as? [String: String]
-    }()
 
     static var preferredLocalization: String {
         bundle.preferredLocalizations.first?.lowercased() ?? "en"
     }
 
     static func string(_ key: String, _ arguments: CVarArg...) -> String {
-        let format = testStrings?[key]
-            ?? bundle.localizedString(forKey: key, value: nil, table: "Localizable")
+        let format = bundle.localizedString(forKey: key, value: nil, table: "Localizable")
         guard !arguments.isEmpty else { return format }
         // Localized formats use `%@`, so numeric CVarArgs must be bridged to
         // text before formatting or Core Foundation crashes with SIGSEGV.

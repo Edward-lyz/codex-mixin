@@ -35,10 +35,9 @@
 codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 （计划任务、taskkill、ACL、Windows Terminal）上分别实现。
 
-`tests/platform_neutral_core.rs` 扫描 `src/` 与 `panel/` 中 `src/platform`
-以外的生产代码，发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、
-`launchctl`、`USERPROFILE`、`/usr/`、权限位等平台片段即失败。测试专用代码
-（`#[cfg(test)]` 项与 `tests.rs`）可以按平台准备 fixture。
+`scripts/check_arch.sh` 扫描 `src/` 与 `panel/` 中 `src/platform` 以外的代码，
+发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、`launchctl`、
+`USERPROFILE`、`/usr/`、权限位等平台片段即失败。
 
 ## 壳与 CLI 的契约
 

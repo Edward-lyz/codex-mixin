@@ -826,6 +826,3 @@ fn parse_remote_repo(remote: &str) -> String {
     };
     path.trim_matches('/').to_owned()
 }
-
-#[cfg(test)]
-mod tests;

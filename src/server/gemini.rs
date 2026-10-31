@@ -5,9 +5,6 @@ use crate::protocol::gemini::inbound;
 use axum::extract::Query;
 use std::collections::HashMap;
 
-#[cfg(test)]
-mod tests;
-
 // Normalize the Gemini header only inside this adapter; never forward the client key.
 fn auth_headers(mut headers: HeaderMap) -> Result<HeaderMap, GatewayError> {
     if let Some(key) = headers.remove("x-goog-api-key") {

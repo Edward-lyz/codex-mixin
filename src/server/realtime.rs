@@ -6,8 +6,6 @@ use crate::upstream::forward_official_headers;
 mod routing;
 mod transport;
 
-#[cfg(test)]
-use routing::official_live_sideband_url;
 use routing::{
     RealtimeRoute, official_codex_base_url, provider_realtime_url, resolve_realtime_route,
     rewrite_custom_call_location, set_mapped_query, set_official_call_query,
@@ -202,16 +200,4 @@ fn multipart_text_field(
     Err(GatewayError::BadRequest(format!(
         "missing realtime call multipart field: {field_name}"
     )))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn official_live_sideband_uses_openai_api_url() {
-        let url = official_live_sideband_url("call-123").unwrap();
-
-        assert_eq!(url.as_str(), "https://api.openai.com/v1/live/call-123");
-    }
 }

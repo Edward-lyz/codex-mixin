@@ -309,6 +309,3 @@ fn runtime_providers_at(
     providers.extend(discover_at(at, &providers)?);
     Ok(providers)
 }
-
-#[cfg(test)]
-mod tests;

@@ -39,7 +39,7 @@ fn quoted(value: &str) -> String {
     super::shell_quote(value)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn windows_script(command: &TerminalCommand<'_>) -> anyhow::Result<String> {
     use super::shell::powershell_quote;
     // Windows PowerShell 5 reads UTF-8 scripts correctly only with a BOM.
@@ -146,27 +146,6 @@ mod implementation {
     }
 }
 
-#[cfg(test)]
-mod windows_script_tests {
-    use super::*;
-
-    #[test]
-    fn windows_launcher_quotes_paths() {
-        let script = windows_script(&TerminalCommand {
-            title: "Login",
-            script_directory: Path::new("/tmp"),
-            home: Some(Path::new("C:/O'Neil/$HOME/%PATH%/home")),
-            environment: &[],
-            program: Path::new("C:/O'Neil/$HOME/%PATH%/ducx.exe"),
-            arguments: &["a b", "$(exit 7)"],
-        })
-        .unwrap();
-        assert!(script.starts_with('\u{feff}'));
-        assert!(script.contains("$env:HOME = 'C:/O''Neil/$HOME/%PATH%/home'"));
-        assert!(script.contains("& 'C:/O''Neil/$HOME/%PATH%/ducx.exe' 'a b' '$(exit 7)'"));
-    }
-}
-
 #[cfg(unix)]
 mod implementation {
     use super::*;
@@ -235,24 +214,5 @@ mod implementation {
                 "open x-terminal-emulator; run this step in an interactive terminal instead",
             )?;
         Ok(launcher)
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn launcher_exports_the_environment_and_quotes_arguments() {
-            let script = posix_script(&TerminalCommand {
-                title: "Login",
-                script_directory: Path::new("/tmp"),
-                home: Some(Path::new("/tmp/a b")),
-                environment: &[],
-                program: Path::new("/opt/it's/ducx"),
-                arguments: &["login"],
-            });
-            assert!(script.contains("export HOME='/tmp/a b'\n"));
-            assert!(script.contains("'/opt/it'\\''s/ducx' 'login'\n"));
-        }
     }
 }

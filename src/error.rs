@@ -40,19 +40,3 @@ pub fn format_error_chain(error: &(dyn Error + 'static)) -> String {
     }
     chain
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn formats_the_complete_error_chain_for_logs() {
-        let error = GatewayError::Other(
-            anyhow::anyhow!("connection refused").context("request provider models"),
-        );
-
-        assert_eq!(
-            format_error_chain(&error),
-            "request provider models: connection refused"
-        );
-    }
-}

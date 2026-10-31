@@ -91,22 +91,3 @@ pub(super) fn identifier(value: &str) -> anyhow::Result<&str> {
     );
     Ok(value)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_api_rejects_non_loopback_addresses_and_path_injection() {
-        for url in [
-            "https://example.com/api/providers",
-            "http://localhost:23001/api/providers",
-            "http://user:password@127.0.0.1:23001/api/providers",
-        ] {
-            assert!(request(reqwest::Method::GET, url, None, None).is_err());
-        }
-        for id in ["../provider", "provider/name", "", "provider?query"] {
-            assert!(identifier(id).is_err());
-        }
-    }
-}

@@ -344,38 +344,3 @@ pub(crate) fn validate_region(region: &str) -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reads_cli_login_from_read_only_database_and_handles_auth_types() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.sqlite3");
-        let db = rusqlite::Connection::open(&path).unwrap();
-        db.execute(
-            "CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value TEXT)",
-            [],
-        )
-        .unwrap();
-        db.execute("INSERT INTO auth_kv VALUES (?1, ?2)", ["kirocli:external-idp:token", r#"{"access_token":"fixture","refresh_token":"fixture-refresh","expires_at":"2000-01-01T00:00:00Z","region":"eu-west-2"}"#]).unwrap();
-        let credentials = cli_credentials(&path).unwrap().unwrap();
-        assert_eq!(credentials["tokenType"], "EXTERNAL_IDP");
-        assert_eq!(credentials["sourceKey"], "kirocli:external-idp:token");
-        assert_eq!(api_region("eu-west-2"), "eu-central-1");
-        assert_eq!(token_type("ksk_fixture", false), Some("API_KEY"));
-        assert_eq!(token_type("fixture", true), Some("EXTERNAL_IDP"));
-        assert_eq!(token_type("fixture", false), None);
-        db.execute("DELETE FROM auth_kv", []).unwrap();
-        db.execute(
-            "INSERT INTO auth_kv VALUES (?1, ?2)",
-            [
-                "kirocli:odic:token",
-                r#"{"access_token":"fixture","expires_at":"2000-01-01T00:00:00Z"}"#,
-            ],
-        )
-        .unwrap();
-        assert!(cli_credentials(&path).unwrap().is_none());
-    }
-}

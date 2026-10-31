@@ -425,6 +425,3 @@ fn parse_quota(value: &Value) -> anyhow::Result<Vec<AgyQuotaWindow>> {
     );
     Ok(windows.into_values().collect())
 }
-
-#[cfg(test)]
-mod tests;

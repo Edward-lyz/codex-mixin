@@ -7,4 +7,4 @@
 - 模型 key、catalog slug、上游 ID 与来源分别保存，不通过字符串猜测混用；保留模型级端点与认证策略。
 - preset 的特殊行为必须有真实接口依据，不按 provider 名称堆叠无验证猜测。
 - 能力未知和探测失败不等于不支持；配置身份变化后旧缓存必须失效。
-- 验证定义边界、模型端点、认证、发现合并与缓存身份，运行 provider 相关测试、`cargo test --locked --test provider_probe_cache` 和根级门禁。
+- 用 E2E（如 `cargo test --locked --test provider_probe_cache`）验证模型端点、认证与发现合并，并运行根级门禁。

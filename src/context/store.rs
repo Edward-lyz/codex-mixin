@@ -184,14 +184,6 @@ impl Store {
         Ok(store)
     }
 
-    #[cfg(test)]
-    pub fn open_in_memory() -> Result<Self> {
-        let connection = Connection::open_in_memory().context("open in-memory context database")?;
-        let store = Self { connection };
-        store.configure()?;
-        Ok(store)
-    }
-
     fn configure(&self) -> Result<()> {
         self.connection
             .pragma_update(None, "journal_mode", "WAL")
