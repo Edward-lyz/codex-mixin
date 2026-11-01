@@ -2547,24 +2547,6 @@ async function loadContext() {
 function contextSettingsCard(context) {
   const settings = context.settings || {};
   const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: Boolean(settings.enabled), disabled: state.busy, "aria-label": "启用上下文引擎", "data-action": "" });
-  const mode = h("select", { class: "select", "aria-label": "压缩策略", disabled: state.busy },
-    h("option", { value: "aggressive", text: "激进", selected: context.compression_mode === "aggressive" }),
-    h("option", { value: "gentle", text: "平和", selected: context.compression_mode === "gentle" }));
-  const note = h("div", { class: "row-sub", text: mode.value === "aggressive" ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。" });
-  mode.addEventListener("change", () => {
-    note.textContent = mode.value === "aggressive" ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。";
-  });
-  const followsModel = settings.context_window_tokens == null;
-  const follow = h("input", { class: "switch", type: "checkbox", role: "switch", checked: followsModel, disabled: state.busy, "aria-label": "跟随模型上下文窗口" });
-  const windowInput = h("input", { class: "input", type: "number", min: "1", step: "1", required: true,
-    value: settings.context_window_tokens ?? "", disabled: state.busy || followsModel, "aria-label": "上下文窗口（tokens）" });
-  const windowRow = h("div", { class: "row", hidden: followsModel },
-    h("div", { class: "row-main" }, h("label", { class: "row-title", text: "上下文窗口（tokens）" })), windowInput);
-  follow.addEventListener("change", () => {
-    windowInput.disabled = follow.checked;
-    windowRow.hidden = follow.checked;
-    if (!follow.checked) windowInput.focus();
-  });
   const save = h("button", { class: "btn btn-primary", type: "submit", text: "保存设置", disabled: state.busy });
   const body = h(
     "form",
@@ -2579,17 +2561,11 @@ function contextSettingsCard(context) {
       ),
       toggle,
     ),
-    h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: "压缩策略" }), note), mode),
-    h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: "跟随模型上下文窗口" })), follow),
-    windowRow,
     h("div", { class: "row" }, h("span", { class: "row-sub", text: "保存后自动应用到运行中的网关。" }), save),
   );
   body.addEventListener("submit", async (event) => {
     event.preventDefault();
     const params = { enabled: toggle.checked };
-    if (mode.value !== context.compression_mode) params.compression_mode = mode.value;
-    const window = follow.checked ? "none" : windowInput.value;
-    if (window !== (settings.context_window_tokens == null ? "none" : String(settings.context_window_tokens))) params.context_window_tokens = window;
     await runAction(save, "context_configure", params, { ok: "上下文设置已保存" });
     await loadContext();
   });

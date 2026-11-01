@@ -16,8 +16,7 @@ internal sealed record ContextSettings(
     long MaxInternalRounds,
     long MaxTier,
     bool GuidanceOnly,
-    long? ContextWindowTokens,
-    string CompressionMode = "gentle");
+    long? ContextWindowTokens);
 
 internal sealed record ContextConfig(ContextSettings Settings, string ConfigPath, string DatabasePath);
 
@@ -47,9 +46,7 @@ internal static class ContextContract
 {
     internal static ContextConfig ParseConfig(JsonElement value)
     {
-        var mode = Json.Text(value, "compression_mode");
-        if (mode is not ("aggressive" or "gentle")) throw new CliFailure("CLI contract 字段 compression_mode 无效。");
-        return new(ParseSettings(Json.Field(value, "context")) with { CompressionMode = mode },
+        return new(ParseSettings(Json.Field(value, "context")),
             Json.Text(value, "config_path"), Json.Text(value, "database_path"));
     }
 
@@ -78,7 +75,6 @@ internal static class ContextContract
     internal static string[]? SaveArguments(ContextSettings stored, ContextSettings edited)
     {
         var arguments = new List<string> { "context", "config", "set" };
-        if (edited.CompressionMode != stored.CompressionMode) arguments.AddRange(["--compression-mode", edited.CompressionMode]);
         if (edited.Enabled != stored.Enabled) arguments.AddRange(["--enabled", edited.Enabled ? "true" : "false"]);
         if (edited.GrowthThresholdTokens != stored.GrowthThresholdTokens) arguments.AddRange(["--growth-threshold-tokens", Number(edited.GrowthThresholdTokens)]);
         if (edited.PressureRatio != stored.PressureRatio) arguments.AddRange(["--pressure-ratio", Number(edited.PressureRatio)]);

@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use super::args::{ContextCommand, ContextConfigCommand, ContextSessionsCommand};
 
 struct ContextUpdate {
-    compression_mode: Option<String>,
     enabled: Option<bool>,
     growth_threshold_tokens: Option<u64>,
     pressure_ratio: Option<f64>,
@@ -28,7 +27,6 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
         ContextCommand::Config { command } => match command {
             ContextConfigCommand::Get { json: json_output } => config_get(json_output),
             ContextConfigCommand::Set {
-                compression_mode,
                 enabled,
                 growth_threshold_tokens,
                 pressure_ratio,
@@ -43,7 +41,6 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
             } => {
                 config_set(
                     ContextUpdate {
-                        compression_mode,
                         enabled,
                         growth_threshold_tokens,
                         pressure_ratio,
@@ -78,18 +75,8 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
 
 fn config_get(json_output: bool) -> Result<()> {
     let settings = stored_settings()?;
-    let defaults = ContextSettings::default();
-    let compression_mode = if settings.growth_threshold_tokens < defaults.growth_threshold_tokens
-        || settings.pressure_ratio < defaults.pressure_ratio
-        || settings.urgent_ratio < defaults.urgent_ratio
-    {
-        "aggressive"
-    } else {
-        "gentle"
-    };
     let value = json!({
         "context": settings,
-        "compression_mode": compression_mode,
         "config_path": stored_config_path(),
         "database_path": codex_mixin::context::database_path()?,
     });
@@ -98,7 +85,6 @@ fn config_get(json_output: bool) -> Result<()> {
     } else {
         let settings = &value["context"];
         println!("context enabled: {}", settings["enabled"]);
-        println!("compression mode: {compression_mode}");
         println!(
             "growth threshold tokens: {}",
             settings["growth_threshold_tokens"]
@@ -151,21 +137,9 @@ async fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
         })?;
     }
     if json_output {
-        let defaults = ContextSettings::default();
-        let compression_mode = if settings.growth_threshold_tokens
-            < defaults.growth_threshold_tokens
-            || settings.pressure_ratio < defaults.pressure_ratio
-            || settings.urgent_ratio < defaults.urgent_ratio
-        {
-            "aggressive"
-        } else {
-            "gentle"
-        };
         println!(
             "{}",
-            serde_json::to_string_pretty(
-                &json!({"context": settings, "compression_mode": compression_mode})
-            )?
+            serde_json::to_string_pretty(&json!({"context": settings}))?
         );
     } else {
         println!("context settings updated");
@@ -176,22 +150,6 @@ async fn config_set(update: ContextUpdate, json_output: bool) -> Result<()> {
 }
 
 fn apply_update(settings: &mut ContextSettings, update: ContextUpdate) -> Result<()> {
-    if let Some(mode) = update.compression_mode {
-        let defaults = ContextSettings::default();
-        (
-            settings.growth_threshold_tokens,
-            settings.pressure_ratio,
-            settings.urgent_ratio,
-        ) = match mode.as_str() {
-            "aggressive" => (25_000, 0.6, 0.85),
-            "gentle" => (
-                defaults.growth_threshold_tokens,
-                defaults.pressure_ratio,
-                defaults.urgent_ratio,
-            ),
-            _ => bail!("context compression mode must be aggressive or gentle"),
-        };
-    }
     if let Some(enabled) = update.enabled {
         settings.enabled = enabled;
     }

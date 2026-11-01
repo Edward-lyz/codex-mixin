@@ -19,17 +19,12 @@
 
 ```bash
 codex-mixin context config set --enabled true
-codex-mixin context config set --compression-mode aggressive
 codex-mixin context config get --json
 ```
 
-macOS、Windows 和 Web 设置页统一提供「激进 / 平和」两档，不展示内部阈值。
-平和是默认档；激进将增长门槛降到 25000 tokens、压力/紧急占比降到 0.6/0.85，
-平和使用下表默认值。CLI 接受 `--compression-mode aggressive|gentle`，与三个阈值参数互斥；
-两档只改变这三个阈值，保留保护区、内部轮次和显式窗口覆盖。`config get/set --json`
-在顶层返回 `compression_mode`，GUI 只传档位名；已有自定义阈值不因无关保存而重置，
-低于默认门槛的自定义配置显示为激进，其余显示为平和。
-跟随模型窗口默认开启（`context_window_tokens: null`），关闭后才显示手动窗口输入。
+macOS、Windows 和 Web 设置页只提供启用开关和统计，不展示压缩档位、阈值或窗口设置；
+引擎统一使用下表默认值（100000 tokens 增长门槛，最近 10000 tokens 保持原文）。
+需要调整时使用下方 CLI 参数；上下文窗口默认跟随模型（`context_window_tokens: null`）。
 
 可调项（默认值见 `src/config/context.rs`）：
 
@@ -37,10 +32,10 @@ macOS、Windows 和 Web 设置页统一提供「激进 / 平和」两档，不�
 | --- | --- | --- |
 | `enabled` | 总开关 | `false` |
 | `context_window_tokens` | 显式视图窗口；未设置时解析具体模型元数据，缺项时用网关默认值 | 自动 |
-| `growth_threshold_tokens` | T1 待压缩量门槛；同时用于推导增长间隔 | 50000 |
+| `growth_threshold_tokens` | T1 待压缩量门槛；同时用于推导增长间隔 | 100000 |
 | `pressure_ratio` / `urgent_ratio` | 提示与强提示的窗口占比 | 0.75 / 0.95 |
 | `protected_messages` | 最近保留的消息条数 | 3 |
-| `protected_tokens` | 最近保留的 token 数 | 5000 |
+| `protected_tokens` | 最近保留的 token 数 | 10000 |
 | `max_internal_rounds` | 单次用户请求内的内部工具轮次上限 | 10 |
 | `max_tier` | 允许产生的最高压缩层级（1-3），用于消融实验 | 3 |
 | `guidance_only` | 只注入压缩指引、不注入压缩工具（仅消融实验） | `false` |
@@ -75,13 +70,13 @@ CLI 保存实际改动后自动重启正在运行的网关一次，例如
 [`src/context/prompts/LICENSE`](../src/context/prompts/LICENSE)）。
 
 - 增长从持久化的低水位基线或上次提示计算，首次低压力请求只建立基线。增长间隔为
-  `max(20000, ceil(growth_threshold_tokens × 0.45))`，默认 22500 tokens。
-  忽略提示且没有新增长时，不因总长度超过 50000 而反复催促。
+  `max(20000, ceil(growth_threshold_tokens × 0.45))`，默认 45000 tokens。
+  忽略提示且没有新增长时，不因总长度超过 100000 而反复催促。
 - 初次出现的积压在窗口占用至少 45%、某层待压缩量至少达到增长门槛时可以立即触发。
   压缩成功在同一 SQLite 事务内清除基线，剩余积压可以重新评估。
 - T1 只计入实际文本长度至少 5000 个 UTF-16 单元的可执行连续范围；T2/T3 计入
   活跃 T1/T2 摘要的 token 量。普通增长路径优先 T1，其次 T2、T3；后两层的量级门槛
-  默认是 75000 tokens，并须大于低层待压缩量，或达到 1000/2000 个源块的数量门槛。
+  默认是 150000 tokens，并须大于低层待压缩量，或达到 1000/2000 个源块的数量门槛。
 - 达到 75% 压力或 95% 紧急门槛时，选择待压缩量最多的层，但仍要求至少
   `max(5000, round(window × 0.01))` tokens 的潜在收益。
 - 没有可执行范围或收益不足时继续用户任务。仅指引消融模式不提示工具调用或更新基线。

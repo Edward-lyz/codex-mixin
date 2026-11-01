@@ -26,11 +26,9 @@ codex-mixin context config get --json
 codex-mixin context config set --enabled true
 ```
 
-macOS、Windows 控制台和 Web 面板也提供「上下文」设置入口，保存使用同一 CLI 流程。
-压缩策略有「激进」和「平和」两档：激进更早提醒模型压缩，平和保留更长上下文，默认选择平和。
-「跟随模型上下文窗口」默认开启，无需输入窗口大小。CLI 可以用
-`codex-mixin context config set --compression-mode aggressive` 切换激进档，
-或用 `--compression-mode gentle` 恢复平和档。
+macOS、Windows 控制台和 Web 面板的「上下文」页提供启用开关和统计，保存使用同一 CLI 流程。
+界面不提供压缩档位和窗口设置：引擎默认在新增约 100000 tokens 后提示压缩，最近 10000 tokens 保持原文，
+上下文窗口跟随模型。需要调整时使用下文的 CLI 参数。
 
 **设置发生变化时，CLI 会自动重启正在运行的网关一次。** 正在进行的请求可能受重启影响，应在请求结束后调整。设置没有变化则不重启；网关原本停止则只保存，不启动。若保存成功但重启失败，命令返回非零退出码；`--json-errors` 会说明 `committed: true`、`stage: "context gateway restart"`，配置不会回滚。
 
@@ -103,11 +101,11 @@ JSON 使用下划线字段名，CLI 使用连字符参数名。下表给出当�
 | --- | --- | --- | --- |
 | `enabled` | `--enabled` | `false` | 是否开启新的上下文管理 |
 | `context_window_tokens` | `--context-window-tokens` | 自动 | 正整数；未设置时取具体模型元数据，缺项使用网关默认值；传 `none` 清除覆盖 |
-| `growth_threshold_tokens` | `--growth-threshold-tokens` | `50000` | 正整数；增长提示与各层积压门槛的基础值，不是硬性压缩间隔 |
+| `growth_threshold_tokens` | `--growth-threshold-tokens` | `100000` | 正整数；增长提示与各层积压门槛的基础值，不是硬性压缩间隔 |
 | `pressure_ratio` | `--pressure-ratio` | `0.75` | `(0,1]`，且必须小于 urgent；窗口压力提示阈值 |
 | `urgent_ratio` | `--urgent-ratio` | `0.95` | `(0,1]`；紧急提示阈值，不是强制截断或保证不溢出的开关 |
 | `protected_messages` | `--protected-messages` | `3` | 正整数；最近消息保护数量 |
-| `protected_tokens` | `--protected-tokens` | `5000` | 正整数；最近 token 保护预算，与其他保护规则共同生效 |
+| `protected_tokens` | `--protected-tokens` | `10000` | 正整数；最近 token 保护预算，与其他保护规则共同生效 |
 | `max_internal_rounds` | `--max-internal-rounds` | `10` | `1–10`；一次用户请求内的内部轮次上限 |
 | `max_tier` | `--max-tier` | `3` | `1–3`；允许新产生的最高压缩层级，主要用于消融实验 |
 | `guidance_only` | `--guidance-only` | `false` | 仅注入指引、不注入内部工具；用于消融实验，不是正常压缩模式 |
@@ -129,7 +127,7 @@ codex-mixin context config set --context-window-tokens none
 
 ## 何时提示压缩
 
-默认增长间隔为 `max(20000, ceil(growth_threshold_tokens × 0.45))`，即 22500 tokens。首次低压力请求建立基线；之后按增长提示，不会因为总历史一直超过 50000 就在无增长时反复催促。首次积压也可能在窗口占用至少 45%、某层积压达到门槛时触发。
+默认增长间隔为 `max(20000, ceil(growth_threshold_tokens × 0.45))`，即 45000 tokens。首次低压力请求建立基线；之后按增长提示，不会因为总历史一直超过 100000 就在无增长时反复催促。首次积压也可能在窗口占用至少 45%、某层积压达到门槛时触发。
 
 T1 的候选范围实际文本至少需要 5000 个 UTF-16 单元，这是字符长度条件，**不是 5000 tokens**。普通增长路径优先 T1，再考虑 T2/T3；高层还有独立的积压和源块数量条件。到 75% / 95% 压力门槛时，选择积压最多且预计收益至少 `max(5000, round(window × 0.01))` tokens 的层。
 

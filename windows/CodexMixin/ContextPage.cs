@@ -47,25 +47,12 @@ public sealed partial class MainWindow
             IsChecked = stored.Enabled
         };
         AutomationProperties.SetAutomationId(enabled, "context-enabled");
-        var mode = new ComboBox { Header = "压缩策略", ItemsSource = new[] { "激进", "平和" },
-            SelectedIndex = stored.CompressionMode == "aggressive" ? 0 : 1, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var followsModel = new CheckBox { Content = "跟随模型上下文窗口", IsChecked = stored.ContextWindowTokens is null };
-        var window = Amount("上下文窗口（tokens）", stored.ContextWindowTokens, "context-window-tokens");
-        window.Visibility = stored.ContextWindowTokens is null ? Visibility.Collapsed : Visibility.Visible;
-        followsModel.Checked += (_, _) => window.Visibility = Visibility.Collapsed;
-        followsModel.Unchecked += (_, _) => window.Visibility = Visibility.Visible;
-        var note = new TextBlock { Text = stored.CompressionMode == "aggressive"
-            ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。", TextWrapping = TextWrapping.Wrap };
-        mode.SelectionChanged += (_, _) => note.Text = mode.SelectedIndex == 0
-            ? "更早压缩，节省更多 token。" : "保留更长上下文，稍后再压缩。";
 
         async Task SaveAsync()
         {
             var edited = stored with
             {
-                Enabled = enabled.IsChecked == true,
-                CompressionMode = mode.SelectedIndex == 0 ? "aggressive" : "gentle",
-                ContextWindowTokens = followsModel.IsChecked == true ? null : Whole(window, "上下文窗口 token 数")
+                Enabled = enabled.IsChecked == true
             };
             if (ContextContract.SaveArguments(stored, edited) is not { } arguments)
             {
@@ -82,16 +69,9 @@ public sealed partial class MainWindow
         ApplyChanges.Content = "保存设置";
         ToolTipService.SetToolTip(ApplyChanges, "保存更改后自动重启运行中的网关并生效。");
         TrackDraft(enabled);
-        TrackDraft(mode);
-        TrackDraft(followsModel);
-        TrackDraft(window);
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(enabled);
-        body.Children.Add(mode);
-        body.Children.Add(note);
-        body.Children.Add(followsModel);
-        body.Children.Add(window);
         return Card("上下文引擎", "", body);
     }
 
@@ -204,29 +184,4 @@ public sealed partial class MainWindow
             BorderThickness = divider ? new Thickness(0, 1, 0, 0) : new Thickness(0)
         };
     }
-
-    private static NumberBox Amount(string header, long value, string id)
-    {
-        var box = new NumberBox { Header = header, Value = value, MinWidth = 180 };
-        AutomationProperties.SetAutomationId(box, id);
-        AutomationProperties.SetName(box, header);
-        return box;
-    }
-
-    private static NumberBox Amount(string header, long? value, string id)
-    {
-        var box = Amount(header, 0, id);
-        box.Value = value ?? double.NaN;
-        return box;
-    }
-
-    // NumberBox holds a double; integers are still validated here so a fractional
-    // entry never silently reaches the CLI. Range checks stay in the CLI.
-    private static long Whole(NumberBox box, string label)
-    {
-        var value = box.Value;
-        return double.IsFinite(value) && value == Math.Truncate(value) && Math.Abs(value) <= long.MaxValue ? (long)value
-            : throw new InvalidOperationException($"{label}必须是整数。");
-    }
-
 }

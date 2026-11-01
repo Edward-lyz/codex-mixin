@@ -71,8 +71,9 @@ fn context_cli_reports_settings_and_empty_stats() {
         &["context", "config", "get", "--json"],
     ));
     assert_eq!(got["context"]["enabled"], false);
-    assert_eq!(got["context"]["growth_threshold_tokens"], 50000);
-    assert_eq!(got["compression_mode"], "gentle");
+    assert_eq!(got["context"]["growth_threshold_tokens"], 100000);
+    assert_eq!(got["context"]["protected_tokens"], 10000);
+    assert!(got.get("compression_mode").is_none());
     assert_eq!(got["context"]["context_window_tokens"], Value::Null);
     assert_eq!(got["database_path"], database.display().to_string());
 
@@ -92,73 +93,10 @@ fn context_cli_reports_settings_and_empty_stats() {
 }
 
 #[test]
-fn context_compression_modes_are_persisted_by_the_cli() {
+fn context_settings_are_persisted_by_the_cli() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("context.db");
-    for (mode, growth, pressure, urgent) in [
-        ("aggressive", 25_000, 0.6, 0.85),
-        ("gentle", 50_000, 0.75, 0.95),
-    ] {
-        let saved = successful(cli(
-            directory.path(),
-            &database,
-            &[
-                "context",
-                "config",
-                "set",
-                "--compression-mode",
-                mode,
-                "--json",
-            ],
-        ));
-        assert_eq!(saved["compression_mode"], mode);
-        assert_eq!(saved["context"]["growth_threshold_tokens"], growth);
-        assert_eq!(saved["context"]["pressure_ratio"], pressure);
-        assert_eq!(saved["context"]["urgent_ratio"], urgent);
-        assert_eq!(saved["context"]["context_window_tokens"], Value::Null);
-        let reopened = successful(cli(
-            directory.path(),
-            &database,
-            &["context", "config", "get", "--json"],
-        ));
-        assert_eq!(reopened["compression_mode"], mode);
-        assert_eq!(reopened["context"], saved["context"]);
-    }
-    let rejected = cli(
-        directory.path(),
-        &database,
-        &[
-            "context",
-            "config",
-            "set",
-            "--compression-mode",
-            "unknown",
-            "--json",
-        ],
-    );
-    assert!(!rejected.status.success());
-    let reopened = successful(cli(
-        directory.path(),
-        &database,
-        &["context", "config", "get", "--json"],
-    ));
-    assert_eq!(reopened["compression_mode"], "gentle");
-    assert!(!directory.path().join("runtime.json").exists());
-    successful(cli(
-        directory.path(),
-        &database,
-        &[
-            "context",
-            "config",
-            "set",
-            "--context-window-tokens",
-            "128000",
-            "--protected-tokens",
-            "10000",
-            "--json",
-        ],
-    ));
-    let manual = successful(cli(
+    let removed = cli(
         directory.path(),
         &database,
         &[
@@ -169,30 +107,46 @@ fn context_compression_modes_are_persisted_by_the_cli() {
             "aggressive",
             "--json",
         ],
-    ));
-    assert_eq!(manual["context"]["context_window_tokens"], 128000);
-    assert_eq!(manual["context"]["protected_tokens"], 10000);
-    let conflicting = cli(
+    );
+    assert!(!removed.status.success());
+    let saved = successful(cli(
         directory.path(),
         &database,
         &[
             "context",
             "config",
             "set",
-            "--compression-mode",
-            "gentle",
+            "--context-window-tokens",
+            "128000",
+            "--protected-tokens",
+            "20000",
+            "--json",
+        ],
+    ));
+    assert_eq!(saved["context"]["context_window_tokens"], 128000);
+    assert_eq!(saved["context"]["protected_tokens"], 20000);
+    assert_eq!(saved["context"]["growth_threshold_tokens"], 100000);
+    assert!(saved.get("compression_mode").is_none());
+    assert!(!directory.path().join("runtime.json").exists());
+    let rejected = cli(
+        directory.path(),
+        &database,
+        &[
+            "context",
+            "config",
+            "set",
             "--pressure-ratio",
-            "0.4",
+            "0.99",
             "--json",
         ],
     );
-    assert!(!conflicting.status.success());
-    let unchanged = successful(cli(
+    assert!(!rejected.status.success());
+    let reopened = successful(cli(
         directory.path(),
         &database,
         &["context", "config", "get", "--json"],
     ));
-    assert_eq!(unchanged["context"], manual["context"]);
+    assert_eq!(reopened["context"], saved["context"]);
 }
 
 #[test]

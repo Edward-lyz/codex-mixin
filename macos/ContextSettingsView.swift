@@ -185,29 +185,6 @@ struct ContextSettingsView: View {
             } header: {
                 Text(AppLocalization.string("context.section.settings"))
             }
-            Section {
-                Picker(AppLocalization.string("context.compressionMode"), selection: $model.draft.compressionMode) {
-                    Text(AppLocalization.string("context.mode.aggressive")).tag("aggressive")
-                    Text(AppLocalization.string("context.mode.gentle")).tag("gentle")
-                }
-                .pickerStyle(.segmented)
-                Text(AppLocalization.string(model.draft.compressionMode == "aggressive"
-                    ? "context.mode.aggressiveNote" : "context.mode.gentleNote"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Toggle(
-                    AppLocalization.string("context.followModelWindow"),
-                    isOn: $model.draft.followsModelWindow
-                )
-                if !model.draft.followsModelWindow {
-                    TextField(
-                        AppLocalization.string("context.contextWindowTokens"),
-                        text: $model.draft.contextWindowTokens
-                    )
-                }
-            } header: {
-                Text(AppLocalization.string("context.section.limits"))
-            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)

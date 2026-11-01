@@ -14,7 +14,6 @@ struct ContextSettings: Equatable {
     var maxInternalRounds: Int
     /// `nil` follows the gateway or model default window.
     var contextWindowTokens: Int?
-    var compressionMode: String = "gentle"
 
     static func fromCLIJSON(_ rawJSON: String) throws -> ContextSettings {
         guard
@@ -28,10 +27,6 @@ struct ContextSettings: Equatable {
         }
         guard let enabled = (context["enabled"] as? NSNumber)?.boolValue else {
             throw ContextSettingsError.missingField("enabled")
-        }
-        guard let mode = response["compression_mode"] as? String,
-              ["aggressive", "gentle"].contains(mode) else {
-            throw ContextSettingsError.missingField("compression_mode")
         }
         func integer(_ key: String) throws -> Int {
             guard let number = context[key] as? NSNumber else {
@@ -54,8 +49,7 @@ struct ContextSettings: Equatable {
             protectedTokens: try integer("protected_tokens"),
             maxInternalRounds: try integer("max_internal_rounds"),
             // `null` and a missing key both mean "follow the model".
-            contextWindowTokens: (context["context_window_tokens"] as? NSNumber)?.intValue,
-            compressionMode: mode
+            contextWindowTokens: (context["context_window_tokens"] as? NSNumber)?.intValue
         )
     }
 }
@@ -77,7 +71,6 @@ enum ContextSettingsValidationIssue: Error, Equatable {
 /// clear or retype a field; `validated()` converts it to CLI values.
 struct ContextSettingsDraft: Equatable {
     var enabled: Bool
-    var compressionMode: String
     var growthThresholdTokens: String
     var pressureRatio: String
     var urgentRatio: String
@@ -89,7 +82,6 @@ struct ContextSettingsDraft: Equatable {
 
     init() {
         enabled = false
-        compressionMode = "gentle"
         growthThresholdTokens = ""
         pressureRatio = ""
         urgentRatio = ""
@@ -102,7 +94,6 @@ struct ContextSettingsDraft: Equatable {
 
     init(settings: ContextSettings) {
         enabled = settings.enabled
-        compressionMode = settings.compressionMode
         growthThresholdTokens = String(settings.growthThresholdTokens)
         pressureRatio = String(settings.pressureRatio)
         urgentRatio = String(settings.urgentRatio)
@@ -152,8 +143,7 @@ struct ContextSettingsDraft: Equatable {
             protectedMessages: messages,
             protectedTokens: tokens,
             maxInternalRounds: rounds,
-            contextWindowTokens: window,
-            compressionMode: compressionMode
+            contextWindowTokens: window
         ))
     }
 
@@ -166,9 +156,6 @@ struct ContextSettingsDraft: Equatable {
 /// An empty result means there is nothing to save.
 func contextSettingsArguments(from saved: ContextSettings, to edited: ContextSettings) -> [String] {
     var arguments = ["context", "config", "set"]
-    if saved.compressionMode != edited.compressionMode {
-        arguments += ["--compression-mode", edited.compressionMode]
-    }
     if saved.enabled != edited.enabled {
         arguments += ["--enabled", edited.enabled ? "true" : "false"]
     }
