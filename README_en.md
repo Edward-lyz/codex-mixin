@@ -32,40 +32,36 @@
   <a href="#documentation">Docs</a>
 </p>
 
-<p align="center">
-  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="Models and Services in the macOS console"></a>
-</p>
-
 ## Highlights
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>🧩 Works with official Codex</h3>
+      <h3>Works with official Codex</h3>
       Custom models appear next to official GPT models in the Codex picker. ChatGPT sign-in, session history, and mobile remote tasks keep working, and disconnecting restores the original configuration.
     </td>
     <td width="50%" valign="top">
-      <h3>🧠 Context engine</h3>
+      <h3>Context engine</h3>
       The Billion Context algorithm compresses history in segments during inference and archives the originals for restore, keeping the cache hit rate above 90% on long tasks.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>🔌 One setup, 50 agents</h3>
+      <h3>One setup, 50 agents</h3>
       Connect Codex, Claude Code, Gemini CLI, OpenCode, Cursor, and more to the same models. Only managed fields change; unrelated settings stay as they were.
     </td>
     <td width="50%" valign="top">
-      <h3>🔁 Protocol translation</h3>
+      <h3>Protocol translation</h3>
       Requests and streams are translated between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, keeping reasoning, tool calls, and multi-turn context.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>📊 Usage and quota at a glance</h3>
+      <h3>Usage and quota at a glance</h3>
       Daily and per-reply Tokens, cache hits, time to first token, and output speed, with provider quota in the menu bar or tray.
     </td>
     <td width="50%" valign="top">
-      <h3>🖥️ Native on every platform</h3>
+      <h3>Native on every platform</h3>
       A macOS menu bar app, a Windows WinUI 3 tray app, and a Web panel for Linux and remote machines, all backed by the same CLI.
     </td>
   </tr>
@@ -75,7 +71,7 @@
 
 ## Install
 
-**Linux / macOS (CLI + Web panel)**: one command installs to `~/.local/bin`:
+**Linux (CLI + Web panel)**: one command installs to `~/.local/bin`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
@@ -100,7 +96,7 @@ See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 
 
 Codex Mixin is a local gateway written in Rust. It provides OpenAI-, Anthropic-, and Gemini-compatible endpoints on your machine and routes requests from official Codex and other coding agents to the model providers you configure: DeepSeek, Claude, Gemini, Baidu OneAPI, AWS Bedrock, Google Antigravity, or any OpenAI- or Anthropic-compatible endpoint.
 
-The catalog supports all 50 Agents: 47 gateway or native-app integrations and vendor-native model management for Cursor CLI, Copilot CLI, and Devin. Native applications may require a running app or an import confirmation. Everything in the interface is also available from the CLI with `codex-mixin --no-tui` on machines without a GUI.
+The catalog supports all 50 Agents: 47 support gateway configuration, while Cursor CLI, Copilot CLI, and Devin provide vendor-native model management. Some applications may require a running app or an import confirmation. Everything in the interface is also available from the CLI with `codex-mixin --no-tui` on machines without a GUI.
 
 ---
 
@@ -116,12 +112,22 @@ Disconnect an Agent to restore its original configuration. The Web panel listens
 <table>
   <tr>
     <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="Model integration page in the macOS console"></a><br>
+      <sub><b>Model integration</b> · Provider configuration, model selection, and ordering</sub>
+    </td>
+    <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="Agents page in the macOS console"></a><br>
       <sub><b>Agents</b> · Installed versions, connection state, and restore controls</sub>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="Usage page in the macOS console"></a><br>
       <sub><b>Usage</b> · Daily totals, per-reply records, cache results, and speed</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="Context compression management page in the macOS console"></a><br>
+      <sub><b>Context compression management</b> · Session statistics, context growth, and compression summaries</sub>
     </td>
   </tr>
   <tr>

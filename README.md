@@ -32,40 +32,36 @@
   <a href="#文档">文档</a>
 </p>
 
-<p align="center">
-  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="macOS 控制台的模型与服务页面"></a>
-</p>
-
 ## 亮点
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>🧩 与官方 Codex 共存</h3>
+      <h3>与官方 Codex 共存</h3>
       自定义模型和官方 GPT 并列出现在 Codex 模型选择器里。ChatGPT 登录、历史会话和移动端远程任务照常可用，断开后恢复原配置。
     </td>
     <td width="50%" valign="top">
-      <h3>🧠 上下文引擎</h3>
+      <h3>上下文引擎</h3>
       集成 Billion Context 算法，推理时分段压缩历史、原文归档可随时恢复，缓存命中率保持在 90% 以上，长任务不再频繁失忆。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>🔌 一处配置，50 款 Agent</h3>
+      <h3>一处配置，50 款 Agent</h3>
       Codex、Claude Code、Gemini CLI、OpenCode、Cursor 等一键接入同一套模型，只改托管字段，无关配置原样保留。
     </td>
     <td width="50%" valign="top">
-      <h3>🔁 协议互转</h3>
+      <h3>协议互转</h3>
       在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间转换请求与流式响应，保留思考内容、工具调用和多轮上下文。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>📊 用量与额度一目了然</h3>
+      <h3>用量与额度一目了然</h3>
       每天和每次回复的 Token、缓存命中、首字延迟与输出速度；菜单栏 / 托盘直接看供应商额度。
     </td>
     <td width="50%" valign="top">
-      <h3>🖥️ 三端原生</h3>
+      <h3>三端原生</h3>
       macOS 菜单栏 App、Windows WinUI 3 托盘 App，以及 Linux / 远程机器的 Web 控制面板，背后是同一个 CLI。
     </td>
   </tr>
@@ -75,7 +71,7 @@
 
 ## 安装
 
-**Linux / macOS（CLI + Web 面板）**，一条命令安装到 `~/.local/bin`：
+**Linux（CLI + Web 面板）**，一条命令安装到 `~/.local/bin`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
@@ -100,7 +96,7 @@ codex-mixin panel
 
 Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI、Anthropic 和 Gemini 兼容接口，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
 
-管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置或原生应用接入，Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。所有操作都可以在图形界面完成，也可以在无 GUI 的机器上用 `codex-mixin --no-tui` 完成。
+管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置，Cursor CLI、Copilot CLI、Devin 这三款提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。所有操作都可以在图形界面完成，也可以在无 GUI 的机器上用 `codex-mixin --no-tui` 完成。
 
 ---
 
@@ -116,12 +112,22 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
 <table>
   <tr>
     <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS 控制台的模型接入页面"></a><br>
+      <sub><b>模型接入</b> · 供应商配置、模型选择与排序</sub>
+    </td>
+    <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS 控制台的 Agent 接入页面"></a><br>
       <sub><b>Agent 接入</b> · 安装版本、接入状态与恢复入口</sub>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS 控制台的用量明细页面"></a><br>
       <sub><b>用量明细</b> · 每日统计、逐次回复、缓存与速度</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS 控制台的上下文压缩管理页面"></a><br>
+      <sub><b>上下文压缩管理</b> · 会话统计、上下文增长与压缩摘要</sub>
     </td>
   </tr>
   <tr>
