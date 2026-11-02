@@ -14,7 +14,7 @@
 //!   `GET /api/agents/versions` -> `agent versions --json` (network).
 //! - `GET /api/context` -> `{settings, database_path, totals, sessions}` from
 //!   `context stats --json` and `context config get --json`; with `?session=key`,
-//!   returns the existing `context export --session=key` document on demand.
+//!   returns `context export --compact --session=key` metadata on demand.
 //! - `GET /api/ech` -> `ech status --json`; `GET /api/report/estimate` ->
 //!   `report-replay --all-sessions --estimate --json`.
 //! - `GET /api/config/export` downloads a Base64 backup (not encrypted);
@@ -369,7 +369,13 @@ async fn context_stats(Query(query): Query<ContextQuery>) -> Result<Json<Value>,
             return Err(ApiError::invalid("Invalid context session".to_owned()));
         }
         return Ok(Json(
-            run_json(&["context", "export", &format!("--session={session}")]).await?,
+            run_json(&[
+                "context",
+                "export",
+                "--compact",
+                &format!("--session={session}"),
+            ])
+            .await?,
         ));
     }
     let (stats, config) = tokio::try_join!(

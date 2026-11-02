@@ -1051,6 +1051,9 @@ pub(super) enum ContextCommand {
         session: Option<String>,
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Export message metadata instead of original bodies for visualization.
+        #[arg(long)]
+        compact: bool,
     },
 }
 

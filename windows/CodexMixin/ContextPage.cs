@@ -1,6 +1,4 @@
 using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
@@ -16,7 +14,7 @@ namespace CodexMixin;
 // reads and writes none of those files directly.
 public sealed partial class MainWindow
 {
-    private static readonly double[] ContextColumns = [2.4, 0.7, 0.7, 0.9, 0.9, 0.9, 1.1];
+    private static readonly double[] ContextColumns = [3, 0.8, 1.2];
 
     private async Task ContextAsync(CancellationToken token)
     {
@@ -108,7 +106,7 @@ public sealed partial class MainWindow
         }
 
         var inspector = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        inspector.Content = Card("上下文详情", "选择一个会话，查看上下文增长、压缩范围，以及原文和摘要。");
+        inspector.Content = Card("上下文详情", "选择一个会话，查看上下文增长，以及消息和工具如何合并成精简摘要。");
         CancellationTokenSource? archiveQuery = null;
         async Task InspectAsync(ContextSession session)
         {
@@ -118,7 +116,7 @@ public sealed partial class MainWindow
             inspector.Content = Card(session.Display, "正在读取归档…", new ProgressRing { IsActive = true, Width = 24, Height = 24 });
             try
             {
-                var document = await Client.QueryAsync(["context", "export", $"--session={session.Session}"], request.Token);
+                var document = await Client.QueryAsync(["context", "export", "--compact", $"--session={session.Session}"], request.Token);
                 request.Token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(archiveQuery, request)) return;
                 var detail = ContextContract.ParseArchive(document);
@@ -175,7 +173,7 @@ public sealed partial class MainWindow
 
     private static ListView Sessions(ContextSession[] sessions, Action<ContextSession> select)
     {
-        var headers = new[] { "会话", "消息", "压缩", "节省", "视图", "命中", "更新" };
+        var headers = new[] { "会话", "压缩", "节省" };
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
@@ -201,10 +199,9 @@ public sealed partial class MainWindow
         var body = new StackPanel { Spacing = 16 };
         body.Children.Add(Text($"当前视图 {UsageView.Compact(session.ViewTokens)} token · 已节省 {UsageView.Compact(session.SavedTokens)} token"));
         body.Children.Add(new TextBlock { Text = "上下文增长", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        var serializing = new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
         var messages = archive.History.ToDictionary(row => row.Reference);
         var blocks = archive.Blocks.ToDictionary(row => row.Id);
-        var sizes = messages.ToDictionary(row => row.Key, row => Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(row.Value.Item, serializing)));
+        var sizes = messages.ToDictionary(row => row.Key, row => row.Value.Bytes);
         var visibleAt = new Dictionary<long, long>();
         foreach (var segment in archive.Segments)
         {
@@ -253,75 +250,100 @@ public sealed partial class MainWindow
             Text = "按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。",
             Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap
         });
-        var segments = new StackPanel { Spacing = 4 };
-        foreach (var segment in archive.Segments)
-            segments.Children.Add(Text($"{(segment.Kind == "block" ? "压缩块" : "原始消息")} · {segment.Reference} · {segment.Position + 1}–{segment.EndPosition + 1}"));
-        body.Children.Add(new Expander { Header = "当前上下文片段", Content = segments, HorizontalAlignment = HorizontalAlignment.Stretch });
-        foreach (var block in archive.Blocks)
-        {
-            var detail = new StackPanel { Spacing = 12 };
-            var summary = new TextBlock { Text = block.Summary, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
-            detail.Children.Add(new TextBlock { Text = "压缩后的摘要", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            detail.Children.Add(summary);
-            var sources = new Expander { Header = $"查看被压缩的原文（{block.References.Length} 条）", HorizontalAlignment = HorizontalAlignment.Stretch };
-            sources.Expanding += (_, _) =>
-            {
-                if (sources.Content is not null) return;
-                var originals = new StackPanel { Spacing = 8 };
-                foreach (var reference in block.References)
-                    if (messages.TryGetValue(reference, out var message)) originals.Children.Add(ContextOriginal(message));
-                sources.Content = originals;
-            };
-            detail.Children.Add(sources);
-            var title = new StackPanel { Spacing = 4 };
-            title.Children.Add(Text(string.IsNullOrEmpty(block.Topic) ? block.Id : block.Topic));
-            title.Children.Add(new TextBlock { Text = $"{block.Id} · T{block.Tier} · {block.StartPosition + 1}–{block.EndPosition + 1} · {(block.SupersededBy is null ? "未被替代" : $"已被 {block.SupersededBy} 替代")}", Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap });
-            body.Children.Add(new Expander { Header = title, Content = detail, HorizontalAlignment = HorizontalAlignment.Stretch });
-        }
+        body.Children.Add(new TextBlock { Text = "压缩概览", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        foreach (var block in archive.Blocks.Where(block => block.SupersededBy is null))
+            body.Children.Add(ContextCompression(block, messages));
         if (archive.Blocks.Length == 0) body.Children.Add(Text("此会话尚无压缩块。"));
-        var all = new Expander { Header = $"浏览原始归档（{archive.History.Length} 条）", HorizontalAlignment = HorizontalAlignment.Stretch };
-        all.Expanding += (_, _) =>
+        var remaining = archive.Segments.Count(segment => segment.Kind == "message");
+        if (remaining > 0) body.Children.Add(new TextBlock { Text = $"尚未压缩 · {remaining} 条内容", Style = Themed("Caption") });
+        var earlier = archive.Blocks.Where(block => block.SupersededBy is not null).ToArray();
+        if (earlier.Length > 0)
         {
-            if (all.Content is not null) return;
-            var originals = new StackPanel { Spacing = 8 };
-            foreach (var message in archive.History) originals.Children.Add(ContextOriginal(message));
-            all.Content = originals;
-        };
-        body.Children.Add(all);
+            var history = new Expander { Header = $"历史压缩（{earlier.Length}）", HorizontalAlignment = HorizontalAlignment.Stretch };
+            history.Expanding += (_, _) =>
+            {
+                if (history.Content is not null) return;
+                var cards = new StackPanel { Spacing = 12 };
+                foreach (var block in earlier) cards.Children.Add(ContextCompression(block, messages));
+                history.Content = cards;
+            };
+            body.Children.Add(history);
+        }
         return Card(session.Display, "", body);
     }
 
-    private static Expander ContextOriginal(ContextArchiveMessage message)
+    private static Border ContextCompression(ContextArchiveBlock block, Dictionary<string, ContextArchiveMessage> messages)
     {
-        var expander = new Expander { Header = message.Reference, HorizontalAlignment = HorizontalAlignment.Stretch };
-        expander.Expanding += (_, _) =>
+        var sources = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var covered = block.References.Select(reference => messages.GetValueOrDefault(reference)
+            ?? new ContextArchiveMessage(reference, 0, 0, "other", null));
+        var groups = covered.GroupBy(message => (message.Kind, message.Tool))
+            .OrderByDescending(group => group.Count()).ThenBy(group => group.Key.Kind).ThenBy(group => group.Key.Tool).ToArray();
+        foreach (var group in groups.Take(5))
         {
-            if (expander.Content is not null) return;
-            expander.Content = new TextBlock
+            var (kind, tool) = group.Key;
+            var label = tool?.Split('.').Last().Split("__").Last() ?? kind switch
             {
-                Text = JsonSerializer.Serialize(message.Item, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }),
-                TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, Style = Themed("Mono")
+                "user" => "用户消息", "assistant" => "助手消息", "function_call" => "工具调用",
+                "function_call_output" => "工具结果", "reasoning" => "推理", _ => "其他"
             };
+            var symbol = kind switch { "user" => Symbol.Contact, "assistant" => Symbol.Message,
+                "function_call" => Symbol.Setting, "function_call_output" => Symbol.Document, _ => Symbol.More };
+            var chip = new Grid { ColumnSpacing = 6 };
+            chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+            chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            chip.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var icon = new SymbolIcon { Symbol = symbol, Width = 14, Height = 14 };
+            chip.Children.Add(icon);
+            var title = new TextBlock { Text = label, Style = Themed("Caption"), TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetColumn(title, 1); chip.Children.Add(title);
+            var count = new TextBlock { Text = $"×{group.Count()}", Style = Themed("Caption") };
+            Grid.SetColumn(count, 2); chip.Children.Add(count);
+            ToolTipService.SetToolTip(chip, tool ?? label);
+            AutomationProperties.SetName(chip, $"{label}，{group.Count()} 条");
+            sources.Children.Add(chip);
+        }
+        if (groups.Length > 5) sources.Children.Add(new TextBlock { Text = $"其他 {groups.Skip(5).Sum(group => group.Count())} 条", Style = Themed("Caption") });
+        var flow = new Grid { ColumnSpacing = 10 };
+        flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(124) });
+        flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+        flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        flow.Children.Add(sources);
+        var brace = new TextBlock { Text = "}", FontSize = 72, FontWeight = Microsoft.UI.Text.FontWeights.ExtraLight,
+            Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAccessibilityView(brace, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+        Grid.SetColumn(brace, 1); flow.Children.Add(brace);
+        var output = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        output.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(block.Topic) ? "精简摘要" : block.Topic,
+            TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        output.Children.Add(new TextBlock { Text = $"{block.References.Length} 条内容 → 1 条摘要", Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap });
+        output.Children.Add(new TextBlock { Text = block.Summary[..Math.Min(240, block.Summary.Length)],
+            Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis });
+        Grid.SetColumn(output, 2); flow.Children.Add(output);
+        var detail = new Expander { Header = "查看摘要", HorizontalAlignment = HorizontalAlignment.Stretch };
+        detail.Expanding += (_, _) =>
+        {
+            if (detail.Content is not null) return;
+            detail.Content = new TextBlock { Text = block.Summary, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
         };
-        return expander;
+        var body = new StackPanel { Spacing = 12 };
+        body.Children.Add(flow); body.Children.Add(detail);
+        return new Border { Child = body, Padding = new Thickness(12), Style = Themed("ListCard") };
     }
 
     private static Border Session(ContextSession session)
     {
         var display = new TextBlock { Text = session.Display.Trim(), TextTrimming = TextTrimming.CharacterEllipsis };
-        ToolTipService.SetToolTip(display, $"{session.Session}\nrevision {session.Revision}");
         var updated = session.UpdatedAt <= 0 ? "未知"
             : DateTimeOffset.FromUnixTimeSeconds(session.UpdatedAt).ToLocalTime().ToString("MM-dd HH:mm");
         var hit = session.Cache.HitPercent is null ? "—" : $"{session.Cache.HitPercent:0.0}%";
+        ToolTipService.SetToolTip(display, $"{session.Session}\nrevision {session.Revision}\n消息 {UsageView.Compact(session.Messages)} · 视图 {UsageView.Compact(session.ViewTokens)} · 命中 {hit}\n更新 {updated}");
         var cells = new UIElement[]
         {
             display,
-            new TextBlock { Text = UsageView.Compact(session.Messages) },
             new TextBlock { Text = UsageView.Compact(session.Compressions) },
-            new TextBlock { Text = UsageView.Compact(session.SavedTokens) },
-            new TextBlock { Text = UsageView.Compact(session.ViewTokens) },
-            new TextBlock { Text = hit },
-            new TextBlock { Text = updated, Style = Themed("Mono") }
+            new TextBlock { Text = UsageView.Compact(session.SavedTokens) }
         };
         return TableRow(cells, true);
     }

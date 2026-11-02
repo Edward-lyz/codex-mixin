@@ -351,62 +351,28 @@ struct ContextSettingsView: View {
                             Text(AppLocalization.string("context.inspect.estimate"))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(AppLocalization.string("context.inspect.map")).font(.headline)
-                            ForEach(Array(archive.segments.enumerated()), id: \.offset) { _, segment in
-                                HStack(spacing: 8) {
-                                    Image(systemName: segment.kind == "block" ? "archivebox.fill" : "text.alignleft")
-                                        .foregroundStyle(segment.kind == "block" ? Color.accentColor : Color.secondary)
-                                    Text(segment.reference).font(.system(.caption, design: .monospaced))
-                                    Spacer()
-                                    Text("\(segment.position + 1)–\(segment.end_position + 1)")
-                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                                }
-                                .padding(8)
-                                .background(segment.kind == "block" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04),
-                                            in: RoundedRectangle(cornerRadius: 6))
-                            }
+                        Text(AppLocalization.string("context.inspect.map")).font(.headline)
+                        ForEach(archive.blocks.filter { $0.superseded_by == nil }) { block in
+                            compressionCard(block, archive: archive)
                         }
                         if archive.blocks.isEmpty {
                             Text(AppLocalization.string("context.inspect.noBlocks"))
                                 .foregroundStyle(.secondary)
                         }
-                        ForEach(archive.blocks) { block in
-                            DisclosureGroup {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text(AppLocalization.string("context.inspect.summary")).font(.headline)
-                                    Text(block.summary).font(.callout).textSelection(.enabled)
-                                    DisclosureGroup(AppLocalization.string("context.inspect.source")) {
-                                        let refs = archive.referencesByBlock[block.id] ?? []
-                                        ForEach(archive.messages.filter { refs.contains($0.id) }) { message in
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(message.id).font(.caption).foregroundStyle(.secondary)
-                                                Text(message.text).font(.system(.caption, design: .monospaced))
-                                                    .textSelection(.enabled)
-                                            }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
-                                        }
+                        let remaining = archive.segments.filter { $0.kind == "message" }.count
+                        if remaining > 0 {
+                            Label(AppLocalization.string("context.inspect.remaining", String(remaining)), systemImage: "bubble.left")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        let history = archive.blocks.filter { $0.superseded_by != nil }
+                        if !history.isEmpty {
+                            DisclosureGroup(AppLocalization.string("context.inspect.history", String(history.count))) {
+                                LazyVStack(alignment: .leading, spacing: 12) {
+                                    ForEach(history) { block in
+                                        compressionCard(block, archive: archive)
                                     }
                                 }.padding(.top, 10)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(block.topic.isEmpty ? block.id : block.topic).font(.callout.weight(.medium))
-                                    Text("\(block.id) · T\(block.tier) · \(block.start_position + 1)–\(block.end_position + 1) · "
-                                         + AppLocalization.string(block.superseded_by == nil ? "context.inspect.active" : "context.inspect.superseded"))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
                             }
-                            .padding(12)
-                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                        }
-                        DisclosureGroup(AppLocalization.string("context.inspect.archive")) {
-                            LazyVStack(alignment: .leading, spacing: 12) {
-                                ForEach(archive.messages) { message in
-                                    DisclosureGroup(message.id) {
-                                        Text(message.text).font(.system(.caption, design: .monospaced))
-                                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                            }.padding(.top, 8)
                         }
                     }.padding(20)
                 }
@@ -419,6 +385,53 @@ struct ContextSettingsView: View {
                 }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+
+    private func compressionCard(_ block: ContextArchive.Block, archive: ContextArchive) -> some View {
+        let groups = archive.groupsByBlock[block.id] ?? []
+        let count = archive.referencesByBlock[block.id]?.count ?? 0
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(groups.prefix(5))) { group in
+                        HStack(spacing: 6) {
+                            Image(systemName: group.symbol).frame(width: 16)
+                            Text(group.title).lineLimit(1)
+                            Spacer(minLength: 2)
+                            Text("×\(group.count)").monospacedDigit()
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                        .help(group.tool ?? group.title)
+                        .accessibilityElement(children: .combine)
+                    }
+                    if groups.count > 5 {
+                        let otherCount = groups.dropFirst(5).reduce(0) { $0 + $1.count }
+                        Label(AppLocalization.string("context.inspect.more", String(otherCount)), systemImage: "ellipsis")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.frame(width: 124, alignment: .leading)
+                Text("}")
+                    .font(.system(size: 72, weight: .ultraLight))
+                    .foregroundStyle(.tertiary).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(block.topic.isEmpty ? AppLocalization.string("context.inspect.summary") : block.topic,
+                          systemImage: "doc.text.image")
+                        .font(.callout.weight(.medium)).foregroundStyle(Color.accentColor).lineLimit(2)
+                    Text(AppLocalization.string("context.inspect.packed", String(count)))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(String(block.summary.prefix(240)))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            DisclosureGroup(AppLocalization.string("context.inspect.summary")) {
+                Text(block.summary).font(.callout).textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+            }
+            .font(.caption)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var emptyState: some View {

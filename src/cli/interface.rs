@@ -31,6 +31,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
             "config_apply": true,
             "context_management": true,
+            "context_compact_export": true,
             "cors_configuration": true,
             "claude_desktop_routing": true,
             "official_ech_proxy": true,

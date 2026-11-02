@@ -227,13 +227,58 @@ struct ContextSessionStats: Decodable, Identifiable, Equatable {
     }
 }
 
-/// Presentation of the existing CLI export; the shell never opens context.db.
+/// Presentation of the compact CLI export; no original bodies enter the shell.
 struct ContextArchive {
-    struct Message: Identifiable {
+    struct Message: Decodable, Identifiable {
         let id: String
         let position: Int
-        let text: String
         let bytes: Int
+        let kind: String
+        let tool: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id = "reference"
+            case position, bytes, kind, tool
+        }
+    }
+
+    struct SourceGroup: Identifiable {
+        let id: String
+        let kind: String
+        let tool: String?
+        let count: Int
+
+        var title: String {
+            if let tool, !tool.isEmpty {
+                return tool.components(separatedBy: ".").last?.components(separatedBy: "__").last ?? tool
+            }
+            switch kind {
+            case "user": return AppLocalization.string("context.inspect.kind.user")
+            case "assistant": return AppLocalization.string("context.inspect.kind.assistant")
+            case "function_call": return AppLocalization.string("context.inspect.kind.tool")
+            case "function_call_output": return AppLocalization.string("context.inspect.kind.result")
+            case "reasoning": return AppLocalization.string("context.inspect.kind.reasoning")
+            default: return AppLocalization.string("context.inspect.kind.other")
+            }
+        }
+
+        var symbol: String {
+            if let tool {
+                let name = tool.lowercased()
+                if name.contains("search") || name.contains("web") { return "magnifyingglass" }
+                if name.contains("exec") || name.contains("shell") { return "terminal" }
+                if name.contains("patch") || name.contains("edit") { return "pencil" }
+                return "wrench.and.screwdriver"
+            }
+            switch kind {
+            case "user": return "person.crop.circle"
+            case "assistant": return "bubble.left.and.bubble.right"
+            case "function_call": return "wrench.and.screwdriver"
+            case "function_call_output": return "doc.text"
+            case "reasoning": return "brain.head.profile"
+            default: return "ellipsis"
+            }
+        }
     }
 
     struct Block: Decodable, Identifiable {
@@ -265,25 +310,20 @@ struct ContextArchive {
     let segments: [Segment]
     let points: [Point]
     let referencesByBlock: [String: Set<String>]
+    let groupsByBlock: [String: [SourceGroup]]
 
     init(_ rawJSON: String) throws {
         let data = Data(rawJSON.utf8)
         guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              document["compact"] as? Bool == true,
               let history = document["history"] as? [[String: Any]],
               let rawBlocks = document["blocks"], let rawSegments = document["segments"]
         else { throw ContextSettingsError.missingField("history/blocks/segments") }
         let decoder = JSONDecoder()
         blocks = try decoder.decode([Block].self, from: JSONSerialization.data(withJSONObject: rawBlocks))
         segments = try decoder.decode([Segment].self, from: JSONSerialization.data(withJSONObject: rawSegments))
-        messages = try history.map { row in
-            guard let reference = row["reference"] as? String, let position = row["position"] as? Int,
-                  let item = row["item"]
-            else { throw ContextSettingsError.missingField("history.item") }
-            let compact = try JSONSerialization.data(withJSONObject: item, options: [.fragmentsAllowed, .sortedKeys])
-            let pretty = try JSONSerialization.data(withJSONObject: item, options: [.fragmentsAllowed, .prettyPrinted, .sortedKeys])
-            return Message(id: reference, position: position,
-                           text: String(decoding: pretty, as: UTF8.self), bytes: compact.count)
-        }.sorted { $0.position < $1.position }
+        messages = try decoder.decode([Message].self, from: JSONSerialization.data(withJSONObject: history))
+            .sorted { $0.position < $1.position }
         guard Set(messages.map(\.id)).count == messages.count,
               Set(blocks.map(\.id)).count == blocks.count else {
             throw ContextSettingsError.missingField("unique archive references")
@@ -296,6 +336,22 @@ struct ContextArchive {
         // historical measurement. Plot byte volume so no tokenizer is invented.
         var visibleAt: [Int: Int] = [:]
         let messageByID = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+        var groupedBlocks: [String: [SourceGroup]] = [:]
+        for block in blocks {
+            let refs = referencesByBlock[block.id] ?? []
+            let covered = refs.compactMap { messageByID[$0] }
+            let groups = Dictionary(grouping: covered) { "\($0.kind):\($0.tool ?? "")" }
+            var sources = groups.map { key, rows in
+                SourceGroup(id: key, kind: rows[0].kind, tool: rows[0].tool, count: rows.count)
+            }
+            if covered.count < refs.count {
+                sources.append(SourceGroup(id: "unavailable", kind: "other", tool: nil, count: refs.count - covered.count))
+            }
+            groupedBlocks[block.id] = sources.sorted {
+                $0.count == $1.count ? $0.id < $1.id : $0.count > $1.count
+            }
+        }
+        groupsByBlock = groupedBlocks
         for segment in segments {
             if segment.kind == "block", let block = byID[segment.reference] {
                 visibleAt[segment.end_position, default: 0] += block.summary.utf8.count
@@ -333,8 +389,7 @@ struct ContextStatsTotals: Decodable, Equatable {
     }
 }
 
-/// Decoded `context stats --json`. Fields the page does not show (tiers,
-/// revision, view tokens) are ignored by `Decodable`.
+/// Decoded `context stats --json`; unused tier counters are ignored by `Decodable`.
 struct ContextStats: Decodable, Equatable {
     let enabled: Bool
     let totals: ContextStatsTotals

@@ -2552,8 +2552,12 @@ async function loadContextArchive(session) {
   try {
     const data = await api(`/api/context?session=${encodeURIComponent(session)}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]) });
     if (request !== contextArchive.request) return;
-    if (data.session !== session || !Array.isArray(data.history) || !Array.isArray(data.blocks) || !Array.isArray(data.segments)) {
+    if (data.compact !== true || data.session !== session || !Array.isArray(data.history) || !Array.isArray(data.blocks) || !Array.isArray(data.segments)) {
       throw new Error("归档数据不完整，请更新 CLI 后重试。");
+    }
+    for (const row of data.history) {
+      if (!Number.isSafeInteger(row.bytes) || row.bytes < 0 || typeof row.kind !== "string" ||
+          (row.tool != null && typeof row.tool !== "string")) throw new Error("消息元数据格式无效。");
     }
     // Parse references once; malformed data is a visible error, not an empty archive.
     for (const block of data.blocks) {
@@ -2574,7 +2578,7 @@ async function loadContextArchive(session) {
 
 function contextGrowth(archive) {
   const bytes = (text) => new TextEncoder().encode(text).length;
-  const originals = new Map(archive.history.map((row) => [row.reference, bytes(JSON.stringify(row.item))]));
+  const originals = new Map(archive.history.map((row) => [row.reference, row.bytes]));
   const blocks = new Map(archive.blocks.map((block) => [block.id, block]));
   const visibleAt = new Map();
   for (const segment of archive.segments) {
@@ -2616,60 +2620,68 @@ function contextGrowth(archive) {
     h("p", { class: "card-note", text: "按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。" }));
 }
 
+function contextCompressionBlock(block, messages) {
+  const groups = new Map();
+  const labels = { user: "用户消息", assistant: "助手消息", function_call: "工具调用", function_call_output: "工具结果", reasoning: "推理", other: "其他" };
+  const paths = {
+    user: "M20 21v-2a6 6 0 0 0-12 0v2M14 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
+    assistant: "M21 11a8 8 0 0 1-8 8H7l-5 3V11a9 9 0 0 1 19 0Z",
+    function_call: "m7 7 5 5-5 5M14 17h6",
+    function_call_output: "M14 2H6v20h14V8ZM14 2v6h6M9 13h8M9 17h8",
+    reasoning: "M9 18h6M9 22h6M8 14a7 7 0 1 1 8 0l-1 4H9Z",
+    other: "M5 12h2M11 12h2M17 12h2",
+  };
+  for (const reference of block.refs) {
+    const row = messages.get(reference) || { kind: "other", tool: null };
+    const key = JSON.stringify([row.kind, row.tool]);
+    if (groups.has(key)) groups.get(key).count++;
+    else groups.set(key, { kind: row.kind, tool: row.tool, count: 1 });
+  }
+  const sorted = [...groups.values()].sort((a, b) => b.count - a.count || `${a.kind}:${a.tool || ""}`.localeCompare(`${b.kind}:${b.tool || ""}`));
+  const sources = h("div", { class: "ctx-compression-sources", "aria-label": "被压缩的内容" });
+  for (const group of sorted.slice(0, 5)) {
+    const label = group.tool ? group.tool.split(".").pop().split("__").pop() : labels[group.kind] || labels.other;
+    const icon = svgNode("svg", { viewBox: "0 0 24 24", class: "ctx-source-icon", "aria-hidden": "true" });
+    icon.append(svgNode("path", { d: paths[group.kind] || paths.other }));
+    sources.append(h("div", { class: "ctx-source-chip", title: group.tool || label }, icon,
+      h("span", { class: "ctx-source-label", text: label }), h("span", { class: "ctx-source-count", text: `×${group.count}` })));
+  }
+  if (sorted.length > 5) sources.append(h("span", { class: "card-note", text: `其他 ${sorted.slice(5).reduce((sum, group) => sum + group.count, 0)} 条` }));
+  const details = h("details", { class: "ctx-summary" }, h("summary", { text: "查看摘要" }));
+  details.addEventListener("toggle", () => {
+    if (details.open && details.children.length === 1) details.append(h("div", { class: "ctx-summary-text", text: block.summary }));
+  });
+  return h("div", { class: "ctx-compression" },
+    h("div", { class: "ctx-compression-flow" }, sources, h("span", { class: "ctx-brace", "aria-hidden": "true", text: "}" }),
+      h("div", { class: "ctx-compression-output" }, h("div", { class: "row-title", text: block.topic || "精简摘要" }),
+        h("p", { class: "card-note", text: `${block.refs.length} 条内容 → 1 条摘要` }),
+        h("p", { class: "ctx-summary-preview", text: block.summary.slice(0, 240) }))), details);
+}
+
 function contextArchiveCard(sessions, reload) {
   const selected = sessions.find((row) => row.session === contextArchive.session);
   let body;
   if (contextArchive.loading) body = h("div", { class: "empty", role: "status", text: "正在读取归档…" });
   else if (contextArchive.error) body = h("div", { class: "notice", role: "alert" },
     h("p", { text: contextArchive.error }), h("button", { class: "btn", type: "button", text: "重试", onclick: () => loadContextArchive(contextArchive.session) }));
-  else if (!contextArchive.data) body = emptyState("选择一个会话", "查看上下文增长、压缩范围，以及原文和摘要。");
+  else if (!contextArchive.data) body = emptyState("选择一个会话", "查看上下文增长，以及消息和工具如何合并成精简摘要。");
   else {
     const archive = contextArchive.data;
     const messages = new Map(archive.history.map((row) => [row.reference, row]));
-    const sources = (rows) => {
-      const container = h("div", { class: "ctx-sources" });
-      for (const row of rows) {
-        const details = h("details", { class: "ctx-source" }, h("summary", { text: row.reference }));
-        details.addEventListener("toggle", () => {
-          if (details.open && details.children.length === 1) details.append(h("pre", { text: JSON.stringify(row.item, null, 2) }));
-        });
-        container.append(details);
-      }
-      return container;
-    };
-    const segments = h("div", { class: "ctx-segment-map", "aria-label": "当前上下文片段" }, ...archive.segments.map((segment) => {
-      const block = archive.blocks.find((candidate) => candidate.id === segment.reference);
-      const button = h("button", { class: `ctx-segment ${segment.kind === "block" ? "is-block" : ""}`, type: "button",
-        text: block ? `${block.id} · T${block.tier}` : segment.reference,
-        title: `${segment.position + 1}–${segment.end_position + 1}${block ? " · " + block.topic : " · 原始消息"}` });
-      button.addEventListener("click", () => {
-        const target = document.getElementById(`ctx-block-${segment.reference}`);
-        if (target) { target.open = true; target.scrollIntoView({ behavior: reduceMotion.matches ? "instant" : "smooth", block: "nearest" }); target.querySelector("summary").focus(); }
-        else {
-          const message = messages.get(segment.reference);
-          if (message) openSheet(message.reference, h("pre", { class: "ctx-original-text", text: JSON.stringify(message.item, null, 2) }));
-        }
-      });
-      return button;
-    }));
-    const blocks = archive.blocks.map((block) => {
-      const source = h("details", null, h("summary", { text: `查看被压缩的原文（${block.refs.length} 条）` }));
-      source.addEventListener("toggle", () => {
-        if (source.open && source.children.length === 1) source.append(sources(block.refs.map((ref) => messages.get(ref)).filter(Boolean)));
-      });
-      return h("details", { class: "ctx-block", id: `ctx-block-${block.id}` },
-        h("summary", null, h("span", { class: "row-title", text: block.topic || block.id }),
-          h("span", { class: "card-note", text: `${block.id} · T${block.tier} · ${block.start_position + 1}–${block.end_position + 1} · ${block.superseded_by ? "已被 " + block.superseded_by + " 替代" : "未被替代"}` })),
-        h("div", { class: "ctx-block-body" }, h("h4", { text: "压缩后的摘要" }), h("pre", { text: block.summary }), source));
+    const active = archive.blocks.filter((block) => !block.superseded_by);
+    const earlier = archive.blocks.filter((block) => block.superseded_by);
+    const history = h("details", { class: "ctx-history" }, h("summary", { text: `历史压缩（${earlier.length}）` }));
+    history.addEventListener("toggle", () => {
+      if (history.open && history.children.length === 1) history.append(h("div", { class: "ctx-inspector-body" }, ...earlier.map((block) => contextCompressionBlock(block, messages))));
     });
-    const original = h("details", { class: "ctx-block" }, h("summary", { text: `浏览原始归档（${archive.history.length} 条）` }));
-    original.addEventListener("toggle", () => {
-      if (original.open && original.children.length === 1) original.append(sources(archive.history));
-    });
+    const remaining = archive.segments.filter((segment) => segment.kind === "message").length;
     body = h("div", { class: "ctx-inspector-body" },
       selected ? h("p", { class: "card-note", text: `当前视图 ${compact(selected.view_tokens)} token · 已节省 ${compact(selected.saved_tokens)} token` }) : null,
-      contextGrowth(archive), h("h4", { text: "当前上下文片段" }), segments,
-      ...blocks, !blocks.length ? h("p", { class: "card-note", text: "此会话尚无压缩块。" }) : null, original);
+      contextGrowth(archive), h("h4", { text: "压缩概览" }),
+      ...active.map((block) => contextCompressionBlock(block, messages)),
+      !archive.blocks.length ? h("p", { class: "card-note", text: "此会话尚无压缩块。" }) : null,
+      remaining ? h("p", { class: "card-note", text: `尚未压缩 · ${remaining} 条内容` }) : null,
+      earlier.length ? history : null);
   }
   return card(selected?.display || "上下文详情", null, body, [reload], "ctx-inspector");
 }

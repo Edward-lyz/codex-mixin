@@ -1080,7 +1080,7 @@ impl Store {
         Ok(summaries)
     }
 
-    pub fn export(&self, key: &str) -> Result<Value> {
+    pub fn export(&self, key: &str, compact: bool) -> Result<Value> {
         let session = self
             .connection
             .query_row(
@@ -1099,14 +1099,44 @@ impl Store {
         let Some(session) = session else {
             bail!("context session does not exist");
         };
-        let history = self.history(key)?;
         let mut items = Vec::new();
-        for entry in &history {
-            items.push(json!({
-                "position": entry.position,
-                "reference": entry.reference,
-                "item": self.message_json(key, &entry.reference)?.map(|raw| serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null)),
-            }));
+        if compact {
+            // Project metadata in one query: no N+1 body reads or JSON/body
+            // copies in Rust. SQLite still scans the stored JSON for its tags.
+            let mut statement = self
+                .connection
+                .prepare(
+                    "SELECT h.position, h.reference, length(CAST(m.item_json AS BLOB)),
+                        COALESCE(json_extract(m.item_json, '$.role'),
+                                 json_extract(m.item_json, '$.type'), 'other'),
+                        json_extract(m.item_json, '$.name')
+                 FROM history h JOIN messages m
+                   ON m.session_key = h.session_key AND m.reference = h.reference
+                 WHERE h.session_key = ?1 ORDER BY h.position",
+                )
+                .context("prepare compact history export")?;
+            let rows = statement
+                .query_map(params![key], |row| {
+                    Ok(json!({
+                        "position": row.get::<_, i64>(0)?,
+                        "reference": row.get::<_, String>(1)?,
+                        "bytes": row.get::<_, i64>(2)?,
+                        "kind": row.get::<_, String>(3)?,
+                        "tool": row.get::<_, Option<String>>(4)?,
+                    }))
+                })
+                .context("export compact history")?;
+            for row in rows {
+                items.push(row.context("read compact history metadata")?);
+            }
+        } else {
+            for entry in self.history(key)? {
+                items.push(json!({
+                    "position": entry.position,
+                    "reference": entry.reference,
+                    "item": self.message_json(key, &entry.reference)?.map(|raw| serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null)),
+                }));
+            }
         }
         let segments: Vec<Value> = self
             .segments(key, session.revision)?
@@ -1148,13 +1178,17 @@ impl Store {
         for row in rows {
             blocks.push(row.context("read exported block")?);
         }
-        Ok(json!({
+        let mut document = json!({
             "session": key,
             "revision": session.revision,
             "history": items,
             "segments": segments,
             "blocks": blocks,
-        }))
+        });
+        if compact {
+            document["compact"] = json!(true);
+        }
+        Ok(document)
     }
 }
 

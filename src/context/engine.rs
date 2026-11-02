@@ -720,7 +720,13 @@ impl ContextEngine {
 
     pub fn export(&self, session: &str) -> Result<Value> {
         let store = self.lock()?;
-        store.export(session)
+        store.export(session, false)
+    }
+
+    /// Export visualization metadata without transferring archived message bodies.
+    pub fn export_compact(&self, session: &str) -> Result<Value> {
+        let store = self.lock()?;
+        store.export(session, true)
     }
 }
 

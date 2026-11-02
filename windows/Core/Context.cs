@@ -41,7 +41,7 @@ internal sealed record ContextTotals(long Sessions, long Messages, long Compress
 
 internal sealed record ContextStats(bool Enabled, string DatabasePath, ContextTotals Totals, ContextSession[] Sessions);
 
-internal sealed record ContextArchiveMessage(string Reference, long Position, JsonElement Item);
+internal sealed record ContextArchiveMessage(string Reference, long Position, long Bytes, string Kind, string? Tool);
 internal sealed record ContextArchiveSegment(long Position, long EndPosition, string Kind, string Reference);
 internal sealed record ContextArchiveBlock(string Id, long Tier, string Topic, string Summary, string[] References,
     long StartPosition, long EndPosition, string? SupersededBy);
@@ -53,11 +53,13 @@ internal static class ContextContract
 {
     internal static ContextArchive ParseArchive(JsonElement value)
     {
+        if (!Json.Flag(value, "compact")) throw new CliFailure("CLI 未返回轻量归档，请更新后重试。");
         try
         {
             return new(Json.Text(value, "session"),
                 Json.Rows(Json.Field(value, "history")).Select(row => new ContextArchiveMessage(
-                    Json.Text(row, "reference"), Json.Integer(row, "position"), Json.Field(row, "item"))).ToArray(),
+                    Json.Text(row, "reference"), Json.Integer(row, "position"), Json.Integer(row, "bytes"),
+                    Json.Text(row, "kind"), Json.OptionalText(row, "tool"))).ToArray(),
                 Json.Rows(Json.Field(value, "segments")).Select(row => new ContextArchiveSegment(
                     Json.Integer(row, "position"), Json.Integer(row, "end_position"), Json.Text(row, "kind"), Json.Text(row, "reference"))).ToArray(),
                 Json.Rows(Json.Field(value, "blocks")).Select(row =>

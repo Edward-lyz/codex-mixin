@@ -69,7 +69,11 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
                 json: json_output,
             } => sessions_show(&session, json_output),
         },
-        ContextCommand::Export { session, out } => export(session.as_deref(), out.as_deref()),
+        ContextCommand::Export {
+            session,
+            out,
+            compact,
+        } => export(session.as_deref(), out.as_deref(), compact),
     }
 }
 
@@ -409,7 +413,7 @@ fn sessions_show(session: &str, json_output: bool) -> Result<()> {
     Ok(())
 }
 
-fn export(session: Option<&str>, out: Option<&std::path::Path>) -> Result<()> {
+fn export(session: Option<&str>, out: Option<&std::path::Path>, compact: bool) -> Result<()> {
     let settings = stored_settings()?;
     let path = codex_mixin::context::database_path()?;
     let value = if !path.exists() {
@@ -419,12 +423,20 @@ fn export(session: Option<&str>, out: Option<&std::path::Path>) -> Result<()> {
         match session {
             Some(input) => {
                 let key = resolve_session(&engine, input)?;
-                engine.export(&key)?
+                if compact {
+                    engine.export_compact(&key)?
+                } else {
+                    engine.export(&key)?
+                }
             }
             None => {
                 let mut sessions = Vec::new();
                 for summary in engine.sessions()? {
-                    sessions.push(engine.export(&summary.session)?);
+                    sessions.push(if compact {
+                        engine.export_compact(&summary.session)?
+                    } else {
+                        engine.export(&summary.session)?
+                    });
                 }
                 json!({"database_path": path, "sessions": sessions})
             }
