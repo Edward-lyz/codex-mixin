@@ -85,6 +85,8 @@ struct Backup {
     previous: Vec<BTreeMap<String, Option<Value>>>,
     installed: Vec<BTreeMap<String, Value>>,
     existed: Vec<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_profile: Option<Value>,
 }
 
 impl Backup {
@@ -214,7 +216,13 @@ fn apply(
         Backup::read(&paths[4])?
     } else {
         anyhow::ensure!(
-            !paths[3].exists(),
+            documents[2].get("appliedId").and_then(Value::as_str) != Some(PROFILE_ID)
+                && !documents[2]
+                    .get("entries")
+                    .and_then(Value::as_array)
+                    .is_some_and(|entries| entries.iter().any(|entry| {
+                        entry.get("id").and_then(Value::as_str) == Some(PROFILE_ID)
+                    })),
             "Claude Desktop profile ID is already in use: {}",
             paths[3].display()
         );
@@ -222,6 +230,10 @@ fn apply(
             previous: vec![BTreeMap::new(); 4],
             installed: vec![BTreeMap::new(); 4],
             existed: paths[..4].iter().map(|path| path.exists()).collect(),
+            // Unregistered files can be left behind by Desktop. Keep their
+            // complete content so disconnect can restore them even if Desktop
+            // replaces the managed fields with a sealed representation.
+            original_profile: paths[3].exists().then(|| documents[3].clone()),
         }
     };
     let patches = [
@@ -319,7 +331,12 @@ pub fn uninstall(root: &Path) -> anyhow::Result<()> {
         .into_iter()
         .enumerate()
         .map(|(index, document)| {
-            if !backup.existed[index] && document.as_object().is_some_and(serde_json::Map::is_empty)
+            if index == 3 && (!backup.existed[index] || backup.original_profile.is_some()) {
+                // Desktop may rewrite the whole managed profile. Its fields
+                // no longer identify ownership; the first-write backup does.
+                backup.original_profile.clone()
+            } else if !backup.existed[index]
+                && document.as_object().is_some_and(serde_json::Map::is_empty)
             {
                 None
             } else {

@@ -46,6 +46,30 @@ async fn official_contexts_reach_clients() {
     let claude_settings = directory.path().join("claude/settings.json");
     let pi_dir = directory.path().join("pi");
     let desktop_root = directory.path().join("desktop");
+    let library = desktop_root.join("Claude-3p/configLibrary");
+    fs::create_dir_all(&library).unwrap();
+    let profile_path = library.join("be16e7b5-9352-4cca-a197-32a6e608d930.json");
+    let orphan = json!({"sealed": "fixture-desktop-value", "custom": true});
+    fs::write(&profile_path, serde_json::to_vec(&orphan).unwrap()).unwrap();
+    let metadata_path = library.join("_meta.json");
+    let original_metadata = json!({
+        "appliedId": "user-profile",
+        "entries": [{"id": "user-profile", "name": "User Profile"}],
+        "custom": true
+    });
+    fs::write(
+        &metadata_path,
+        serde_json::to_vec(&original_metadata).unwrap(),
+    )
+    .unwrap();
+    let desktop_config = desktop_root.join("Claude/claude_desktop_config.json");
+    fs::create_dir_all(desktop_config.parent().unwrap()).unwrap();
+    let original_config = json!({"theme": "dark", "deploymentMode": "original"});
+    fs::write(
+        &desktop_config,
+        serde_json::to_vec(&original_config).unwrap(),
+    )
+    .unwrap();
     // Claude Desktop connect restarts a real gateway, which refreshes the
     // official catalog. Block outbound HTTP so the fixture catalog survives.
     let mixin = |args: &[&str]| {
@@ -57,7 +81,10 @@ async fn official_contexts_reach_clients() {
             .env("CODEX_HOME", &codex_home);
         command
     };
-    for context in [Some(1_000_000), Some(512_000), None] {
+    for (round, context) in [Some(1_000_000), Some(512_000), None]
+        .into_iter()
+        .enumerate()
+    {
         let mut stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
         stored.official_model_contexts = context
             .map(|window| BTreeMap::from([("gpt-test".to_owned(), window)]))
@@ -104,6 +131,59 @@ async fn official_contexts_reach_clients() {
             }),
             json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
         );
+        let reconnect_args = [
+            "connect",
+            "claude-desktop",
+            "--config-root",
+            desktop_root.to_str().unwrap(),
+        ];
+        let reconnected = run_cli(mixin(&reconnect_args), &reconnect_args, directory.path()).await;
+        assert!(
+            reconnected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&reconnected.stderr)
+        );
+        // Desktop rewrites the managed profile after it consumes it. A newly
+        // created profile must still disappear on disconnect, allowing retry.
+        fs::write(&profile_path, br#"{"sealed":"fixture-desktop-rewrite"}"#).unwrap();
+        let remove_args = [
+            "connect",
+            "remove",
+            "claude-desktop",
+            "--config-root",
+            desktop_root.to_str().unwrap(),
+        ];
+        let removed = run_cli(mixin(&remove_args), &remove_args, directory.path()).await;
+        assert!(
+            removed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&removed.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&desktop_config).unwrap()).unwrap(),
+            original_config
+        );
+        assert!(
+            !library
+                .join("be16e7b5-9352-4cca-a197-32a6e608d930.mixin-backup")
+                .exists()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&metadata_path).unwrap()).unwrap(),
+            original_metadata
+        );
+        if round == 0 {
+            assert_eq!(
+                serde_json::from_slice::<Value>(&fs::read(&profile_path).unwrap()).unwrap(),
+                orphan
+            );
+            fs::remove_file(&profile_path).unwrap();
+        } else {
+            assert!(
+                !profile_path.exists(),
+                "Desktop rewrite must not leave an orphan profile"
+            );
+        }
     }
     let stop_args = ["service", "stop", "--force"];
     let stopped = run_cli(mixin(&stop_args), &stop_args, directory.path()).await;
