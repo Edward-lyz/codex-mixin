@@ -32,6 +32,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: default-tests
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
@@ -59,14 +61,13 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      # Tests and the macOS app build shell out to `rg`; the static CLI build
-      # needs the musl toolchain. One `apt-get update` covers both.
+      # Tests shell out to `rg`; release toolchains belong to the build jobs.
       - name: Install test dependencies
         shell: bash
         run: |
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install --yes jq ripgrep musl-tools
+            sudo apt-get install --yes jq ripgrep
           elif [[ "${RUNNER_OS}" == "macOS" ]]; then
             command -v rg >/dev/null || brew install ripgrep
           else
@@ -81,8 +82,22 @@ jobs:
       - name: Run multi-provider E2E
         if: runner.os == 'Linux'
         run: ./scripts/e2e_multi_provider.sh
+
+  client-auth:
+    name: Client auth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq ripgrep
       - name: Run client auth Clippy
-        if: runner.os == 'Linux'
         run: |
           cargo clippy --locked --all-targets --features client-auth -- \
             -D clippy::cognitive_complexity \
@@ -90,15 +105,43 @@ jobs:
             -D clippy::redundant_pattern_matching \
             -D warnings
       - name: Run client auth tests
-        if: runner.os == 'Linux'
         run: ./scripts/test_client_auth.sh
       - name: Run prompt cache prefix E2E
-        if: runner.os == 'Linux'
         run: ./scripts/e2e_prompt_cache.sh
+
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      # Match Build's release cache, never a check-only or debug-test cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes musl-tools
+          else
+            command -v rg >/dev/null || brew install ripgrep
+          fi
       - name: Build static Linux CLI
         if: runner.os == 'Linux'
         run: |
-          rustup target add x86_64-unknown-linux-musl
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
           CC_x86_64_unknown_linux_musl=musl-gcc \
             cargo build --locked --release --target x86_64-unknown-linux-musl
@@ -106,6 +149,7 @@ jobs:
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
         run: ./macos/build_app.sh

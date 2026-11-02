@@ -106,7 +106,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: release-${{ matrix.target }}
       - name: Install musl linker
         if: matrix.os == 'linux'
         run: |
@@ -197,7 +197,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: x86_64-pc-windows-msvc
+          shared-key: release-x86_64-pc-windows-msvc
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'

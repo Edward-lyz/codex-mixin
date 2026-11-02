@@ -33,7 +33,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: rust
+          # Clippy's metadata cannot replace compiled test dependencies.
+          shared-key: windows-${{ matrix.shard == 'clippy' && 'clippy' || 'integration' }}
+          # All test shards use the same features and dependency profile.
+          # One writer seeds their cache; release has its own cache below.
+          save-if: ${{ matrix.shard == 'clippy' || matrix.shard == 'integration-b' }}
       - name: Run strict Clippy
         if: matrix.shard == 'clippy'
         shell: bash
@@ -55,7 +59,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: rust
+          shared-key: release-x86_64-pc-windows-msvc
       - run: cargo build --locked --release
       - uses: actions/upload-artifact@v7
         with:
