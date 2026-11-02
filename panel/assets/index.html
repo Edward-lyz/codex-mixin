@@ -85,11 +85,23 @@
   </dialog>
 
   <dialog class="dialog dialog-wide" id="operation" aria-labelledby="operation-title" aria-describedby="operation-status">
-    <div class="dialog-body">
-      <h2 class="dialog-title" id="operation-title">正在执行</h2>
+    <div class="dialog-body operation-body">
+      <header class="operation-head">
+        <h2 class="dialog-title" id="operation-title">正在执行</h2>
+        <span class="badge" id="operation-state">进行中</span>
+      </header>
       <p id="operation-status" role="status" aria-live="polite">正在连接…</p>
-      <p class="muted">下载、保存和登录进度会实时显示。出现二维码时请扫码；取消不会撤销已经保存的配置。</p>
-      <pre id="operation-output" class="operation-output" tabindex="0" aria-label="实时命令输出与登录二维码"></pre>
+      <p class="muted" id="operation-connection"></p>
+      <div class="operation-content">
+        <ol id="operation-steps" class="operation-steps" aria-label="流程状态"></ol>
+        <p class="muted" id="operation-history" hidden>较早的步骤已收起，可在命令输出中查看。</p>
+        <p id="operation-result" class="operation-result" hidden></p>
+        <details id="operation-details" open>
+          <summary>命令输出与登录二维码</summary>
+          <p class="muted">出现二维码时请扫码；取消不会撤销已经保存的配置。“待确认”表示已进入下一阶段，尚未收到成功结果。</p>
+          <pre id="operation-output" class="operation-output" tabindex="0" aria-label="实时命令输出与登录二维码"></pre>
+        </details>
+      </div>
       <div class="dialog-actions">
         <button class="btn btn-ghost" id="operation-dismiss" type="button">取消操作</button>
       </div>

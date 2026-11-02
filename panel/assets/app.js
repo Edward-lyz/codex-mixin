@@ -289,7 +289,7 @@ function closeSheet() {
 
 // ---------- Actions ----------
 
-async function streamAction(action, params, onOutput) {
+async function streamAction(action, params, onEvent) {
   const response = await api("/api/actions/stream", {
     method: "POST", body: params ? { action, params } : { action }, stream: true,
     signal: AbortSignal.timeout(610000),
@@ -309,7 +309,7 @@ async function streamAction(action, params, onOutput) {
         const event = JSON.parse(line);
         if (event.type === "error") throw new ApiError(502, event);
         if (event.type === "result") return event;
-        if (event.type === "output") onOutput(event.text);
+        onEvent(event);
       }
       if (pending.length > 2 * 1024 * 1024) throw new Error("操作输出超出限制，请刷新确认配置状态。");
       if (done) throw new Error("连接已断开，未收到完成结果。部分配置可能已保存，请刷新确认后再试。");
@@ -344,10 +344,27 @@ async function runAction(button, action, params, messages = {}) {
   const output = $("#operation-output");
   const status = $("#operation-status");
   const dismiss = $("#operation-dismiss");
+  const badge = $("#operation-state");
+  const steps = $("#operation-steps");
+  const connection = $("#operation-connection");
+  const resultSummary = $("#operation-result");
+  const details = $("#operation-details");
+  const started = performance.now();
+  let stepIndex = 0;
+  let result = null;
   let running = true;
+  dialog.dataset.state = "running";
   $("#operation-title").textContent = "正在执行";
+  badge.className = "badge";
+  badge.textContent = "进行中";
+  steps.replaceChildren();
+  $("#operation-history").hidden = true;
+  resultSummary.hidden = true;
+  resultSummary.textContent = "";
+  details.open = true;
   output.textContent = "";
   status.textContent = "正在启动，请稍候…";
+  connection.textContent = "正在连接…";
   dismiss.textContent = "取消操作";
   dismiss.disabled = false;
   const dismissOperation = async () => {
@@ -363,38 +380,110 @@ async function runAction(button, action, params, messages = {}) {
   };
   dismiss.onclick = dismissOperation;
   dialog.oncancel = (event) => { event.preventDefault(); dismissOperation(); };
+  const closed = new Promise((resolve) => dialog.addEventListener("close", resolve, { once: true }));
   dialog.showModal();
   try {
-    const result = await streamAction(action, params, (text) => {
+    result = await streamAction(action, params, (event) => {
+      connection.textContent = `连接正常 · 已用时 ${Math.round((performance.now() - started) / 1000)} 秒`;
+      if (event.type === "step") {
+        // A new CLI invocation starts only after the previous one succeeded.
+        for (const row of steps.children) {
+          if (row.dataset.state === "running" || row.dataset.state === "pending") {
+            row.dataset.state = "success";
+            row.firstElementChild.textContent = "✓ 已完成";
+          }
+        }
+        stepIndex = event.index;
+        status.textContent = `正在执行流程 ${event.index} / ${event.total}`;
+        steps.append(h("li", { class: "operation-step operation-command", "data-state": "running", "data-kind": "command", "data-step": stepIndex },
+          h("span", { class: "operation-step-state", text: "● 进行中" }),
+          h("span", { class: "operation-step-label", text: `流程 ${event.index} / ${event.total}` })));
+      }
+      if (event.type !== "output") return;
       // Render terminal text, never HTML. DUCX emits a plain block QR; remove
       // other CLIs' terminal controls while preserving QR spaces and newlines.
-      const plain = String(text).replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\r/g, "");
+      const plain = String(event.text).replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\r/g, "");
       const stickToBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
       output.textContent = (output.textContent + plain).slice(-65536);
       if (stickToBottom) output.scrollTop = output.scrollHeight;
-      if (plain.startsWith("MIXIN_PROGRESS ")) status.textContent = plain.slice(15).trim();
+      for (const line of plain.split("\n")) {
+        const progress = line.startsWith("MIXIN_PROGRESS ");
+        const stage = event.channel === "stdout" && /^(ok|failed): (.+?)(?: \(\d+(?:\.\d+)?s\))?$/.exec(line);
+        const stageStart = event.channel === "stdout" && !stage && line.endsWith(" ...");
+        if (!progress && !stage && !stageStart) continue;
+        const label = progress ? line.slice(15).trim() : stage ? stage[2] : line.slice(0, -4);
+        const kind = progress ? "progress" : "stage";
+        // A progress message starts work; it does not prove earlier work succeeded.
+        for (const row of steps.children) {
+          if (row.dataset.kind === "progress" && row.dataset.state === "running") {
+            row.dataset.state = "pending";
+            row.firstElementChild.textContent = "○ 待确认";
+          }
+        }
+        let row = stage && [...steps.children].reverse().find((item) => item.dataset.kind === "stage" && item.dataset.step === String(stepIndex) && item.dataset.label === label);
+        if (!row) {
+          row = h("li", { class: "operation-step", "data-kind": kind, "data-step": stepIndex, "data-label": label },
+            h("span", { class: "operation-step-state" }), h("span", { class: "operation-step-label", text: label }));
+          steps.append(row);
+        }
+        row.dataset.state = stage ? (stage[1] === "ok" ? "success" : "error") : "running";
+        row.firstElementChild.textContent = stage ? (stage[1] === "ok" ? "✓ 已完成" : "✕ 失败") : "● 进行中";
+        status.textContent = stage ? `${stage[1] === "ok" ? "已完成" : "失败"}：${label}` : label;
+      }
+      while (steps.children.length > 128) {
+        steps.firstElementChild.remove();
+        $("#operation-history").hidden = false;
+      }
       if (plain.startsWith("provider added:") || plain.startsWith("provider updated:")) {
         status.textContent = "配置已保存，正在完成模型刷新等后续步骤…";
       }
     });
+    dialog.dataset.state = "success";
     $("#operation-title").textContent = "操作完成";
-    status.textContent = messages.ok || "已完成";
+    badge.className = "badge badge-ok";
+    badge.textContent = "✓ 已完成";
+    status.textContent = messages.ok || "全部流程已完成";
+    for (const row of steps.children) {
+      if (row.dataset.state === "running" || row.dataset.state === "pending") {
+        row.dataset.state = "success";
+        row.firstElementChild.textContent = "✓ 已完成";
+      }
+    }
+    resultSummary.textContent = "执行已结束，无需继续等待。可以关闭此窗口继续操作。";
+    resultSummary.hidden = false;
+    details.open = false;
     toast("ok", messages.ok || "已完成", lastLine(result.stdout));
-    return result;
   } catch (error) {
     const [title, detail] = describeError(error);
+    dialog.dataset.state = error.code === "cancelled" ? "cancelled" : "error";
     $("#operation-title").textContent = error.code === "cancelled" ? "操作已取消" : title;
+    badge.className = error.code === "cancelled" ? "badge" : "badge badge-bad";
+    badge.textContent = error.code === "cancelled" ? "已取消" : "✕ 未完成";
     status.textContent = detail;
+    for (const row of steps.children) {
+      if (row.dataset.state === "running" || row.dataset.state === "pending") {
+        const failed = row.dataset.kind === "command" && error instanceof ApiError && error.status === 502
+          && !["cancelled", "timeout", "disconnected", "output_failed", "output_limit", "panel_internal"].includes(error.code);
+        row.dataset.state = failed ? "error" : "pending";
+        row.firstElementChild.textContent = failed ? "✕ 失败" : "○ 未确认";
+      }
+    }
+    resultSummary.textContent = error.committed === true
+      ? "配置已保存，后续流程未能全部完成。请根据错误详情处理，关闭窗口不会撤销保存。"
+      : "执行已结束。已确认完成的步骤保留成功标记，其余步骤的完成状态未确认；请刷新检查配置后再试。";
+    resultSummary.hidden = false;
     if (error.code === "cancelled") {
       toast("ok", "已取消等待", error.message);
     } else if (error.status !== 401) {
       toast("bad", title, detail);
     }
-    return null;
+    if (error.status === 401) dialog.close();
   } finally {
     running = false;
     dismiss.disabled = false;
     dismiss.textContent = "关闭";
+    connection.textContent = `执行已结束 · 用时 ${Math.round((performance.now() - started) / 1000)} 秒`;
+    if (dialog.open) dismiss.focus({ preventScroll: true });
     state.busy = false;
     controls.forEach(([node, disabled]) => { if (node.isConnected) node.disabled = disabled; });
     if (button) {
@@ -407,6 +496,9 @@ async function runAction(button, action, params, messages = {}) {
     // Agent state comes from a separate CLI query; re-read it after changes.
     if (state.page === "apps") void loadAgents();
   }
+  // Result sheets and follow-up navigation wait until this result is acknowledged.
+  await closed;
+  return result;
 }
 
 function lastLine(text) {

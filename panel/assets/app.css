@@ -930,8 +930,27 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
   color: var(--c-ink);
 }
 .dialog-wide { width: min(640px, calc(100vw - 32px)); }
+.dialog-body.operation-body { max-height: calc(100dvh - 64px); display: flex; flex-direction: column; }
+.operation-body > :not(.operation-content) { flex-shrink: 0; }
+.operation-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.operation-head .badge { flex-shrink: 0; }
+#operation-status { font-weight: 600; overflow-wrap: anywhere; }
+.operation-content { min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.operation-steps { display: grid; gap: 8px; list-style: none; padding: 0; margin: 0; }
+.operation-step { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: var(--fs-sm); }
+.operation-step-state { color: var(--ink-64); }
+.operation-step-label { overflow-wrap: anywhere; }
+.operation-command { padding-top: 8px; border-top: 1px solid var(--ink-08); font-weight: 600; }
+.operation-step[data-state="success"] .operation-step-state { color: var(--accent-text); }
+.operation-step[data-state="error"] .operation-step-state { color: var(--c-alert); }
+.operation-step[data-state="running"] .operation-step-state { color: var(--accent-text); }
+.operation-result { padding: 12px 14px; border: 1px solid var(--ink-16); border-radius: 8px; overflow-wrap: anywhere; white-space: pre-wrap; }
+#operation[data-state="success"] #operation-status { color: var(--accent-text); }
+#operation[data-state="error"] #operation-status { color: var(--c-alert); }
+#operation-details summary { cursor: pointer; }
+#operation-details[open] > * + * { margin-top: 12px; }
 .operation-output {
-  max-height: min(52vh, 480px);
+  max-height: min(36vh, 360px);
   min-height: 120px;
   overflow: auto;
   white-space: pre;
