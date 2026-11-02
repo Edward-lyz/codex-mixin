@@ -1,4 +1,41 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.6
+
+### 特性新增
+
+- **Agent 支持扩展至 50 款**：覆盖 47 款网关接入 Agent，以及 Cursor CLI、Copilot CLI、Devin 三款厂商原生接入。
+- **跨平台上下文压缩视图**：Web、macOS、Windows 均可按会话查看压缩记录，通过消息类型、数量与摘要展示压缩关系，并查看压缩前后的归档体积变化。
+- **模型排序持久化**：支持调整并保存模型顺序，优化模型选择与排序操作。
+- **完善 Kiro 支持**：补齐会话管理与额度信息展示。
+- **Web 支持 DUCX 扫码登录**：在页面内展示登录二维码及实时操作输出。
+
+### 体验优化
+
+- **Web 操作状态更明确**：区分进行中、已完成、失败、待确认和已取消，清楚展示各流程的执行结果。
+- **完成结果持续可见**：任务结束后，进度窗口保留成功或失败结果，并明确提示无需继续等待；后续结果弹窗在关闭进度窗口后展示。
+- **进度窗口更易查看**：完成后自动收起原始日志，保留展开入口；优化窄屏布局与滚动区域，确保状态和关闭按钮可见。
+- **模型管理更紧凑**：优化三端模型工具栏、排序入口和列表交互。
+- **上下文默认策略更均衡**：调整默认压缩阈值与最近内容的原文保留配置。
+- **完善使用说明**：更新中英文安装文档与界面截图，补充模型管理和上下文压缩视图。
+
+### BUG 修复
+
+- 修复 DeepSeek reasoning 内容在历史回放中的兼容性问题。
+- 修复 Claude thinking 历史回放及签名思考块的分组问题。
+- 修复 Claude Desktop 孤立配置残留与配置清理问题，完善备份和归属判断。
+- 修复部分 Agent 生命周期管理与模型选择问题。
+- 修复账号模型目录与模板模型列表不一致的问题。
+- 统一用量统计与缓存计数口径。
+- 修复 Antigravity Business 账号登录问题。
+
+### 致谢
+
+感谢以下贡献者的支持：
+
+- [@Primer-Fan](https://github.com/Primer-Fan)：[#86](https://github.com/Edward-lyz/codex-mixin/pull/86)
+- [@LianshengLi](https://github.com/LianshengLi)：[#87](https://github.com/Edward-lyz/codex-mixin/pull/87)
+- [@clingfei](https://github.com/clingfei)：[#82](https://github.com/Edward-lyz/codex-mixin/pull/82)
+
 ## v0.7.5
 
 ### 特性新增
@@ -212,6 +249,43 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.6
+
+### 新增功能
+
+- **Agent 支援擴展至 50 款**：涵蓋 47 款閘道接入 Agent，以及 Cursor CLI、Copilot CLI、Devin 三款廠商原生接入。
+- **跨平台上下文壓縮檢視**：Web、macOS、Windows 均可依對話查看壓縮紀錄，透過訊息類型、數量與摘要呈現壓縮關係，並查看壓縮前後的封存體積變化。
+- **持續儲存模型排序**：支援調整並儲存模型順序，改善模型選擇與排序操作。
+- **完善 Kiro 支援**：補齊對話管理與額度資訊顯示。
+- **Web 支援 DUCX 掃碼登入**：在頁面內顯示登入 QR Code 與即時操作輸出。
+
+### 體驗優化
+
+- **Web 操作狀態更明確**：區分進行中、已完成、失敗、待確認與已取消，清楚呈現各流程的執行結果。
+- **完成結果持續可見**：任務結束後，進度視窗保留成功或失敗結果，並明確提示無須繼續等待；後續結果視窗會在關閉進度視窗後顯示。
+- **進度視窗更易查看**：完成後自動收合原始日誌，保留展開入口；改善窄螢幕版面與捲動區域，確保狀態與關閉按鈕可見。
+- **模型管理更緊湊**：改善三端模型工具列、排序入口和清單互動。
+- **上下文預設策略更均衡**：調整預設壓縮門檻與近期內容的原文保留設定。
+- **完善使用說明**：更新中英文安裝文件與介面截圖，補充模型管理和上下文壓縮檢視。
+
+### 問題修正
+
+- 修正 DeepSeek reasoning 內容在歷史重播中的相容性問題。
+- 修正 Claude thinking 歷史重播與帶簽章思考區塊的分組問題。
+- 修正 Claude Desktop 孤立設定殘留與設定清理問題，完善備份及歸屬判斷。
+- 修正部分 Agent 生命週期管理與模型選擇問題。
+- 修正帳號模型目錄與範本模型清單不一致的問題。
+- 統一用量統計與快取計數口徑。
+- 修正 Antigravity Business 帳號登入問題。
+
+### 致謝
+
+感謝以下貢獻者的支持：
+
+- [@Primer-Fan](https://github.com/Primer-Fan)：[#86](https://github.com/Edward-lyz/codex-mixin/pull/86)
+- [@LianshengLi](https://github.com/LianshengLi)：[#87](https://github.com/Edward-lyz/codex-mixin/pull/87)
+- [@clingfei](https://github.com/clingfei)：[#82](https://github.com/Edward-lyz/codex-mixin/pull/82)
+
 ## v0.7.5
 
 ### 新增功能
@@ -425,6 +499,43 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.6
+
+### New features
+
+- **Expand support to 50 agents**: cover 47 gateway-integrated agents and three vendor-native integrations: Cursor CLI, Copilot CLI, and Devin.
+- **Cross-platform context compression views**: inspect compression records by conversation on Web, macOS, and Windows. Message types, counts, and summaries show how content was compressed, alongside changes in archive size before and after compression.
+- **Persist model ordering**: adjust and save model order with improved model selection and sorting controls.
+- **Improve Kiro support**: complete conversation management and quota information display.
+- **DUCX QR login on Web**: display the login QR code and live operation output directly in the panel.
+
+### Improvements
+
+- **Clearer Web operation states**: distinguish running, completed, failed, unconfirmed, and cancelled work so each workflow's result is visible.
+- **Keep completion results visible**: the progress dialog retains success or failure results and explicitly says when no further waiting is needed. Follow-up result dialogs appear after the progress dialog is closed.
+- **More readable progress dialogs**: collapse raw logs on completion while keeping them available to expand. Improve narrow-screen layouts and scrolling so status and close controls remain visible.
+- **More compact model management**: improve model toolbars, sorting controls, and list interactions across all three interfaces.
+- **More balanced context defaults**: adjust the default compression threshold and verbatim retention of recent content.
+- **Improve documentation**: update Chinese and English installation guides and screenshots, including model management and context compression views.
+
+### Bug fixes
+
+- Fix compatibility issues when replaying DeepSeek reasoning content.
+- Fix Claude thinking history replay and grouping of signed thinking blocks.
+- Fix orphaned Claude Desktop profiles and configuration cleanup, with improved backup and ownership checks.
+- Fix agent lifecycle management and model selection issues.
+- Fix inconsistencies between account model catalogs and template model lists.
+- Align usage statistics and cache counters.
+- Fix Antigravity Business account login.
+
+### Thanks
+
+Thanks to the following contributors for their support:
+
+- [@Primer-Fan](https://github.com/Primer-Fan): [#86](https://github.com/Edward-lyz/codex-mixin/pull/86)
+- [@LianshengLi](https://github.com/LianshengLi): [#87](https://github.com/Edward-lyz/codex-mixin/pull/87)
+- [@clingfei](https://github.com/clingfei): [#82](https://github.com/Edward-lyz/codex-mixin/pull/82)
+
 ## v0.7.5
 
 ### New features
