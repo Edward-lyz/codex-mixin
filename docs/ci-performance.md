@@ -1,6 +1,6 @@
 # GitHub CI 耗时与缓存
 
-2026-11-02：工作流配置已调整，本地静态验证通过；尚未在 GitHub 上运行新配置。以下收益为推算，不是实测提速结果。
+2026-11-02：工作流配置已调整，本地静态验证和首次 GitHub 运行均通过。本页记录改前基线、新配置及首次冷运行；后续耗时可从 GitHub run 查询，不能将冷缓存与热缓存结果混为一谈。
 
 ## 参考文章与适用范围
 
@@ -44,7 +44,16 @@ Owen Gretzinger 的 [How I made our CI 20x faster (steal this)](https://x.com/ow
 
 ## 验证与后续测量
 
-本次仅改 YAML 与本文档。本地执行 `actionlint 1.7.12` 检查全部四份工作流、`git diff --check`、`./scripts/check_arch.sh`，均通过；逐项核对原有门禁仍在对应平台运行。未重新编译无变化的 Rust/GUI，也未以本地静态检查替代 GitHub 的三平台运行。
+本次仅改 YAML 与本文档。本地执行 `actionlint 1.7.12` 检查全部四份工作流、`git diff --check`、`./scripts/check_arch.sh`，均通过；逐项核对原有门禁仍在对应平台运行。本地未重新编译无变化的 Rust/GUI；之后在 GitHub 上完整执行了三平台工作流。
+
+`d78ccc1` 首次线上运行全部通过，新的分类缓存均未命中，运行结束后 main 已生成独立的 release、integration、Clippy、client-auth 和默认测试缓存：
+
+| 新配置首次运行 | 总耗时 | 关键步骤 |
+| --- | --- | --- |
+| [CI 冷运行](https://github.com/Edward-lyz/codex-mixin/actions/runs/41382839094) | 8m39s | macOS App 7m54s；Linux musl CLI 5m53s；默认 Linux 测试 job 5m03s；默认 macOS 测试 job 3m24s；client-auth job 2m53s |
+| [Windows 冷运行](https://github.com/Edward-lyz/codex-mixin/actions/runs/41382839099) | 15m17s | CLI 编译 step 10m31s，另有首次保存缓存开销；CLI contract、打包及安装升级验证全部通过 |
+
+首轮没有证明稳定提速：新缓存键会全量编译依赖，Windows 冷运行还比原基线慢。判断收益必须再看相同编译配置的热缓存运行，特别是 release 是否还重编第三方依赖。
 
 按最新基线推算：Unix 将构建与测试分开后，关键路径约为 5–6 分钟；Windows 热缓存有望省去约 3–4 分钟依赖编译。项目 release 编译/链接及安装器验证仍需运行，不承诺 20 倍收益。首次新键会冷启动，拆 job 也会增加 runner 设置和恢复缓存的总开销。
 
