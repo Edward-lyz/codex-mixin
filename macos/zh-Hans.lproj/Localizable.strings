@@ -277,3 +277,22 @@
 "provider.reviewModelOverride" = "Codex 审查模型覆盖";
 "provider.reviewModel" = "审查模型";
 "provider.reviewModelOverrideDetail" = "独立指定审查模型；关闭时使用默认路由。";
+
+// Context archive inspector
+"context.search" = "搜索会话";
+"context.inspect.loading" = "正在读取归档…";
+"context.inspect.tokens" = "当前视图 %@ token · 已节省 %@ token";
+"context.inspect.growth" = "上下文增长";
+"context.inspect.original" = "原始归档";
+"context.inspect.visible" = "当前视图";
+"context.inspect.position" = "归档消息顺序";
+"context.inspect.estimate" = "按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。";
+"context.inspect.map" = "当前上下文片段";
+"context.inspect.noBlocks" = "此会话尚无压缩块。";
+"context.inspect.summary" = "压缩后的摘要";
+"context.inspect.source" = "查看被压缩的原文";
+"context.inspect.archive" = "浏览原始归档";
+"context.inspect.active" = "未被替代";
+"context.inspect.superseded" = "已被更高层摘要替代";
+"context.inspect.choose" = "选择一个会话";
+"context.inspect.hint" = "查看上下文增长、压缩范围，以及原文和摘要。";

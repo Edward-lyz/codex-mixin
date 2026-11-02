@@ -67,6 +67,9 @@ extension AppDelegate {
                 } catch {
                     throw ContextSettingsError.from(error)
                 }
+            } archiveLoader: { [weak self] session in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                return try ContextArchive(try await self.runGateway(["context", "export", "--session=\(session)"]))
             }
             let container = ConsoleContainerController(
                 pages: [

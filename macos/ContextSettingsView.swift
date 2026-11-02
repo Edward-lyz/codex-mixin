@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 @MainActor
 final class ContextSettingsModel: ObservableObject {
@@ -16,11 +17,15 @@ final class ContextSettingsModel: ObservableObject {
 
     private let loader: Loader
     private let saver: Saver
+    let archiveLoader: (String) async throws -> ContextArchive
+    @Published private(set) var archiveRefresh = 0
     private var loadGeneration = 0
 
-    init(loader: @escaping Loader, saver: @escaping Saver) {
+    init(loader: @escaping Loader, saver: @escaping Saver,
+         archiveLoader: @escaping (String) async throws -> ContextArchive) {
         self.loader = loader
         self.saver = saver
+        self.archiveLoader = archiveLoader
     }
 
     var validationIssue: ContextSettingsValidationIssue? {
@@ -124,6 +129,7 @@ final class ContextSettingsModel: ObservableObject {
             guard generation == loadGeneration else { return }
             self.settings = settings
             self.stats = stats
+            archiveRefresh += 1
             draft = ContextSettingsDraft(settings: settings)
             loadError = nil
             saveFailure = nil
@@ -161,35 +167,60 @@ final class ContextSettingsModel: ObservableObject {
 
 struct ContextSettingsView: View {
     @ObservedObject var model: ContextSettingsModel
+    @State private var selectedSession: String?
+    @State private var archive: ContextArchive?
+    @State private var archiveError: String?
+    @State private var archiveLoading = false
+    @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-                settingsPane
-                Divider()
+            settingsPane
+            Divider()
+            HSplitView {
                 statsPane
+                    .frame(minWidth: 370, idealWidth: 440, maxWidth: 560)
+                archivePane
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
             statusBar
         }
         .frame(minWidth: 860, minHeight: 600)
         .background(Color(nsColor: .windowBackgroundColor))
+        .task(id: "\(selectedSession ?? ""):\(model.archiveRefresh)") {
+            archive = nil
+            archiveError = nil
+            archiveLoading = selectedSession != nil
+            guard let session = selectedSession else { return }
+            do {
+                let loaded = try await model.archiveLoader(session)
+                try Task.checkCancellation()
+                guard selectedSession == session else { return }
+                archive = loaded
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, selectedSession == session else { return }
+                archiveError = localizedErrorDescription(error)
+            }
+            archiveLoading = false
+        }
     }
 
     private var settingsPane: some View {
-        Form {
-            Section {
+        HStack(spacing: 12) {
+            Label(AppLocalization.string("context.section.settings"), systemImage: "square.stack.3d.up")
+                .font(.headline)
+            Spacer()
                 Toggle(AppLocalization.string("context.enabled"), isOn: $model.draft.enabled)
                     .toggleStyle(.switch)
+                    .controlSize(.small)
                     .help(AppLocalization.string("context.restartNote"))
-            } header: {
-                Text(AppLocalization.string("context.section.settings"))
-            }
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .disabled(model.settings == nil || model.isSaving)
-        .frame(minWidth: 360, idealWidth: 420, maxWidth: 460, maxHeight: .infinity)
     }
 
     private var statsPane: some View {
@@ -212,7 +243,12 @@ struct ContextSettingsView: View {
             }
             if let stats = model.stats {
                 metrics(stats.totals)
-                sessionList(stats.sessions)
+                NativeSearchField(text: $query, placeholder: AppLocalization.string("context.search"))
+                    .accessibilityLabel(AppLocalization.string("context.search"))
+                sessionList(stats.sessions.filter {
+                    query.isEmpty || $0.display.localizedCaseInsensitiveContains(query)
+                        || $0.session.localizedCaseInsensitiveContains(query)
+                })
             } else if model.loadError == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -225,7 +261,7 @@ struct ContextSettingsView: View {
     }
 
     private func metrics(_ totals: ContextStatsTotals) -> some View {
-        HStack(spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
             metric(
                 AppLocalization.string("context.stats.sessions"),
                 String(totals.sessions)
@@ -263,23 +299,124 @@ struct ContextSettingsView: View {
         if sessions.isEmpty {
             emptyState
         } else {
-            Table(sessions) {
+            Table(sessions, selection: $selectedSession) {
                 TableColumn(AppLocalization.string("context.stats.display")) { session in
                     Text(session.display).font(.callout)
                 }
-                .width(min: 120, ideal: 200)
+                .width(min: 110, ideal: 200)
                 TableColumn(AppLocalization.string("context.stats.compressions")) { session in
                     Text(String(session.compressions)).monospacedDigit()
                 }
-                .width(min: 70, ideal: 90)
+                .width(48)
                 TableColumn(AppLocalization.string("context.stats.savedTokens")) { session in
                     Text(formatTokenCount(session.savedTokens)).monospacedDigit()
                 }
-                .width(min: 80, ideal: 100)
-                TableColumn(AppLocalization.string("context.stats.cacheHit")) { session in
-                    Text(formatContextPercent(session.cache.hitPercent)).monospacedDigit()
+                .width(64)
+            }
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    private var archivePane: some View {
+        Group {
+            if archiveLoading {
+                ProgressView(AppLocalization.string("context.inspect.loading"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let archiveError {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+                    Text(archiveError).textSelection(.enabled)
+                    Button(AppLocalization.string("context.reload")) {
+                        let session = selectedSession
+                        selectedSession = nil
+                        Task { @MainActor in
+                            await Task.yield()
+                            selectedSession = session
+                        }
+                    }
+                }.padding(24)
+            } else if let archive {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        Text(model.stats?.sessions.first(where: { $0.id == selectedSession })?.display ?? "")
+                            .font(.title3.weight(.semibold)).textSelection(.enabled)
+                        if let session = model.stats?.sessions.first(where: { $0.id == selectedSession }) {
+                            Text(AppLocalization.string("context.inspect.tokens",
+                                formatTokenCount(session.viewTokens), formatTokenCount(session.savedTokens)))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(AppLocalization.string("context.inspect.growth")).font(.headline)
+                            growthChart(archive)
+                            Text(AppLocalization.string("context.inspect.estimate"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(AppLocalization.string("context.inspect.map")).font(.headline)
+                            ForEach(Array(archive.segments.enumerated()), id: \.offset) { _, segment in
+                                HStack(spacing: 8) {
+                                    Image(systemName: segment.kind == "block" ? "archivebox.fill" : "text.alignleft")
+                                        .foregroundStyle(segment.kind == "block" ? Color.accentColor : Color.secondary)
+                                    Text(segment.reference).font(.system(.caption, design: .monospaced))
+                                    Spacer()
+                                    Text("\(segment.position + 1)–\(segment.end_position + 1)")
+                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                                .padding(8)
+                                .background(segment.kind == "block" ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.04),
+                                            in: RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                        if archive.blocks.isEmpty {
+                            Text(AppLocalization.string("context.inspect.noBlocks"))
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(archive.blocks) { block in
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text(AppLocalization.string("context.inspect.summary")).font(.headline)
+                                    Text(block.summary).font(.callout).textSelection(.enabled)
+                                    DisclosureGroup(AppLocalization.string("context.inspect.source")) {
+                                        let refs = archive.referencesByBlock[block.id] ?? []
+                                        ForEach(archive.messages.filter { refs.contains($0.id) }) { message in
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(message.id).font(.caption).foregroundStyle(.secondary)
+                                                Text(message.text).font(.system(.caption, design: .monospaced))
+                                                    .textSelection(.enabled)
+                                            }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+                                        }
+                                    }
+                                }.padding(.top, 10)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(block.topic.isEmpty ? block.id : block.topic).font(.callout.weight(.medium))
+                                    Text("\(block.id) · T\(block.tier) · \(block.start_position + 1)–\(block.end_position + 1) · "
+                                         + AppLocalization.string(block.superseded_by == nil ? "context.inspect.active" : "context.inspect.superseded"))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(12)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        DisclosureGroup(AppLocalization.string("context.inspect.archive")) {
+                            LazyVStack(alignment: .leading, spacing: 12) {
+                                ForEach(archive.messages) { message in
+                                    DisclosureGroup(message.id) {
+                                        Text(message.text).font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }.padding(.top, 8)
+                        }
+                    }.padding(20)
                 }
-                .width(min: 70, ideal: 90)
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "chart.xyaxis.line").font(.system(size: 32)).foregroundStyle(.tertiary)
+                    Text(AppLocalization.string("context.inspect.choose")).font(.headline)
+                    Text(AppLocalization.string("context.inspect.hint"))
+                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -293,6 +430,27 @@ struct ContextSettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
+    }
+
+    private func growthChart(_ archive: ContextArchive) -> some View {
+        let originalLabel = AppLocalization.string("context.inspect.original")
+        let visibleLabel = AppLocalization.string("context.inspect.visible")
+        return Chart {
+            ForEach(archive.points) { point in
+                LineMark(x: .value("Message", point.id), y: .value("KiB", point.original))
+                    .foregroundStyle(by: .value("View", originalLabel))
+                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
+            }
+            ForEach(archive.points) { point in
+                LineMark(x: .value("Message", point.id), y: .value("KiB", point.visible))
+                    .foregroundStyle(by: .value("View", visibleLabel))
+            }
+        }
+        .chartForegroundStyleScale([originalLabel: Color.secondary, visibleLabel: Color.accentColor])
+        .chartXAxisLabel(AppLocalization.string("context.inspect.position"))
+        .chartYAxisLabel("KiB")
+        .frame(height: 180)
+        .accessibilityLabel(AppLocalization.string("context.inspect.growth"))
     }
 
     private var statusBar: some View {

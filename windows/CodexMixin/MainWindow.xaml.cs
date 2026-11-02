@@ -698,12 +698,14 @@ public sealed partial class MainWindow : Window
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
         var modelsById = models.Select((model, index) => (Model: model, Index: index)).ToDictionary(row => Json.Text(row.Model, "id"));
-        var selected = Json.Strings(Json.Field(provider, "selected_models")).ToHashSet();
+        var modelIds = modelsById.Keys.ToArray();
+        var selected = Json.Strings(Json.Field(provider, "selected_models")).ToList();
+        var modelOrder = Json.OptionalText(provider, "model_order") ?? "family";
         var savedContexts = Json.Field(provider, "model_context_overrides");
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
 
         var toolbar = new Grid { ColumnSpacing = 8 };
-        foreach (var width in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, GridLength.Auto })
+        foreach (var width in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto })
             toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
         var search = new AutoSuggestBox { PlaceholderText = "搜索当前服务商的模型", QueryIcon = new SymbolIcon(Symbol.Find), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(search, "搜索当前服务商的模型");
@@ -719,7 +721,12 @@ public sealed partial class MainWindow : Window
         var test = Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
         test.Content = IconLabel("\uE916", $"测试已加入的 {selected.Count} 个模型");
         AutomationProperties.SetName(test, $"测试已加入的 {selected.Count} 个模型");
-        var tools = new FrameworkElement[] { search, filter, more, test };
+        var order = new ComboBox { MinWidth = 128, VerticalAlignment = VerticalAlignment.Center };
+        order.Items.Add("家族与版本"); order.Items.Add("手动排序");
+        order.SelectedIndex = modelOrder == "manual" ? 1 : 0;
+        AutomationProperties.SetName(order, "模型排序");
+        ToolTipService.SetToolTip(order, "拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。");
+        var tools = new FrameworkElement[] { search, filter, order, more, test };
         for (var index = 0; index < tools.Length; index++) { Grid.SetColumn(tools[index], index); toolbar.Children.Add(tools[index]); }
         modelBody.Children.Add(toolbar);
 
@@ -727,20 +734,20 @@ public sealed partial class MainWindow : Window
         Grid Columns()
         {
             var grid = new Grid { ColumnSpacing = 12 };
-            foreach (var width in new[] { 80d, -1d, 76d, 84d, 80d, 48d, 120d })
+            foreach (var width in new[] { 64d, 64d, -1d, 76d, 84d, 80d, 48d, 120d })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
         var header = Columns();
-        var labels = new[] { "是否加入", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
+        var labels = new[] { "加入", "顺序", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
         for (var index = 0; index < labels.Length; index++)
         {
-            var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 2 and <= 5 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
+            var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 3 and <= 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
             Grid.SetColumn(label, index); header.Children.Add(label);
         }
         modelBody.Children.Add(new Border { Style = Themed("RowDivider"), Padding = new Thickness(12, 8, 12, 8), Child = header });
 
-        var list = new ListView { SelectionMode = ListViewSelectionMode.None, Height = ModelTableHeight(), Padding = new Thickness(0) };
+        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, Height = ModelTableHeight(), Padding = new Thickness(0) };
         list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
         list.ItemContainerStyle = Themed("ModelRowContainer");
         AutomationProperties.SetAutomationId(list, "model-table");
@@ -760,8 +767,29 @@ public sealed partial class MainWindow : Window
             var row = Columns();
             var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
             AutomationProperties.SetName(check, $"{modelId} 加入 Codex");
-            check.Checked += (_, _) => { selected.Add(modelId); MarkDirty(); };
-            check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); };
+            check.Checked += (_, _) => { if (!selected.Contains(modelId)) selected.Add(modelId); MarkDirty(); Filter(); };
+            check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); Filter(); };
+            var rank = new TextBlock { Text = selected.Contains(modelId) ? $"{selected.IndexOf(modelId) + 1}  ≡" : "", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+            var moveMenu = new MenuFlyout();
+            async Task Move(int delta)
+            {
+                var current = selected.IndexOf(modelId);
+                var target = current + delta;
+                if (current < 0 || target < 0 || target >= selected.Count) return;
+                selected.RemoveAt(current); selected.Insert(target, modelId);
+                modelOrder = "manual"; order.SelectedIndex = 1; MarkDirty(); Filter();
+                await Task.CompletedTask;
+            }
+            var up = MenuItem("上移", "\uE74A", () => Move(-1));
+            var down = MenuItem("下移", "\uE74B", () => Move(1));
+            moveMenu.Items.Add(up); moveMenu.Items.Add(down);
+            moveMenu.Opening += (_, _) =>
+            {
+                up.IsEnabled = selected.IndexOf(modelId) > 0;
+                down.IsEnabled = selected.Contains(modelId) && selected.IndexOf(modelId) < selected.Count - 1;
+            };
+            args.ItemContainer.ContextFlyout = moveMenu;
+            ToolTipService.SetToolTip(rank, "拖动排序；右键菜单可上移、下移。");
             var title = new Grid { ColumnSpacing = 0, VerticalAlignment = VerticalAlignment.Center };
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -814,7 +842,7 @@ public sealed partial class MainWindow : Window
             args.ItemContainer.Tag = ($"{id}/{modelId}", ttft);
             if (timings.TryGetValue($"{id}/{modelId}", out var timing)) ShowTiming(timing, ttft, tps);
             var ratio = new TextBlock { Text = Json.OptionalText(model, "ratio") ?? "-", Style = Themed("MonoPrimary"), HorizontalAlignment = HorizontalAlignment.Right };
-            var cells = new FrameworkElement[] { check, title, ttft, tps, context, ratio, capabilities };
+            var cells = new FrameworkElement[] { check, rank, title, ttft, tps, context, ratio, capabilities };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = new Border
@@ -827,21 +855,50 @@ public sealed partial class MainWindow : Window
             args.Handled = true;
         };
         // WinRT collections can expose strings directly; JsonElement is a .NET struct.
-        var modelIds = modelsById.Keys.ToArray();
+        list.CanDragItems = true;
+        list.AllowDrop = true;
+        string? draggedModel = null;
+        list.DragItemsStarting += (_, args) =>
+        {
+            draggedModel = args.Items.FirstOrDefault() as string;
+            if (draggedModel is null || !selected.Contains(draggedModel)) { args.Cancel = true; draggedModel = null; }
+        };
+        list.DragOver += (_, args) =>
+        {
+            if (draggedModel is not null) args.AcceptedOperation = DataPackageOperation.Move;
+        };
+        list.Drop += (_, args) =>
+        {
+            if (draggedModel is null) return;
+            DependencyObject? target = args.OriginalSource as DependencyObject;
+            while (target is not null && target is not ListViewItem) target = VisualTreeHelper.GetParent(target);
+            if (target is ListViewItem container && container.Content is string targetId && selected.Contains(targetId))
+            {
+                var position = selected.IndexOf(targetId);
+                selected.Remove(draggedModel); selected.Insert(position, draggedModel);
+                modelOrder = "manual"; order.SelectedIndex = 1; MarkDirty(); Filter();
+            }
+            draggedModel = null;
+        };
+        list.DragItemsCompleted += (_, _) => draggedModel = null;
         list.ItemsSource = modelIds;
         void Filter()
         {
             var text = search.Text;
             var mode = filter.SelectedIndex;
             list.ItemsSource = modelIds.Where(modelId => modelId.Contains(text, StringComparison.OrdinalIgnoreCase) &&
-                (mode == 0 || selected.Contains(modelId) == (mode == 1))).ToArray();
+                (mode == 0 || selected.Contains(modelId) == (mode == 1)))
+                .OrderBy(modelId => modelOrder == "manual" && selected.Contains(modelId) ? selected.IndexOf(modelId) : int.MaxValue)
+                .ToArray();
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
+        order.SelectionChanged += (_, _) => { modelOrder = order.SelectedIndex == 1 ? "manual" : "family"; MarkDirty(); Filter(); };
+        Filter();
         modelBody.Children.Add(list);
         ShowSummary("正在读取测速结果…");
         pendingApply = async () =>
         {
-            var arguments = new List<string> { "provider", "select", id };
+            var arguments = new List<string> { "provider", "select", id, "--model-order", modelOrder };
             foreach (var modelId in selected) arguments.AddRange(["--model", modelId]);
             foreach (var (modelId, value) in contexts)
             {

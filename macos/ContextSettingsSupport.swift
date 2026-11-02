@@ -210,6 +210,8 @@ struct ContextSessionStats: Decodable, Identifiable, Equatable {
     let display: String
     let compressions: Int
     let savedTokens: UInt64
+    let viewTokens: UInt64
+    let revision: Int
     let cache: ContextCacheStats
 
     var id: String { session }
@@ -219,7 +221,101 @@ struct ContextSessionStats: Decodable, Identifiable, Equatable {
         case display
         case compressions
         case savedTokens = "saved_tokens"
+        case viewTokens = "view_tokens"
+        case revision
         case cache
+    }
+}
+
+/// Presentation of the existing CLI export; the shell never opens context.db.
+struct ContextArchive {
+    struct Message: Identifiable {
+        let id: String
+        let position: Int
+        let text: String
+        let bytes: Int
+    }
+
+    struct Block: Decodable, Identifiable {
+        let id: String
+        let tier: Int
+        let topic: String
+        let summary: String
+        let full_refs: String
+        let start_position: Int
+        let end_position: Int
+        let superseded_by: String?
+    }
+
+    struct Segment: Decodable {
+        let position: Int
+        let end_position: Int
+        let kind: String
+        let reference: String
+    }
+
+    struct Point: Identifiable {
+        let id: Int
+        let original: Double
+        let visible: Double
+    }
+
+    let messages: [Message]
+    let blocks: [Block]
+    let segments: [Segment]
+    let points: [Point]
+    let referencesByBlock: [String: Set<String>]
+
+    init(_ rawJSON: String) throws {
+        let data = Data(rawJSON.utf8)
+        guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let history = document["history"] as? [[String: Any]],
+              let rawBlocks = document["blocks"], let rawSegments = document["segments"]
+        else { throw ContextSettingsError.missingField("history/blocks/segments") }
+        let decoder = JSONDecoder()
+        blocks = try decoder.decode([Block].self, from: JSONSerialization.data(withJSONObject: rawBlocks))
+        segments = try decoder.decode([Segment].self, from: JSONSerialization.data(withJSONObject: rawSegments))
+        messages = try history.map { row in
+            guard let reference = row["reference"] as? String, let position = row["position"] as? Int,
+                  let item = row["item"]
+            else { throw ContextSettingsError.missingField("history.item") }
+            let compact = try JSONSerialization.data(withJSONObject: item, options: [.fragmentsAllowed, .sortedKeys])
+            let pretty = try JSONSerialization.data(withJSONObject: item, options: [.fragmentsAllowed, .prettyPrinted, .sortedKeys])
+            return Message(id: reference, position: position,
+                           text: String(decoding: pretty, as: UTF8.self), bytes: compact.count)
+        }.sorted { $0.position < $1.position }
+        guard Set(messages.map(\.id)).count == messages.count,
+              Set(blocks.map(\.id)).count == blocks.count else {
+            throw ContextSettingsError.missingField("unique archive references")
+        }
+        referencesByBlock = try Dictionary(uniqueKeysWithValues: blocks.map {
+            ($0.id, Set(try decoder.decode([String].self, from: Data($0.full_refs.utf8))))
+        })
+        let byID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+        // This is a distribution of today's view over archive positions, not a
+        // historical measurement. Plot byte volume so no tokenizer is invented.
+        var visibleAt: [Int: Int] = [:]
+        let messageByID = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+        for segment in segments {
+            if segment.kind == "block", let block = byID[segment.reference] {
+                visibleAt[segment.end_position, default: 0] += block.summary.utf8.count
+            } else if segment.kind == "message", let message = messageByID[segment.reference] {
+                visibleAt[segment.position, default: 0] += message.bytes
+            }
+        }
+        var original = 0
+        var visible = 0
+        var samples = [Point(id: 0, original: 0, visible: 0)]
+        let stride = max(1, Int(ceil(Double(messages.count) / 400)))
+        for (index, message) in messages.enumerated() {
+            original += message.bytes
+            visible += visibleAt[message.position, default: 0]
+            if (index + 1) % stride == 0 || index == messages.count - 1 {
+                samples.append(Point(id: index + 1, original: Double(original) / 1024,
+                                     visible: Double(visible) / 1024))
+            }
+        }
+        points = samples
     }
 }
 

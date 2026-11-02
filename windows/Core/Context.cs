@@ -41,9 +41,39 @@ internal sealed record ContextTotals(long Sessions, long Messages, long Compress
 
 internal sealed record ContextStats(bool Enabled, string DatabasePath, ContextTotals Totals, ContextSession[] Sessions);
 
+internal sealed record ContextArchiveMessage(string Reference, long Position, JsonElement Item);
+internal sealed record ContextArchiveSegment(long Position, long EndPosition, string Kind, string Reference);
+internal sealed record ContextArchiveBlock(string Id, long Tier, string Topic, string Summary, string[] References,
+    long StartPosition, long EndPosition, string? SupersededBy);
+internal sealed record ContextArchive(string Session, ContextArchiveMessage[] History,
+    ContextArchiveSegment[] Segments, ContextArchiveBlock[] Blocks);
+
 // Strict readers for the context CLI contract. Display decisions stay in the page.
 internal static class ContextContract
 {
+    internal static ContextArchive ParseArchive(JsonElement value)
+    {
+        try
+        {
+            return new(Json.Text(value, "session"),
+                Json.Rows(Json.Field(value, "history")).Select(row => new ContextArchiveMessage(
+                    Json.Text(row, "reference"), Json.Integer(row, "position"), Json.Field(row, "item"))).ToArray(),
+                Json.Rows(Json.Field(value, "segments")).Select(row => new ContextArchiveSegment(
+                    Json.Integer(row, "position"), Json.Integer(row, "end_position"), Json.Text(row, "kind"), Json.Text(row, "reference"))).ToArray(),
+                Json.Rows(Json.Field(value, "blocks")).Select(row =>
+                {
+                    using var references = JsonDocument.Parse(Json.Text(row, "full_refs"));
+                    return new ContextArchiveBlock(Json.Text(row, "id"), Json.Integer(row, "tier"),
+                        Json.Text(row, "topic"), Json.Text(row, "summary"), Json.Strings(references.RootElement),
+                        Json.Integer(row, "start_position"), Json.Integer(row, "end_position"), Json.OptionalText(row, "superseded_by"));
+                }).ToArray());
+        }
+        catch (JsonException)
+        {
+            throw new CliFailure("CLI contract 的压缩块引用不是有效 JSON。");
+        }
+    }
+
     internal static ContextConfig ParseConfig(JsonElement value)
     {
         return new(ParseSettings(Json.Field(value, "context")),

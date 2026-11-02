@@ -3,7 +3,7 @@ import SwiftUI
 
 private let modelOrderDragType = "local.codex-mixin.model-order"
 
-private struct NativeSearchField: NSViewRepresentable {
+struct NativeSearchField: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
 
@@ -810,7 +810,7 @@ struct ModelBenchmarkRootView: View {
     private var minimumModelTableWidth: CGFloat {
         modelTableMinimumWidth(
             includesRatio: model.selectedProvider?.presetID == "baidu-oneapi"
-        ) + 110
+        ) + 60
     }
 
     @ViewBuilder
@@ -895,6 +895,23 @@ struct ModelBenchmarkRootView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
 
+            Menu {
+                Picker(AppLocalization.string("provider.modelOrder.title"), selection: Binding(
+                    get: { model.selectedModelOrder },
+                    set: { model.setModelOrder($0); showModelOrder() }
+                )) {
+                    Text(AppLocalization.string("provider.modelOrder.family")).tag(ProviderModelOrder.family)
+                    Text(AppLocalization.string("provider.modelOrder.manual")).tag(ProviderModelOrder.manual)
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(AppLocalization.string("provider.modelOrder.title"))
+            .accessibilityLabel(AppLocalization.string("provider.modelOrder.title"))
+            .disabled(model.isBusy || isExternallyBusy)
+
             modelActionsMenu
 
             Spacer()
@@ -908,28 +925,6 @@ struct ModelBenchmarkRootView: View {
 
     @ViewBuilder
     private var selectionToolbar: some View {
-        if model.selectedProvider != nil {
-            HStack(spacing: 10) {
-                Picker(AppLocalization.string("provider.modelOrder.title"), selection: Binding(
-                    get: { model.selectedModelOrder },
-                    set: { model.setModelOrder($0); showModelOrder() }
-                )) {
-                    Text(AppLocalization.string("provider.modelOrder.family")).tag(ProviderModelOrder.family)
-                    Text(AppLocalization.string("provider.modelOrder.manual")).tag(ProviderModelOrder.manual)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 260)
-                .disabled(model.isBusy || isExternallyBusy)
-                if model.selectedModelOrder == .family && model.selectedProviderDirty {
-                    Text(AppLocalization.string("provider.modelOrder.defaultHelp"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 10)
-        }
         if showsManualModelEntry {
             HStack(spacing: 8) {
                 TextField("手动输入模型 ID（可不在 /v1/models 中）", text: $model.manualModelID)
@@ -1077,9 +1072,10 @@ struct ModelBenchmarkRootView: View {
     private var orderColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn(AppLocalization.string("provider.modelOrder.position"),
                     sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.orderPosition)) { row in
-            HStack(spacing: 5) {
+            HStack(spacing: 8) {
                 if let position = model.modelPosition(row) {
                     Text("\(position + 1)")
+                        .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .frame(minWidth: 18, alignment: .trailing)
                     Image(systemName: "line.3.horizontal")
@@ -1096,12 +1092,17 @@ struct ModelBenchmarkRootView: View {
                             }
                             return item
                         }
+
+                }
+            }
+            .contextMenu {
+                if model.isSelected(row) {
                     Button {
                         if let current = model.modelPosition(row) {
                             model.moveModel(row, to: current - 1)
                             showModelOrder()
                         }
-                    } label: { Image(systemName: "arrow.up") }
+                    } label: { Label(AppLocalization.string("provider.modelOrder.up"), systemImage: "arrow.up") }
                     .help(AppLocalization.string("provider.modelOrder.up"))
                     .accessibilityLabel(AppLocalization.string("provider.modelOrder.up") + " " + row.model.id)
                     .disabled(isExternallyBusy || !model.canMoveModel(row, by: -1))
@@ -1110,7 +1111,7 @@ struct ModelBenchmarkRootView: View {
                             model.moveModel(row, to: current + 1)
                             showModelOrder()
                         }
-                    } label: { Image(systemName: "arrow.down") }
+                    } label: { Label(AppLocalization.string("provider.modelOrder.down"), systemImage: "arrow.down") }
                     .help(AppLocalization.string("provider.modelOrder.down"))
                     .accessibilityLabel(AppLocalization.string("provider.modelOrder.down") + " " + row.model.id)
                     .disabled(isExternallyBusy || !model.canMoveModel(row, by: 1))
@@ -1136,7 +1137,7 @@ struct ModelBenchmarkRootView: View {
                 return true
             }
         }
-        .width(110)
+        .width(60)
     }
 
     private func showModelOrder() {

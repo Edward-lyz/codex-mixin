@@ -13,7 +13,8 @@
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
 //!   `GET /api/agents/versions` -> `agent versions --json` (network).
 //! - `GET /api/context` -> `{settings, database_path, totals, sessions}` from
-//!   `context stats --json` and `context config get --json`.
+//!   `context stats --json` and `context config get --json`; with `?session=key`,
+//!   returns the existing `context export --session=key` document on demand.
 //! - `GET /api/ech` -> `ech status --json`; `GET /api/report/estimate` ->
 //!   `report-replay --all-sessions --estimate --json`.
 //! - `GET /api/config/export` downloads a Base64 backup (not encrypted);
@@ -357,7 +358,20 @@ struct UsageDetailsQuery {
 // response stays small on slow links.
 const PANEL_TURN_LIMIT: &str = "500";
 
-async fn context_stats() -> Result<Json<Value>, ApiError> {
+#[derive(Deserialize)]
+struct ContextQuery {
+    session: Option<String>,
+}
+
+async fn context_stats(Query(query): Query<ContextQuery>) -> Result<Json<Value>, ApiError> {
+    if let Some(session) = query.session {
+        if session.is_empty() || session.len() > 4096 || session.contains('\0') {
+            return Err(ApiError::invalid("Invalid context session".to_owned()));
+        }
+        return Ok(Json(
+            run_json(&["context", "export", &format!("--session={session}")]).await?,
+        ));
+    }
     let (stats, config) = tokio::try_join!(
         run_json(&["context", "stats", "--json"]),
         run_json(&["context", "config", "get", "--json"])

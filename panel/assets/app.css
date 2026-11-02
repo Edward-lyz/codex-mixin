@@ -1123,10 +1123,15 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 .svc-table tbody tr:nth-child(even) td { background: var(--ink-03); }
 .svc-table tbody tr:hover td { background: var(--ink-05); }
 .svc-table .c-check { width: 56px; }
-.svc-table .c-order { min-width: 84px; }
+.svc-table .c-order { width: 84px; white-space: nowrap; }
 .model-order-controls { display: inline-flex; align-items: center; gap: 2px; }
+.model-rank { min-width: 18px; text-align: right; color: var(--ink-64); font-variant-numeric: tabular-nums; }
 .model-order-controls .svc-grip { cursor: grab; }
 .model-order-controls .btn { width: 24px; min-width: 24px; height: 24px; }
+.model-order-controls > :last-child { opacity: 0; transition: opacity var(--dur-fast); }
+.svc-table tr:hover .model-order-controls > :last-child,
+.model-order-controls:focus-within > :last-child { opacity: 1; }
+@media (hover: none) { .model-order-controls > :last-child { opacity: 1; } }
 .svc-table tr.is-dragging { opacity: 0.4; }
 .svc-table tr.is-drop-target td { box-shadow: inset 0 2px var(--c-accent); }
 .svc-table { min-width: 760px; }
@@ -1247,3 +1252,40 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 /* The models table needs room; widen this page like the macOS window. */
 body[data-page="providers"] .view,
 body[data-page="providers"] .topbar { max-width: 1480px; }
+
+/* Context uses a persistent session browser beside the on-demand inspector. */
+.ctx-workspace { display: grid; grid-template-columns: minmax(320px, 0.85fr) minmax(360px, 1.15fr); gap: 16px; align-items: start; }
+.ctx-workspace > .card { min-width: 0; }
+.ctx-sessions { max-height: 760px; overflow: auto; }
+.ctx-workspace .ctx-sessions .table { min-width: 0; }
+.ctx-workspace .ctx-sessions th:nth-child(2), .ctx-workspace .ctx-sessions td:nth-child(2),
+.ctx-workspace .ctx-sessions th:nth-child(n+5), .ctx-workspace .ctx-sessions td:nth-child(n+5) { display: none; }
+.ctx-session-button { border: 0; background: transparent; color: inherit; text-align: left; font: inherit; padding: 6px 8px; border-radius: 6px; cursor: pointer; width: 100%; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-session-button:hover { background: var(--ink-05); }
+.ctx-session-button[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-12); }
+.ctx-inspector-body { display: grid; gap: 16px; padding: 0 20px 20px; }
+.ctx-inspector-body h4 { margin: 0; font-weight: 600; }
+.ctx-chart { min-width: 0; }
+.ctx-growth { width: 100%; height: auto; display: block; }
+.ctx-grid-line { stroke: var(--ink-08); stroke-width: 1; }
+.ctx-axis { fill: var(--ink-64); font: 12px var(--font-sans); }
+.ctx-line-original, .ctx-line-visible { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.ctx-line-original { stroke: var(--ink-54); stroke-dasharray: 5 4; }
+.ctx-line-visible { stroke: var(--c-accent); }
+.ctx-legend { display: flex; gap: 16px; align-items: center; font-size: var(--fs-xs); }
+.ctx-original-key::before, .ctx-visible-key::before { content: ""; display: inline-block; width: 16px; margin: 0 6px 3px 0; border-top: 2px dashed var(--ink-54); }
+.ctx-visible-key::before { border-top: 2px solid var(--c-accent); }
+.ctx-segment-map { display: flex; flex-wrap: wrap; gap: 4px; max-height: 156px; overflow: auto; }
+.ctx-segment { border: 0; background: var(--ink-05); color: var(--ink-64); border-radius: 4px; padding: 6px 8px; font: 11px var(--font-mono); cursor: pointer; }
+.ctx-segment.is-block { color: var(--accent-text); background: var(--accent-12); }
+.ctx-segment:hover { box-shadow: inset 0 0 0 1px var(--ink-16); }
+.ctx-block { background: var(--ink-03); border-radius: 8px; padding: 12px; min-width: 0; }
+.ctx-block summary { cursor: pointer; overflow-wrap: anywhere; }
+.ctx-block summary .card-note { display: block; margin-top: 4px; }
+.ctx-block-body { display: grid; gap: 12px; padding-top: 16px; }
+.ctx-block pre, .ctx-original-text, .ctx-source pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-mono); max-height: 400px; overflow: auto; margin: 0; user-select: text; }
+.ctx-sources { display: grid; gap: 10px; padding: 12px 0 0; }
+.ctx-source { padding: 8px; background: var(--c-base); border-radius: 6px; }
+.ctx-source pre { margin-top: 8px; }
+@media (max-width: 1100px) { .ctx-workspace { grid-template-columns: minmax(0, 1fr); } .ctx-sessions { max-height: 360px; } }
+@media (prefers-reduced-motion: reduce) { .model-order-controls > :last-child { transition: none; } }

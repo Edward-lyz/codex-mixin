@@ -99,6 +99,18 @@
         <Setter Property="FontSize" Value="15" />
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
       </Style>
+      <Style x:Key="ContextArchiveOriginalLine" TargetType="Polyline">
+        <Setter Property="Stroke" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="StrokeThickness" Value="2" />
+      </Style>
+      <Style x:Key="ContextArchiveVisibleLine" TargetType="Polyline">
+        <Setter Property="Stroke" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+        <Setter Property="StrokeThickness" Value="2" />
+      </Style>
+      <Style x:Key="ContextArchiveGridLine" TargetType="Line">
+        <Setter Property="Stroke" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <Setter Property="StrokeThickness" Value="0.5" />
+      </Style>
       <Style x:Key="DotOn" TargetType="Ellipse">
         <Setter Property="Width" Value="7" /><Setter Property="Height" Value="7" />
         <Setter Property="Fill" Value="{ThemeResource SystemFillColorSuccessBrush}" />
