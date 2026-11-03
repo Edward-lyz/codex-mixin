@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::provider::{
     AWS_BEDROCK_DEFAULT_REGION, ProviderDefinition, ProviderModel, ProviderModelSource,
-    ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider,
+    ProviderPreset, ProviderProtocol, ProviderQuotaParser, aws_bedrock_aksk_provider,
 };
 
 use super::super::error::OperationError;
@@ -186,6 +186,15 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
     );
     if let Some(protocol) = input.protocol {
         provider.protocol = parse_protocol(&protocol)?;
+        if preset == ProviderPreset::Custom && !explicit_api_path && !path_explicit {
+            provider.api_path = match provider.protocol {
+                ProviderProtocol::AnthropicMessages => "/v1/messages",
+                ProviderProtocol::OpenAiChat => "/v1/chat/completions",
+                ProviderProtocol::OpenAiResponses => "/v1/responses",
+                ProviderProtocol::GoogleGemini => "/v1beta",
+            }
+            .to_owned();
+        }
     }
     if let Some(path) = input.api_path {
         provider.api_path = normalize_path("API path", path)?;
@@ -320,6 +329,19 @@ pub fn update_provider_from_input(
     }
     if let Some(protocol) = input.protocol {
         provider.protocol = parse_protocol(&protocol).map_err(before_commit)?;
+        if provider.preset_id.as_deref() == Some("custom")
+            && base_url_updated
+            && !explicit_api_path
+            && !path_explicit
+        {
+            provider.api_path = match provider.protocol {
+                ProviderProtocol::AnthropicMessages => "/v1/messages",
+                ProviderProtocol::OpenAiChat => "/v1/chat/completions",
+                ProviderProtocol::OpenAiResponses => "/v1/responses",
+                ProviderProtocol::GoogleGemini => "/v1beta",
+            }
+            .to_owned();
+        }
     }
     if let Some(path) = input.api_path {
         provider.api_path = normalize_path("API path", path).map_err(before_commit)?;

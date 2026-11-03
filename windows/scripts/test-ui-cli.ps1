@@ -99,6 +99,7 @@ try {
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
     if ($provider.display_name -ne 'UI local provider' -or $provider.base_url -ne $upstreamUrl) { throw 'UI provider save differs from CLI state' }
+    if ($provider.protocol -ne 'open_ai_chat' -or $provider.api_path -ne '/v1/chat/completions') { throw 'Explicit Chat protocol did not select its default API endpoint' }
     $completed.Add($stage)
 
     $stage = 'model selection, search, context and apply'
@@ -134,6 +135,19 @@ try {
     & $WinApp ui invoke 刷新 -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '刷新完成' --contains --timeout 90000
     & $WinApp ui screenshot -a $app.Id --output "$evidence\models.png"
+    $completed.Add($stage)
+
+    $stage = 'real CLI failure and recovery'
+    $configBytes = [IO.File]::ReadAllBytes($env:CODEX_GATEWAY_CONFIG)
+    try {
+        [IO.File]::WriteAllText($env:CODEX_GATEWAY_CONFIG, '{')
+        & $WinApp ui invoke 刷新 -a $app.Id
+        & $WinApp ui wait-for operation-status -a $app.Id --value '刷新失败' --timeout 90000
+        & $WinApp ui screenshot -a $app.Id --output "$evidence\cli-error.png"
+    }
+    finally { [IO.File]::WriteAllBytes($env:CODEX_GATEWAY_CONFIG, $configBytes) }
+    & $WinApp ui invoke 刷新 -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新完成' --contains --timeout 90000
     $completed.Add($stage)
 
     $stage = 'model discovery, capability probe and benchmark'
