@@ -355,20 +355,31 @@ try {
     & $WinApp ui invoke 导出配置 -w $settingsWindow
     & $WinApp ui invoke PrimaryButton -w $settingsWindow
     & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
-    & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\export-picker-tree.json"
-    $field = & $WinApp ui search 'File name:' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector $backup -a $app.Id
-    $button = & $WinApp ui search Save -a $app.Id --type Button --json | ConvertFrom-Json
-    & $WinApp ui invoke $button.matches[0].selector -a $app.Id
+    $pickerTree = & $WinApp ui inspect -a $app.Id --depth 10 --json | ConvertFrom-Json
+    $pickerTree | ConvertTo-Json -Depth 30 | Set-Content "$evidence\export-picker-tree.json"
+    $pickerWindow = @($pickerTree.windows | Where-Object title -eq 'Save As')[0].hwnd
+    # Target the native dialog, not the larger disabled settings window behind it.
+    $field = & $WinApp ui search 'File name:' -w $pickerWindow --type Edit --json | ConvertFrom-Json
+    & $WinApp ui send-keys 'ctrl+a' --target $field.matches[0].selector -w $pickerWindow --via send-input
+    & $WinApp ui send-keys $backup --verbatim --target $field.matches[0].selector -w $pickerWindow --via send-input
+    & $WinApp ui wait-for $field.matches[0].selector -w $pickerWindow --value $backup --timeout 5000
+    & $WinApp ui send-keys tab -w $pickerWindow --via send-input
+    $button = & $WinApp ui search Save -w $pickerWindow --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $button.matches[0].selector -w $pickerWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '导出配置完成' --contains --timeout 90000
     if (-not (Test-Path $backup) -or (Get-Item $backup).Length -eq 0) { throw 'Native save picker did not export the fixture' }
     & $cli --no-tui --json-errors provider update ui-local --display-name 'Changed after backup'
     & $WinApp ui invoke 导入配置 -w $settingsWindow
     & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
-    $field = & $WinApp ui search 'File name:' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector $backup -a $app.Id
-    $button = & $WinApp ui search Open -a $app.Id --type Button --json | ConvertFrom-Json
-    & $WinApp ui invoke $button.matches[0].selector -a $app.Id
+    $pickerTree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
+    $pickerWindow = @($pickerTree.windows | Where-Object title -eq 'Open')[0].hwnd
+    $field = & $WinApp ui search 'File name:' -w $pickerWindow --type Edit --json | ConvertFrom-Json
+    & $WinApp ui send-keys 'ctrl+a' --target $field.matches[0].selector -w $pickerWindow --via send-input
+    & $WinApp ui send-keys $backup --verbatim --target $field.matches[0].selector -w $pickerWindow --via send-input
+    & $WinApp ui wait-for $field.matches[0].selector -w $pickerWindow --value $backup --timeout 5000
+    & $WinApp ui send-keys tab -w $pickerWindow --via send-input
+    $button = & $WinApp ui search Open -w $pickerWindow --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $button.matches[0].selector -w $pickerWindow
     & $WinApp ui wait-for PrimaryButton -w $settingsWindow --timeout 15000
     & $WinApp ui invoke PrimaryButton -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '导入配置完成' --contains --timeout 90000
