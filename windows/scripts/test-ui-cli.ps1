@@ -62,6 +62,9 @@ try {
     & $cli --version | Set-Content "$evidence\cli-version.txt"
     $interface = & $cli --no-tui --json-errors interface --json | ConvertFrom-Json
     if ($interface.protocol_version -ne 1) { throw 'Unexpected CLI interface version' }
+    $guiVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $AppDirectory 'codex_mixin_ui.dll')).Version.ToString(3)
+    if ($guiVersion -ne ($interface.version -split '-', 2)[0]) { throw 'Published GUI and CLI versions do not match' }
+    @{ gui = $guiVersion; cli = $interface.version } | ConvertTo-Json | Set-Content "$evidence\versions.json"
     $app = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -PassThru
     & $WinApp ui wait-for operation-status -a $app.Id --timeout 60000
     & $WinApp ui wait-for operation-status -a $app.Id --value '连接 CLI完成' --contains --timeout 90000
@@ -308,6 +311,40 @@ try {
     & $WinApp ui invoke 运行诊断 -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '诊断完成' --contains --timeout 90000
     $null = & $cli --no-tui --json-errors doctor --json | ConvertFrom-Json
+    & $WinApp ui invoke 重放上报 -w $settingsWindow
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '重放上报完成' --contains --timeout 90000
+    # Normal HTTP uses the dead fixture proxy; an update check must surface its error.
+    & $WinApp ui wait-for check-app-updates -w $settingsWindow --property IsEnabled --value True --timeout 90000
+    & $WinApp ui invoke check-app-updates -w $settingsWindow
+    & $WinApp ui wait-for app-update-status -w $settingsWindow --value '更新失败：' --contains --timeout 90000
+    & $WinApp ui wait-for check-app-updates -w $settingsWindow --property IsEnabled --value True --timeout 90000
+    $completed.Add($stage)
+
+    $stage = 'ECH test, safe fallback and disable'
+    & $WinApp ui wait-for '检测 ECH' -w $settingsWindow --timeout 30000
+    $echBefore = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
+    & $WinApp ui invoke '检测 ECH' -w $settingsWindow
+    # ECH deliberately bypasses ordinary proxies. Both real probe verdicts are valid.
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        $status = & $WinApp ui get-property operation-status -w $settingsWindow --property Name --json | ConvertFrom-Json
+        $echTestStatus = [string]$status.properties.Name
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'ECH test did not expose its terminal result' }
+        if ($echTestStatus -notmatch '^检测 ECH(完成|失败)') { Start-Sleep -Milliseconds 200 }
+    } until ($echTestStatus -match '^检测 ECH(完成|失败)')
+    $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
+    if ($echAfter.enabled -ne $echBefore.enabled -or $echAfter.fallback_reason -ne $echBefore.fallback_reason) { throw 'ECH test changed saved network settings' }
+    & $WinApp ui invoke '启用 ECH' -w $settingsWindow
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '启用 ECH完成' --contains --timeout 90000
+    $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
+    if ($echAfter.enabled -eq (-not [string]::IsNullOrWhiteSpace($echAfter.fallback_reason))) { throw 'ECH enable did not persist a consistent probe verdict or safe fallback' }
+    @{ test = $echTestStatus; enable = $echAfter } | ConvertTo-Json -Depth 8 | Set-Content "$evidence\ech.json"
+    & $WinApp ui invoke '关闭 ECH' -w $settingsWindow
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '关闭 ECH完成' --contains --timeout 90000
+    $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
+    if ($echAfter.enabled -or $null -ne $echAfter.fallback_reason) { throw 'ECH disable did not clear its saved setting and fallback reason' }
+    $completed.Add($stage)
+
     & $WinApp ui invoke 导出配置 -w $settingsWindow
     & $WinApp ui wait-for CloseButton -w $settingsWindow --timeout 5000
     & $WinApp ui invoke CloseButton -w $settingsWindow
@@ -341,7 +378,6 @@ try {
     $completed.Add($stage)
     & $WinApp ui inspect -w $settingsWindow --depth 10 --json | Set-Content "$evidence\settings-tree.json"
     & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input --allow-system-keys
-    $completed.Add($stage)
 
     $stage = 'tray, gateway toggle, refresh, console reopening and exit'
     $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
@@ -389,7 +425,7 @@ try {
     & $WinApp ui invoke PrimaryButton -w $trayWindow
     if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
     $completed.Add($stage)
-    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
+    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update (covered separately by installer and portable-update checks)') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }
 catch {
     @{ stage = $stage; passed = $completed.ToArray(); error = $_.Exception.Message } |
