@@ -66,9 +66,18 @@ async fn model_catalog(state: &AppState) -> Result<Vec<Value>, GatewayError> {
             )
         })
         .collect::<Vec<_>>();
-    if !state.config.accept_codex_oauth
-        || !tokio::fs::try_exists(&state.config.codex_auth_path).await?
-    {
+    if !state.config.accept_codex_oauth {
+        return Ok(models);
+    }
+    // Mirror the routing predicate: only advertise official IDs when a real
+    // OAuth login can serve them. A bare auth.json in API-key mode cannot, and
+    // advertising it makes Desktop offer models the gateway then rejects.
+    let auth_path = state.config.codex_auth_path.clone();
+    let official_available =
+        tokio::task::spawn_blocking(move || crate::provider::official_auth_available(&auth_path))
+            .await
+            .map_err(|error| anyhow::anyhow!("official credential check failed: {error}"))??;
+    if !official_available {
         return Ok(models);
     }
     // The CLI profile includes selected official models as well as providers.

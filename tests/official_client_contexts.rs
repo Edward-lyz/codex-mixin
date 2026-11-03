@@ -18,7 +18,16 @@ async fn official_contexts_reach_clients() {
     let config_path = directory.path().join("gateway.json");
     let codex_home = directory.path().join("codex");
     fs::create_dir_all(&codex_home).unwrap();
-    fs::write(codex_home.join("auth.json"), "{}").unwrap();
+    // Official models are only advertised when a ChatGPT OAuth login can serve
+    // them, so the fixture needs real tokens rather than an empty auth.json.
+    fs::write(
+        codex_home.join("auth.json"),
+        serde_json::to_vec(&json!({
+            "tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     fs::write(
         directory.path().join("official-models.json"),
         serde_json::to_vec(&json!({"models":[{

@@ -5598,6 +5598,50 @@ async fn converts_anthropic_messages_for_official_models() {
 }
 
 #[tokio::test]
+async fn claude_desktop_hides_official_models_without_oauth_tokens() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    // API-key mode: auth.json exists, but nothing can serve official models.
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"OPENAI_API_KEY":"sk-test","auth_mode":"apikey"}"#,
+    )
+    .unwrap();
+    config.gateway_client_keys.claude_desktop = Some("desktop-key".to_owned());
+    config.official_selected_models = Some(vec!["gpt-5.6-terra".to_owned()]);
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let catalog: Value = reqwest::Client::new()
+        .get(format!("{gateway_url}/claude-desktop/v1/models"))
+        .bearer_auth("desktop-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ids = catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let official_route = codex_mixin::clients::claude_desktop::route_id("gpt-5.6-terra");
+    assert!(
+        !ids.contains(&official_route),
+        "gateway advertised {official_route} without OAuth tokens: {ids:?}"
+    );
+    assert_eq!(
+        ids.len(),
+        10,
+        "only provider models should stay listed: {ids:?}"
+    );
+    assert!(ids.iter().all(|id| id.starts_with("claude-sonnet-mixin-")));
+}
+
+#[tokio::test]
 async fn converts_anthropic_messages_for_openai_chat_models() {
     let (upstream_url, requests) = spawn_mock_openai_chat().await;
     let mut config = test_config(upstream_url);

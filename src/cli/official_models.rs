@@ -140,13 +140,14 @@ async fn refresh_official_models_to_path(
     write_official_models_cache(&catalog, cache_path)
 }
 
-// Existing client exports may be prepared before OAuth is completed; requests still validate credentials.
+// Only advertise official models when a ChatGPT OAuth login can actually serve
+// them. A plain auth.json (auth_mode=apikey, no tokens) exists for every Codex
+// user yet routes nothing, so file presence alone is not enough.
 pub(super) fn selected_official_models(
     config: &GatewayConfig,
 ) -> anyhow::Result<Vec<ProviderModel>> {
     if !config.accept_codex_oauth
-        || !(config.codex_auth_path.is_file()
-            || codex_mixin::provider::official_auth_available(&config.codex_auth_path)?)
+        || !codex_mixin::provider::official_auth_available(&config.codex_auth_path)?
     {
         return Ok(Vec::new());
     }
