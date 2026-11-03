@@ -14,6 +14,9 @@ $fixture = Join-Path ([IO.Path]::GetTempPath()) ('codex-mixin-ui-' + [guid]::New
 $null = [IO.Directory]::CreateDirectory($fixture)
 $app = $null
 $upstream = $null
+$settingsChanged = $false
+$startupValue = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'CodexMixin', $null)
+$automaticValue = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', $null)
 $stage = 'startup'
 $completed = [Collections.Generic.List[string]]::new()
 $cli = Join-Path $AppDirectory 'codex-mixin.exe'
@@ -133,6 +136,31 @@ try {
     & $WinApp ui screenshot -a $app.Id --output "$evidence\models.png"
     $completed.Add($stage)
 
+    $stage = 'model discovery, capability probe and benchmark'
+    & $WinApp ui invoke 更多模型操作 -a $app.Id
+    & $WinApp ui invoke 刷新模型列表 -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新模型完成' --contains --timeout 90000
+    & $WinApp ui invoke 更多模型操作 -a $app.Id
+    & $WinApp ui invoke 重新探测已加入模型的能力 -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '探测模型能力完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
+    if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared') { throw 'Discovery or probe changed the selected models' }
+    & $cli --no-tui --json-errors service start
+    & $WinApp ui invoke 更多模型操作 -a $app.Id
+    & $WinApp ui invoke '测试已加入的 1 个模型' -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '启动模型测速完成' --contains --timeout 90000
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        $benchmark = & $cli --no-tui --json-errors benchmark status | ConvertFrom-Json
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'UI benchmark did not complete' }
+        if ($benchmark.snapshot.status -ne 'completed') { Start-Sleep -Milliseconds 200 }
+    } until ($benchmark.snapshot.status -eq 'completed')
+    $results = @($benchmark.snapshot.results | Where-Object { $_.provider_id -eq 'ui-local' -and $_.upstream_model -eq 'shared' })
+    if ($results.Count -ne 1 -or $results[0].status -ne 'completed') { throw 'UI benchmark did not successfully call the loopback model' }
+    if (-not (Test-Path "$fixture/upstream.ndjson") -or (Get-Item "$fixture/upstream.ndjson").Length -eq 0) { throw 'No actual upstream requests were recorded' }
+    $completed.Add($stage)
+
     $stage = 'Codex mode, cancel, connect and disconnect'
     & $WinApp ui invoke console-agents-tab -a $app.Id --action select
     & $WinApp ui wait-for agent-summary -a $app.Id --timeout 30000
@@ -248,6 +276,20 @@ try {
         & $WinApp ui invoke $option.matches[0].selector -w $settingsWindow --action select
         & $WinApp ui screenshot -w $settingsWindow --output "$evidence\theme-$theme.png"
     }
+    $settingsChanged = $true
+    & $WinApp ui click '登录 Windows 时启动界面' -w $settingsWindow
+    $startupAfter = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'CodexMixin', $null)
+    if (($null -ne $startupAfter) -eq ($null -ne $startupValue)) { throw 'Startup checkbox did not change the native Run value' }
+    & $WinApp ui click '登录 Windows 时启动界面' -w $settingsWindow
+    $startupRestored = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'CodexMixin', $null)
+    if (($null -ne $startupRestored) -ne ($null -ne $startupValue)) { throw 'Startup checkbox did not restore its original enabled state' }
+    $automatic = '自动更新（每小时检查；网关空闲 30 分钟后安装）'
+    & $WinApp ui click $automatic -w $settingsWindow
+    $automaticAfter = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', $null)
+    $automaticBefore = if ($null -eq $automaticValue) { 1 } else { [int]$automaticValue }
+    if ($null -eq $automaticAfter -or [int]$automaticAfter -eq $automaticBefore) { throw 'Automatic-update checkbox did not save the new state' }
+    & $WinApp ui click $automatic -w $settingsWindow
+    if ([int][Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', -1) -ne $automaticBefore) { throw 'Automatic-update checkbox did not restore its enabled state' }
     & $WinApp ui invoke 运行诊断 -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '诊断完成' --contains --timeout 90000
     $null = & $cli --no-tui --json-errors doctor --json | ConvertFrom-Json
@@ -282,12 +324,23 @@ try {
     & $WinApp ui screenshot -w $trayWindow --output "$evidence\tray.png"
     & $WinApp ui invoke '打开控制台…' -w $trayWindow
     & $WinApp ui wait-for console-providers-tab -a $app.Id --timeout 15000
+    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
+    & $WinApp ui invoke 删除服务商 -a $app.Id
+    & $WinApp ui invoke CloseButton -a $app.Id
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if (@($listed.providers | Where-Object id -eq 'ui-local').Count -ne 1) { throw 'Cancelled provider deletion removed configuration' }
+    & $WinApp ui invoke 删除服务商 -a $app.Id
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '删除服务商完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if (@($listed.providers).Count -ne 0) { throw 'Provider delete button did not remove the isolated provider' }
+    $completed.Add('provider delete cancellation and confirmation')
     $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
     & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 15000
     & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
     if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
     $completed.Add($stage)
-    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'native backup file picker round trip', 'OS startup registry and ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
+    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'native backup file picker round trip', 'ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }
 catch {
     @{ stage = $stage; passed = $completed.ToArray(); error = $_.Exception.Message } |
@@ -304,6 +357,16 @@ finally {
     }
     & $cli --no-tui --json-errors service stop --force --allow-codex-disconnect --restore-clients *> "$evidence\service-cleanup.txt"
     if ($null -ne $upstream -and -not $upstream.HasExited) { Stop-Process -Id $upstream.Id -Force -ErrorAction Continue }
+    if ($settingsChanged) {
+        $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+        if ($null -eq $startupValue) { $runKey.DeleteValue('CodexMixin', $false) }
+        else { $runKey.SetValue('CodexMixin', $startupValue, [Microsoft.Win32.RegistryValueKind]::String) }
+        $runKey.Dispose()
+        $updateKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\CodexMixin\Updates')
+        if ($null -eq $automaticValue) { $updateKey.DeleteValue('Automatic', $false) }
+        else { $updateKey.SetValue('Automatic', $automaticValue, [Microsoft.Win32.RegistryValueKind]::DWord) }
+        $updateKey.Dispose()
+    }
     $guiLogs = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'CodexMixin/logs'
     if (Test-Path $guiLogs) { Copy-Item $guiLogs "$evidence\gui-logs" -Recurse }
     & $WinApp ui yield *> $null
