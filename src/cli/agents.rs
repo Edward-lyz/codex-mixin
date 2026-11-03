@@ -370,9 +370,16 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                         .with_context(|| {
                             format!("missing cached model {selected} for {}", provider.id)
                         })?;
+                    let name = if matches!(id_owned.as_str(), "workbuddy" | "codebuddy") {
+                        let mut display_model = model.clone();
+                        display_model.ratio = None;
+                        codex_mixin::provider::provider_model_display_name(&display_model, provider)
+                    } else {
+                        codex_mixin::provider::provider_model_display_name(model, provider)
+                    };
                     models.push(framework_model(
                         codex_mixin::provider::catalog_model_slug(selected, &provider.id),
-                        codex_mixin::provider::provider_model_display_name(model, provider),
+                        name,
                         model,
                         &config,
                         provider.protocol,
@@ -419,6 +426,7 @@ fn framework_model(
     codex_mixin::clients::frameworks::FrameworkModel {
         id,
         name,
+        ratio: model.ratio.clone(),
         context_window: context,
         max_tokens: model
             .max_output_tokens

@@ -23,6 +23,8 @@ const DETAIL: &str = "Disconnect restores the saved managed fields and preserves
 pub struct FrameworkModel {
     pub id: String,
     pub name: String,
+    /// Optional provider rate, rendered through native client metadata when supported.
+    pub ratio: Option<String>,
     pub context_window: u64,
     pub max_tokens: u64,
     pub supports_image: bool,

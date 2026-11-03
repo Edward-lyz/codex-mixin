@@ -104,23 +104,30 @@ async fn oneapi_rate_labels_reach_native_client_configs() {
         serde_json::from_slice::<Value>(&fs::read(buddy.join("models.json")).unwrap()).unwrap(),
         original
     );
-    for models in [
+    for (index, models) in [
         &snapshots[0],
         &snapshots[1]["models"],
         &snapshots[2]["providers"]["codex-mixin"]["models"],
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let models = models.as_array().unwrap();
-        for (id, name) in [
-            (
-                "gpt-6.1-sol-baidu-oneapi",
-                "GPT-6.1 Sol (0.5x) \u{b7} oneapi",
-            ),
+        for (id, name, ratio) in [
+            ("gpt-6.1-sol-baidu-oneapi", "GPT-6.1 Sol", "0.5x"),
             (
                 "DeepSeek-V4.1-Flash-baidu-oneapi",
-                "DeepSeek V4.1 Flash (0.4x) \u{b7} oneapi",
+                "DeepSeek V4.1 Flash",
+                "0.4x",
             ),
         ] {
             let model = models.iter().find(|model| model["id"] == id).unwrap();
+            let name = if index < 2 {
+                assert_eq!(model["credits"], ratio);
+                format!("{name} \u{b7} oneapi")
+            } else {
+                format!("{name} ({ratio}) \u{b7} oneapi")
+            };
             assert_eq!(model["name"], name);
         }
     }

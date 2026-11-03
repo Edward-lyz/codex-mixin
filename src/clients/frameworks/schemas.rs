@@ -824,7 +824,17 @@ fn buddy(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Re
     let dir = home_path(variable, default)?;
     let path = dir.join("models.json");
     let doc = read_config(&path, Format::Json)?;
-    let entries = models.iter().map(|m|json!({"id":m.id,"name":m.name,"vendor":PROVIDER,"apiKey":key,"url":format!("{v1}/chat/completions"),"maxInputTokens":m.context_window,"maxOutputTokens":m.max_tokens,"supportsToolCall":true,"supportsImages":m.supports_image,"supportsReasoning":!m.efforts.is_empty()})).collect();
+    // WorkBuddy/CodeBuddy render credits in their native rate column.
+    let entries = models
+        .iter()
+        .map(|m| {
+            let mut entry = json!({"id":m.id,"name":m.name,"vendor":PROVIDER,"apiKey":key,"url":format!("{v1}/chat/completions"),"maxInputTokens":m.context_window,"maxOutputTokens":m.max_tokens,"supportsToolCall":true,"supportsImages":m.supports_image,"supportsReasoning":!m.efforts.is_empty()});
+            if let Some(ratio) = m.ratio.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                entry["credits"] = json!(ratio);
+            }
+            entry
+        })
+        .collect();
     let root_array = doc.is_array() || (!path.exists() && id == "workbuddy");
     let fields = if root_array {
         vec![(vec![], append_existing(&path, &[], entries)?)]

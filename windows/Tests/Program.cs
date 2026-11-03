@@ -45,7 +45,11 @@ try
         Json.Text(integration, "detail");
         Json.OptionalText(integration, "error");
         var mode = Json.OptionalText(integration, "mode");
-        if (state == "unmanaged") Assert(mode is null, "Unmanaged agents must allow a null integration mode");
+        // Native model/app integrations may retain a mode while unmanaged.
+        // Fresh Codex specifically exercises the nullable-mode CLI contract.
+        if (Json.Text(agent, "id") == "codex")
+            Assert(state == "unmanaged" && mode is null,
+                "Fresh Codex must be unmanaged with a null integration mode");
     }
     Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
     Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
