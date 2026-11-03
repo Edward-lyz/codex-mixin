@@ -8,7 +8,13 @@ mod common;
 
 #[tokio::test]
 async fn install_needs_only_config() {
-    for mode in ["--custom-only", "--codex-oauth-proxy"] {
+    for (mode, recovery) in ["--custom-only", "--codex-oauth-proxy"]
+        .into_iter()
+        .flat_map(|mode| {
+            ["normal", "missing-config", "missing-home", "auth-conflict"]
+                .map(|recovery| (mode, recovery))
+        })
+    {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
         let home = root.join("codex");
@@ -16,6 +22,12 @@ async fn install_needs_only_config() {
         let config = home.join("config.toml");
         let original = "# User settings\npersonality = 'precise'\nopenai_base_url = 'https://original.example/v1'\n[model_providers.existing]\nbase_url = 'https://example.test'\n";
         fs::write(&config, original).unwrap();
+        let original_auth = r#"{"auth_mode":"apikey","OPENAI_API_KEY":"original-fixture-key"}"#;
+        fs::write(home.join("auth.json"), original_auth).unwrap();
+        let catalog_path = home.join("model-catalogs/mixin-models.json");
+        fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
+        let original_catalog = r#"{"unrelated":"existing catalog must survive"}"#;
+        fs::write(&catalog_path, original_catalog).unwrap();
         fs::write(home.join("models_cache.json"), "not valid JSON").unwrap();
         let sessions = home.join("sessions");
         fs::create_dir_all(&sessions).unwrap();
@@ -114,6 +126,28 @@ async fn install_needs_only_config() {
             fs::read_to_string(home.join("state_5.sqlite")).unwrap(),
             "leave this database untouched"
         );
+        let installed_config = fs::read(&config).unwrap();
+        if recovery == "missing-config" {
+            fs::remove_file(&config).unwrap();
+        } else if recovery == "missing-home" {
+            fs::remove_dir_all(&home).unwrap();
+        } else if recovery == "auth-conflict" {
+            fs::remove_file(home.join("auth.json")).unwrap();
+            fs::create_dir(home.join("auth.json")).unwrap();
+            let rejected = common::tokio_cli(root)
+                .args(["--no-tui", "uninstall-codex", "--config"])
+                .arg(&config)
+                .output()
+                .await
+                .unwrap();
+            assert!(!rejected.status.success(), "{mode}: invalid auth must fail");
+            assert_eq!(
+                fs::read(&config).unwrap(),
+                installed_config,
+                "{mode}: failed disconnect must leave the managed config intact"
+            );
+            fs::remove_dir(home.join("auth.json")).unwrap();
+        }
         let removed = common::tokio_cli(root)
             .args(["--no-tui", "uninstall-codex", "--config"])
             .arg(&config)
@@ -123,17 +157,24 @@ async fn install_needs_only_config() {
             .unwrap();
         assert!(
             removed.status.success(),
-            "{}",
+            "{mode}/{recovery}: {}",
             String::from_utf8_lossy(&removed.stderr)
         );
         assert_eq!(fs::read_to_string(&config).unwrap(), original);
         assert_eq!(
-            fs::read_to_string(sessions.join("history.jsonl")).unwrap(),
-            history
+            fs::read_to_string(home.join("auth.json")).unwrap(),
+            original_auth
         );
-        assert_eq!(
-            fs::read_to_string(home.join("state_5.sqlite")).unwrap(),
-            "leave this database untouched"
-        );
+        assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
+        if recovery != "missing-home" {
+            assert_eq!(
+                fs::read_to_string(sessions.join("history.jsonl")).unwrap(),
+                history
+            );
+            assert_eq!(
+                fs::read_to_string(home.join("state_5.sqlite")).unwrap(),
+                "leave this database untouched"
+            );
+        }
     }
 }

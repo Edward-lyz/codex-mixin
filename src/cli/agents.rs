@@ -150,6 +150,7 @@ fn snapshot(id: &str) -> anyhow::Result<Value> {
     let name = agent_name(id)?;
     let cli = agent_versions::discover_agent(id)?;
     let integration = match integration_paths(id) {
+        Ok((path, _)) if id == "codex" => super::codex::integration_status(&path)?,
         Ok((path, key)) if is_legacy(id) => integration_status(id, &path, key.as_deref())?,
         Ok((path, _)) => codex_mixin::clients::frameworks::status(id, &path)?,
         Err(error) => codex_mixin::clients::IntegrationStatus {
@@ -294,7 +295,9 @@ async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
     let (path, key) = integration_paths(id)?;
     let owned_id = id.to_owned();
     let state = tokio::task::spawn_blocking(move || {
-        if is_legacy(&owned_id) {
+        if owned_id == "codex" {
+            super::codex::integration_status(&path)
+        } else if is_legacy(&owned_id) {
             integration_status(&owned_id, &path, key.as_deref())
         } else {
             codex_mixin::clients::frameworks::status(&owned_id, &path)
@@ -369,21 +372,23 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                         })?;
                     models.push(framework_model(
                         codex_mixin::provider::catalog_model_slug(selected, &provider.id),
+                        codex_mixin::provider::provider_model_display_name(model, provider),
                         model,
                         &config,
                         provider.protocol,
-                        provider.model_source
-                            == codex_mixin::provider::ProviderModelSource::BaiduOneApi,
                     ));
                 }
             }
             for model in super::official_models::selected_official_models(&config)? {
                 models.push(framework_model(
                     model.id.clone(),
+                    model
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| model.id.clone()),
                     &model,
                     &config,
                     codex_mixin::provider::ProviderProtocol::OpenAiResponses,
-                    false,
                 ));
             }
             frameworks::install(
@@ -403,24 +408,17 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
 
 fn framework_model(
     id: String,
+    name: String,
     model: &codex_mixin::provider::ProviderModel,
     config: &codex_mixin::config::GatewayConfig,
     protocol: codex_mixin::provider::ProviderProtocol,
-    use_model_id: bool,
 ) -> codex_mixin::clients::frameworks::FrameworkModel {
     let context = model
         .context_window
         .unwrap_or(config.default_context_window);
     codex_mixin::clients::frameworks::FrameworkModel {
         id,
-        name: if use_model_id {
-            model.id.clone()
-        } else {
-            model
-                .display_name
-                .clone()
-                .unwrap_or_else(|| model.id.clone())
-        },
+        name,
         context_window: context,
         max_tokens: model
             .max_output_tokens

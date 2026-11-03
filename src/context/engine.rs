@@ -850,6 +850,14 @@ fn compute_protection(
             .map(str::to_owned)
     };
     for (index, item) in items.iter().enumerate() {
+        if item
+            .as_ref()
+            .and_then(|value| value.get("type"))
+            .and_then(Value::as_str)
+            == Some("configuration_update")
+        {
+            protected.insert(index, "active configuration".to_owned());
+        }
         if matches!(role_of(item).as_deref(), Some("system" | "developer")) {
             protected
                 .entry(index)

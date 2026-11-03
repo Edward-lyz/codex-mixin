@@ -1281,7 +1281,8 @@ public sealed partial class MainWindow : Window
                 _ => $"未知状态：{state}"
             };
             var version = Json.Field(agent, "cli");
-            var modeLabel = Json.Text(integration, "mode") switch
+            var integrationMode = Json.OptionalText(integration, "mode");
+            var modeLabel = integrationMode switch
             {
                 "native_models" => "厂商原生模型管理",
                 "native_credentials" => "原生凭据存储",
@@ -1290,7 +1291,7 @@ public sealed partial class MainWindow : Window
                 "confirmed_import" => "应用内确认导入",
                 _ => ""
             };
-            if (Json.Text(integration, "mode") == "native_models" && state == "managed")
+            if (integrationMode == "native_models" && state == "managed")
                 stateLabel = "原生模型已托管";
             if (modeLabel.Length > 0) stateLabel += $" · {modeLabel}";
             var connected = state is "managed" or "drift" or "pending" or "pending_removal";

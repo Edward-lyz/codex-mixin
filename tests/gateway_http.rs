@@ -2265,6 +2265,10 @@ async fn uses_baidu_available_models_as_authoritative_catalog_source() {
         .find(|model| model["id"] == "DeepSeek-V4-Flash-custom")
         .unwrap();
     assert_eq!(deepseek["ratio"], "0.2x");
+    assert_eq!(
+        deepseek["display_name"],
+        "DeepSeek V4 Flash (0.2x) \u{b7} oneapi"
+    );
     assert_eq!(deepseek["description"], "Fast coding model");
     assert_eq!(deepseek["context_window"], 1_024_000);
     let kimi = models
@@ -2299,6 +2303,10 @@ async fn uses_baidu_available_models_as_authoritative_catalog_source() {
     assert_eq!(
         model["description"],
         "Fast coding model | 0.2x | Value model"
+    );
+    assert_eq!(
+        model["display_name"],
+        "DeepSeek V4 Flash (0.2x) \u{b7} oneapi"
     );
     assert_eq!(model["context_window"], 1_024_000);
     assert_eq!(model["input_modalities"], json!(["text"]));
@@ -3565,6 +3573,9 @@ async fn context_compression_round_rewrites_the_upstream_view() {
     config.context.enabled = true;
     config.context.protected_messages = 1;
     config.context.protected_tokens = 1;
+    configure_baidu_policy(&mut config);
+    config.thinking_mode = ThinkingMode::Auto;
+    config.providers[0].cached_models[0].supports_thinking = Some(true);
     let database = tempfile::tempdir().unwrap();
     let database_path = database.path().join("context.db");
     let gateway_url = spawn_gateway_with_context(config, &database_path).await;
@@ -3583,6 +3594,7 @@ async fn context_compression_round_rewrites_the_upstream_view() {
             "role":"assistant",
             "content":[{"type":"output_text","text":format!("beta {}", "word ".repeat(400))}]
         },
+        {"type":"configuration_update","reasoning":{"effort":"high"}},
         {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
     ]);
     let response = reqwest::Client::new()
@@ -3603,6 +3615,9 @@ async fn context_compression_round_rewrites_the_upstream_view() {
 
     let recorded = requests.lock().unwrap().clone();
     assert_eq!(recorded.len(), 2, "context round count: {recorded:?}");
+    for request in &recorded {
+        assert_eq!(request["output_config"]["effort"], "high");
+    }
     let compressed = recorded[1]["messages"].to_string();
     assert!(compressed.contains("<context_summary"), "{compressed}");
     assert!(
@@ -5048,6 +5063,270 @@ async fn maps_stable_session_to_anthropic_metadata() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn configuration_updates_apply_before_translating_custom_requests() {
+    for protocol in [
+        ProviderProtocol::AnthropicMessages,
+        ProviderProtocol::OpenAiChat,
+        ProviderProtocol::GoogleGemini,
+    ] {
+        let (upstream_url, requests) = match protocol {
+            ProviderProtocol::AnthropicMessages => spawn_mock_upstream(MockMode::Text).await,
+            ProviderProtocol::OpenAiChat => spawn_mock_openai_chat().await,
+            ProviderProtocol::GoogleGemini => spawn_mock_gemini().await,
+            _ => unreachable!(),
+        };
+        let mut config = test_config(upstream_url);
+        configure_baidu_policy(&mut config);
+        config.thinking_mode = ThinkingMode::Auto;
+        config.providers[0].cached_models[0].supports_thinking = Some(true);
+        match protocol {
+            ProviderProtocol::AnthropicMessages => {}
+            ProviderProtocol::OpenAiChat => {
+                configure_openai_chat(&mut config, "/chat/completions");
+                configure_model_protocol(
+                    &mut config,
+                    "DeepSeek-V4-Flash",
+                    protocol,
+                    "/chat/completions",
+                );
+            }
+            ProviderProtocol::GoogleGemini => {
+                config.providers[0].protocol = protocol;
+                config.providers[0].api_path =
+                    "/v1beta/models/{model}:streamGenerateContent".to_owned();
+                configure_model_protocol(
+                    &mut config,
+                    "DeepSeek-V4-Flash",
+                    protocol,
+                    "/v1beta/models/{model}:streamGenerateContent",
+                );
+            }
+            _ => unreachable!(),
+        }
+        let gateway = spawn_gateway_with_config(config).await;
+        let format = json!({
+            "type":"json_schema", "name":"answer", "strict":true,
+            "schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}
+        });
+        let body = json!({
+            "model":"DeepSeek-V4-Flash-custom", "stream":true,
+            "reasoning":{"effort":"low","summary":"auto"},
+            "text":{"format":{"type":"text"},"verbosity":"low"},
+            "input":[
+                {"type":"message","role":"user","content":"first turn"},
+                {"type":"configuration_update","id":"cu-1","reasoning":{"effort":"high"},"text":{"format":format}},
+                {"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"working"}]},
+                {"type":"configuration_update","id":"cu-2","reasoning":{"effort":"max"}},
+                {"type":"message","role":"user","content":"return the answer"}
+            ]
+        });
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let stream = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{protocol:?}: {stream}");
+        assert!(
+            stream.contains("response.completed"),
+            "{protocol:?}: {stream}"
+        );
+
+        let mut request = format!("{}/v1/responses", gateway.replacen("http://", "ws://", 1))
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        let mut websocket_body = body.clone();
+        websocket_body["type"] = json!("response.create");
+        socket
+            .send(WsMessage::Text(websocket_body.to_string().into()))
+            .await
+            .unwrap();
+        let frames = websocket_response_frames(&mut socket).await;
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.contains("\"type\":\"response.completed\"")),
+            "{protocol:?}: {frames:?}"
+        );
+        socket.close(None).await.unwrap();
+
+        let recorded = requests.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2, "{protocol:?}: {recorded:?}");
+        for sent in recorded.iter() {
+            assert!(!sent.to_string().contains("configuration_update"), "{sent}");
+            match protocol {
+                ProviderProtocol::AnthropicMessages => {
+                    assert_eq!(sent["output_config"]["effort"], "max");
+                    assert_eq!(sent["output_config"]["format"]["schema"], format["schema"]);
+                }
+                ProviderProtocol::OpenAiChat => {
+                    assert_eq!(sent["reasoning_effort"], "max");
+                    assert_eq!(
+                        sent["response_format"]["json_schema"]["schema"],
+                        format["schema"]
+                    );
+                }
+                ProviderProtocol::GoogleGemini => {
+                    assert_eq!(
+                        sent["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+                        16384
+                    );
+                    assert_eq!(
+                        sent["generationConfig"]["responseMimeType"],
+                        "application/json"
+                    );
+                    assert_eq!(
+                        sent["generationConfig"]["responseJsonSchema"],
+                        format["schema"]
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        for effort in [Value::Null, json!("none"), json!("ultra")] {
+            let mut expected = body.clone();
+            expected["reasoning"]["effort"] = effort.clone();
+            expected["text"]["format"] = json!({"type":"text"});
+            expected["input"] = json!([{"type":"message","role":"user","content":"continue"}]);
+            let mut updated = expected.clone();
+            updated["reasoning"]["effort"] = json!("low");
+            updated["text"]["format"] = format.clone();
+            updated["input"].as_array_mut().unwrap().insert(
+                0,
+                json!({"type":"configuration_update","reasoning":{"effort":effort},"text":{"format":{"type":"text"}}}),
+            );
+            for request in [&expected, &updated] {
+                let response = reqwest::Client::new()
+                    .post(format!("{gateway}/v1/responses"))
+                    .bearer_auth("gateway-key")
+                    .json(request)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let stream = response.text().await.unwrap();
+                assert!(stream.contains("response.completed"), "{stream}");
+            }
+            let sent = requests.lock().unwrap();
+            for field in [
+                "thinking",
+                "output_config",
+                "reasoning_effort",
+                "response_format",
+                "generationConfig",
+            ] {
+                assert_eq!(
+                    sent[sent.len() - 1][field],
+                    sent[sent.len() - 2][field],
+                    "{protocol:?} reset {field}"
+                );
+            }
+        }
+        let before_invalid = requests.lock().unwrap().len();
+        for item in [
+            json!({"type":"configuration_update"}),
+            json!({"type":"configuration_update","reasoning":"high"}),
+            json!({"type":"configuration_update","reasoning":{"effort":"invalid"}}),
+            json!({"type":"configuration_update","text":{"format":{"type":"json_schema"}}}),
+            json!({"type":"configuration_update","text":{"format":{"type":"unknown"}}}),
+            json!({"type":"unknown_new_item"}),
+        ] {
+            let mut invalid = body.clone();
+            invalid["input"] = json!([item, {"type":"message","role":"user","content":"continue"}]);
+            let response = reqwest::Client::new()
+                .post(format!("{gateway}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .json(&invalid)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{protocol:?}");
+        }
+        assert_eq!(requests.lock().unwrap().len(), before_invalid);
+    }
+}
+
+#[tokio::test]
+async fn configuration_updates_preserve_native_responses_history_and_prefix() {
+    for official in [false, true] {
+        let (mut config, requests, _, _home) = mock_official_gateway_config(
+            OfficialWebSocketBehavior::Persistent,
+            Duration::from_secs(5),
+        )
+        .await;
+        let model = if official {
+            "gpt-5.6-sol"
+        } else {
+            let (url, recorded) = spawn_baidu_protocol_upstream().await;
+            config.providers[0].base_url = url;
+            configure_baidu_policy(&mut config);
+            configure_custom_headers_from_env(&mut config);
+            config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+            configure_model_protocol(
+                &mut config,
+                "gpt-5.6-sol",
+                ProviderProtocol::OpenAiResponses,
+                "/v1/responses",
+            );
+            // The same original item list must reach a native custom provider.
+            let gateway = spawn_gateway_with_config(config).await;
+            let body = json!({
+                "model":"gpt-5.6-sol-custom","stream":true,
+                "reasoning":{"effort":"low"},
+                "input":[
+                    {"type":"configuration_update","reasoning":{"effort":"max"}},
+                    {"type":"message","role":"user","content":"hi"}
+                ]
+            });
+            let response = reqwest::Client::new()
+                .post(format!("{gateway}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let stream = response.text().await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{stream}");
+            assert!(stream.contains("response.completed"), "{stream}");
+            let sent = recorded.lock().unwrap();
+            assert_eq!(sent[0]["body"]["input"], body["input"], "{sent:?}");
+            assert_eq!(sent[0]["body"]["reasoning"], body["reasoning"]);
+            continue;
+        };
+        let gateway = spawn_gateway_with_config(config).await;
+        let body = json!({
+            "model":model,"stream":true,"reasoning":{"effort":"low"},
+            "input":[
+                {"type":"configuration_update","reasoning":{"effort":"max"}},
+                {"type":"message","role":"user","content":"hi"}
+            ]
+        });
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let stream = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{stream}");
+        assert!(stream.contains("response.completed"), "{stream}");
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent[0]["input"], body["input"]);
+        assert_eq!(sent[0]["reasoning"], body["reasoning"]);
+    }
 }
 
 #[tokio::test]

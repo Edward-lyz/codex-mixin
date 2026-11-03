@@ -220,8 +220,11 @@ pub(super) fn append_input_item(
                 }
             }
         }
-        "compaction_trigger" | "web_search_call" | "image_generation_call" | "additional_tools" => {
-        }
+        "configuration_update"
+        | "compaction_trigger"
+        | "web_search_call"
+        | "image_generation_call"
+        | "additional_tools" => {}
         "agent_message" => {
             messages.push(json!({"role":"user","content":agent_message_text(item)?}));
         }

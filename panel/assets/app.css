@@ -1196,20 +1196,36 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 .cap.is-unknown { color: var(--ink-54); stroke-dasharray: 2 2; }
 
 /* Popover menu */
+.model-id { display: block; color: var(--ink-54); font-size: var(--fs-xs); }
 .menu-anchor { position: relative; }
 .menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 30;
-  display: grid;
+  position: fixed;
+  inset: 0;
+  margin: auto;
   min-width: 200px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
   padding: 6px;
+  border: 0;
   border-radius: var(--radius);
   background: var(--c-base);
+  color: var(--c-ink);
   box-shadow: var(--shadow-pop);
   transform-origin: top right;
+}
+.menu:popover-open {
+  display: grid;
   animation: menu-in var(--dur-spring) var(--spring) both;
+}
+@supports (position-area: block-end span-inline-start) {
+  .menu {
+    inset: auto;
+    margin: 6px;
+    position-area: block-end span-inline-start;
+    justify-self: end;
+    position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  }
 }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.96); } }
 .menu-item {

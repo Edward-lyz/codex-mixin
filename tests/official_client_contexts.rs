@@ -13,6 +13,120 @@ use serde_json::{Value, json};
 mod common;
 
 #[tokio::test]
+async fn oneapi_rate_labels_reach_native_client_configs() {
+    use codex_mixin::provider::{ProviderModel, ProviderModelSource};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.as_path();
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu-oneapi", "fixture-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.model_source = ProviderModelSource::Static;
+    provider.request_policy.baidu_auth_bridge = None;
+    provider.request_policy.baidu_code_report = false;
+    provider.quota_url = None;
+    provider.selected_models = vec!["gpt-6.1-sol".to_owned(), "DeepSeek-V4.1-Flash".to_owned()];
+    provider.cached_models = provider
+        .selected_models
+        .iter()
+        .zip(["0.5x", "0.4x"])
+        .map(|(id, ratio)| ProviderModel {
+            id: id.clone(),
+            display_name: Some(id.clone()),
+            ratio: Some(ratio.to_owned()),
+            context_window: Some(200_000),
+            supports_function_tools: Some(true),
+            ..Default::default()
+        })
+        .collect();
+    save_stored_config_to_path(
+        &root.join("config.json"),
+        &StoredGatewayConfig {
+            providers: vec![provider],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let buddy = root.join("workbuddy");
+    fs::create_dir_all(&buddy).unwrap();
+    let original = json!([{"id":"unrelated","name":"User Model","custom":true}]);
+    fs::write(
+        buddy.join("models.json"),
+        serde_json::to_vec(&original).unwrap(),
+    )
+    .unwrap();
+    let codebuddy = root.join("codebuddy");
+    let pi = root.join("pi");
+    let mut snapshots = Vec::new();
+    for args in [
+        vec!["agent", "connect", "workbuddy"],
+        vec!["agent", "connect", "codebuddy"],
+        vec!["connect", "pi", "--agent-dir", pi.to_str().unwrap()],
+    ] {
+        let mut command = common::tokio_cli(root);
+        command
+            .args(&args)
+            .env("WORKBUDDY_CONFIG_DIR", &buddy)
+            .env("CODEBUDDY_CONFIG_DIR", &codebuddy);
+        let output = run_cli(command, &args, root).await;
+        if !output.status.success() {
+            let mut stop = common::tokio_cli(root);
+            stop.args(["service", "stop", "--force"]);
+            let _ = run_cli(stop, &["service", "stop", "--force"], root).await;
+            panic!("{args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+    for path in [
+        buddy.join("models.json"),
+        codebuddy.join("models.json"),
+        pi.join("models.json"),
+    ] {
+        snapshots.push(serde_json::from_slice::<Value>(&fs::read(path).unwrap()).unwrap());
+    }
+    for id in ["workbuddy", "codebuddy"] {
+        let args = ["agent", "disconnect", id];
+        let mut command = common::tokio_cli(root);
+        command
+            .args(args)
+            .env("WORKBUDDY_CONFIG_DIR", &buddy)
+            .env("CODEBUDDY_CONFIG_DIR", &codebuddy);
+        let output = run_cli(command, &args, root).await;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut stop = common::tokio_cli(root);
+    stop.args(["service", "stop", "--force"]);
+    let _ = run_cli(stop, &["service", "stop", "--force"], root).await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(buddy.join("models.json")).unwrap()).unwrap(),
+        original
+    );
+    for models in [
+        &snapshots[0],
+        &snapshots[1]["models"],
+        &snapshots[2]["providers"]["codex-mixin"]["models"],
+    ] {
+        let models = models.as_array().unwrap();
+        for (id, name) in [
+            (
+                "gpt-6.1-sol-baidu-oneapi",
+                "GPT-6.1 Sol (0.5x) \u{b7} oneapi",
+            ),
+            (
+                "DeepSeek-V4.1-Flash-baidu-oneapi",
+                "DeepSeek V4.1 Flash (0.4x) \u{b7} oneapi",
+            ),
+        ] {
+            let model = models.iter().find(|model| model["id"] == id).unwrap();
+            assert_eq!(model["name"], name);
+        }
+    }
+}
+
+#[tokio::test]
 async fn official_contexts_reach_clients() {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("gateway.json");

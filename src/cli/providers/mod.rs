@@ -133,7 +133,11 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "model_order": provider.model_order,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
-                    "cached_models": provider.cached_models,
+                    "cached_models": provider.cached_models.iter().map(|model| {
+                        let mut named = model.clone();
+                        named.display_name = Some(codex_mixin::provider::provider_model_display_name(model, provider));
+                        named
+                    }).collect::<Vec<_>>(),
                     "model_context_overrides": provider.model_context_overrides,
                     "models_refreshed_at_ms": provider.models_refreshed_at_ms,
                     "last_model_refresh_error": provider.models_refresh_error,

@@ -8,9 +8,7 @@ use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 
 use super::catalog::*;
-use super::managed_auth::*;
 use super::managed_config::*;
-use super::restore_imagegen_skill;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
     filter_official_catalog, load_official_account_catalog, official_template_cache_path,
@@ -18,7 +16,6 @@ use crate::cli::official_models::{
 use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::application::provider::normalize_base_url;
 use codex_mixin::catalog::apply_auto_review_override;
-use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::auxiliary_auto_review_slug;
 
 #[derive(Debug, Args)]
@@ -55,35 +52,15 @@ pub(in crate::cli) struct InstallCodexOptions {
 
 pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Codex;
-    let clears_switch_state = options.config_path.is_none();
-    let config_path = resolve_codex_config_path(options.config_path.clone())?;
-    let auth_mode = if options.codex_oauth_proxy {
-        ManagedAuthMode::Official
-    } else {
-        ManagedAuthMode::CustomOnly
-    };
-    let auth_transaction = ManagedAuthTransaction::begin(&config_path, auth_mode)?;
-    let result =
-        codex_mixin::application::client::install_with_client_key_async(client, async move {
-            let result = install_codex_inner(options).await;
-            match result {
-                Ok(()) => auth_transaction.commit(),
-                Err(install_error) => match auth_transaction.rollback() {
-                    Ok(()) => Err(install_error),
-                    Err(rollback_error) => Err(anyhow::anyhow!(
-                        "{install_error}; Codex auth rollback also failed: {rollback_error}"
-                    )),
-                },
-            }
-        })
-        .await;
-    if result.is_ok() && clears_switch_state {
-        super::clear_restore_mode()?;
-    }
-    result
+    codex_mixin::application::client::install_with_client_key_async(
+        client,
+        install_codex_inner(options),
+    )
+    .await
 }
 
 async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()> {
+    let clears_switch_state = options.config_path.is_none();
     let InstallCodexOptions {
         requested_model,
         set_default,
@@ -194,11 +171,13 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let serialized_config = codex_mixin::clients::codex::serialize(&doc);
     serialized_config.parse::<DocumentMut>()?;
     super::super::progress_step("Writing Codex config and model catalog");
-    write_managed_codex_files(
+    super::restore::install(
         &paths,
         &raw_config,
         &serialized_catalog,
         serialized_config.as_bytes(),
+        codex_oauth_proxy,
+        clears_switch_state,
         || {
             fs::read_to_string(&paths.config)?.parse::<DocumentMut>()?;
             let written_catalog = serde_json::from_slice(&fs::read(&paths.catalog)?)?;
@@ -240,10 +219,14 @@ pub(in crate::cli) fn uninstall_codex(
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let clears_switch_state = config_path.is_none();
-    uninstall_codex_preserving_restore_mode(config_path, catalog_path)?;
-    if clears_switch_state {
-        super::clear_restore_mode()?;
-    }
+    let config_path = resolve_codex_config_path(config_path)?;
+    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
+    super::restore::uninstall(&config_path, catalog_path, clears_switch_state)?;
+    println!(
+        "Codex pre-install configuration restored; recovery directory: {}",
+        super::restore::directory(&config_path).display()
+    );
+    println!("reload required: restart Codex app; for Codex CLI, start a new session");
     Ok(())
 }
 
@@ -251,166 +234,8 @@ pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    super::super::progress_step("Reading and locking Codex config");
     let config_path = resolve_codex_config_path(config_path)?;
-    let codex_home = config_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
-        .to_path_buf();
-    if restore_imagegen_skill(&codex_home)? {
-        println!("codex imagegen skill: restored official skill");
-    }
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
-    let raw_config = if config_path.exists() {
-        fs::read_to_string(&config_path)?
-    } else {
-        String::new()
-    };
-    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
-        anyhow::bail!(
-            "Codex config is not managed by codex-mixin: {}",
-            config_path.display()
-        );
-    }
-    let managed_doc = raw_config.parse::<DocumentMut>()?;
-    let managed_catalog_path = managed_catalog_path(&managed_doc, &config_path)?;
-    if let Some(explicit_catalog_path) = catalog_path {
-        let explicit_catalog_path = absolute_path(explicit_catalog_path)?;
-        if explicit_catalog_path != managed_catalog_path {
-            anyhow::bail!(
-                "explicit catalog {} does not match managed config catalog {}",
-                explicit_catalog_path.display(),
-                managed_catalog_path.display()
-            );
-        }
-    }
-    let backup_path = managed_backup_path(&config_path);
-    let absent_marker_path = managed_absent_marker_path(&config_path);
-    anyhow::ensure!(
-        backup_path.exists() || absent_marker_path.exists(),
-        "missing managed backup for {}; expected {}",
-        config_path.display(),
-        backup_path.display()
-    );
-    super::super::progress_step("Restoring pre-install config and auth state");
-    if backup_path.exists() {
-        fs::copy(&backup_path, &config_path)?;
-        fs::remove_file(&backup_path)?;
-        println!("codex config restored: {}", config_path.display());
-    } else if absent_marker_path.exists() {
-        if config_path.exists() {
-            fs::remove_file(&config_path)?;
-        }
-        fs::remove_file(&absent_marker_path)?;
-        println!("codex config removed; no previous config existed");
-    }
-    match uninstall_managed_custom_auth(&config_path)? {
-        ManagedAuthUninstall::NotManaged => {}
-        ManagedAuthUninstall::RemovedFake => {
-            println!("codex custom-mode login placeholder removed");
-        }
-        ManagedAuthUninstall::RestoredBackup => {
-            println!("codex auth restored from the pre-install backup");
-        }
-        ManagedAuthUninstall::PreservedChangedAuth { backup } => {
-            println!("codex auth changed after custom-mode installation; current login preserved");
-            if let Some(backup) = backup {
-                println!("previous auth backup retained: {}", backup.display());
-            }
-        }
-    }
-    if managed_catalog_path.exists() {
-        fs::remove_file(&managed_catalog_path)?;
-        println!("model catalog removed: {}", managed_catalog_path.display());
-    }
-    println!("reload required: restart Codex app; for Codex CLI, start a new session");
+    super::restore::uninstall(&config_path, catalog_path, false)?;
     Ok(())
-}
-
-pub(in crate::cli) fn write_managed_codex_files(
-    paths: &CodexInstallPaths,
-    raw_config: &str,
-    serialized_catalog: &[u8],
-    serialized_config: &[u8],
-    validate: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    let config_existed = paths.config.exists();
-    let previous_catalog = if paths.catalog.exists() {
-        Some(fs::read(&paths.catalog)?)
-    } else {
-        None
-    };
-    let created_restore_point = !codex_mixin::clients::codex::document_is_managed(raw_config);
-    create_managed_config_restore_point(&paths.config, raw_config)?;
-    println!("codex install step: restore point prepared; created={created_restore_point}");
-    let install_result = (|| -> anyhow::Result<()> {
-        let catalog_changed = write_atomic_if_changed(&paths.catalog, serialized_catalog)?;
-        println!(
-            "codex install step: catalog written; path={}; changed={catalog_changed}; bytes={}",
-            paths.catalog.display(),
-            serialized_catalog.len()
-        );
-        let config_changed = write_atomic_if_changed(&paths.config, serialized_config)?;
-        println!(
-            "codex install step: config written; path={}; changed={config_changed}; bytes={}",
-            paths.config.display(),
-            serialized_config.len()
-        );
-        validate()
-    })();
-    let Err(install_error) = install_result else {
-        println!("codex install step: validation completed");
-        return Ok(());
-    };
-
-    let mut rollback_errors = Vec::new();
-    let config_rollback = if config_existed {
-        write_atomic_if_changed(&paths.config, raw_config.as_bytes()).map(|_| ())
-    } else if paths.config.exists() {
-        fs::remove_file(&paths.config).map_err(Into::into)
-    } else {
-        Ok(())
-    };
-    if let Err(error) = config_rollback {
-        rollback_errors.push(format!("restore config: {error}"));
-    }
-    let catalog_rollback = match previous_catalog {
-        Some(previous_catalog) => {
-            write_atomic_if_changed(&paths.catalog, &previous_catalog).map(|_| ())
-        }
-        None if paths.catalog.exists() => fs::remove_file(&paths.catalog).map_err(Into::into),
-        None => Ok(()),
-    };
-    if let Err(error) = catalog_rollback {
-        rollback_errors.push(format!("restore catalog: {error}"));
-    }
-    if created_restore_point {
-        for restore_path in [
-            managed_backup_path(&paths.config),
-            managed_absent_marker_path(&paths.config),
-        ] {
-            if restore_path.exists()
-                && let Err(error) = fs::remove_file(&restore_path)
-            {
-                rollback_errors.push(format!(
-                    "remove restore point {}: {error}",
-                    restore_path.display()
-                ));
-            }
-        }
-    }
-    if rollback_errors.is_empty() {
-        println!("codex install rollback: completed");
-        anyhow::bail!(
-            "Codex config write or validation failed; installation rolled back: {install_error:#}"
-        );
-    }
-    println!(
-        "codex install rollback: incomplete; errors={}",
-        rollback_errors.len()
-    );
-    anyhow::bail!(
-        "Codex config write or validation failed: {install_error:#}; rollback also failed: {}",
-        rollback_errors.join("; ")
-    )
 }

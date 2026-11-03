@@ -13,7 +13,9 @@ use crate::benchmark::BenchmarkTarget;
 use crate::config::FusionMode;
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
-use crate::provider::{MetadataResolver, ProviderRegistry, catalog_model_slug};
+use crate::provider::{
+    MetadataResolver, ProviderRegistry, catalog_model_slug, provider_model_display_name,
+};
 use crate::web_search::WebSearchCapabilities;
 
 use super::{
@@ -102,10 +104,7 @@ impl CatalogService {
                     // Catalog generation strips the provider suffix via owned_by when it
                     // needs the bare upstream model id for markers/metadata.
                     id: slug,
-                    display_name: Some(provider_model_display_name(
-                        upstream_model_id,
-                        provider.display_name(),
-                    )),
+                    display_name: Some(provider_model_display_name(model, provider.definition())),
                     object: Some("model".to_owned()),
                     created: None,
                     owned_by: Some(provider.id().to_owned()),
@@ -285,11 +284,4 @@ impl CatalogService {
         });
         Ok(body)
     }
-}
-
-pub(crate) fn provider_model_display_name(
-    upstream_model_id: &str,
-    provider_display_name: &str,
-) -> String {
-    format!("{upstream_model_id} · {provider_display_name}")
 }

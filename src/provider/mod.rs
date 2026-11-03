@@ -57,6 +57,51 @@ pub(crate) use types::AUTO_REVIEW_MODEL_ID;
 
 pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 
+/// Client-facing label; routing continues to use the separate catalog slug.
+pub fn provider_model_display_name(model: &ProviderModel, provider: &ProviderDefinition) -> String {
+    if provider.model_source != ProviderModelSource::BaiduOneApi
+        && provider.preset_id.as_deref() != Some("baidu-oneapi")
+    {
+        return format!("{} \u{b7} {}", model.id, provider.display_name);
+    }
+    let base = model
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&model.id);
+    let gpt = base
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"));
+    let mut name = String::new();
+    for (index, word) in base.split('-').enumerate() {
+        if index > 0 {
+            name.push(if gpt && index == 1 { '-' } else { ' ' });
+        }
+        match word.to_ascii_lowercase().as_str() {
+            "gpt" => name.push_str("GPT"),
+            "deepseek" => name.push_str("DeepSeek"),
+            _ => {
+                let mut chars = word.chars();
+                if let Some(first) = chars.next() {
+                    name.extend(first.to_uppercase());
+                    name.extend(chars);
+                }
+            }
+        }
+    }
+    if let Some(ratio) = model
+        .ratio
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        name.push_str(&format!(" ({ratio})"));
+    }
+    name.push_str(" \u{b7} oneapi");
+    name
+}
+
 /// Mint the native auth headers for the selected Baidu auth core.
 ///
 /// Mint the DUCX native auth headers without keeping a carrier process alive.

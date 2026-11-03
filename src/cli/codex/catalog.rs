@@ -24,7 +24,6 @@ use crate::cli::official_models::{
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog,
 };
-use codex_mixin::platform::write_atomic_if_changed;
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
@@ -191,14 +190,14 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     if let Some(official_contexts) = official_contexts {
         apply_official_context_overrides(&mut catalog, official_contexts)?;
     }
-    let config_changed = if remove_unavailable_default_model(&mut doc, &catalog) {
-        write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
-    } else {
-        false
-    };
-    let catalog_changed =
-        write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)?;
-    Ok(config_changed || catalog_changed)
+    let config_contents =
+        remove_unavailable_default_model(&mut doc, &catalog).then(|| doc.to_string().into_bytes());
+    super::restore::refresh(
+        &config_path,
+        &catalog_path,
+        config_contents,
+        serde_json::to_vec_pretty(&catalog)?,
+    )
 }
 
 pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
@@ -279,14 +278,14 @@ fn refresh_managed_codex_catalog_with_source(
     if let Some(official_contexts) = official_contexts {
         apply_official_context_overrides(&mut refreshed, official_contexts)?;
     }
-    let config_changed = if remove_unavailable_default_model(&mut doc, &refreshed) {
-        write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
-    } else {
-        false
-    };
-    let catalog_changed =
-        write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)?;
-    Ok(config_changed || catalog_changed)
+    let config_contents = remove_unavailable_default_model(&mut doc, &refreshed)
+        .then(|| doc.to_string().into_bytes());
+    super::restore::refresh(
+        &config_path,
+        &catalog_path,
+        config_contents,
+        serde_json::to_vec_pretty(&refreshed)?,
+    )
 }
 
 fn remove_unavailable_default_model(doc: &mut DocumentMut, catalog: &serde_json::Value) -> bool {

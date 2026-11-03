@@ -1432,18 +1432,12 @@ function moveModel(provider, id, target) {
   row?.querySelector("input[type=checkbox]")?.focus();
 }
 
-// Small popover menu anchored to a button; closes on outside click or Esc.
+// Native popovers escape scroll clipping and handle light dismiss and Escape.
 function popoverMenu(label, items, buttonClass = "btn btn-ghost btn-icon") {
   const button = h("button", { class: buttonClass, type: "button", "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": label, text: "\u22ef" });
-  const menu = h("div", { class: "menu", role: "menu", hidden: true });
-  const close = () => {
-    menu.hidden = true;
-    button.setAttribute("aria-expanded", "false");
-    document.removeEventListener("pointerdown", outside, true);
-  };
-  const outside = (event) => {
-    if (!menu.contains(event.target) && event.target !== button) close();
-  };
+  const menu = h("div", { class: "menu", role: "menu", popover: "auto" });
+  button.popoverTargetElement = menu;
+  const close = () => menu.hidePopover();
   for (const item of items) {
     if (item === "-") {
       menu.append(h("div", { class: "menu-sep", role: "separator" }));
@@ -1474,12 +1468,10 @@ function popoverMenu(label, items, buttonClass = "btn btn-ghost btn-icon") {
       button.focus();
     }
   });
-  button.addEventListener("click", () => {
-    if (!menu.hidden) return close();
-    menu.hidden = false;
-    button.setAttribute("aria-expanded", "true");
-    document.addEventListener("pointerdown", outside, true);
-    menu.querySelector(".menu-item:not(:disabled)")?.focus();
+  menu.addEventListener("toggle", (event) => {
+    const open = event.newState === "open";
+    button.setAttribute("aria-expanded", String(open));
+    if (open && menu.isConnected) menu.querySelector(".menu-item:not(:disabled)")?.focus();
   });
   return h("div", { class: "menu-anchor" }, button, menu);
 }
@@ -1831,7 +1823,9 @@ function modelsTab(provider) {
     const tr = h("tr", { "data-model": row.model.id, class: row.selected ? "is-selected" : null, title: row.model.description || null },
       h("td", { class: "c-check" }, check),
       h("td", { class: "c-order" }, controls),
-      h("td", { class: "c-model" }, h("span", { class: "mono", text: row.model.id }), ...tags),
+      h("td", { class: "c-model" },
+        h("span", { text: row.model.display_name || row.model.id }), ...tags,
+        row.model.display_name && row.model.display_name !== row.model.id ? h("span", { class: "model-id mono", text: row.model.id }) : null),
       h("td", { class: "r mono", text: fixed(row.bench?.ttft_ms, 0, " ms").replace("\u2014", "-") }),
       h("td", { class: "r mono", text: fixed(row.bench?.tps, 1, " t/s").replace("\u2014", "-") }),
       h("td", { class: "r" }, contextCell(provider, row)),

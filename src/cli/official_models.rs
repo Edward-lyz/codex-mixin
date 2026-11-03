@@ -224,7 +224,7 @@ pub(super) fn selected_catalog_models<'a>(
             };
             let id = codex_mixin::provider::catalog_model_slug(upstream_model_id, &provider.id);
             if seen.insert(id.clone()) {
-                let name = format!("{upstream_model_id} · {}", provider.display_name);
+                let name = codex_mixin::provider::provider_model_display_name(cached, provider);
                 models.push((id, name, cached));
             }
         }

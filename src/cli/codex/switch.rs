@@ -162,12 +162,16 @@ pub(in crate::cli) async fn switch_to_official() -> anyhow::Result<()> {
 
 pub(in crate::cli) async fn switch_to_mixin() -> anyhow::Result<()> {
     let before = current_codex_status()?;
-    if before.integration == CodexIntegration::Managed {
+    let config_path = resolve_codex_config_path(None)?;
+    if before.integration == CodexIntegration::Managed
+        && codex_mixin::clients::codex::is_managed(&config_path)?
+    {
         clear_restore_mode()?;
         return Ok(());
     }
     let mode = before
         .restore_mode
+        .or(before.mode)
         .ok_or_else(|| anyhow::anyhow!("no previous managed Codex mode is available to restore"))?;
 
     super::super::progress_step("Starting the Mixin gateway");
@@ -209,7 +213,7 @@ pub(in crate::cli) fn restore_codex_for_quit() -> anyhow::Result<bool> {
     Ok(false)
 }
 
-fn switch_state_path() -> PathBuf {
+pub(super) fn switch_state_path() -> PathBuf {
     super::super::runtime::state_dir().join(SWITCH_STATE_FILE)
 }
 
@@ -230,9 +234,20 @@ fn codex_status_from_paths(
         String::new()
     };
     let managed = codex_mixin::clients::codex::document_is_managed(&raw);
-    let mode = if managed { managed_mode(&raw) } else { None };
+    let recovery = super::restore::ManagedCodexRestore::load(config_path)?;
+    let mode = if managed {
+        managed_mode(&raw)
+    } else {
+        recovery.as_ref().map(|record| {
+            if record.codex_oauth_proxy {
+                ManagedCodexMode::CodexOauthProxy
+            } else {
+                ManagedCodexMode::CustomOnly
+            }
+        })
+    };
     Ok(CodexIntegrationStatus {
-        integration: if managed {
+        integration: if managed || recovery.is_some() {
             CodexIntegration::Managed
         } else {
             CodexIntegration::Unmanaged

@@ -72,6 +72,76 @@ pub(crate) async fn stream_provider_response(
     let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
+    let mut effective_body = std::borrow::Cow::Borrowed(body);
+    if protocol != ProviderProtocol::OpenAiResponses
+        && let Some(input) = body.get("input").and_then(Value::as_array)
+    {
+        for item in input
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("configuration_update"))
+        {
+            let mut applied = false;
+            for (field, setting) in [("reasoning", "effort"), ("text", "format")] {
+                let Some(update) = item.get(field) else {
+                    continue;
+                };
+                if field == "reasoning" && update.is_object() && update.get(setting).is_none() {
+                    applied = true;
+                    continue;
+                }
+                let value = update.get(setting).ok_or_else(|| {
+                    GatewayError::BadRequest(format!(
+                        "configuration_update requires {field}.{setting}"
+                    ))
+                })?;
+                let valid = match field {
+                    "reasoning" => {
+                        value.is_null()
+                            || matches!(
+                                value.as_str(),
+                                Some(
+                                    "none"
+                                        | "minimal"
+                                        | "low"
+                                        | "medium"
+                                        | "high"
+                                        | "xhigh"
+                                        | "max"
+                                        | "ultra"
+                                )
+                            )
+                    }
+                    _ => match value.get("type").and_then(Value::as_str) {
+                        Some("text") => true,
+                        Some("json_schema") => value.get("schema").is_some_and(Value::is_object),
+                        _ => false,
+                    },
+                };
+                if !valid {
+                    return Err(GatewayError::BadRequest(format!(
+                        "invalid configuration_update {field}.{setting}"
+                    )));
+                }
+                // Preserve sibling fields such as summary/verbosity. Each setting
+                // changes independently and the last update in input wins.
+                let target = &mut effective_body.to_mut()[field];
+                if target.is_null() {
+                    *target = json!({});
+                }
+                let target = target.as_object_mut().ok_or_else(|| {
+                    GatewayError::BadRequest(format!("{field} must be an object"))
+                })?;
+                target.insert(setting.to_owned(), value.clone());
+                applied = true;
+            }
+            if !applied {
+                return Err(GatewayError::BadRequest(
+                    "configuration_update requires reasoning or text".to_owned(),
+                ));
+            }
+        }
+    }
+    let body = effective_body.as_ref();
     executor.require_ducx_client(provider, headers).await?;
     let ctx = ProviderRequestContext {
         executor,

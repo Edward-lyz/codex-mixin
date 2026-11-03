@@ -37,7 +37,16 @@ try
     // `provider list` is a read-only query: an unconfigured install lists no providers.
     Assert(Json.Rows(Json.Field(await client.QueryAsync(["provider", "list", "--json"], CancellationToken.None), "providers")).Length == 0,
         "A fresh install must list no providers");
-    Json.Rows(Json.Field(await client.QueryAsync(["agent", "list", "--json"], CancellationToken.None), "agents"));
+    var agents = Json.Rows(Json.Field(await client.QueryAsync(["agent", "list", "--json"], CancellationToken.None), "agents"));
+    foreach (var agent in agents)
+    {
+        var integration = Json.Field(agent, "integration");
+        var state = Json.Text(integration, "state");
+        Json.Text(integration, "detail");
+        Json.OptionalText(integration, "error");
+        var mode = Json.OptionalText(integration, "mode");
+        if (state == "unmanaged") Assert(mode is null, "Unmanaged agents must allow a null integration mode");
+    }
     Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
     Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
     Json.Field(await client.QueryAsync(["fusion", "get", "--json"], CancellationToken.None), "profile");

@@ -176,6 +176,258 @@ async fn all_registered_models_can_say_hi() {
 
 #[tokio::test]
 #[ignore = "requires local Baidu OneAPI credentials and makes real model requests"]
+async fn baidu_configuration_updates_reach_real_upstream() {
+    use codex_mixin::config::{load_stored_config, save_stored_config_to_path};
+    use std::process::Stdio;
+
+    let mut config = load_stored_config().unwrap().expect("load local providers");
+    let index = config
+        .providers
+        .iter()
+        .position(|provider| provider.model_source == ProviderModelSource::BaiduOneApi)
+        .expect("Baidu OneAPI provider is not configured");
+    let mut provider = config.providers.remove(index);
+    let models = std::env::var("CODEX_MIXIN_REAL_MODEL")
+        .unwrap_or_else(|_| "DeepSeek-V4.1-Flash,DeepSeek-V4-Flash".to_owned())
+        .split(',')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for model in &models {
+        assert!(
+            provider
+                .cached_models
+                .iter()
+                .any(|entry| &entry.id == model)
+        );
+    }
+    provider.selected_models = models.clone();
+    provider.request_policy.baidu_code_report = false;
+    let provider_id = provider.id.clone();
+    config.providers = vec![provider];
+    config.fusion_profiles.clear();
+    config.context.enabled = false;
+    config.gateway_client_keys.codex = Some(
+        codex_mixin::gateway_access::generate_client_key(
+            codex_mixin::gateway_access::GatewayClient::Codex,
+        )
+        .unwrap(),
+    );
+    let api_key = config.gateway_api_key.clone();
+    let client_key = config.gateway_client_keys.codex.clone();
+    config.official_selected_models = Some(Vec::new());
+    let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join("gateway.json");
+    let runtime_path = directory.path().join("runtime.json");
+    save_stored_config_to_path(&config_path, &config).unwrap();
+    // The DUCX auth carrier must run the real CLI, not this test binary.
+    let mut command = common::tokio_cli(directory.path());
+    // This explicitly ignored online test opts out of the fixture-only dead proxy.
+    for variable in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ] {
+        if let Some(value) = std::env::var_os(variable) {
+            command.env(variable, value);
+        } else {
+            command.env_remove(variable);
+        }
+    }
+    let mut child = command
+        .args(["start", "--bind", "127.0.0.1:0"])
+        .env("CODEX_GATEWAY_CONFIG", &config_path)
+        .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
+        .env(
+            "CODEX_GATEWAY_DAEMON_FILE",
+            directory.path().join("daemon.json"),
+        )
+        .env("CODEX_HOME", directory.path().join("codex"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let bind = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(bytes) = fs::read(&runtime_path)
+                && let Ok(runtime) = serde_json::from_slice::<Value>(&bytes)
+                && let Some(bind) = runtime["bind"].as_str()
+            {
+                break bind.to_owned();
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "real gateway exited during startup"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("real gateway startup timed out");
+    let gateway = format!("http://{bind}");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .unwrap();
+    let format = json!({
+        "type":"json_schema","name":"answer","strict":true,
+        "schema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}
+    });
+    for model in models {
+        let slug = catalog_model_slug(&model, &provider_id);
+        for (case, updates) in [
+            ("baseline", json!([])),
+            (
+                "effort",
+                json!([{"type":"configuration_update","reasoning":{"effort":"high"}}]),
+            ),
+            (
+                "format",
+                json!([
+                    {"type":"configuration_update","reasoning":{"effort":"max"}},
+                    {"type":"configuration_update","text":{"format":format}}
+                ]),
+            ),
+            (
+                "reset",
+                json!([
+                    {"type":"configuration_update","reasoning":{"effort":"high"},"text":{"format":format}},
+                    {"type":"configuration_update","reasoning":{"effort":"none"},"text":{"format":{"type":"text"}}}
+                ]),
+            ),
+        ] {
+            let started = Instant::now();
+            let mut input = updates.as_array().unwrap().clone();
+            let prompt = if case == "format" {
+                "Return a JSON object with exactly one string property answer, whose value is hi."
+            } else {
+                "Reply with hi, using the requested format."
+            };
+            input.push(json!({"type":"message","role":"user","content":[{"type":"input_text","text":prompt}]}));
+            let body = json!({
+                "model":slug,"stream":true,"store":false,"max_output_tokens":1024,
+                "reasoning":{"effort":"low","summary":"auto"},
+                "text":{"format":{"type":"text"},"verbosity":"low"},
+                "input":input,"tools":[]
+            });
+            let mut request = client
+                .post(format!("{gateway}/v1/responses"))
+                .header("session-id", format!("configuration-update-{model}-{case}"))
+                .json(&body);
+            if let Some(key) = &api_key {
+                request = request.bearer_auth(key);
+            }
+            if let Some(key) = &client_key {
+                request = request.header(CODEX_CLIENT_KEY_HEADER, key);
+            }
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            let text = response.text().await.unwrap();
+            assert!(status.is_success(), "{model} {case}: {status} {text}");
+            assert!(
+                text.contains("response.completed"),
+                "{model} {case}: {text}"
+            );
+            assert!(!text.contains("response.failed"), "{model} {case}: {text}");
+            assert!(
+                text.contains("response.output_text.delta"),
+                "{model} {case}: {text}"
+            );
+            if case == "format" {
+                let answer = text
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data:"))
+                    .filter_map(|data| serde_json::from_str::<Value>(data.trim()).ok())
+                    .filter(|event| event["type"] == "response.output_text.delta")
+                    .filter_map(|event| event["delta"].as_str().map(str::to_owned))
+                    .collect::<String>();
+                let answer: Value = serde_json::from_str(&answer)
+                    .unwrap_or_else(|error| panic!("{model} schema output {answer:?}: {error}"));
+                assert!(answer["answer"].is_string(), "{model}: {answer}");
+            }
+            println!(
+                "PASS {model} HTTP {case} ({} ms)",
+                started.elapsed().as_millis()
+            );
+        }
+
+        let mut request = format!("{}/v1/responses", gateway.replacen("http://", "ws://", 1))
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "session-id",
+            HeaderValue::from_static("configuration-update-continuation"),
+        );
+        if let Some(key) = &api_key {
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {key}")).unwrap(),
+            );
+        }
+        if let Some(key) = &client_key {
+            request
+                .headers_mut()
+                .insert(CODEX_CLIENT_KEY_HEADER, HeaderValue::from_str(key).unwrap());
+        }
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        let mut previous = None;
+        for turn in 0..2 {
+            let started = Instant::now();
+            let mut body = json!({
+                "type":"response.create","model":slug,"stream":true,"store":false,
+                "max_output_tokens":1024,"reasoning":{"effort":"low"},"tools":[],
+                "input":[
+                    {"type":"configuration_update","reasoning":{"effort":if turn==0 {json!("high")} else {Value::Null}},"text":{"format":if turn==0 {format.clone()} else {json!({"type":"text"})}}},
+                    {"type":"message","role":"user","content":"Reply with hi, using the requested format."}
+                ]
+            });
+            if let Some(id) = previous {
+                body["previous_response_id"] = id;
+            }
+            socket
+                .send(WsMessage::Text(body.to_string().into()))
+                .await
+                .unwrap();
+            let completed = tokio::time::timeout(Duration::from_secs(180), async {
+                let mut has_text = false;
+                while let Some(message) = socket.next().await {
+                    let WsMessage::Text(text) = message.unwrap() else {
+                        continue;
+                    };
+                    let event: Value = serde_json::from_str(&text).unwrap();
+                    match event["type"].as_str() {
+                        Some("response.completed") => {
+                            assert!(has_text, "{model} WS turn {turn}: no text");
+                            return event["response"]["id"].clone();
+                        }
+                        Some("response.output_text.delta") => has_text = true,
+                        Some("response.failed" | "error") => {
+                            panic!("{model} WS turn {turn}: {event}")
+                        }
+                        _ => {}
+                    }
+                }
+                panic!("{model} WS turn {turn}: closed before completion");
+            })
+            .await
+            .expect("real WebSocket response timed out");
+            assert!(completed.is_string(), "{completed}");
+            previous = Some(completed);
+            println!(
+                "PASS {model} WS turn {turn} ({} ms)",
+                started.elapsed().as_millis()
+            );
+        }
+        socket.close(None).await.unwrap();
+    }
+    child.kill().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires local Baidu OneAPI credentials and makes real model requests"]
 async fn baidu_reasoning_profiles_reach_real_upstream() {
     let mut config =
         GatewayConfig::from_stored_config().expect("load local Codex Mixin configuration");

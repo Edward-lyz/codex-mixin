@@ -234,7 +234,7 @@ pub fn responses_to_gemini(
         }
     }
 
-    let generation_config = build_generation_config(body, &model);
+    let generation_config = build_generation_config(body, &model)?;
 
     let mut request = json!({
         "contents": contents
@@ -312,12 +312,12 @@ fn extract_hosted_search(
     Ok(hosted_search)
 }
 
-fn build_generation_config(body: &Value, model: &str) -> Option<Value> {
+fn build_generation_config(body: &Value, model: &str) -> Result<Option<Value>, GatewayError> {
     if let Some(config) = body
         .get("__mixin_gemini_generation_config")
         .filter(|v| v.is_object())
     {
-        return Some(config.clone());
+        return Ok(Some(config.clone()));
     }
     let mut generation_config = serde_json::Map::new();
     let mut max_tokens = body
@@ -404,8 +404,25 @@ fn build_generation_config(body: &Value, model: &str) -> Option<Value> {
     }
 
     generation_config.insert("maxOutputTokens".to_owned(), json!(max_tokens));
+    if let Some(format) = body.pointer("/text/format") {
+        match format.get("type").and_then(Value::as_str) {
+            None | Some("text") => {}
+            Some("json_schema") => {
+                let schema = format.get("schema").ok_or_else(|| {
+                    GatewayError::BadRequest("text.format json_schema missing schema".to_owned())
+                })?;
+                generation_config.insert("responseMimeType".to_owned(), json!("application/json"));
+                generation_config.insert("responseJsonSchema".to_owned(), schema.clone());
+            }
+            Some(other) => {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported text format for Gemini upstream: {other}"
+                )));
+            }
+        }
+    }
 
-    (!generation_config.is_empty()).then_some(Value::Object(generation_config))
+    Ok((!generation_config.is_empty()).then_some(Value::Object(generation_config)))
 }
 
 pub(crate) fn sanitize_gemini_schema(schema: &mut Value) {
@@ -657,7 +674,8 @@ fn append_gemini_input_item(
                 system_parts.push(json!({"text": format!("[compaction summary: {token}]")}));
             }
         }
-        "compaction_trigger"
+        "configuration_update"
+        | "compaction_trigger"
         | "reasoning"
         | "web_search_call"
         | "image_generation_call"

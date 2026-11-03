@@ -20,11 +20,12 @@ pub(in crate::cli) struct ManagedConfigLock {
 
 impl ManagedConfigLock {
     pub(in crate::cli) fn acquire(config_path: &Path) -> anyhow::Result<Self> {
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        // A sibling file keeps the lock inode stable while config writes use atomic replacement.
-        let lock_path = sibling_path_with_extra_extension(config_path, "codex-mixin.lock");
+        let lock_path = super::restore::lock_path(config_path);
+        codex_mixin::platform::ensure_owner_only_dir(
+            lock_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("Codex lock has no parent"))?,
+        )?;
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -37,6 +38,7 @@ impl ManagedConfigLock {
                 config_path.display()
             )
         })?;
+        super::restore::recover(config_path)?;
         Ok(Self { _file: file })
     }
 }
@@ -68,7 +70,17 @@ pub(in crate::cli) fn resolve_codex_config_path(
 }
 
 pub(in crate::cli) fn absolute_path(path: PathBuf) -> anyhow::Result<PathBuf> {
-    Ok(std::path::absolute(path)?)
+    let mut normalized = PathBuf::new();
+    for component in std::path::absolute(path)?.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => normalized.push(other),
+        }
+    }
+    Ok(normalized)
 }
 
 pub(in crate::cli) fn managed_catalog_path(
@@ -100,70 +112,18 @@ pub(in crate::cli) fn read_managed_config_for_install(
     } else {
         String::new()
     };
-    if codex_mixin::clients::codex::document_is_managed(&raw_config) {
-        return Ok(raw_config);
-    }
-    let backup_path = managed_backup_path(config_path);
-    let absent_marker_path = managed_absent_marker_path(config_path);
-    for restore_path in [backup_path, absent_marker_path] {
-        if !restore_path.exists() {
-            continue;
-        }
-        let archived_path = archive_stale_restore_point(config_path)?;
-        fs::rename(&restore_path, &archived_path)?;
-        eprintln!(
-            "codex install: archived stale restore point {} as {}",
-            restore_path.display(),
-            archived_path.display()
-        );
+    if let Some(record) = super::restore::ManagedCodexRestore::load(config_path)? {
+        return record.install_config(&raw_config);
     }
     Ok(raw_config)
 }
 
-fn archive_stale_restore_point(config_path: &Path) -> anyhow::Result<PathBuf> {
-    for index in 0..1000 {
-        let suffix = if index == 0 {
-            "codex-mixin.stale".to_owned()
-        } else {
-            format!("codex-mixin.stale.{index}")
-        };
-        let candidate = sibling_path_with_extra_extension(config_path, &suffix);
-        if !candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    anyhow::bail!(
-        "could not allocate a stale Codex restore point path for {}",
-        config_path.display()
-    )
-}
-
-pub(in crate::cli) fn create_managed_config_restore_point(
-    config_path: &Path,
-    raw_config: &str,
-) -> anyhow::Result<()> {
-    if codex_mixin::clients::codex::document_is_managed(raw_config) {
-        return Ok(());
-    }
-    let backup_path = managed_backup_path(config_path);
-    let absent_marker_path = managed_absent_marker_path(config_path);
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if config_path.exists() {
-        fs::copy(config_path, &backup_path)?;
-    } else {
-        fs::write(&absent_marker_path, b"")?;
-    }
-    Ok(())
-}
-
 pub(in crate::cli) fn managed_backup_path(config_path: &std::path::Path) -> PathBuf {
-    sibling_path_with_extra_extension(config_path, "codex-mixin.backup")
+    super::restore::directory(config_path).join("config.toml.backup")
 }
 
 pub(in crate::cli) fn managed_absent_marker_path(config_path: &std::path::Path) -> PathBuf {
-    sibling_path_with_extra_extension(config_path, "codex-mixin.absent")
+    super::restore::directory(config_path).join("config.toml.absent")
 }
 
 pub(in crate::cli) fn sibling_path_with_extra_extension(

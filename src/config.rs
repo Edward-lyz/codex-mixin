@@ -264,6 +264,7 @@ fn gateway_client_keys_are_empty(keys: &crate::gateway_access::GatewayClientKeys
         && keys.dsh.is_none()
         && keys.opencode.is_none()
         && keys.pi.is_none()
+        && keys.frameworks.values().all(Option::is_none)
 }
 
 pub fn ensure_config_version(version: u32) -> anyhow::Result<()> {
