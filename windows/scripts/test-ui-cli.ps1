@@ -185,7 +185,9 @@ try {
     & $WinApp ui wait-for 统计范围 -a $app.Id --timeout 30000
     & $WinApp ui invoke 统计范围 -a $app.Id --action expand
     $option = & $WinApp ui search '今天' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
+    # SelectionChanged disables the page while reloading; use a real mouse gesture
+    # so the outgoing SelectionItem peer is not queried after it becomes disabled.
+    & $WinApp ui click $option.matches[0].selector -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '读取用量完成' --contains --timeout 30000
     & $WinApp ui invoke 图表分组 -a $app.Id --action expand
     $option = & $WinApp ui search '按 Provider 拆分' -a $app.Id --type ListItem --json | ConvertFrom-Json
@@ -231,7 +233,7 @@ try {
     & $WinApp ui wait-for operation-status -w $fusionWindow --value '停用 Fusion完成' --contains --timeout 90000
     $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
     if ($null -ne $fusion.profile) { throw 'Fusion deletion did not remove the profile' }
-    & $WinApp ui send-keys alt+f4 -w $fusionWindow --via send-input
+    & $WinApp ui send-keys alt+f4 -w $fusionWindow --via send-input --allow-system-keys
     $completed.Add($stage)
 
     $stage = 'settings themes, diagnostics and backup cancellation'
@@ -254,7 +256,7 @@ try {
     & $WinApp ui invoke CloseButton -w $settingsWindow
     if (-not (Test-Path $env:CODEX_GATEWAY_CONFIG)) { throw 'Backup cancellation removed configuration' }
     & $WinApp ui inspect -w $settingsWindow --depth 10 --json | Set-Content "$evidence\settings-tree.json"
-    & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input
+    & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input --allow-system-keys
     $completed.Add($stage)
 
     $stage = 'tray, gateway toggle, refresh, console reopening and exit'
