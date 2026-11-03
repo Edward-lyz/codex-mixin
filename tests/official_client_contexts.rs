@@ -7,7 +7,7 @@ use tokio::process::Command;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::ProviderPreset;
+use codex_mixin::provider::{ProviderModel, ProviderPreset};
 use serde_json::{Value, json};
 
 mod common;
@@ -127,9 +127,11 @@ async fn official_contexts_reach_clients() {
             json!({
                 "claude_model":claude["modelPicker"]["options"][0]["model"],
                 "pi_context":pi["providers"]["codex-mixin"]["models"][0]["contextWindow"],
-                "desktop_1m":profile["inferenceModels"][0]["supports1m"]
+                "desktop_1m":profile["inferenceModels"][0]["supports1m"],
+                "desktop_prefer_1m":profile["inferenceModels"][0]["prefer1m"],
+                "desktop_behaves_as":profile["inferenceModels"][0]["behavesAs"]
             }),
-            json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
+            json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000), "desktop_prefer_1m":context == Some(1_000_000), "desktop_behaves_as": Value::Null})
         );
         let reconnect_args = [
             "connect",
@@ -192,6 +194,96 @@ async fn official_contexts_reach_clients() {
         "stop test gateway: {}",
         String::from_utf8_lossy(&stopped.stderr)
     );
+}
+
+#[tokio::test]
+async fn desktop_effort_anchors_follow_model_versions() {
+    let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join("gateway.json");
+    let codex_home = directory.path().join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    let models = [
+        ("Claude Haiku 5.5", 1_000_000, Some("claude-haiku-5-5")),
+        ("Claude Haiku 4.5", 200_000, Some("claude-haiku-4-5")),
+        ("Claude Sonnet 5.5", 1_000_000, Some("claude-sonnet-5-5")),
+        ("claude-sonnet-5", 1_000_000, Some("claude-sonnet-5")),
+        ("Opus 4.8", 1_000_000, Some("claude-opus-4-8")),
+        ("Opus 5", 1_000_000, Some("claude-opus-5")),
+        ("Opus 5.5", 1_000_000, Some("claude-opus-5-5")),
+        (
+            "claude-opus-4-5-20251101",
+            1_000_000,
+            Some("claude-opus-4-5"),
+        ),
+        ("DeepSeek-V4.1-Flash", 1_000_000, None),
+    ];
+    let mut provider = ProviderPreset::Custom.create("fixture", "fixture-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.cached_models = models
+        .iter()
+        .map(|(id, context_window, _)| ProviderModel {
+            id: (*id).to_owned(),
+            context_window: Some(*context_window),
+            ..ProviderModel::default()
+        })
+        .collect();
+    provider.selected_models = models.iter().map(|(id, _, _)| (*id).to_owned()).collect();
+    save_stored_config_to_path(
+        &config_path,
+        &StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        },
+    )
+    .unwrap();
+
+    let desktop_root = directory.path().join("desktop");
+    let args = [
+        "connect",
+        "claude-desktop",
+        "--config-root",
+        desktop_root.to_str().unwrap(),
+    ];
+    let mut command = common::tokio_cli(directory.path());
+    command
+        .kill_on_drop(true)
+        .args(args)
+        .env("CODEX_GATEWAY_CONFIG", &config_path)
+        .env("CODEX_HOME", &codex_home);
+    let output = run_cli(command, &args, directory.path()).await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let profile: Value = serde_json::from_slice(
+        &fs::read(
+            desktop_root.join("Claude-3p/configLibrary/be16e7b5-9352-4cca-a197-32a6e608d930.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let anchors = profile["inferenceModels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| {
+            let label = model["labelOverride"].as_str().unwrap();
+            let label = label.split(" - ").next().unwrap().to_owned();
+            (label, model["behavesAs"].clone())
+        })
+        .collect::<BTreeMap<_, _>>();
+    let expected = models
+        .iter()
+        .map(|(id, _, anchor)| {
+            (
+                (*id).to_owned(),
+                anchor.map_or(Value::Null, |anchor| json!(anchor)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(anchors, expected);
 }
 
 async fn run_cli(mut command: Command, args: &[&str], directory: &Path) -> Output {
