@@ -93,6 +93,8 @@ fn add_provider_with_blocked_cache(cache_name: &str) {
             "upstream-key",
             "--base-url",
             "http://127.0.0.1:9",
+            "--protocol",
+            "open_ai_chat",
             "--model",
             "static-model",
         ])
@@ -109,6 +111,7 @@ fn add_provider_with_blocked_cache(cache_name: &str) {
     let stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
     assert_eq!(stored.providers.len(), 1);
     assert_eq!(stored.providers[0].id, "review");
+    assert_eq!(stored.providers[0].api_path, "/v1/chat/completions");
 }
 
 #[test]
