@@ -106,7 +106,7 @@ try {
     if ('shared' -notin $provider.selected_models) { & $WinApp ui invoke 'shared 加入 Codex' -a $app.Id --action toggle }
     $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector shared -a $app.Id
-    & $WinApp ui wait-for 搜索当前服务商的模型 -a $app.Id --value shared --timeout 5000
+    & $WinApp ui wait-for $field.matches[0].selector -a $app.Id --value shared --timeout 5000
     & $WinApp ui invoke 'shared 上下文' -a $app.Id
     $field = & $WinApp ui search '上下文 Token 数' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector 16384 -a $app.Id
@@ -194,7 +194,95 @@ try {
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
     $completed.Add($stage)
 
-    @{ passed = $completed.ToArray(); phase = 'core operations' } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
+    $stage = 'Fusion orchestration and time rotation'
+    & $WinApp ui invoke window-menu -a $app.Id
+    $option = & $WinApp ui search 'Fusion 设置' -a $app.Id --type MenuItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id
+    & $WinApp ui wait-for fusion-mode -a $app.Id --timeout 30000
+    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
+    $fusionWindow = @($tree.windows | Where-Object title -eq 'Fusion 设置')[0].hwnd
+    $field = & $WinApp ui search 'Profile ID' -w $fusionWindow --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-profile -w $fusionWindow
+    & $WinApp ui invoke 显示中间结果 -w $fusionWindow --action toggle
+    & $WinApp ui invoke apply-changes -w $fusionWindow
+    & $WinApp ui wait-for operation-status -w $fusionWindow --value '保存 Fusion完成' --contains --timeout 90000
+    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
+    if ($fusion.profile.id -ne 'ui-profile' -or $fusion.profile.mode -ne 'orchestration' -or -not $fusion.profile.show_intermediate_results) { throw 'Fusion orchestration was not saved' }
+    & $WinApp ui invoke fusion-mode -w $fusionWindow --action expand
+    $option = & $WinApp ui search 按时间轮转 -w $fusionWindow --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -w $fusionWindow --action select
+    & $WinApp ui invoke 添加时段 -w $fusionWindow
+    $routes = & $WinApp ui search 移除此时段 -w $fusionWindow --type Button --json | ConvertFrom-Json
+    if ($routes.matchCount -ne 2) { throw 'Add time route did not create a second row' }
+    & $WinApp ui invoke $routes.matches[0].selector -w $fusionWindow
+    & $WinApp ui invoke apply-changes -w $fusionWindow
+    & $WinApp ui wait-for operation-status -w $fusionWindow --value '保存 Fusion完成' --contains --timeout 90000
+    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
+    if ($fusion.profile.mode -ne 'time_rotation' -or @($fusion.profile.time_routes).Count -ne 1) { throw 'Fusion time route was not saved' }
+    & $WinApp ui screenshot -w $fusionWindow --output "$evidence\fusion.png"
+    & $WinApp ui invoke '停用 Fusion' -w $fusionWindow
+    & $WinApp ui invoke CloseButton -w $fusionWindow
+    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
+    if ($null -eq $fusion.profile) { throw 'Cancelled Fusion deletion removed the profile' }
+    & $WinApp ui invoke '停用 Fusion' -w $fusionWindow
+    & $WinApp ui invoke PrimaryButton -w $fusionWindow
+    & $WinApp ui wait-for operation-status -w $fusionWindow --value '停用 Fusion完成' --contains --timeout 90000
+    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
+    if ($null -ne $fusion.profile) { throw 'Fusion deletion did not remove the profile' }
+    & $WinApp ui send-keys alt+f4 -w $fusionWindow --via send-input
+    $completed.Add($stage)
+
+    $stage = 'settings themes, diagnostics and backup cancellation'
+    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=settings' -PassThru
+    & $WinApp ui wait-for theme-picker -a $app.Id --timeout 30000
+    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
+    $settingsWindow = @($tree.windows | Where-Object title -eq '设置与诊断')[0].hwnd
+    foreach ($theme in @('浅色', '深色', '跟随系统')) {
+        & $WinApp ui invoke theme-picker -w $settingsWindow --action expand
+        $option = & $WinApp ui search $theme -w $settingsWindow --type ListItem --json | ConvertFrom-Json
+        & $WinApp ui invoke $option.matches[0].selector -w $settingsWindow --action select
+        & $WinApp ui screenshot -w $settingsWindow --output "$evidence\theme-$theme.png"
+    }
+    & $WinApp ui invoke 运行诊断 -w $settingsWindow
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '诊断完成' --contains --timeout 90000
+    $null = & $cli --no-tui --json-errors doctor --json | ConvertFrom-Json
+    & $WinApp ui invoke 导出配置 -w $settingsWindow
+    & $WinApp ui wait-for CloseButton -w $settingsWindow --timeout 5000
+    & $WinApp ui invoke CloseButton -w $settingsWindow
+    if (-not (Test-Path $env:CODEX_GATEWAY_CONFIG)) { throw 'Backup cancellation removed configuration' }
+    & $WinApp ui inspect -w $settingsWindow --depth 10 --json | Set-Content "$evidence\settings-tree.json"
+    & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input
+    $completed.Add($stage)
+
+    $stage = 'tray, gateway toggle, refresh, console reopening and exit'
+    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
+    & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 30000
+    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
+    $trayWindow = @($tree.windows | Where-Object title -eq 'Codex Mixin · 主面板')[0].hwnd
+    & $WinApp ui invoke tray-refresh -w $trayWindow
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        $switch = & $WinApp ui search 本地网关 -w $trayWindow --json | ConvertFrom-Json
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Gateway switch did not become ready' }
+        if (-not $switch.matches[0].isEnabled) { Start-Sleep -Milliseconds 100 }
+    } until ($switch.matches[0].isEnabled)
+    $before = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
+    & $WinApp ui invoke 本地网关 -w $trayWindow --action toggle
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        $after = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Gateway switch did not change actual service state' }
+        if ($after.running -eq $before.running) { Start-Sleep -Milliseconds 200 }
+    } until ($after.running -ne $before.running)
+    & $WinApp ui screenshot -w $trayWindow --output "$evidence\tray.png"
+    & $WinApp ui invoke '打开控制台…' -w $trayWindow
+    & $WinApp ui wait-for console-providers-tab -a $app.Id --timeout 15000
+    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
+    & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 15000
+    & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
+    if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
+    $completed.Add($stage)
+    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'native backup file picker round trip', 'OS startup registry and ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }
 catch {
     @{ stage = $stage; passed = $completed.ToArray(); error = $_.Exception.Message } |
