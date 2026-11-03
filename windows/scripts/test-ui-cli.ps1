@@ -32,6 +32,7 @@ $isolatedEnvironment = @{
     HTTP_PROXY = 'http://127.0.0.1:9'; HTTPS_PROXY = 'http://127.0.0.1:9'
     NO_PROXY = '127.0.0.1,localhost'
     WINAPP_UI_WORKFLOW_ID = [guid]::NewGuid().ToString('N')
+    WINAPP_CLI_TELEMETRY_OPTOUT = '1'
 }
 foreach ($entry in $isolatedEnvironment.GetEnumerator()) {
     $originalEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key)
@@ -59,12 +60,15 @@ try {
     $interface = & $cli --no-tui --json-errors interface --json | ConvertFrom-Json
     if ($interface.protocol_version -ne 1) { throw 'Unexpected CLI interface version' }
     $app = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -PassThru
-    & $WinApp ui wait-for console-pages -a $app.Id --timeout 60000
+    & $WinApp ui wait-for operation-status -a $app.Id --timeout 60000
     & $WinApp ui wait-for operation-status -a $app.Id --value '连接 CLI完成' --contains --timeout 90000
-    & $WinApp ui inspect -a $app.Id --json | Set-Content "$evidence\initial-tree.json"
+    & $WinApp ui send-keys escape -a $app.Id --via send-input
+    & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\initial-tree.json"
     & $WinApp ui screenshot -a $app.Id --output "$evidence\initial.png"
-    & $WinApp ui invoke 新增服务商 -a $app.Id
-    & $WinApp ui inspect -a $app.Id --json | Set-Content "$evidence\add-provider-tree.json"
+    $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $add.matches[0].selector -a $app.Id
+    & $WinApp ui wait-for PrimaryButton -a $app.Id --timeout 5000
+    & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\add-provider-tree.json"
     & $WinApp ui screenshot -a $app.Id --output "$evidence\add-provider.png"
 }
 catch {
@@ -76,7 +80,7 @@ finally {
     # Preserve evidence even when an action fails; cleanup cannot turn failure into success.
     $PSNativeCommandUseErrorActionPreference = $false
     if ($null -ne $app) {
-        & $WinApp ui inspect -a $app.Id --json 2> "$evidence\inspect-error.txt" | Set-Content "$evidence\final-tree.json"
+        & $WinApp ui inspect -a $app.Id --depth 10 --json 2> "$evidence\inspect-error.txt" | Set-Content "$evidence\final-tree.json"
         & $WinApp ui screenshot -a $app.Id --output "$evidence\final.png" 2> "$evidence\screenshot-error.txt"
         if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction Continue }
     }
