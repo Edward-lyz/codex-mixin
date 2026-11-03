@@ -156,8 +156,9 @@ try {
         if ([DateTime]::UtcNow -gt $deadline) { throw 'UI benchmark did not complete' }
         if ($benchmark.snapshot.status -ne 'completed') { Start-Sleep -Milliseconds 200 }
     } until ($benchmark.snapshot.status -eq 'completed')
+    $benchmark | ConvertTo-Json -Depth 12 | Set-Content "$evidence\benchmark.json"
     $results = @($benchmark.snapshot.results | Where-Object { $_.provider_id -eq 'ui-local' -and $_.upstream_model -eq 'shared' })
-    if ($results.Count -ne 1 -or $results[0].status -ne 'completed') { throw 'UI benchmark did not successfully call the loopback model' }
+    if ($results.Count -ne 1 -or $results[0].status -ne 'completed') { throw "UI benchmark did not successfully call the loopback model: $($benchmark | ConvertTo-Json -Depth 12 -Compress)" }
     if (-not (Test-Path "$fixture/upstream.ndjson") -or (Get-Item "$fixture/upstream.ndjson").Length -eq 0) { throw 'No actual upstream requests were recorded' }
     $completed.Add($stage)
 
