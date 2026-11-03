@@ -1,4 +1,25 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.7
+
+### 特性新增
+
+- **兼容 Codex 新版请求配置**：支持 Responses 请求中的 `configuration_update`，按协议分别应用推理强度与结构化输出设置；Chat Completions、Anthropic Messages 与 Gemini 上游均可生效。Gemini 侧补齐 `responseJsonSchema` 结构化输出，不支持的格式直接返回明确错误。
+
+### 体验优化
+
+- **OneAPI 模型名称更清楚**：统一模型名称、来源与倍率展示；WorkBuddy、CodeBuddy 使用客户端原生 `credits` 字段，在模型列表右侧展示倍率，名称中不再拼接倍率文本。
+- **模型列表更易读**：Web 模型列表优先显示展示名，另起一行显示模型 ID，便于区分同名模型。
+- **Web 菜单适配窄屏**：菜单改用浏览器原生弹层，空间不足时自动翻转展开方向，完善点击外部与键盘关闭、焦点恢复。
+- **加强 Windows 交互验证**：新增原生界面与真实 CLI 联动检查，覆盖供应商、模型、Codex 接入、上下文、用量、Fusion、设置、备份与托盘等主要流程，打包前必须通过。
+
+### BUG 修复
+
+- 修复 Codex 原配置备份依赖客户端目录的问题。备份改为事务性恢复记录并保存在 Mixin 自有目录，断开接入时可还原配置、模型目录与认证；配置目录被移动或重建后仍可恢复，恢复失败时保留恢复记录，避免留下半完成状态。
+- 修复 WorkBuddy 等客户端首次接入时可能缺少网关密钥、导致接入失败的问题。
+- 修复首次安装时框架客户端密钥被判定为空配置、进而丢失已接入客户端密钥的问题。
+- 修复自定义供应商明确选择协议后，默认请求路径仍沿用 Responses、导致 Chat Completions 等请求返回 404 的问题。
+- 修复 Windows 读取未接入 Agent 的可空接入模式时可能报错的问题，并把契约校验收敛到 Codex，不再拒绝原生接入的合法模式。
+
 ## v0.7.6
 
 ### 特性新增
@@ -249,6 +270,27 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.7
+
+### 新增功能
+
+- **相容 Codex 新版請求設定**：支援 Responses 請求中的 `configuration_update`，依協定分別套用推理強度與結構化輸出設定；Chat Completions、Anthropic Messages 與 Gemini 上游均可生效。Gemini 端補齊 `responseJsonSchema` 結構化輸出，不支援的格式直接回傳明確錯誤。
+
+### 體驗優化
+
+- **OneAPI 模型名稱更清楚**：統一模型名稱、來源與倍率呈現；WorkBuddy、CodeBuddy 改用客戶端原生 `credits` 欄位，在模型清單右側顯示倍率，名稱中不再拼接倍率文字。
+- **模型清單更易讀**：Web 模型清單優先顯示顯示名稱，另起一行顯示模型 ID，便於區分同名模型。
+- **Web 選單適應窄螢幕**：選單改用瀏覽器原生彈出層，空間不足時自動翻轉展開方向，完善點擊外部與鍵盤關閉、焦點還原。
+- **強化 Windows 互動驗證**：新增原生介面與真實 CLI 聯動檢查，涵蓋供應商、模型、Codex 接入、上下文、用量、Fusion、設定、備份與系統匣等主要流程，打包前必須通過。
+
+### 問題修正
+
+- 修正 Codex 原始設定備份依賴客戶端目錄的問題。備份改為交易式還原紀錄並保存在 Mixin 自有目錄，中斷接入時可還原設定、模型目錄與認證；設定目錄被移動或重建後仍可還原，還原失敗時保留紀錄，避免留下半完成狀態。
+- 修正 WorkBuddy 等客戶端首次接入時可能缺少閘道金鑰、導致接入失敗的問題。
+- 修正首次安裝時框架客戶端金鑰被判定為空設定、進而遺失已接入客戶端金鑰的問題。
+- 修正自訂供應商明確選擇協定後，預設請求路徑仍沿用 Responses、導致 Chat Completions 等請求回傳 404 的問題。
+- 修正 Windows 讀取未接入 Agent 的可空接入模式時可能出錯的問題，並將契約驗證收斂到 Codex，不再拒絕原生接入的合法模式。
+
 ## v0.7.6
 
 ### 新增功能
@@ -499,6 +541,27 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.7
+
+### New features
+
+- **Support newer Codex request configuration**: handle `configuration_update` entries in Responses requests and apply reasoning effort and structured output per protocol, so Chat Completions, Anthropic Messages, and Gemini upstreams all honor them. Gemini now forwards `responseJsonSchema` for structured output and rejects unsupported formats with an explicit error.
+
+### Improvements
+
+- **Clearer OneAPI model names**: share model names, sources, and rates across surfaces. WorkBuddy and CodeBuddy now write the native `credits` field so the client's own rate column shows the value instead of embedding the rate in model names.
+- **More readable model lists**: the Web model list shows the display name first and the model ID on its own line, so models with similar names stay distinguishable.
+- **Web menus on narrow screens**: menus use native browser popovers with automatic flip when space runs out, plus outside-click and keyboard dismissal with focus restoration.
+- **Stronger Windows interaction checks**: a native UI and real CLI job covers providers, models, Codex integration, context, usage, Fusion, settings, backup, and tray workflows, and packaging cannot proceed unless it passes.
+
+### Bug fixes
+
+- Fix Codex backup depending on the client directory. Backups are now transactional restore records kept in Mixin's own directory, so disconnecting restores configuration, model catalog, and authentication. Recovery still works after the Codex directory is moved or recreated, and a failed restore keeps its record instead of leaving a half-finished state.
+- Fix missing gateway keys on the first WorkBuddy and similar client integrations, which could make the integration fail.
+- Fix first-time installation treating framework client keys as an empty configuration and dropping keys of already-connected clients.
+- Fix custom providers keeping the inferred Responses endpoint after an explicit protocol was chosen, which returned 404 for Chat Completions requests.
+- Fix Windows failing on nullable integration modes for unmanaged agents, and scope that contract assertion to Codex instead of rejecting valid native modes.
+
 ## v0.7.6
 
 ### New features
