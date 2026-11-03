@@ -2,6 +2,11 @@ name: Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      artifacts_run_id:
+        description: 'Optional successful Windows run to observe existing binaries (does not satisfy the merge gate)'
+        type: string
+        default: ''
   pull_request:
   merge_group:
   push:
@@ -9,13 +14,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   rust:
+    if: ${{ !inputs.artifacts_run_id }}
     name: Rust (${{ matrix.shard }})
     runs-on: windows-latest
     strategy:
@@ -53,6 +60,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test_windows_integration.ps1 -Shard ${{ matrix.shard }}
   cli:
+    if: ${{ !inputs.artifacts_run_id }}
     name: Build Windows CLI
     runs-on: windows-latest
     steps:
@@ -69,6 +77,7 @@ jobs:
           if-no-files-found: error
 
   native:
+    if: ${{ !inputs.artifacts_run_id }}
     name: WinUI 3 build and adapter tests
     runs-on: windows-latest
     steps:
@@ -114,6 +123,7 @@ jobs:
           if-no-files-found: error
 
   cli-contracts:
+    if: ${{ !inputs.artifacts_run_id }}
     name: Real CLI contract tests
     runs-on: windows-latest
     needs: [cli]
@@ -131,7 +141,8 @@ jobs:
         run: dotnet run --project windows/Tests/Tests.csproj -c Release -- target/release/codex-mixin.exe
 
   ui-cli:
-    name: Windows UI and CLI
+    name: ${{ inputs.artifacts_run_id && 'Windows UI observation' || 'Windows UI and CLI' }}
+    if: ${{ always() && !cancelled() && (inputs.artifacts_run_id || (needs.cli.result == 'success' && needs.native.result == 'success')) }}
     runs-on: windows-latest
     timeout-minutes: 20
     needs: [cli, native]
@@ -144,10 +155,14 @@ jobs:
         with:
           name: windows-native-ui
           path: windows-ui
+          run-id: ${{ inputs.artifacts_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v7
         with:
           name: windows-cli
           path: windows-ui
+          run-id: ${{ inputs.artifacts_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Install pinned Microsoft winapp
         shell: pwsh
         run: |
