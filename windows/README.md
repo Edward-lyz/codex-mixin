@@ -64,7 +64,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 `.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust Clippy 与 E2E、真实 CLI 契约测试、自包含 WinUI 发布，最后生成安装器和便携包。
 
-界面通过人工操作验收；仓库不维护 UI 自动化、截图或视觉回归测试，详见根级 `AGENTS.md`。
+Windows 原生界面另由 `Windows UI and CLI` job 在隔离配置下运行真实发布包，以固定版本的微软 winapp UI Automation 操作控件，并用真实 CLI 读取结果。无可用桌面或操作失败均使检查失败，窗口树、截图和脱敏日志上传为 `windows-ui-evidence`。截图用于故障证据，不作像素视觉回归。具体覆盖范围以脚本和运行产物为准，其他平台仍按根级 `AGENTS.md` 人工验收。
 
 一键打包仍从仓库根执行：
 

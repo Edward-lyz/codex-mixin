@@ -3,6 +3,7 @@ name: Windows
 on:
   workflow_dispatch:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -129,9 +130,52 @@ jobs:
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release -- target/release/codex-mixin.exe
 
+  ui-cli:
+    name: Windows UI and CLI
+    runs-on: windows-latest
+    timeout-minutes: 20
+    needs: [cli, native]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows-ui
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-cli
+          path: windows-ui
+      - name: Install pinned Microsoft winapp
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'winappcli-x64.zip'
+          Invoke-WebRequest 'https://github.com/microsoft/winappCli/releases/download/v0.7.1/winappcli-x64.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'd925d1e32cdc320b6d271f653fd2cd3c05b5d7558deb20d1b548bead77900fcf') {
+            throw 'Microsoft winapp archive hash mismatch'
+          }
+          $destination = Join-Path $env:RUNNER_TEMP 'winapp'
+          Expand-Archive $archive -DestinationPath $destination
+          $tool = @(Get-ChildItem $destination -Recurse -Filter winapp.exe)
+          if ($tool.Count -ne 1) { throw 'Expected exactly one winapp.exe' }
+          "WINAPP_CLI=$($tool[0].FullName)" >> $env:GITHUB_ENV
+      - name: Exercise native UI and real CLI
+        shell: pwsh
+        run: ./windows/scripts/test-ui-cli.ps1 -AppDirectory windows-ui -WinApp $env:WINAPP_CLI -EvidenceDirectory windows-ui-evidence
+      - name: Upload UI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-ui-evidence
+          path: windows-ui-evidence
+          if-no-files-found: error
+          retention-days: 7
+
   package:
     runs-on: windows-latest
-    needs: [rust, cli, native, cli-contracts]
+    needs: [rust, cli, native, cli-contracts, ui-cli]
     steps:
       - uses: actions/checkout@v5
       - name: Read package version
