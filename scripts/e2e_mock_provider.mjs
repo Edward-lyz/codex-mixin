@@ -83,6 +83,20 @@ const server = http.createServer((request, response) => {
       sendJson(response, 404, { error: "unexpected path" });
       return;
     }
+    // Discovery/probes also use ordinary JSON completions, unlike streaming
+    // gateway requests. Keep both paths on the same controlled HTTP upstream.
+    if (body.stream !== true) {
+      sendJson(response, 200, protocol === "anthropic" ? {
+        id: "msg_mock", type: "message", role: "assistant", model: body.model,
+        content: [{ type: "text", text: "alpha" }], stop_reason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      } : {
+        id: "chat_mock", object: "chat.completion", model: body.model,
+        choices: [{ index: 0, message: { role: "assistant", content: "beta" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+      return;
+    }
     response.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
