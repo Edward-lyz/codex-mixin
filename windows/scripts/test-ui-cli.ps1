@@ -334,6 +334,7 @@ try {
     } until ($echTestStatus -match '^检测 ECH(完成|失败)')
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -ne $echBefore.enabled -or $echAfter.fallback_reason -ne $echBefore.fallback_reason) { throw 'ECH test changed saved network settings' }
+    & $WinApp ui wait-for '启用 ECH' -w $settingsWindow --timeout 90000
     & $WinApp ui invoke '启用 ECH' -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '启用 ECH完成' --contains --timeout 90000
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
