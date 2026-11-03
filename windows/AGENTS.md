@@ -9,7 +9,7 @@
 - 安装与卸载保留用户配置；PATH 只修改本项目项。自包含分发随包携带 .NET 与 Windows App SDK runtime，不依赖用户预装 .NET。
 - 自有类型和成员默认 internal/private；WinUI XAML 根类型、框架 override 和接口实现仅保留框架要求的 public 可见性，不形成业务公共 API。
 - 图标从 macOS 唯一来源生成。构建先执行 `windows/scripts/generate-windows-assets.ps1`，不得提交生成资源、bin、obj 或 build。
-- 验证由 `.github/workflows/windows.yml` 在 GitHub Windows runner 执行：`Tests` 用真实 Rust CLI 检查 `Core/` 的契约解析；UI 通过构建与人工操作验收，禁止新增 UI 自动化测试。
+- 验证由 `.github/workflows/windows.yml` 在 GitHub Windows runner 执行：`Tests` 用真实 Rust CLI 检查 `Core/` 的契约解析；`scripts/test-ui-cli.ps1` 用固定版本、校验哈希的微软 winapp 操作同次构建的真实 WinUI 包，并用 CLI 核对结果。无可用桌面或操作失败不得跳过；失败上传脱敏窗口树、截图和日志。
 
 在 Windows 仓库根运行：
 
