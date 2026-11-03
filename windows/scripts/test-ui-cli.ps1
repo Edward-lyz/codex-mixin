@@ -324,6 +324,7 @@ try {
     & $WinApp ui screenshot -w $trayWindow --output "$evidence\tray.png"
     & $WinApp ui invoke '打开控制台…' -w $trayWindow
     & $WinApp ui wait-for console-providers-tab -a $app.Id --timeout 15000
+    & $WinApp ui invoke console-providers-tab -a $app.Id --action select
     & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
     & $WinApp ui invoke 删除服务商 -a $app.Id
     & $WinApp ui invoke CloseButton -a $app.Id
@@ -338,6 +339,12 @@ try {
     $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
     & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 15000
     & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
+    & $WinApp ui wait-for CloseButton -w $trayWindow --timeout 5000
+    & $WinApp ui invoke CloseButton -w $trayWindow
+    if ($app.HasExited) { throw 'Cancel on the quit confirmation exited the application' }
+    & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
+    & $WinApp ui wait-for PrimaryButton -w $trayWindow --timeout 5000
+    & $WinApp ui invoke PrimaryButton -w $trayWindow
     if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
     $completed.Add($stage)
     @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'native backup file picker round trip', 'ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
