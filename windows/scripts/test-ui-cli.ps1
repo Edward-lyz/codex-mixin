@@ -79,12 +79,14 @@ try {
     $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
     & $WinApp ui invoke $add.matches[0].selector -a $app.Id
     & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
-    & $WinApp ui invoke custom -a $app.Id --action select
+    $option = & $WinApp ui search 'custom' -a $app.Id --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
     & $WinApp ui set-value '供应商 ID' ui-local -a $app.Id
     & $WinApp ui set-value 显示名称 'UI local provider' -a $app.Id
     & $WinApp ui set-value provider-base-url $upstreamUrl -a $app.Id
     & $WinApp ui invoke '协议（custom）' -a $app.Id --action expand
-    & $WinApp ui invoke open_ai_chat -a $app.Id --action select
+    $option = & $WinApp ui search 'open_ai_chat' -a $app.Id --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
     & $WinApp ui set-value 'API Key' ui-fixture-key -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
@@ -136,7 +138,8 @@ try {
     if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Cancelled Codex connection mutated CLI state' }
     & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
     & $WinApp ui invoke 接入模式 -a $app.Id --action expand
-    & $WinApp ui invoke 仅自定义模型 -a $app.Id --action select
+    $option = & $WinApp ui search '仅自定义模型' -a $app.Id --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '接入 Agent完成' --contains --timeout 90000
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
@@ -174,10 +177,12 @@ try {
     & $WinApp ui invoke console-usage-tab -a $app.Id --action select
     & $WinApp ui wait-for 统计范围 -a $app.Id --timeout 30000
     & $WinApp ui invoke 统计范围 -a $app.Id --action expand
-    & $WinApp ui invoke 今天 -a $app.Id --action select
+    $option = & $WinApp ui search '今天' -a $app.Id --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
     & $WinApp ui wait-for operation-status -a $app.Id --value '读取用量完成' --contains --timeout 30000
     & $WinApp ui invoke 图表分组 -a $app.Id --action expand
-    & $WinApp ui invoke '按 Provider 拆分' -a $app.Id --action select
+    $option = & $WinApp ui search '按 Provider 拆分' -a $app.Id --type ListItem --json | ConvertFrom-Json
+    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
     & $WinApp ui wait-for 每日用量 -a $app.Id --timeout 10000
     $null = & $cli --no-tui --json-errors usage --daily --json --days 1 | ConvertFrom-Json
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
