@@ -181,6 +181,7 @@ try {
 
     $stage = 'usage filters'
     & $WinApp ui invoke console-usage-tab -a $app.Id --action select
+    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
     & $WinApp ui wait-for 统计范围 -a $app.Id --timeout 30000
     & $WinApp ui invoke 统计范围 -a $app.Id --action expand
     $option = & $WinApp ui search '今天' -a $app.Id --type ListItem --json | ConvertFrom-Json
@@ -201,6 +202,7 @@ try {
     & $WinApp ui wait-for fusion-mode -a $app.Id --timeout 30000
     $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
     $fusionWindow = @($tree.windows | Where-Object title -eq 'Fusion 设置')[0].hwnd
+    & $WinApp ui wait-for operation-status -w $fusionWindow --value '连接 CLI完成' --contains --timeout 90000
     $field = & $WinApp ui search 'Profile ID' -w $fusionWindow --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector ui-profile -w $fusionWindow
     & $WinApp ui invoke 显示中间结果 -w $fusionWindow --action toggle
@@ -237,6 +239,7 @@ try {
     & $WinApp ui wait-for theme-picker -a $app.Id --timeout 30000
     $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
     $settingsWindow = @($tree.windows | Where-Object title -eq '设置与诊断')[0].hwnd
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '连接 CLI完成' --contains --timeout 90000
     foreach ($theme in @('浅色', '深色', '跟随系统')) {
         & $WinApp ui invoke theme-picker -w $settingsWindow --action expand
         $option = & $WinApp ui search $theme -w $settingsWindow --type ListItem --json | ConvertFrom-Json
@@ -272,8 +275,8 @@ try {
     do {
         $after = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Gateway switch did not change actual service state' }
-        if ($after.running -eq $before.running) { Start-Sleep -Milliseconds 200 }
-    } until ($after.running -ne $before.running)
+        if ($after.gateway -eq $before.gateway) { Start-Sleep -Milliseconds 200 }
+    } until ($after.gateway -ne $before.gateway)
     & $WinApp ui screenshot -w $trayWindow --output "$evidence\tray.png"
     & $WinApp ui invoke '打开控制台…' -w $trayWindow
     & $WinApp ui wait-for console-providers-tab -a $app.Id --timeout 15000
