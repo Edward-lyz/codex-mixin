@@ -339,6 +339,7 @@ try {
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -eq (-not [string]::IsNullOrWhiteSpace($echAfter.fallback_reason))) { throw 'ECH enable did not persist a consistent probe verdict or safe fallback' }
     @{ test = $echTestStatus; enable = $echAfter } | ConvertTo-Json -Depth 8 | Set-Content "$evidence\ech.json"
+    & $WinApp ui wait-for '关闭 ECH' -w $settingsWindow --timeout 90000
     & $WinApp ui invoke '关闭 ECH' -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '关闭 ECH完成' --contains --timeout 90000
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
