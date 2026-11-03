@@ -81,13 +81,16 @@ try {
     & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
     $option = & $WinApp ui search 'custom' -a $app.Id --type ListItem --json | ConvertFrom-Json
     & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
-    & $WinApp ui set-value '供应商 ID' ui-local -a $app.Id
-    & $WinApp ui set-value 显示名称 'UI local provider' -a $app.Id
+    $field = & $WinApp ui search '供应商 ID' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-local -a $app.Id
+    $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector 'UI local provider' -a $app.Id
     & $WinApp ui set-value provider-base-url $upstreamUrl -a $app.Id
     & $WinApp ui invoke '协议（custom）' -a $app.Id --action expand
     $option = & $WinApp ui search 'open_ai_chat' -a $app.Id --type ListItem --json | ConvertFrom-Json
     & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
-    & $WinApp ui set-value 'API Key' ui-fixture-key -a $app.Id
+    $field = & $WinApp ui search 'API Key' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-fixture-key -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
@@ -101,10 +104,12 @@ try {
         & $WinApp ui invoke "$model 加入 Codex" -a $app.Id --action toggle
     }
     if ('shared' -notin $provider.selected_models) { & $WinApp ui invoke 'shared 加入 Codex' -a $app.Id --action toggle }
-    & $WinApp ui set-value 搜索当前服务商的模型 shared -a $app.Id
+    $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector shared -a $app.Id
     & $WinApp ui wait-for 搜索当前服务商的模型 -a $app.Id --value shared --timeout 5000
     & $WinApp ui invoke 'shared 上下文' -a $app.Id
-    & $WinApp ui set-value '上下文 Token 数' 16384 -a $app.Id
+    $field = & $WinApp ui search '上下文 Token 数' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector 16384 -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui invoke apply-changes -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
@@ -116,7 +121,8 @@ try {
     $stage = 'provider edit and refresh'
     & $WinApp ui invoke provider-connection-tab -a $app.Id --action select
     & $WinApp ui wait-for provider-base-url -a $app.Id --timeout 10000
-    & $WinApp ui set-value 显示名称 'UI local edited' -a $app.Id
+    $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector 'UI local edited' -a $app.Id
     & $WinApp ui invoke apply-changes -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
