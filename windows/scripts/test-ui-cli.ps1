@@ -70,6 +70,120 @@ try {
     & $WinApp ui wait-for PrimaryButton -a $app.Id --timeout 5000
     & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\add-provider-tree.json"
     & $WinApp ui screenshot -a $app.Id --output "$evidence\add-provider.png"
+    $completed.Add('launch, real CLI connection, interactive desktop and provider dialog')
+
+    $stage = 'provider cancel and save'
+    & $WinApp ui invoke CloseButton -a $app.Id
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if (@($listed.providers).Count -ne 0) { throw 'Cancel created a provider' }
+    $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $add.matches[0].selector -a $app.Id
+    & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
+    & $WinApp ui invoke custom -a $app.Id --action select
+    & $WinApp ui set-value '供应商 ID' ui-local -a $app.Id
+    & $WinApp ui set-value 显示名称 'UI local provider' -a $app.Id
+    & $WinApp ui set-value provider-base-url $upstreamUrl -a $app.Id
+    & $WinApp ui invoke '协议（custom）' -a $app.Id --action expand
+    & $WinApp ui invoke open_ai_chat -a $app.Id --action select
+    & $WinApp ui set-value 'API Key' ui-fixture-key -a $app.Id
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
+    if ($provider.display_name -ne 'UI local provider' -or $provider.base_url -ne $upstreamUrl) { throw 'UI provider save differs from CLI state' }
+    $completed.Add($stage)
+
+    $stage = 'model selection, search, context and apply'
+    & $WinApp ui wait-for model-table -a $app.Id --timeout 15000
+    foreach ($model in @($provider.selected_models | Where-Object { $_ -ne 'shared' })) {
+        & $WinApp ui invoke "$model 加入 Codex" -a $app.Id --action toggle
+    }
+    if ('shared' -notin $provider.selected_models) { & $WinApp ui invoke 'shared 加入 Codex' -a $app.Id --action toggle }
+    & $WinApp ui set-value 搜索当前服务商的模型 shared -a $app.Id
+    & $WinApp ui wait-for 搜索当前服务商的模型 -a $app.Id --value shared --timeout 5000
+    & $WinApp ui invoke 'shared 上下文' -a $app.Id
+    & $WinApp ui set-value '上下文 Token 数' 16384 -a $app.Id
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
+    if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared' -or $provider.model_context_overrides.shared -ne 16384) { throw 'Model draft was not persisted by the UI' }
+    $completed.Add($stage)
+
+    $stage = 'provider edit and refresh'
+    & $WinApp ui invoke provider-connection-tab -a $app.Id --action select
+    & $WinApp ui wait-for provider-base-url -a $app.Id --timeout 10000
+    & $WinApp ui set-value 显示名称 'UI local edited' -a $app.Id
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if (@($listed.providers | Where-Object id -eq 'ui-local')[0].display_name -ne 'UI local edited') { throw 'Provider edit was not saved' }
+    & $WinApp ui invoke provider-models-tab -a $app.Id --action select
+    & $WinApp ui invoke 刷新 -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新完成' --contains --timeout 90000
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\models.png"
+    $completed.Add($stage)
+
+    $stage = 'Codex mode, cancel, connect and disconnect'
+    & $WinApp ui invoke console-agents-tab -a $app.Id --action select
+    & $WinApp ui wait-for agent-summary -a $app.Id --timeout 30000
+    & $WinApp ui invoke agent-undetected -a $app.Id --action expand
+    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
+    & $WinApp ui wait-for PrimaryButton -a $app.Id --timeout 10000
+    & $WinApp ui invoke CloseButton -a $app.Id
+    $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
+    if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Cancelled Codex connection mutated CLI state' }
+    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
+    & $WinApp ui invoke 接入模式 -a $app.Id --action expand
+    & $WinApp ui invoke 仅自定义模型 -a $app.Id --action select
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '接入 Agent完成' --contains --timeout 90000
+    $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
+    $codex = @($agents.agents | Where-Object id -eq 'codex')[0]
+    if ($codex.integration.state -ne 'managed' -or $codex.integration.mode -ne 'custom_only') { throw 'Codex switch failed to save the selected mode' }
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\agents.png"
+    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
+    & $WinApp ui invoke CloseButton -a $app.Id
+    $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
+    if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'managed') { throw 'Cancelled disconnect removed Codex integration' }
+    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '断开 Agent完成' --contains --timeout 90000
+    $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
+    if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Codex disconnect did not restore unmanaged state' }
+    $completed.Add($stage)
+
+    $stage = 'context toggle and save'
+    & $WinApp ui invoke console-context-tab -a $app.Id --action select
+    & $WinApp ui wait-for context-enabled -a $app.Id --timeout 30000
+    $before = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
+    & $WinApp ui invoke context-enabled -a $app.Id --action toggle
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存并应用设置完成' --contains --timeout 90000
+    $after = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
+    if ($before.context.enabled -eq $after.context.enabled) { throw 'Context switch did not change saved CLI state' }
+    & $WinApp ui invoke context-enabled -a $app.Id --action toggle
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存并应用设置完成' --contains --timeout 90000
+    $restored = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
+    if ($before.context.enabled -ne $restored.context.enabled) { throw 'Context switch did not restore its original value' }
+    $completed.Add($stage)
+
+    $stage = 'usage filters'
+    & $WinApp ui invoke console-usage-tab -a $app.Id --action select
+    & $WinApp ui wait-for 统计范围 -a $app.Id --timeout 30000
+    & $WinApp ui invoke 统计范围 -a $app.Id --action expand
+    & $WinApp ui invoke 今天 -a $app.Id --action select
+    & $WinApp ui wait-for operation-status -a $app.Id --value '读取用量完成' --contains --timeout 30000
+    & $WinApp ui invoke 图表分组 -a $app.Id --action expand
+    & $WinApp ui invoke '按 Provider 拆分' -a $app.Id --action select
+    & $WinApp ui wait-for 每日用量 -a $app.Id --timeout 10000
+    $null = & $cli --no-tui --json-errors usage --daily --json --days 1 | ConvertFrom-Json
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
+    $completed.Add($stage)
+
+    @{ passed = $completed.ToArray(); phase = 'core operations' } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }
 catch {
     @{ stage = $stage; passed = $completed.ToArray(); error = $_.Exception.Message } |
