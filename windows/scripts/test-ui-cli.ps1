@@ -298,6 +298,33 @@ try {
     & $WinApp ui wait-for CloseButton -w $settingsWindow --timeout 5000
     & $WinApp ui invoke CloseButton -w $settingsWindow
     if (-not (Test-Path $env:CODEX_GATEWAY_CONFIG)) { throw 'Backup cancellation removed configuration' }
+    $stage = 'native backup export, import and restoration'
+    $backup = Join-Path $fixture 'config.b64'
+    $beforeBackup = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    & $WinApp ui invoke 导出配置 -w $settingsWindow
+    & $WinApp ui invoke PrimaryButton -w $settingsWindow
+    & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
+    & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\export-picker-tree.json"
+    $field = & $WinApp ui search 'File name:' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector $backup -a $app.Id
+    $button = & $WinApp ui search Save -a $app.Id --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $button.matches[0].selector -a $app.Id
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '导出配置完成' --contains --timeout 90000
+    if (-not (Test-Path $backup) -or (Get-Item $backup).Length -eq 0) { throw 'Native save picker did not export the fixture' }
+    & $cli --no-tui --json-errors provider update ui-local --display-name 'Changed after backup'
+    & $WinApp ui invoke 导入配置 -w $settingsWindow
+    & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
+    $field = & $WinApp ui search 'File name:' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector $backup -a $app.Id
+    $button = & $WinApp ui search Open -a $app.Id --type Button --json | ConvertFrom-Json
+    & $WinApp ui invoke $button.matches[0].selector -a $app.Id
+    & $WinApp ui wait-for PrimaryButton -w $settingsWindow --timeout 15000
+    & $WinApp ui invoke PrimaryButton -w $settingsWindow
+    & $WinApp ui wait-for operation-status -w $settingsWindow --value '导入配置完成' --contains --timeout 90000
+    $afterBackup = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if ($afterBackup.providers[0].display_name -ne $beforeBackup.providers[0].display_name) { throw 'Native import did not restore the exported provider' }
+    Remove-Item $backup
+    $completed.Add($stage)
     & $WinApp ui inspect -w $settingsWindow --depth 10 --json | Set-Content "$evidence\settings-tree.json"
     & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input --allow-system-keys
     $completed.Add($stage)
@@ -348,7 +375,7 @@ try {
     & $WinApp ui invoke PrimaryButton -w $trayWindow
     if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
     $completed.Add($stage)
-    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'native backup file picker round trip', 'ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
+    @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update', 'ECH network checks') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }
 catch {
     @{ stage = $stage; passed = $completed.ToArray(); error = $_.Exception.Message } |
