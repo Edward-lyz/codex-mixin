@@ -73,7 +73,13 @@ where
             inner: tempfile::tempfile()?,
             digest: signed.then(|| ring::digest::Context::new(&ring::digest::SHA256)),
         };
-        serde_json::to_writer(&mut writer, &value)?;
+        {
+            // Serde emits small fragments; coalesce them before writing to disk
+            // while keeping the digest over the exact serialized bytes.
+            let mut buffered = std::io::BufWriter::new(&mut writer);
+            serde_json::to_writer(&mut buffered, &value)?;
+            buffered.flush()?;
+        }
         writer.flush()?;
         let length = writer.inner.stream_position()?;
         writer.inner.rewind()?;

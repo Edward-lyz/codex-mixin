@@ -59,30 +59,30 @@ func diagnosticErrorDescription(_ error: Error) -> String {
     String(diagnosticSafeText(String(describing: error)).prefix(6_000))
 }
 
+private let diagnosticRedactionPatterns = [
+    (
+        #"(?i)(--(?:api-key|gateway-key|key|token|access-token|refresh-token|quota-auth-cookie|secret|password))(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
+        "$1=<redacted>"
+    ),
+    (
+        #"(?i)("(?:api[_-]?key|gateway[_-]?key|access[_-]?token|refresh[_-]?token|quota[_-]?auth[_-]?cookie|token|secret|password|authorization)"\s*:\s*)(?:"[^"]*"|[^,}\s]+)"#,
+        "$1\"<redacted>\""
+    ),
+    (
+        #"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+"#,
+        "$1<redacted>"
+    ),
+    (
+        #"(?im)\b(api[_-]?key|gateway[_-]?key|access[_-]?token|refresh[_-]?token|quota[_-]?auth[_-]?cookie|token|secret|password|authorization)\s*([=:])\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
+        "$1$2<redacted>"
+    ),
+].map { pattern in
+    (try? NSRegularExpression(pattern: pattern.0, options: []), pattern.1)
+}
+
 func diagnosticSafeText(_ text: String) -> String {
-    let patterns = [
-        (
-            #"(?i)(--(?:api-key|gateway-key|key|token|access-token|refresh-token|quota-auth-cookie|secret|password))(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
-            "$1=<redacted>"
-        ),
-        (
-            #"(?i)("(?:api[_-]?key|gateway[_-]?key|access[_-]?token|refresh[_-]?token|quota[_-]?auth[_-]?cookie|token|secret|password|authorization)"\s*:\s*)(?:"[^"]*"|[^,}\s]+)"#,
-            "$1\"<redacted>\""
-        ),
-        (
-            #"(?i)(authorization\s*:\s*bearer\s+)[^\s,;]+"#,
-            "$1<redacted>"
-        ),
-        (
-            #"(?im)\b(api[_-]?key|gateway[_-]?key|access[_-]?token|refresh[_-]?token|quota[_-]?auth[_-]?cookie|token|secret|password|authorization)\s*([=:])\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)"#,
-            "$1$2<redacted>"
-        ),
-    ]
-    return patterns.reduce(text) { result, pattern in
-        guard let expression = try? NSRegularExpression(
-            pattern: pattern.0,
-            options: []
-        ) else {
+    return diagnosticRedactionPatterns.reduce(text) { result, pattern in
+        guard let expression = pattern.0 else {
             return result
         }
         let range = NSRange(result.startIndex..<result.endIndex, in: result)
@@ -103,6 +103,18 @@ func appendAppDiagnosticLog(_ message: String, directory: URL) {
                 at: directory,
                 withIntermediateDirectories: true
             )
+            if FileManager.default.fileExists(atPath: logURL.path) {
+                let attributes = try FileManager.default.attributesOfItem(atPath: logURL.path)
+                if let size = attributes[.size] as? NSNumber,
+                   size.uint64Value >= 8 * 1024 * 1024 {
+                    // Keep one archive; never let routine polling grow the log forever.
+                    let archiveURL = directory.appendingPathComponent("app.log.1")
+                    if FileManager.default.fileExists(atPath: archiveURL.path) {
+                        try FileManager.default.removeItem(at: archiveURL)
+                    }
+                    try FileManager.default.moveItem(at: logURL, to: archiveURL)
+                }
+            }
             let descriptor = open(
                 logURL.path,
                 O_WRONLY | O_CREAT | O_APPEND,
