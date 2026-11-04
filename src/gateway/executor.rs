@@ -277,7 +277,10 @@ impl GatewayExecutor {
         plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
-        self.stream_and_return_body(plan, headers)
+        if let Some(run) = ContextRun::prepare(self, &plan.body, headers).await? {
+            return run.stream(self.clone(), plan, headers.clone()).await;
+        }
+        self.send_round(plan, headers)
             .await
             .map(|(stream, _)| stream)
     }
@@ -303,9 +306,7 @@ impl GatewayExecutor {
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         plan.body = prepare_body(plan.body, &plan.target).await?;
-        let body = plan.body.clone();
-        let (stream, _) = self.dispatch_round(plan, headers).await?;
-        Ok((stream, body))
+        self.dispatch_round(plan, headers).await
     }
 
     async fn dispatch_round(
@@ -490,7 +491,8 @@ impl GatewayExecutor {
         if status != reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             return Err(error);
         }
-        let (fallback_body, stats) = normalize_provider_images_for_fallback(body).await?;
+        // Callers retain the prepared history, not the retry-only image encoding.
+        let (fallback_body, stats) = normalize_provider_images_for_fallback(body.clone()).await?;
         if stats.normalized_images == 0 || stats.saved_bytes == 0 {
             return Err(error);
         }
@@ -515,7 +517,7 @@ impl GatewayExecutor {
             },
         )
         .await
-        .map(|stream| (stream, fallback_body))
+        .map(|stream| (stream, body))
     }
 }
 
