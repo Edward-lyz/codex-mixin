@@ -9,7 +9,7 @@ mod plan;
 mod provider;
 mod responses;
 mod router;
-mod turn_usage;
+pub(crate) mod turn_usage;
 
 pub(crate) use cache_shape::{
     CacheShape, CacheShapeTracker, PrefixObservation, UpstreamCacheObserver,

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, ensure};
 use regex::Regex;
 
-use codex_mixin::config::load_stored_config;
+use codex_mixin::config::load_stored_config_read_only;
 use codex_mixin::provider::{BaiduAuthBridge, ProviderDefinition, catalog_model_slug};
 
 use super::{ReportContext, hook_body_string, report_ducx_event};
@@ -218,7 +218,7 @@ pub(super) fn reporting_provider_by_id(
 }
 
 pub(super) fn reporting_providers() -> anyhow::Result<Vec<ProviderDefinition>> {
-    let Some(config) = load_stored_config()? else {
+    let Some(config) = load_stored_config_read_only()? else {
         return Ok(Vec::new());
     };
     Ok(config

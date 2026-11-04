@@ -621,6 +621,7 @@ dependencies = [
  "walkdir",
  "webpki-roots 1.0.8",
  "windows-registry",
+ "zstd",
 ]
 
 [[package]]

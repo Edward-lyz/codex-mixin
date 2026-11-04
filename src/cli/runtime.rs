@@ -53,6 +53,31 @@ pub(super) fn state_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// State directory the reporting hook is allowed to write.
+///
+/// Sandboxed clients (DSH `workspace-write`) deny file writes outside the
+/// session workspace and the temp areas, so a hook that cannot write the
+/// normal state directory falls back to the user temp directory instead of
+/// failing before it can report anything.
+pub(super) fn report_state_dir() -> PathBuf {
+    let primary = state_dir();
+    if directory_writable(&primary) {
+        return primary;
+    }
+    let fallback = std::env::temp_dir().join("codex-mixin-report");
+    if std::fs::create_dir_all(&fallback).is_ok() {
+        let _ = codex_mixin::platform::restrict_owner_only_dir(&fallback);
+    }
+    fallback
+}
+
+fn directory_writable(dir: &std::path::Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    tempfile::NamedTempFile::new_in(dir).is_ok()
+}
+
 pub(super) fn daemon_metadata_path() -> PathBuf {
     std::env::var("CODEX_GATEWAY_DAEMON_FILE")
         .ok()
@@ -82,7 +107,7 @@ pub(super) fn default_report_hook_log_path() -> PathBuf {
         .ok()
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| state_dir().join("report-hook.log"))
+        .unwrap_or_else(|| report_state_dir().join("report-hook.log"))
 }
 
 pub(super) fn load_daemon_metadata() -> anyhow::Result<Option<DaemonMetadata>> {

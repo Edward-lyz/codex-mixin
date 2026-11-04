@@ -84,6 +84,16 @@ pub fn stored_config_path() -> PathBuf {
 pub fn load_stored_config() -> anyhow::Result<Option<StoredGatewayConfig>> {
     load_stored_config_from_path(&stored_config_path())
 }
+
+/// Load the stored configuration without taking the writer lock.
+///
+/// Reporting hooks run inside client sandboxes (DSH `workspace-write`, for
+/// example) that deny creating the lock file and re-restricting the state
+/// directory. Reads stay safe because writers replace the configuration
+/// atomically.
+pub fn load_stored_config_read_only() -> anyhow::Result<Option<StoredGatewayConfig>> {
+    load_stored_config_from_path_unlocked(&stored_config_path(), false)
+}
 pub fn load_stored_config_from_path(
     path: &std::path::Path,
 ) -> anyhow::Result<Option<StoredGatewayConfig>> {
