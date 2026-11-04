@@ -5,7 +5,7 @@
 //! answered with the model that was requested. It keeps counters and model
 //! names only, never prompt or completion text.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
@@ -15,8 +15,7 @@ use anyhow::Context;
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 
-/// Rows kept in memory and on disk. At a few hundred bytes per row this bounds
-/// the ledger to about 2 MB; older turns stay in the daily aggregates.
+/// Rows kept on disk. Older turns stay in the daily aggregates.
 pub(crate) const MAX_TRACKED_TURNS: usize = 5_000;
 
 const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -207,32 +206,19 @@ pub(crate) struct TurnQuery {
     pub(crate) limit: usize,
 }
 
+/// Turn rows live only in usage.sqlite3; queries read them on demand so the
+/// gateway does not keep thousands of rows resident between dashboard refreshes.
 #[derive(Debug, Default)]
 pub(crate) struct TurnLedger {
-    turns: Mutex<VecDeque<TurnUsage>>,
     persist_path: Option<PathBuf>,
 }
 
 impl TurnLedger {
     pub(crate) fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
-        let turns = match path.as_deref() {
-            Some(path) if path.exists() => load_turns(path)?,
-            _ => VecDeque::new(),
-        };
-        Ok(Self {
-            turns: Mutex::new(turns),
-            persist_path: path,
-        })
+        Ok(Self { persist_path: path })
     }
 
     pub(crate) fn record(&self, turn: TurnUsage) {
-        {
-            let mut turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
-            if turns.len() == MAX_TRACKED_TURNS {
-                turns.pop_front();
-            }
-            turns.push_back(turn.clone());
-        }
         let Some(path) = self.persist_path.clone() else {
             return;
         };
@@ -249,61 +235,84 @@ impl TurnLedger {
         query: &TurnQuery,
         providers: Option<&HashSet<String>>,
     ) -> Vec<TurnUsage> {
-        let turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
-        turns
-            .iter()
-            .rev()
-            .filter(|turn| query.since_ms.is_none_or(|since| turn.at_ms >= since))
-            .filter(|turn| providers.is_none_or(|providers| providers.contains(&turn.provider_id)))
-            .filter(|turn| {
-                query
-                    .provider_id
-                    .as_deref()
-                    .is_none_or(|provider| provider == turn.provider_id)
-            })
-            .take(query.limit)
-            .cloned()
-            .collect()
+        let Some(path) = self.persist_path.as_deref().filter(|path| path.exists()) else {
+            return Vec::new();
+        };
+        match query_turns(path, query, providers) {
+            Ok(turns) => turns,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to read turn usage");
+                Vec::new()
+            }
+        }
     }
 }
 
-fn load_turns(path: &Path) -> anyhow::Result<VecDeque<TurnUsage>> {
-    let connection = Connection::open(path)?;
-    connection.execute_batch(TURNS_SCHEMA)?;
+fn query_turns(
+    path: &Path,
+    query: &TurnQuery,
+    providers: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<TurnUsage>> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
+    connection.execute_batch("PRAGMA cache_size = -256;")?;
+    let table_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'token_usage_turns')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(Vec::new());
+    }
+    // Inserts run on the blocking pool and may land out of order, so order by
+    // the reply timestamp rather than the row id.
     let mut statement = connection.prepare(
         "SELECT at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
                 protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
                 output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
-         FROM (SELECT * FROM token_usage_turns ORDER BY id DESC LIMIT ?1)
-         ORDER BY at_ms, id",
+         FROM token_usage_turns
+         WHERE (?1 IS NULL OR at_ms >= ?1) AND (?2 IS NULL OR provider_id = ?2)
+         ORDER BY at_ms DESC, id DESC",
     )?;
-    // Inserts run on the blocking pool and may land out of order, so restore
-    // reply order from the timestamp rather than the row id.
-    let rows = statement.query_map([MAX_TRACKED_TURNS as i64], |row| {
-        Ok(TurnUsage {
-            at_ms: row.get(0)?,
-            session: row.get(1)?,
-            session_display: None,
-            provider_id: row.get(2)?,
-            catalog_slug: row.get(3)?,
-            upstream_model_id: row.get(4)?,
-            returned_model: row.get(5)?,
-            model_matches: None,
-            protocol: row.get(6)?,
-            prefix_state: row.get(7)?,
-            input_tokens: row.get(8)?,
-            cache_read_tokens: row.get(9)?,
-            cache_creation_tokens: row.get(10)?,
-            output_tokens: row.get(11)?,
-            reasoning_tokens: row.get(12)?,
-            reasoning_chars: row.get(13)?,
-            cache_hit_percent: None,
-            ttft_ms: row.get(14)?,
-            output_tps: row.get(15)?,
+    let since = query
+        .since_ms
+        .map(|since| since.min(i64::MAX as u64) as i64);
+    let mut rows = statement.query(params![since, query.provider_id])?;
+    let mut turns = Vec::new();
+    while turns.len() < query.limit {
+        let Some(row) = rows.next()? else {
+            break;
+        };
+        let provider_id: String = row.get(2)?;
+        if providers.is_some_and(|providers| !providers.contains(&provider_id)) {
+            continue;
         }
-        .finalize())
-    })?;
-    Ok(rows.collect::<Result<VecDeque<_>, _>>()?)
+        turns.push(
+            TurnUsage {
+                at_ms: row.get(0)?,
+                session: row.get(1)?,
+                session_display: None,
+                provider_id,
+                catalog_slug: row.get(3)?,
+                upstream_model_id: row.get(4)?,
+                returned_model: row.get(5)?,
+                model_matches: None,
+                protocol: row.get(6)?,
+                prefix_state: row.get(7)?,
+                input_tokens: row.get(8)?,
+                cache_read_tokens: row.get(9)?,
+                cache_creation_tokens: row.get(10)?,
+                output_tokens: row.get(11)?,
+                reasoning_tokens: row.get(12)?,
+                reasoning_chars: row.get(13)?,
+                cache_hit_percent: None,
+                ttft_ms: row.get(14)?,
+                output_tps: row.get(15)?,
+            }
+            .finalize(),
+        );
+    }
+    Ok(turns)
 }
 
 fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
