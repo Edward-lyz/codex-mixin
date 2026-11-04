@@ -172,6 +172,7 @@ chmod +x "$RESOURCES_DIR/codex-mixin"
 cp -R "$SPARKLE_DIR/Sparkle.framework" "$FRAMEWORKS_DIR/Sparkle.framework"
 
 xcrun swiftc \
+  -O -whole-module-optimization \
   -target "$SWIFT_ARCH-apple-macosx$MACOS_DEPLOYMENT_TARGET" \
   -F "$SPARKLE_DIR" \
   -Xlinker -rpath \
