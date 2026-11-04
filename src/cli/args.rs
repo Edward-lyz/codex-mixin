@@ -236,6 +236,11 @@ pub(super) enum Command {
     Serve {
         #[arg(long)]
         bind: Option<SocketAddr>,
+        #[arg(
+            long,
+            help = "Run only the foreground HTTP server; skip client configuration, keys, catalogs, skills, and service management"
+        )]
+        no_client_sync: bool,
     },
     /// Open the web control panel (random port in 8000-9000 on all interfaces).
     Panel {

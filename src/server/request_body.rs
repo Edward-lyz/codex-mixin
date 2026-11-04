@@ -53,7 +53,7 @@ async fn parse_json_with_limit(body: Body, max_bytes: usize) -> Result<Value, Ga
     file.flush().await?;
     file.seek(std::io::SeekFrom::Start(0)).await?;
     let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || serde_json::from_reader(file))
+    tokio::task::spawn_blocking(move || serde_json::from_reader(std::io::BufReader::new(file)))
         .await
         .map_err(|error| GatewayError::Other(error.into()))?
         .map_err(GatewayError::Json)

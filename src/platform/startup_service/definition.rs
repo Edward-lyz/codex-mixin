@@ -154,7 +154,7 @@ pub(super) fn render_launchd_plist(
 <plist version=\"1.0\">\n<dict>\n\
   <key>Label</key>\n  <string>{label}</string>\n\
   <key>ProgramArguments</key>\n  <array>\n{arguments}  </array>\n\
-  <key>EnvironmentVariables</key>\n  <dict>\n{environment}  </dict>\n\
+  <key>EnvironmentVariables</key>\n  <dict>\n{environment}    <key>MallocSpaceEfficient</key>\n    <string>1</string>\n  </dict>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
   <key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>\n\
   <key>ThrottleInterval</key>\n  <integer>{LAUNCHD_THROTTLE_SECONDS}</integer>\n\
@@ -190,6 +190,7 @@ pub(super) fn launchd_program(
         .all(|(name, value)| plist["EnvironmentVariables"][name].as_str() == Some(*value));
     let matches = arguments_match
         && environment_matches
+        && plist["EnvironmentVariables"]["MallocSpaceEfficient"].as_str() == Some("1")
         && plist["Label"].as_str() == Some(launchd_label()?.as_str())
         && plist["RunAtLoad"].as_bool() == Some(true)
         && plist["KeepAlive"]["SuccessfulExit"].as_bool() == Some(false)
