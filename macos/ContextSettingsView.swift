@@ -3,7 +3,8 @@ import Charts
 
 @MainActor
 final class ContextSettingsModel: ObservableObject {
-    typealias Loader = () async throws -> (ContextSettings, ContextStats)
+    typealias Loader = () async throws -> ContextSettings
+    typealias StatsLoader = () async throws -> ContextStats
     typealias Saver = (_ arguments: [String]) async throws -> ContextSettings
 
     @Published private(set) var settings: ContextSettings?
@@ -16,14 +17,16 @@ final class ContextSettingsModel: ObservableObject {
     @Published var draft = ContextSettingsDraft()
 
     private let loader: Loader
+    private let statsLoader: StatsLoader
     private let saver: Saver
     let archiveLoader: (String) async throws -> ContextArchive
     @Published private(set) var archiveRefresh = 0
     private var loadGeneration = 0
 
-    init(loader: @escaping Loader, saver: @escaping Saver,
+    init(loader: @escaping Loader, statsLoader: @escaping StatsLoader, saver: @escaping Saver,
          archiveLoader: @escaping (String) async throws -> ContextArchive) {
         self.loader = loader
+        self.statsLoader = statsLoader
         self.saver = saver
         self.archiveLoader = archiveLoader
     }
@@ -125,12 +128,14 @@ final class ContextSettingsModel: ObservableObject {
         let generation = loadGeneration
         isLoading = true
         do {
-            let (settings, stats) = try await loader()
+            let settings = try await loader()
             guard generation == loadGeneration else { return }
             self.settings = settings
+            draft = ContextSettingsDraft(settings: settings)
+            let stats = try await statsLoader()
+            guard generation == loadGeneration else { return }
             self.stats = stats
             archiveRefresh += 1
-            draft = ContextSettingsDraft(settings: settings)
             loadError = nil
             saveFailure = nil
             statusMessage = nil

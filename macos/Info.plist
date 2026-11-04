@@ -31,6 +31,11 @@
   <string>13.1</string>
   <key>LSUIElement</key>
   <true/>
+  <key>LSEnvironment</key>
+  <dict>
+    <key>MallocSpaceEfficient</key>
+    <string>1</string>
+  </dict>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>SUFeedURL</key>

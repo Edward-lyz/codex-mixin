@@ -302,3 +302,5 @@
 "context.inspect.kind.other" = "其他";
 "context.inspect.choose" = "选择一个会话";
 "context.inspect.hint" = "查看上下文增长，以及消息和工具如何合并成精简摘要。";
+"console.usage.previousPage" = "上一页";
+"console.usage.nextPage" = "下一页";

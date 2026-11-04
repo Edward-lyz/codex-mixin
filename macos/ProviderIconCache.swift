@@ -119,6 +119,7 @@ func refreshProviderLogoIfNeeded(providerID: String, websiteURL: String) async t
     configuration.timeoutIntervalForRequest = 5
     configuration.timeoutIntervalForResource = 8
     let session = URLSession(configuration: configuration)
+    defer { session.finishTasksAndInvalidate() }
     var candidates: [URL] = []
     if let (pageData, response) = try? await session.data(from: siteURL),
        let response = response as? HTTPURLResponse,

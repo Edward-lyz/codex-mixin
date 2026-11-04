@@ -81,6 +81,7 @@ final class ConsoleUsageModel: ObservableObject {
 
 struct ConsoleUsageView: View {
     @ObservedObject var model: ConsoleUsageModel
+    @State private var pageIndex = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -91,10 +92,24 @@ struct ConsoleUsageView: View {
             summary
             charts
             turnsTable
+            HStack {
+                Button(AppLocalization.string("console.usage.previousPage")) { pageIndex -= 1 }
+                    .disabled(pageIndex == 0)
+                Text("\(pageIndex + 1) / \(max(1, (model.filteredTurns.count + 49) / 50))")
+                    .monospacedDigit()
+                Button(AppLocalization.string("console.usage.nextPage")) { pageIndex += 1 }
+                    .disabled((pageIndex + 1) * 50 >= model.filteredTurns.count)
+            }
         }
         .padding(20)
         .frame(minWidth: 860, minHeight: 560, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: model.range) { _ in pageIndex = 0 }
+        .onChange(of: model.providerFilter) { _ in pageIndex = 0 }
+        .onChange(of: model.sessionFilter) { _ in pageIndex = 0 }
+        .onChange(of: model.filteredTurns.count) { count in
+            pageIndex = min(pageIndex, max(0, (count - 1) / 50))
+        }
     }
 
     private var toolbar: some View {
@@ -203,7 +218,7 @@ struct ConsoleUsageView: View {
     }
 
     private var turnsTable: some View {
-        Table(model.filteredTurns) {
+        Table(Array(model.filteredTurns.dropFirst(pageIndex * 50).prefix(50))) {
             TableColumn(AppLocalization.string("console.usage.time")) { turn in
                 Text(turn.date.formatted(date: .numeric, time: .standard)).monospacedDigit()
             }

@@ -302,3 +302,5 @@
 "context.inspect.kind.other" = "Other";
 "context.inspect.choose" = "Select a session";
 "context.inspect.hint" = "Explore context growth and how messages and tools become compact summaries.";
+"console.usage.previousPage" = "Previous page";
+"console.usage.nextPage" = "Next page";

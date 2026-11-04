@@ -1079,11 +1079,9 @@ private struct ProviderLogo: View {
     }
 }
 
-private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? {
-    if let cached = cachedProviderLogoImage(providerID: provider.id, websiteURL: provider.websiteURL) {
-        return cached
-    }
+private let settingsBundledLogoCache = NSCache<NSString, NSImage>()
 
+private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? {
     let normalized = (provider.presetID ?? provider.id).lowercased()
     let assetName: String
     if normalized.contains("baidu") {
@@ -1101,17 +1099,26 @@ private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? 
     } else {
         assetName = "custom"
     }
+    if assetName == "custom",
+       let cached = cachedProviderLogoImage(providerID: provider.id, websiteURL: provider.websiteURL) {
+        return cached
+    }
 
+    let cacheKey = "\(assetName):\(provider.kind == .official)" as NSString
+    if let image = settingsBundledLogoCache.object(forKey: cacheKey) { return image }
+    settingsBundledLogoCache.countLimit = 16
     let directories = [
         Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos", isDirectory: true),
         Bundle.main.bundleURL.appendingPathComponent("ProviderLogos", isDirectory: true),
     ]
     for directory in directories.compactMap({ $0 }) {
         if let image = NSImage(contentsOf: directory.appendingPathComponent("\(assetName).svg")) {
+            if provider.kind == .official { image.isTemplate = true }
+            settingsBundledLogoCache.setObject(image, forKey: cacheKey)
             return image
         }
     }
-    return nil
+    return cachedProviderLogoImage(providerID: provider.id, websiteURL: provider.websiteURL)
 }
 
 private func providerStatusColor(_ provider: ProviderView) -> Color {
