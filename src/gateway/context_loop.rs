@@ -115,7 +115,7 @@ impl ContextRun {
     pub(crate) async fn stream(
         self,
         executor: GatewayExecutor,
-        plan: RequestPlan,
+        mut plan: RequestPlan,
         headers: HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
         let engine = Arc::clone(&self.engine);
@@ -139,7 +139,12 @@ impl ContextRun {
             window_tokens = view.window_tokens,
             "prepared context view"
         );
-        let template = plan.body.clone();
+        let mut template = std::mem::take(&mut plan.body);
+        // Every round rebuilds input from the view; templates must not retain
+        // another full history for the lifetime of the upstream stream.
+        if let Some(fields) = template.as_object_mut() {
+            fields.remove("input");
+        }
         // The model can only time its own compression when the request says how
         // full the view is, so every round carries the current pressure.
         let mut note = pressure_note(&self.engine, &self.session, &view, self.guidance_only)?;
