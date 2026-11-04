@@ -25,6 +25,20 @@ pub fn install_cli_executable(source: &Path, target: &Path) -> anyhow::Result<bo
     Ok(true)
 }
 
+/// DSH CLI shipped inside the macOS app bundle, when present.
+pub fn dsh_cli_executable() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let bundled = PathBuf::from(
+            "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
+        );
+        if bundled.is_file() {
+            return Some(bundled);
+        }
+    }
+    None
+}
+
 pub fn install_cli_command() -> anyhow::Result<Option<PathBuf>> {
     let home = super::home_dir_required()?;
     let bin = if cfg!(windows) {

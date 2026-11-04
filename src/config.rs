@@ -22,8 +22,9 @@ mod storage;
 pub use storage::{
     ensure_compaction_secret, ensure_gateway_client_key, export_stored_config,
     gateway_client_key_exists, import_stored_config, load_stored_config,
-    load_stored_config_from_path, mutate_stored_config, mutate_stored_config_at_path,
-    revoke_gateway_client_key, save_stored_config, save_stored_config_to_path, stored_config_path,
+    load_stored_config_from_path, load_stored_config_read_only, mutate_stored_config,
+    mutate_stored_config_at_path, revoke_gateway_client_key, save_stored_config,
+    save_stored_config_to_path, stored_config_path,
 };
 
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;

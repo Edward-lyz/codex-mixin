@@ -13,18 +13,20 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::cli::runtime::state_dir;
+use crate::cli::runtime::report_state_dir;
 use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::ProviderDefinition;
 
+mod dsh_bridge;
 mod installation;
+mod model;
 mod queue;
 mod transport;
 
+pub(super) use dsh_bridge::{sync as sync_dsh_bridge, unmount as unmount_dsh_bridge};
 pub(super) use installation::{reporting_enabled, sync_installation_at};
 use transport::{
-    post_json, post_transcript, report_with_provider, reporting_provider, reporting_provider_by_id,
-    reporting_providers,
+    post_json, post_transcript, report_with_provider, reporting_provider_by_id, reporting_providers,
 };
 
 /// (Codex hooks.json event name, our `--event` argument value).
@@ -107,10 +109,22 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
         hook_bytes = hook_body.len(),
         "DUCX report hook received"
     );
-    let Some((model, provider)) = reporting_model_and_provider(event, &hook_body)? else {
+    let Ok(mut payload @ Value::Object(_)) = serde_json::from_slice::<Value>(&hook_body) else {
+        tracing::info!(
+            event,
+            reason = "invalid_hook_body",
+            "DUCX reporting skipped"
+        );
         return Ok(());
     };
+    let Some((model, provider)) = model::resolve(event, &mut payload)? else {
+        return Ok(());
+    };
+    hook_body = serde_json::to_vec(&payload).context("serialize DUCX reporting hook body")?;
     let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+    if event == "model-switch" {
+        return Ok(());
+    }
     if event == "session-start" {
         report_session_start(ReportContext {
             event,
@@ -140,7 +154,7 @@ async fn persist_and_drain_event(
     context: ReportContext<'_>,
     hook_body: &[u8],
 ) -> anyhow::Result<()> {
-    let state_directory = state_dir();
+    let state_directory = report_state_dir();
     let queued_event = context.event.to_owned();
     let queued_provider_id = context.provider_id.to_owned();
     let event_instance = Uuid::new_v4().simple().to_string();
@@ -303,7 +317,7 @@ async fn drain_queue() -> anyhow::Result<usize> {
 }
 
 async fn drain_queue_report() -> anyhow::Result<DrainReport> {
-    let state_directory = state_dir();
+    let state_directory = report_state_dir();
     let lock_directory = state_directory.clone();
     let _lock = tokio::task::spawn_blocking(move || queue::lock_at(&lock_directory))
         .await
@@ -421,7 +435,7 @@ fn enqueue_local_sessions(estimate_only: bool) -> anyhow::Result<LocalSessionSca
         !providers.is_empty(),
         "no enabled Baidu reporting provider is configured"
     );
-    let state_directory = state_dir();
+    let state_directory = report_state_dir();
     let mut scan = LocalSessionScan::default();
     for entry in walkdir::WalkDir::new(&sessions_directory) {
         let entry = entry?;
@@ -562,29 +576,6 @@ fn response_message_text(payload: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn reporting_model_and_provider(
-    event: &str,
-    hook_body: &[u8],
-) -> anyhow::Result<Option<(String, ProviderDefinition)>> {
-    let Some(model) = hook_body_model(hook_body) else {
-        tracing::info!(event, reason = "missing_model", "DUCX reporting skipped");
-        return Ok(None);
-    };
-    let Some(provider) = reporting_provider(&model).with_context(|| {
-        format!("resolve reporting provider for model {model} on {event} event")
-    })?
-    else {
-        tracing::info!(
-            event,
-            model,
-            reason = "no_matching_reporting_provider",
-            "DUCX reporting skipped"
-        );
-        return Ok(None);
-    };
-    Ok(Some((model, provider)))
-}
-
 async fn report_ducx_event(
     context: ReportContext<'_>,
     hook_body: &[u8],
@@ -707,7 +698,7 @@ async fn record_successful_query(context: ReportContext<'_>) -> anyhow::Result<(
 }
 
 fn successful_query_marker_exists(provider_id: &str, session_id: &str) -> anyhow::Result<bool> {
-    successful_query_marker_exists_at(&state_dir(), provider_id, session_id)
+    successful_query_marker_exists_at(&report_state_dir(), provider_id, session_id)
 }
 
 fn successful_query_marker_exists_at(
@@ -732,7 +723,7 @@ fn successful_query_marker_exists_at(
 }
 
 fn record_successful_query_marker(provider_id: &str, session_id: &str) -> anyhow::Result<()> {
-    record_successful_query_marker_at(&state_dir(), provider_id, session_id)
+    record_successful_query_marker_at(&report_state_dir(), provider_id, session_id)
 }
 
 fn record_successful_query_marker_at(
@@ -743,6 +734,20 @@ fn record_successful_query_marker_at(
     let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
     write_atomic_if_changed(&marker, b"")
         .with_context(|| format!("record DUCX query session state {}", marker.display()))?;
+    Ok(())
+}
+
+pub(super) fn validate_session_id(session_id: &str) -> anyhow::Result<()> {
+    ensure!(
+        !session_id.is_empty(),
+        "DUCX report hook is missing session_id"
+    );
+    ensure!(
+        session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "DUCX report hook session_id contains unsupported characters"
+    );
     Ok(())
 }
 
@@ -758,16 +763,7 @@ fn successful_query_marker_path(
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
         "DUCX reporting provider ID contains unsupported characters"
     );
-    ensure!(
-        !session_id.is_empty(),
-        "DUCX report hook is missing session_id"
-    );
-    ensure!(
-        session_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
-        "DUCX report hook session_id contains unsupported characters"
-    );
+    validate_session_id(session_id)?;
     Ok(state_directory
         .join("ducx-report-sessions")
         .join(provider_id)

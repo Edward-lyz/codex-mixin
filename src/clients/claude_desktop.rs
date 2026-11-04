@@ -26,7 +26,9 @@ pub fn route_id(model: &str) -> String {
     route
 }
 
-pub(crate) fn route_model(route: &str) -> anyhow::Result<String> {
+/// Decode a Claude Desktop model route (optionally suffixed with `[1m]`) back
+/// to the catalog slug it was generated from.
+pub fn route_model(route: &str) -> anyhow::Result<String> {
     let route = route.trim();
     let route = if route.to_ascii_lowercase().ends_with("[1m]") {
         route[..route.len() - 4].trim_end()

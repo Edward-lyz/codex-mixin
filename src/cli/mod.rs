@@ -186,15 +186,14 @@ fn remove_client_integration(
             report_hook::sync_installation()
         }
         "dsh" => {
-            let hooks_path = dsh_home
-                .clone()
-                .unwrap_or_else(dsh::default_dsh_home)
-                .join("hooks.json");
-            uninstall_dsh(dsh_home)?;
+            let dsh_home = dsh_home.unwrap_or_else(dsh::default_dsh_home);
+            let hooks_path = dsh_home.join("hooks.json");
+            uninstall_dsh(Some(dsh_home.clone()))?;
             codex_mixin::config::revoke_gateway_client_key(
                 codex_mixin::gateway_access::GatewayClient::Dsh,
             )?;
             report_hook::sync_installation_at(&hooks_path, report_hook::reporting_enabled()?)?;
+            report_hook::unmount_dsh_bridge(&dsh_home)?;
             report_hook::sync_installation()
         }
         "opencode" => {
@@ -668,12 +667,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 report_hook::sync_installation()
             }
             ConnectCommand::Dsh { dsh_home } => {
-                let hooks_path = dsh_home
-                    .clone()
-                    .unwrap_or_else(dsh::default_dsh_home)
-                    .join("hooks.json");
-                install_dsh(dsh_home)?;
-                report_hook::sync_installation_at(&hooks_path, report_hook::reporting_enabled()?)?;
+                let dsh_home = dsh_home.unwrap_or_else(dsh::default_dsh_home);
+                let hooks_path = dsh_home.join("hooks.json");
+                install_dsh(Some(dsh_home.clone()))?;
+                let reporting_enabled = report_hook::reporting_enabled()?;
+                report_hook::sync_installation_at(&hooks_path, reporting_enabled)?;
+                if reporting_enabled {
+                    report_hook::sync_dsh_bridge(&dsh_home)?;
+                }
                 report_hook::sync_installation()
             }
             ConnectCommand::Opencode { config_path } => install_opencode(config_path),

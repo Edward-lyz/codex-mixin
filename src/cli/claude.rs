@@ -274,6 +274,9 @@ pub(in crate::cli) fn sync_claude_hooks(settings_path: Option<PathBuf>) -> anyho
         ("UserPromptSubmit", "user-prompt-submit"),
         ("PreToolUse", "pre-tool-use"),
         ("PostToolUse", "post-tool-use"),
+        // Prompt and stop payloads never carry the model, so follow `/model`
+        // switches to keep the reporting session cache accurate.
+        ("PostModelSwitch", "model-switch"),
         ("Stop", "stop"),
     ] {
         if let Some(groups) = hooks.get_mut(event_name).and_then(Value::as_array_mut) {

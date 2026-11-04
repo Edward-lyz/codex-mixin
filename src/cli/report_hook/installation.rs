@@ -7,11 +7,11 @@ use serde_json::Value;
 
 use super::REPORT_EVENTS;
 
-use codex_mixin::config::load_stored_config;
+use codex_mixin::config::load_stored_config_read_only;
 use codex_mixin::platform::write_atomic_if_changed;
 
 pub fn reporting_enabled() -> anyhow::Result<bool> {
-    Ok(load_stored_config()?
+    Ok(load_stored_config_read_only()?
         .map(|config| {
             config
                 .providers
