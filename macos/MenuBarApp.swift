@@ -62,9 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installApplicationMenu()
         installStatusItem()
         menuItemViewUpdater.onMenuWillOpen = { [weak self] in
+            (self?.serviceStatusItem?.view as? ServiceMenuHostingView)?.isMenuVisible = true
+            self?.providerUsageDashboardView?.isMenuVisible = true
             Task { @MainActor in
                 await self?.refreshMenuStatus()
             }
+        }
+        menuItemViewUpdater.onMenuDidClose = { [weak self] in
+            (self?.serviceStatusItem?.view as? ServiceMenuHostingView)?.isMenuVisible = false
+            self?.providerUsageDashboardView?.isMenuVisible = false
         }
         applyDefaultLaunchAtLogin()
         startGatewayAtLaunch()
