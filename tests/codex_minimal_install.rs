@@ -160,17 +160,30 @@ async fn install_needs_only_config() {
             "{mode}/{recovery}: {}",
             String::from_utf8_lossy(&removed.stderr)
         );
-        assert_eq!(fs::read_to_string(&config).unwrap(), original);
         assert_eq!(
-            fs::read_to_string(home.join("auth.json")).unwrap(),
-            original_auth
+            fs::read_to_string(&config).unwrap(),
+            "model_provider = \"openai\"\n"
         );
-        assert_eq!(fs::read_to_string(&catalog_path).unwrap(), original_catalog);
-        if recovery != "missing-home" {
+        assert!(
+            !catalog_path.exists(),
+            "{mode}/{recovery}: Mixin catalog must be removed"
+        );
+        // Custom mode replaced auth.json with the Mixin placeholder, which
+        // disconnect removes; proxy mode kept the real login in place. The
+        // auth-conflict case deleted auth.json before disconnecting.
+        if matches!(recovery, "missing-home" | "auth-conflict") || mode == "--custom-only" {
+            assert!(!home.join("auth.json").exists());
+        } else {
             assert_eq!(
-                fs::read_to_string(sessions.join("history.jsonl")).unwrap(),
-                history
+                fs::read_to_string(home.join("auth.json")).unwrap(),
+                original_auth
             );
+        }
+        if recovery != "missing-home" {
+            let migrated: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(sessions.join("history.jsonl")).unwrap())
+                    .unwrap();
+            assert_eq!(migrated["payload"]["model_provider"], "openai");
             assert_eq!(
                 fs::read_to_string(home.join("state_5.sqlite")).unwrap(),
                 "leave this database untouched"
