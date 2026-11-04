@@ -7,7 +7,9 @@ use crate::platform::write_atomic_if_changed;
 pub(crate) mod titles;
 
 pub const MANAGED_MARKER: &str = "codex-mixin managed config";
-pub const MANAGED_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
+pub const MANAGED_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to reset to the official OpenAI config.";
+/// Matches the current and older header lines so a re-serialized file keeps one.
+const MANAGED_HEADER_PREFIX: &str = "# codex-mixin managed config.";
 pub const CUSTOM_ONLY_PROVIDER: &str = "codex-mixin-custom";
 const CODING_DETAIL_MODE: &str = "STEPS_COMMANDS";
 /// Older custom-only installs reused the reserved `amazon-bedrock` provider id.
@@ -63,7 +65,7 @@ pub fn serialize(document: &DocumentMut) -> String {
         if in_preamble && !trimmed.is_empty() && !trimmed.starts_with('#') {
             in_preamble = false;
         }
-        if in_preamble && trimmed == MANAGED_HEADER {
+        if in_preamble && trimmed.starts_with(MANAGED_HEADER_PREFIX) {
             continue;
         }
         serialized.push_str(line);

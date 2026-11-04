@@ -27,7 +27,7 @@ pub fn integration_status(
     agent_name(id)?;
     let detail = match id {
         "codex" => {
-            "Disconnect restores the saved Codex configuration and authentication, migrates managed history back, and removes the managed model catalog. Restart Codex afterwards."
+            "Disconnect resets config.toml to the official OpenAI provider (other settings are removed), removes the Mixin key and model catalog, and moves all history to openai. Restart Codex afterwards."
         }
         "claude" => {
             "Disconnect restores Mixin-managed model, authentication and traffic settings, preserving other Claude Code settings. Start a new session afterwards."

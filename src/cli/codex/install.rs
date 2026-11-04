@@ -219,13 +219,7 @@ pub(in crate::cli) fn uninstall_codex(
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let clears_switch_state = config_path.is_none();
-    let config_path = resolve_codex_config_path(config_path)?;
-    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
-    super::restore::uninstall(&config_path, catalog_path, clears_switch_state)?;
-    println!(
-        "Codex pre-install configuration restored; recovery directory: {}",
-        super::restore::directory(&config_path).display()
-    );
+    reset_codex(config_path, catalog_path, clears_switch_state)?;
     println!("reload required: restart Codex app; for Codex CLI, start a new session");
     Ok(())
 }
@@ -234,8 +228,39 @@ pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    reset_codex(config_path, catalog_path, false)
+}
+
+fn reset_codex(
+    config_path: Option<PathBuf>,
+    catalog_path: Option<PathBuf>,
+    clear_switch: bool,
+) -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(config_path)?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
-    super::restore::uninstall(&config_path, catalog_path, false)?;
+    let (warnings, history) = super::restore::uninstall(&config_path, catalog_path, clear_switch)?;
+    println!(
+        "Codex config reset to the official OpenAI provider: {}",
+        config_path.display()
+    );
+    if !config_path.with_file_name("auth.json").exists() {
+        println!("login required: sign in to Codex with your OpenAI account");
+    }
+    println!(
+        "history normalized to openai: {} session files ({} lines), {} database rows",
+        history.jsonl_files_changed, history.jsonl_lines_changed, history.sqlite_rows_changed
+    );
+    if let Some(backup_root) = &history.backup_root {
+        println!("history backup: {}", backup_root.display());
+    }
+    for warning in warnings.iter().chain(&history.failures) {
+        eprintln!("warning: {warning}");
+    }
+    if !history.failures.is_empty() {
+        eprintln!(
+            "warning: {} history items were not normalized; disconnect again to retry",
+            history.failures.len()
+        );
+    }
     Ok(())
 }
