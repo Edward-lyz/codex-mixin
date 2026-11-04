@@ -381,7 +381,9 @@ try {
     & $WinApp ui wait-for $field.matches[0].selector -w $pickerWindow --value $backup --timeout 5000
     & $WinApp ui send-keys tab -w $pickerWindow --via send-input
     $button = & $WinApp ui search Open -w $pickerWindow --type Button --json | ConvertFrom-Json
-    & $WinApp ui invoke $button.matches[0].selector -w $pickerWindow
+    # The Open split button also exposes its dropdown arrow as a Button; invoke the main part.
+    $openButton = @($button.matches | Where-Object { $_.selector -notlike '*dropdown*' })[0]
+    & $WinApp ui invoke $openButton.selector -w $pickerWindow
     & $WinApp ui wait-for PrimaryButton -w $settingsWindow --timeout 15000
     & $WinApp ui invoke PrimaryButton -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '导入配置完成' --contains --timeout 90000
