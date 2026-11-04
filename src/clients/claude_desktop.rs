@@ -14,6 +14,14 @@ const MAX_DESKTOP_MODELS: usize = 200;
 const MAX_ROUTE_BYTES: usize = 8192;
 const ROUTE_PREFIX: &str = "claude-sonnet-mixin-";
 
+/// One model the CLI selected for Claude Desktop's static profile.
+pub struct DesktopModel {
+    pub model: String,
+    pub label: String,
+    pub description: String,
+    pub supports_1m: bool,
+}
+
 // Encode catalog slugs without a mutable mapping table. Desktop accepts role
 // families only; labels carry the real model name, including non-Claude models.
 pub fn route_id(model: &str) -> String {
@@ -170,11 +178,107 @@ pub fn is_managed(root: &Path) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-pub fn install(root: &Path, base_url: &str, key: &str, models: Value) -> anyhow::Result<bool> {
+fn profile_entry(model: &DesktopModel) -> Value {
+    let mut entry = json!({
+        "name": route_id(&model.model),
+        "labelOverride": format!("{} - {}", model.label, model.description),
+        "supports1m": model.supports_1m,
+        // Without prefer1m Desktop renders the model twice: once as-is and
+        // once as an auto-generated "<route>[1m]" variant whose label is
+        // identical, which reads as two duplicate models in the picker.
+        "prefer1m": model.supports_1m,
+    });
+    // Claude Desktop only builds an effort selector for model IDs it knows.
+    // Route IDs carry an opaque hex suffix, so without behavesAs no effort
+    // menu is offered and requests never carry output_config.effort.
+    if let Some(anchor) = effort_anchor(&model.model) {
+        entry["behavesAs"] = json!(anchor);
+    }
+    entry
+}
+
+/// Maps a provider model slug to a Claude model ID whose client-side
+/// capabilities Desktop already knows. Desktop derives the effort selector
+/// (`thinking.effort_options`) from that anchor; the effort a user picks is
+/// sent as `output_config.effort`, which the gateway forwards upstream as
+/// `reasoning.effort`. Only Claude-family models are anchored: pretending an
+/// unrelated model is a Claude one would also apply Claude's prompt profile.
+fn effort_anchor(model: &str) -> Option<&'static str> {
+    let model = model.to_ascii_lowercase();
+    let family = if model.contains("opus") {
+        "opus"
+    } else if model.contains("sonnet") {
+        "sonnet"
+    } else if model.contains("haiku") {
+        "haiku"
+    } else {
+        return None;
+    };
+    let (major, minor) = model_version(&model, family)?;
+    // Anchor to the exact catalog entry so Desktop shows that model's own
+    // recommended effort and thinking modes. Unknown versions stay unanchored:
+    // a family-level fallback would advertise effort levels the upstream model
+    // does not accept.
+    Some(match (family, major, minor) {
+        ("opus", 5, Some(5)) => "claude-opus-5-5",
+        ("opus", 5, None) => "claude-opus-5",
+        ("opus", 4, Some(8)) => "claude-opus-4-8",
+        ("opus", 4, Some(7)) => "claude-opus-4-7",
+        ("opus", 4, Some(6)) => "claude-opus-4-6",
+        ("opus", 4, Some(5)) => "claude-opus-4-5",
+        ("sonnet", 5, Some(5)) => "claude-sonnet-5-5",
+        ("sonnet", 5, None) => "claude-sonnet-5",
+        ("sonnet", 4, Some(6)) => "claude-sonnet-4-6",
+        ("sonnet", 4, Some(5)) => "claude-sonnet-4-5",
+        ("haiku", 5, Some(5)) => "claude-haiku-5-5",
+        ("haiku", 4, Some(5)) => "claude-haiku-4-5",
+        _ => return None,
+    })
+}
+
+/// Extracts the first `major[.minor]` version following the family token.
+/// Components are limited to two digits so a `-YYYYMMDD` date suffix is not
+/// mistaken for a minor version.
+fn model_version(model: &str, family: &str) -> Option<(u8, Option<u8>)> {
+    let after_family = model.split_once(family)?.1.as_bytes();
+    let start = after_family.iter().position(u8::is_ascii_digit)?;
+    let (major, consumed) = version_component(&after_family[start..])?;
+    let rest = &after_family[start + consumed..];
+    let minor = rest
+        .strip_prefix(b".")
+        .or_else(|| rest.strip_prefix(b"-"))
+        .and_then(version_component)
+        .map(|(minor, _)| minor);
+    Some((major, minor))
+}
+
+fn version_component(bytes: &[u8]) -> Option<(u8, usize)> {
+    let digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 || digits > 2 {
+        return None;
+    }
+    let component = std::str::from_utf8(&bytes[..digits]).ok()?.parse().ok()?;
+    Some((component, digits))
+}
+
+pub fn install(
+    root: &Path,
+    base_url: &str,
+    key: &str,
+    models: &[DesktopModel],
+) -> anyhow::Result<bool> {
     apply(root, base_url, key, models, true)
 }
 
-pub fn refresh(root: &Path, base_url: &str, key: &str, models: Value) -> anyhow::Result<bool> {
+pub fn refresh(
+    root: &Path,
+    base_url: &str,
+    key: &str,
+    models: &[DesktopModel],
+) -> anyhow::Result<bool> {
     anyhow::ensure!(is_managed(root)?, "Claude Desktop is not managed");
     apply(root, base_url, key, models, false)
 }
@@ -183,22 +287,17 @@ fn apply(
     root: &Path,
     base_url: &str,
     key: &str,
-    models: Value,
+    models: &[DesktopModel],
     activate: bool,
 ) -> anyhow::Result<bool> {
     anyhow::ensure!(!key.is_empty(), "Claude Desktop client key is empty");
+    anyhow::ensure!(!models.is_empty(), "no selected Claude Desktop models");
     anyhow::ensure!(
-        models.as_array().is_some_and(|models| !models.is_empty()),
-        "no selected Claude Desktop models"
-    );
-    let models_list = models
-        .as_array()
-        .context("Claude Desktop models must be an array")?;
-    anyhow::ensure!(
-        models_list.len() <= MAX_DESKTOP_MODELS,
+        models.len() <= MAX_DESKTOP_MODELS,
         "Claude Desktop supports at most {MAX_DESKTOP_MODELS} selected models"
     );
-    for model in models_list {
+    let models = models.iter().map(profile_entry).collect::<Vec<_>>();
+    for model in &models {
         route_model(
             model
                 .get("name")
