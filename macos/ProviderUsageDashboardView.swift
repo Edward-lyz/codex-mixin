@@ -92,7 +92,7 @@ private func providerLogoAssetName(_ providerID: String) -> String {
     if normalized.contains("opencode") { return "opencode" }
     if normalized.contains("openrouter") { return "openrouter" }
     if normalized.contains("aws") || normalized.contains("bedrock") { return "aws" }
-    if normalized.contains("openai") || normalized.contains("chatgpt") { return "openai" }
+    if normalized == "official" || normalized.contains("openai") || normalized.contains("chatgpt") { return "openai" }
     return "custom"
 }
 
@@ -111,11 +111,16 @@ private func providerBrandColor(_ providerID: String) -> Color {
     return .secondary
 }
 
+private let dashboardBundledLogoCache = NSCache<NSString, NSImage>()
+
 private func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSImage? {
-    if let cached = cachedProviderLogoImage(providerID: providerID, websiteURL: websiteURL) {
+    let assetName = providerLogoAssetName(providerID)
+    if assetName == "custom",
+       let cached = cachedProviderLogoImage(providerID: providerID, websiteURL: websiteURL) {
         return cached
     }
-    let assetName = providerLogoAssetName(providerID)
+    if let image = dashboardBundledLogoCache.object(forKey: assetName as NSString) { return image }
+    dashboardBundledLogoCache.countLimit = 16
     let directories = [
         Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos", isDirectory: true),
         Bundle.main.bundleURL.appendingPathComponent("ProviderLogos", isDirectory: true),
@@ -124,10 +129,11 @@ private func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSI
         let url = directory.appendingPathComponent("\(assetName).svg")
         if let image = NSImage(contentsOf: url) {
             image.isTemplate = true
+            dashboardBundledLogoCache.setObject(image, forKey: assetName as NSString)
             return image
         }
     }
-    return nil
+    return cachedProviderLogoImage(providerID: providerID, websiteURL: websiteURL)
 }
 
 private func providerMonogram(_ providerID: String) -> String {

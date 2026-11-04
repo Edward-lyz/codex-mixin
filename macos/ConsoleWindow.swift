@@ -26,13 +26,15 @@ private let consolePagesItem = NSToolbarItem.Identifier("CodexMixinConsolePages"
 /// switching pages does not discard provider drafts or reload agents, and the
 /// context page reloads the CLI settings and statistics when shown.
 final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
-    private let pages: [ConsolePage: NSViewController]
-    private let onShow: (ConsolePage) -> Void
+    private var pages: [ConsolePage: NSViewController] = [:]
+    private var pageBuilders: [ConsolePage: () -> NSViewController]
+    private let onShow: (ConsolePage) async -> Void
+    private var pageTasks: [ConsolePage: Task<Void, Never>] = [:]
     private let segments = NSSegmentedControl()
     private(set) var currentPage: ConsolePage?
 
-    init(pages: [ConsolePage: NSViewController], onShow: @escaping (ConsolePage) -> Void) {
-        self.pages = pages
+    init(pages: [ConsolePage: () -> NSViewController], onShow: @escaping (ConsolePage) async -> Void) {
+        self.pageBuilders = pages
         self.onShow = onShow
         super.init(nibName: nil, bundle: nil)
     }
@@ -51,9 +53,6 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
         segments.target = self
         segments.action = #selector(segmentChanged)
         segments.setAccessibilityIdentifier("console-pages")
-        for page in ConsolePage.allCases {
-            if let controller = pages[page] { addChild(controller) }
-        }
     }
 
     func installToolbar(in window: NSWindow) {
@@ -68,8 +67,13 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
     }
 
     func show(_ page: ConsolePage) {
-        guard let controller = pages[page] else { return }
         _ = view
+        if pages[page] == nil, let build = pageBuilders.removeValue(forKey: page) {
+            let controller = build()
+            pages[page] = controller
+            addChild(controller)
+        }
+        guard let controller = pages[page] else { return }
         segments.selectedSegment = page.rawValue
         if currentPage != page {
             view.subviews.forEach { $0.removeFromSuperview() }
@@ -86,15 +90,23 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
         }
         // The hidden title still names the window for VoiceOver and Mission Control.
         view.window?.title = "\(AppLocalization.string("console.windowTitle")) · \(page.title)"
-        onShow(page)
+        if pageTasks[page] == nil {
+            pageTasks[page] = Task { @MainActor [weak self, onShow] in
+                await onShow(page)
+                self?.pageTasks.removeValue(forKey: page)
+            }
+        }
     }
 
     func releaseContent() {
+        pageTasks.values.forEach { $0.cancel() }
+        pageTasks.removeAll()
         // SwiftUI/AppKit may retain closed hosting controllers. Clear their
         // roots explicitly so hidden tables and observation graphs can go.
         for controller in pages.values {
             (controller as? NSHostingController<AnyView>)?.rootView = AnyView(EmptyView())
         }
+        pageBuilders.removeAll()
     }
 
     @objc private func segmentChanged() {
