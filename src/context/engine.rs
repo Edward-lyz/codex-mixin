@@ -672,16 +672,16 @@ impl ContextEngine {
             let (view_tokens, tiers) = {
                 let store = self.lock()?;
                 let segments = store.segments(&row.session, row.revision)?;
-                let rendered = render_view(&store, &row.session, &segments)?;
-                let view_tokens = rendered
-                    .iter()
-                    .fold(estimate_text_tokens(GUIDANCE), |sum, item| {
-                        sum.saturating_add(estimate_item_tokens(item))
-                    });
+                let mut view_tokens = estimate_text_tokens(GUIDANCE);
                 // Archive byte totals require reading historical message bodies;
                 // they are not part of this statistics response.
                 let mut tiers = super::types::TierCounts::default();
                 for segment in &segments {
+                    // Statistics only need the total; release each rendered
+                    // item before decoding the next archived message.
+                    for item in render_view(&store, &row.session, std::slice::from_ref(segment))? {
+                        view_tokens = view_tokens.saturating_add(estimate_item_tokens(&item));
+                    }
                     match segment.kind {
                         SegmentKind::Message => tiers.messages += 1,
                         SegmentKind::Block => {
