@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, params};
+use anyhow::Context;
+use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 
 /// Rows kept in memory and on disk. At a few hundred bytes per row this bounds
@@ -23,7 +24,7 @@ const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Serialises writers to `usage.sqlite3` inside this process. Each reply
 /// persists from its own blocking task, and SQLite reports "database is
 /// locked" instead of waiting while a fresh file switches to WAL.
-pub(super) static USAGE_DB_WRITE: Mutex<()> = Mutex::new(());
+pub(crate) static USAGE_DB_WRITE: Mutex<()> = Mutex::new(());
 
 const TURNS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS token_usage_turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,10 +111,68 @@ pub(crate) fn first_day_start_ms(days: u64) -> u64 {
     today.saturating_sub(days.saturating_sub(1)) * DAY_MS
 }
 
-pub(crate) fn session_tag(session_id: &str) -> String {
+/// Stable short tag the ledger stores for a client session.
+///
+/// The gateway writes turns under this tag; external fixtures that seed the
+/// ledger must derive the same value. Production reporting resolves turns
+/// through the ledger query API instead of touching the tag or the schema.
+pub fn session_tag(session_id: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     session_id.hash(&mut hasher);
     format!("{:08x}", hasher.finish() as u32)
+}
+
+/// Latest ledger row for one client session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SessionTurn {
+    pub(crate) provider_id: String,
+    pub(crate) catalog_slug: String,
+}
+
+/// Reads the newest turn recorded for `session_id` from the ledger under
+/// `state_dir`.
+///
+/// The store owns the database name, schema, and session-tag derivation so
+/// callers never open SQLite or depend on the table layout. A missing ledger or
+/// row is `Ok(None)`; an unreadable or malformed ledger is an error the caller
+/// may downgrade to a skipped fallback.
+pub(crate) fn latest_session_turn(
+    state_dir: &Path,
+    session_id: &str,
+) -> anyhow::Result<Option<SessionTurn>> {
+    let path = state_dir.join("usage.sqlite3");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let connection = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open usage ledger {}", path.display()))?;
+    let has_table: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'token_usage_turns')",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| format!("inspect usage ledger {}", path.display()))?;
+    if !has_table {
+        return Ok(None);
+    }
+    let tag = session_tag(session_id);
+    let row = connection.query_row(
+        "SELECT provider_id, catalog_slug FROM token_usage_turns \
+         WHERE session = ?1 ORDER BY at_ms DESC LIMIT 1",
+        [&tag],
+        |row| {
+            Ok(SessionTurn {
+                provider_id: row.get(0)?,
+                catalog_slug: row.get(1)?,
+            })
+        },
+    );
+    match row {
+        Ok(turn) => Ok(Some(turn)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("query usage ledger {}", path.display())),
+    }
 }
 
 /// Providers answer with namespaced or dated snapshots of the requested model

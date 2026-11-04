@@ -165,7 +165,7 @@ fn usage_ledger_resolves_events_without_a_model() {
              VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![
                 1_i64,
-                codex_mixin::usage_session_tag("session-four"),
+                codex_mixin::usage::session_tag("session-four"),
                 "baidu-oneapi",
                 SLUG
             ],
@@ -289,12 +289,12 @@ fn dsh_connect_mounts_and_removes_the_reporting_bridge() {
         row.get("name").and_then(serde_yaml::Value::as_str),
         Some("@deepseek-ai/dsh-hooks-claude-code")
     );
-    assert_eq!(
-        row.get("config")
-            .and_then(|config| config.get("configPath"))
-            .and_then(serde_yaml::Value::as_str),
-        dsh_home.join("hooks.json").to_str()
-    );
+    let config_path = row
+        .get("config")
+        .and_then(|config| config.get("configPath"))
+        .and_then(serde_yaml::Value::as_str)
+        .expect("reporting bridge configPath");
+    assert_eq!(Path::new(config_path), dsh_home.join("hooks.json"));
     assert!(patch.contains("user-entry"), "patch: {patch}");
 
     // Re-running connect must not duplicate the managed row.

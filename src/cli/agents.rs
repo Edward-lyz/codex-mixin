@@ -128,7 +128,7 @@ fn integration_paths(id: &str) -> anyhow::Result<(PathBuf, Option<PathBuf>)> {
         "codex" => super::codex::resolve_codex_config_path(None)?,
         "claude" => super::claude::resolve_claude_settings_path(None)?,
         "claude-desktop" => codex_mixin::platform::claude_desktop_config_root()?,
-        "dsh" => std::path::absolute(super::dsh::default_dsh_home())?,
+        "dsh" => std::path::absolute(codex_mixin::platform::dsh_home())?,
         "opencode" => {
             return Ok((
                 super::opencode::resolve_opencode_config_path(None)?,

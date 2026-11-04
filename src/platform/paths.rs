@@ -23,6 +23,14 @@ pub fn home_dir_required() -> anyhow::Result<PathBuf> {
         })
 }
 
+/// DSH configuration root, honoring `DSH_HOME` the same way DSH does.
+pub fn dsh_home() -> PathBuf {
+    std::env::var_os("DSH_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".dsh"))
+}
+
 /// Environment variables through which programs find the user's home. Set
 /// all of them on a child so tools that read either one agree.
 pub(super) const HOME_VARIABLES: [&str; 2] = ["HOME", "USERPROFILE"];

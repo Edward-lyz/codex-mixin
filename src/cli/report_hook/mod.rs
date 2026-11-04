@@ -13,21 +13,20 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::cli::runtime::report_state_dir;
+use crate::cli::runtime::{report_state_dir, state_dir};
+use codex_mixin::application::reporting::{
+    self as reporting, ReportPaths, reporting_provider_by_id, reporting_providers,
+    validate_session_id,
+};
 use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::ProviderDefinition;
 
-mod dsh_bridge;
 mod installation;
-mod model;
 mod queue;
 mod transport;
 
-pub(super) use dsh_bridge::{sync as sync_dsh_bridge, unmount as unmount_dsh_bridge};
 pub(super) use installation::{reporting_enabled, sync_installation_at};
-use transport::{
-    post_json, post_transcript, report_with_provider, reporting_provider_by_id, reporting_providers,
-};
+use transport::{post_json, post_transcript, report_with_provider};
 
 /// (Codex hooks.json event name, our `--event` argument value).
 const REPORT_EVENTS: [(&str, &str); 3] = [
@@ -117,7 +116,19 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
         );
         return Ok(());
     };
-    let Some((model, provider)) = model::resolve(event, &mut payload)? else {
+    let report_state = report_state_dir();
+    let gateway_state = state_dir();
+    let dsh_home = codex_mixin::platform::dsh_home();
+    let Some((model, provider)) = reporting::resolve_model(
+        event,
+        &mut payload,
+        &ReportPaths {
+            report_state: &report_state,
+            gateway_state: &gateway_state,
+            dsh_home: &dsh_home,
+        },
+    )?
+    else {
         return Ok(());
     };
     hook_body = serde_json::to_vec(&payload).context("serialize DUCX reporting hook body")?;
@@ -504,7 +515,7 @@ fn enqueue_session_file_with_mode(
                 };
                 let Some(provider) = providers
                     .iter()
-                    .find(|provider| transport::provider_owns_model(provider, model))
+                    .find(|provider| reporting::provider_owns_model(provider, model))
                 else {
                     continue;
                 };
@@ -734,20 +745,6 @@ fn record_successful_query_marker_at(
     let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
     write_atomic_if_changed(&marker, b"")
         .with_context(|| format!("record DUCX query session state {}", marker.display()))?;
-    Ok(())
-}
-
-pub(super) fn validate_session_id(session_id: &str) -> anyhow::Result<()> {
-    ensure!(
-        !session_id.is_empty(),
-        "DUCX report hook is missing session_id"
-    );
-    ensure!(
-        session_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
-        "DUCX report hook session_id contains unsupported characters"
-    );
     Ok(())
 }
 

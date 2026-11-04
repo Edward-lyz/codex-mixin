@@ -1,7 +1,10 @@
+use std::fs::File;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use serde_json::Value as JsonValue;
 use serde_yaml::{Mapping, Value};
 
 use crate::platform::{ensure_owner_only_dir, restrict_owner_only_file, write_atomic_if_changed};
@@ -15,6 +18,32 @@ const CREDENTIALS_RECORDS_FIELD: &str = "records";
 const LLM_ENTRY_ID: &str = "llm-pi-ai";
 const PROFILE_PATCH_FILE: &str = "cordis.patch.yml";
 const GLOBAL_TAG_PREFIX: &str = "codex-mixin-global/";
+/// Bridge plugin DSH loads to translate Claude Code hooks into DSH events.
+pub const REPORT_HOOKS_PLUGIN: &str = "@deepseek-ai/dsh-hooks-claude-code";
+/// Peer packages the bridge imports directly. DSH profiles disable pnpm's
+/// automatic peer installation, so `dsh plugin add` alone leaves the bridge
+/// unable to import and every reporting hook stays inert.
+pub const REPORT_HOOKS_PLUGIN_PEERS: [&str; 2] =
+    ["@deepseek-ai/dsh-hook-protocol", "@deepseek-ai/dsh-llm"];
+const REPORT_HOOKS_ROW_ID: &str = "codex-mixin-report-hooks";
+
+/// One DSH profile whose `cordis.patch.yml` can receive the reporting bridge.
+pub struct ReportHookProfile {
+    pub name: String,
+    pub directory: PathBuf,
+    pub patch_path: PathBuf,
+}
+
+/// DSH writes one session log per conversation; the model is recorded near the
+/// start, so a bounded prefix keeps reporting lookups cheap on long sessions.
+const DSH_SESSION_HEAD_BYTES: u64 = 256 * 1024;
+const DSH_MODEL_POINTERS: [&str; 5] = [
+    "/data/header/config/model",
+    "/data/model",
+    "/data/route/model",
+    "/data/source/model",
+    "/data/message/source/model",
+];
 
 /// DSH `.credentials.yaml` layout version. DSH 0.1.5+ requires a versioned
 /// document whose only top-level keys are `version`, `refs`, and `records`;
@@ -310,6 +339,162 @@ impl SettingsDocument {
     }
 }
 
+/// Existing profiles that can receive the reporting bridge, in stable order.
+pub fn report_hook_profiles(dsh_home: &Path) -> anyhow::Result<Vec<ReportHookProfile>> {
+    let profiles = dsh_home.join("profiles");
+    let entries = match std::fs::read_dir(&profiles) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read DSH profiles {}", profiles.display()));
+        }
+    };
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        if name == "node_modules" || name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let patch_path = entry.path().join(PROFILE_PATCH_FILE);
+        if patch_path.is_file() {
+            found.push(ReportHookProfile {
+                name: name.to_string_lossy().into_owned(),
+                directory: entry.path(),
+                patch_path,
+            });
+        }
+    }
+    found.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(found)
+}
+
+/// Whether `package` is resolvable from the profile or the shared profiles
+/// `node_modules` directory.
+pub fn plugin_installed(dsh_home: &Path, profile_dir: &Path, package: &str) -> bool {
+    let shared = dsh_home
+        .join("profiles")
+        .join("node_modules")
+        .join(package)
+        .join("package.json");
+    shared.is_file()
+        || profile_dir
+            .join("node_modules")
+            .join(package)
+            .join("package.json")
+            .is_file()
+}
+
+/// Add the managed reporting bridge row to one profile patch layer.
+pub fn mount_report_hooks(patch_path: &Path, hooks_path: &Path) -> anyhow::Result<bool> {
+    let mut document = SettingsDocument {
+        path: patch_path.to_owned(),
+        contents: read_profile(patch_path)?,
+        profile: true,
+    };
+    let entries = document.contents.as_sequence_mut().with_context(|| {
+        format!(
+            "DSH profile patch must be a YAML sequence: {}",
+            patch_path.display()
+        )
+    })?;
+    let (mut retained, _) = without_report_hook_rows(std::mem::take(entries));
+    retained.push(report_hook_row(hooks_path));
+    *entries = retained;
+    document.write()
+}
+
+/// Remove the managed reporting bridge row from one profile patch layer.
+pub fn unmount_report_hooks(patch_path: &Path) -> anyhow::Result<bool> {
+    let mut document = SettingsDocument {
+        path: patch_path.to_owned(),
+        contents: read_profile(patch_path)?,
+        profile: true,
+    };
+    let entries = document.contents.as_sequence_mut().with_context(|| {
+        format!(
+            "DSH profile patch must be a YAML sequence: {}",
+            patch_path.display()
+        )
+    })?;
+    let (retained, changed) = without_report_hook_rows(std::mem::take(entries));
+    *entries = retained;
+    if !changed {
+        return Ok(false);
+    }
+    document.write()
+}
+
+fn report_hook_row(hooks_path: &Path) -> Value {
+    let mut config = Mapping::new();
+    config.insert(
+        Value::String("configPath".to_owned()),
+        Value::String(hooks_path.to_string_lossy().into_owned()),
+    );
+    let mut row = Mapping::new();
+    row.insert(
+        Value::String("id".to_owned()),
+        Value::String(REPORT_HOOKS_ROW_ID.to_owned()),
+    );
+    row.insert(
+        Value::String("name".to_owned()),
+        Value::String(REPORT_HOOKS_PLUGIN.to_owned()),
+    );
+    row.insert(Value::String("config".to_owned()), Value::Mapping(config));
+    let mut insert = Mapping::new();
+    insert.insert(
+        Value::String("insert".to_owned()),
+        Value::Sequence(vec![Value::Mapping(row)]),
+    );
+    Value::Mapping(insert)
+}
+
+fn without_report_hook_rows(mut entries: Vec<Value>) -> (Vec<Value>, bool) {
+    let mut changed = false;
+    let mut retained = Vec::with_capacity(entries.len());
+    for entry in std::mem::take(&mut entries) {
+        match strip_report_hook_rows(entry) {
+            None => changed = true,
+            Some(entry) => retained.push(entry),
+        }
+    }
+    (retained, changed)
+}
+
+/// Drop `codex-mixin-report-hooks` rows from one patch entry. Returns `None`
+/// when the entry only carried our insert wrapper, so an unrelated `insert`
+/// block owned by the user is preserved.
+fn strip_report_hook_rows(entry: Value) -> Option<Value> {
+    let Some(mapping) = entry.as_mapping() else {
+        return Some(entry);
+    };
+    let key = Value::String("insert".to_owned());
+    let Some(rows) = mapping.get(&key).and_then(Value::as_sequence) else {
+        return Some(entry);
+    };
+    if !rows.iter().any(is_report_hook_row) {
+        return Some(entry);
+    }
+    let retained: Vec<Value> = rows
+        .iter()
+        .filter(|row| !is_report_hook_row(row))
+        .cloned()
+        .collect();
+    if retained.is_empty() {
+        return None;
+    }
+    let mut mapping = mapping.clone();
+    mapping.insert(key, Value::Sequence(retained));
+    Some(Value::Mapping(mapping))
+}
+
+fn is_report_hook_row(row: &Value) -> bool {
+    row.get("id").and_then(Value::as_str) == Some(REPORT_HOOKS_ROW_ID)
+}
+
 fn read_settings(dsh_home: &Path, include_imported: bool) -> anyhow::Result<Vec<SettingsDocument>> {
     let mut paths = vec![(dsh_home.join("settings.yaml"), false)];
     if include_imported {
@@ -439,6 +624,93 @@ fn write_yaml(path: &Path, value: &Value) -> anyhow::Result<bool> {
     let changed = write_atomic_if_changed(path, contents.as_bytes())?;
     restrict_owner_only_file(path)?;
     Ok(changed)
+}
+
+/// DSH hooks run through a bridge whose payload has no model and no usable
+/// transcript path, so read the session log the app keeps under `$DSH_HOME`.
+pub fn session_model(dsh_home: &Path, session_id: &str) -> anyhow::Result<Option<String>> {
+    if let Some(model) = session_log_model(dsh_home, session_id)? {
+        return Ok(Some(model));
+    }
+    projcache_model(dsh_home, session_id)
+}
+
+fn session_log_model(dsh_home: &Path, session_id: &str) -> anyhow::Result<Option<String>> {
+    let sessions = dsh_home.join("sessions");
+    let entries = match std::fs::read_dir(&sessions) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read DSH sessions {}", sessions.display()));
+        }
+    };
+    for entry in entries {
+        let entry = entry?;
+        // DSH may hand the bridge either a bare session UUID or the
+        // `session-<uuid>` header id, so accept both directory names.
+        for directory in [format!("session-{session_id}"), session_id.to_owned()] {
+            let path = entry.path().join(directory).join("session.v4.jsonl.zstd");
+            if path.is_file() {
+                return zstd_model(&path);
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn zstd_model(path: &Path) -> anyhow::Result<Option<String>> {
+    let file = File::open(path).with_context(|| format!("open DSH session {}", path.display()))?;
+    let decoder = zstd::stream::read::Decoder::new(file)
+        .with_context(|| format!("decode DSH session {}", path.display()))?;
+    let mut head = Vec::new();
+    decoder
+        .take(DSH_SESSION_HEAD_BYTES)
+        .read_to_end(&mut head)
+        .with_context(|| format!("read DSH session {}", path.display()))?;
+    for line in head.split(|byte| *byte == b'\n') {
+        let Ok(value) = serde_json::from_slice::<JsonValue>(line) else {
+            continue;
+        };
+        for pointer in DSH_MODEL_POINTERS {
+            if let Some(model) = value
+                .pointer(pointer)
+                .and_then(JsonValue::as_str)
+                .filter(|model| !model.is_empty())
+            {
+                return Ok(Some(model.to_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn projcache_model(dsh_home: &Path, session_id: &str) -> anyhow::Result<Option<String>> {
+    let directory = dsh_home.join("storages/session_projcache/sessions");
+    for name in [
+        format!("session-{session_id}.json"),
+        format!("{session_id}.json"),
+    ] {
+        let path = directory.join(name);
+        let raw = match std::fs::read(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("read DSH session cache {}", path.display()));
+            }
+        };
+        let Ok(value) = serde_json::from_slice::<JsonValue>(&raw) else {
+            continue;
+        };
+        if let Some(model) = value
+            .pointer("/record/rows/modelSelection/val/lastUsed/model")
+            .and_then(JsonValue::as_str)
+            .filter(|model| !model.is_empty())
+        {
+            return Ok(Some(model.to_owned()));
+        }
+    }
+    Ok(None)
 }
 
 fn provider_profile(bind: SocketAddr, models: Vec<Value>) -> Value {

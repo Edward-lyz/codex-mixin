@@ -5,8 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, ensure};
 use regex::Regex;
 
-use codex_mixin::config::load_stored_config_read_only;
-use codex_mixin::provider::{BaiduAuthBridge, ProviderDefinition, catalog_model_slug};
+use codex_mixin::provider::{BaiduAuthBridge, ProviderDefinition};
 
 use super::{ReportContext, hook_body_string, report_ducx_event};
 
@@ -203,35 +202,6 @@ pub(super) fn truncate_for_log(value: &str, max_chars: usize) -> String {
 }
 
 /// Select the enabled Baidu reporting provider that owns `model`.
-pub(super) fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>> {
-    Ok(reporting_providers()?
-        .into_iter()
-        .find(|provider| provider_owns_model(provider, model)))
-}
-
-pub(super) fn reporting_provider_by_id(
-    provider_id: &str,
-) -> anyhow::Result<Option<ProviderDefinition>> {
-    Ok(reporting_providers()?
-        .into_iter()
-        .find(|provider| provider.id == provider_id))
-}
-
-pub(super) fn reporting_providers() -> anyhow::Result<Vec<ProviderDefinition>> {
-    let Some(config) = load_stored_config_read_only()? else {
-        return Ok(Vec::new());
-    };
-    Ok(config
-        .providers
-        .into_iter()
-        .filter(|provider| {
-            provider.enabled
-                && provider.request_policy.baidu_code_report
-                && provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi
-        })
-        .collect())
-}
-
 fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {
     if let Some(data_report) = &provider.request_policy.data_report_executable {
         return ducx_home_from_data_report(data_report);
@@ -247,18 +217,6 @@ fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {
         managed_home.display()
     );
     Ok(managed_home)
-}
-
-/// True when `model` (as Codex sees it) maps to one of the provider's models,
-/// matching the provider-qualified catalog slug for a selected model.
-pub(super) fn provider_owns_model(
-    provider: &codex_mixin::provider::ProviderDefinition,
-    model: &str,
-) -> bool {
-    provider
-        .selected_models
-        .iter()
-        .any(|candidate| catalog_model_slug(candidate, &provider.id) == model)
 }
 
 fn ducx_home_from_executable(executable: &Path) -> anyhow::Result<PathBuf> {

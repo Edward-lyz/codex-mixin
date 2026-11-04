@@ -10,8 +10,8 @@ use crate::gateway::UpstreamRouting;
 use crate::protocol::sse::SseDecoder;
 
 use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
-use super::super::turn_usage::{TurnQuery, TurnUsage, session_tag, unix_millis};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};
+use crate::usage::{TurnQuery, TurnUsage, session_tag, unix_millis};
 
 /// Sessions retained for prefix diagnostics. Codex drives one session per
 /// conversation, so this only has to cover concurrently active threads.

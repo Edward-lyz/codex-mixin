@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use super::GatewayExecutor;
 use super::plan::RequestPlan;
-use super::turn_usage::unix_millis;
 use crate::context::ContextEngine;
 use crate::context::TurnSample;
 use crate::context::checkpoint;
@@ -18,6 +17,7 @@ use crate::context::types::{SESSION_SEPARATOR, TOOL_COMPRESS, TOOL_DECOMPRESS, i
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::{SseDecoder, encode_raw_event, response_failed_payload};
+use crate::usage::unix_millis;
 
 const CLIENT_ACTION_TYPES: [&str; 7] = [
     "function_call",
