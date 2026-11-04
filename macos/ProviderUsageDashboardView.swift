@@ -502,22 +502,29 @@ private func quotaPercentText(_ ratio: Double) -> String {
 
 final class ProviderUsageDashboardView: FlippedMenuView {
     let model = ProviderUsageDashboardModel()
-    private let hostingView: NSHostingView<ProviderUsageDashboardContent>
+    private var hostingView: NSHostingView<ProviderUsageDashboardContent>?
+    var isMenuVisible = false {
+        didSet {
+            guard isMenuVisible != oldValue else { return }
+            if isMenuVisible {
+                installHostingView()
+            } else {
+                hostingView?.removeFromSuperview()
+                hostingView = nil
+            }
+        }
+    }
     /// Tracks whether a coalesced row-height sync is already queued so repeated
     /// data refreshes collapse into a single deferred resize.
     private var heightSyncScheduled = false
 
     init() {
-        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
         super.init(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: providerDashboardMinimumHeight))
-        installHostingView()
     }
 
     required init?(coder: NSCoder) {
-        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
         super.init(coder: coder)
         frame.size = NSSize(width: menuContentWidth, height: providerDashboardMinimumHeight)
-        installHostingView()
     }
 
     func updateQuotaStatus(title: String, detail: String?) {
@@ -533,7 +540,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     func refreshProviderIcons() {
-        hostingView.rootView = ProviderUsageDashboardContent(model: model)
+        hostingView?.rootView = ProviderUsageDashboardContent(model: model)
     }
 
     func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
@@ -545,9 +552,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     private func installHostingView() {
-        hostingView.frame = bounds
-        hostingView.autoresizingMask = [.width, .height]
-        addSubview(hostingView)
+        let content = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
+        content.frame = bounds
+        content.autoresizingMask = [.width, .height]
+        addSubview(content)
+        hostingView = content
         model.onContentHeightChange = { [weak self] _ in
             self?.scheduleContentHeightUpdate()
         }
@@ -571,7 +580,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         let targetHeight = model.contentHeight
         guard frame.height != targetHeight else { return }
         frame.size.height = targetHeight
-        hostingView.frame = bounds
+        hostingView?.frame = bounds
     }
 }
 

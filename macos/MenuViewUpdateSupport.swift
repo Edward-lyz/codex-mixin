@@ -9,6 +9,7 @@ final class MenuItemViewUpdater: NSObject, NSMenuDelegate {
     private var isMenuTracking = false
     private var pendingUpdates: [ObjectIdentifier: PendingUpdate] = [:]
     var onMenuWillOpen: (() -> Void)?
+    var onMenuDidClose: (() -> Void)?
 
     func setView(for item: NSMenuItem, build: @escaping () -> NSView) {
         guard Thread.isMainThread else {
@@ -40,6 +41,10 @@ final class MenuItemViewUpdater: NSObject, NSMenuDelegate {
         pendingUpdates.removeAll()
         for update in updates {
             update.item.view = update.view
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isMenuTracking else { return }
+            self.onMenuDidClose?()
         }
     }
 }

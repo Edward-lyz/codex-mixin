@@ -173,7 +173,27 @@ private struct ServiceMenuContent: View {
 final class ServiceMenuHostingView: NSView {
     let model: ServiceMenuModel
     let bridgeControl: GatewaySwitchControl
-    private let hostingView: NSHostingView<ServiceMenuContent>
+    private var hostingView: NSHostingView<ServiceMenuContent>?
+    private let openSettings: () -> Void
+    var isMenuVisible = false {
+        didSet {
+            guard isMenuVisible != oldValue else { return }
+            if isMenuVisible {
+                let content = NSHostingView(rootView: ServiceMenuContent(
+                    model: model,
+                    toggle: bridgeControl.activate,
+                    openSettings: openSettings
+                ))
+                content.frame = bounds
+                content.autoresizingMask = [.width, .height]
+                addSubview(content)
+                hostingView = content
+            } else {
+                hostingView?.removeFromSuperview()
+                hostingView = nil
+            }
+        }
+    }
 
     init(
         title: String,
@@ -198,15 +218,8 @@ final class ServiceMenuHostingView: NSView {
         bridgeControl.isEnabled = !isBusy
         bridgeControl.target = target
         bridgeControl.action = action
-        hostingView = NSHostingView(rootView: ServiceMenuContent(
-            model: model,
-            toggle: bridgeControl.activate,
-            openSettings: openSettings
-        ))
+        self.openSettings = openSettings
         super.init(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: serviceMenuHeight))
-        hostingView.frame = bounds
-        hostingView.autoresizingMask = [.width, .height]
-        addSubview(hostingView)
         bridgeControl.frame = .zero
         bridgeControl.isHidden = true
         addSubview(bridgeControl)
