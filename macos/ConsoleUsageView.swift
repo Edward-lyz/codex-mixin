@@ -95,7 +95,6 @@ struct ConsoleUsageView: View {
         .padding(20)
         .frame(minWidth: 860, minHeight: 560, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
-        .task { await model.refresh() }
     }
 
     private var toolbar: some View {
