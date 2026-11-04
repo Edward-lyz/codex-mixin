@@ -62,7 +62,7 @@ fn read_json(path: &Path) -> Result<Value> {
         "client metadata too large: {}",
         path.display()
     );
-    serde_json::from_reader(file.take(METADATA_BYTES))
+    serde_json::from_reader(std::io::BufReader::new(file.take(METADATA_BYTES)))
         .with_context(|| format!("parse metadata {}", path.display()))
 }
 

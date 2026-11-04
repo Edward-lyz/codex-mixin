@@ -772,7 +772,20 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Restart { bind, log_file } => restart(bind, log_file, false).await,
         Command::Logs { lines, follow } => logs(lines, follow),
-        Command::Serve { bind } => start(bind, false, None).await,
+        Command::Serve {
+            bind,
+            no_client_sync,
+        } => {
+            if no_client_sync {
+                let mut config = GatewayConfig::from_stored_config()?;
+                if let Some(bind) = bind {
+                    config.bind = bind;
+                }
+                codex_mixin::server::serve(config).await
+            } else {
+                start(bind, false, None).await
+            }
+        }
         Command::Panel { .. } => {
             anyhow::bail!("the control panel is an interactive shell; remove --no-tui to open it")
         }

@@ -352,6 +352,7 @@ async fn stream_openai_chat(
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let converted =
         responses_to_openai_chat(&upstream_body, Some(upstream_model_id), &compaction_secret)?;
+    drop(upstream_body);
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -368,7 +369,7 @@ async fn stream_openai_chat(
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
             baidu_native.as_ref(),
-            converted.request.clone(),
+            converted.request,
         )
         .await
         .inspect_err(|error| {
@@ -445,7 +446,7 @@ async fn stream_openai_responses(
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
             baidu_native.as_ref(),
-            upstream_body.clone(),
+            upstream_body,
         )
         .await
         .inspect_err(|error| {
