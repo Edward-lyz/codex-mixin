@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::turn_usage::{TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
+use crate::usage::{TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
 
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
@@ -427,9 +427,9 @@ impl TokenUsageAggregator {
             for client in crate::clients::session_titles::TITLE_CLIENTS {
                 crate::clients::session_titles::visit_titles(
                     client,
-                    |id| wanted.contains(&super::turn_usage::session_tag(id)),
+                    |id| wanted.contains(&crate::usage::session_tag(id)),
                     |id, title| {
-                        let tag = super::turn_usage::session_tag(&id);
+                        let tag = crate::usage::session_tag(&id);
                         // Legacy tags are 32-bit hashes and omit the client.
                         // A collision must never name the wrong conversation.
                         titles

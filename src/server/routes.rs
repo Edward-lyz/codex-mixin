@@ -332,19 +332,19 @@ async fn token_usage_turns(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<TurnUsageQuery>,
-) -> Result<Json<Vec<crate::gateway::TurnUsage>>, GatewayError> {
+) -> Result<Json<Vec<crate::usage::TurnUsage>>, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     let limit = query.limit.unwrap_or(DEFAULT_TURN_LIMIT);
-    if limit == 0 || limit > crate::gateway::MAX_TRACKED_TURNS {
+    if limit == 0 || limit > crate::usage::MAX_TRACKED_TURNS {
         return Err(GatewayError::BadRequest(format!(
             "usage turn limit must be between 1 and {}",
-            crate::gateway::MAX_TRACKED_TURNS
+            crate::usage::MAX_TRACKED_TURNS
         )));
     }
     let since_ms = match query.days {
         // Start at the first UTC day the daily series includes, so the reply
         // table and the daily totals on one page cover the same interval.
-        Some(days) if (1..=3_650).contains(&days) => Some(crate::gateway::first_day_start_ms(days)),
+        Some(days) if (1..=3_650).contains(&days) => Some(crate::usage::first_day_start_ms(days)),
         Some(_) => {
             return Err(GatewayError::BadRequest(
                 "usage days must be between 1 and 3650".to_owned(),
@@ -353,7 +353,7 @@ async fn token_usage_turns(
         None => None,
     };
     let turns = tokio::task::spawn_blocking(move || {
-        state.cache_shapes.usage_turns(&crate::gateway::TurnQuery {
+        state.cache_shapes.usage_turns(&crate::usage::TurnQuery {
             since_ms,
             provider_id: query.provider,
             limit,

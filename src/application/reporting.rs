@@ -6,44 +6,40 @@
 //! carry it, so the hook resolves the model from local state before the
 //! upload path runs.
 
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde_json::{Value, json};
 
-use codex_mixin::clients::claude_desktop;
-use codex_mixin::platform::write_atomic_if_changed;
-use codex_mixin::provider::{ProviderDefinition, catalog_model_slug};
-
-use super::transport::{
-    provider_owns_model, reporting_provider, reporting_provider_by_id, reporting_providers,
-};
-use crate::cli::runtime::{report_state_dir, state_dir};
+use crate::clients::{claude_desktop, dsh};
+use crate::config::load_stored_config_read_only;
+use crate::platform::write_atomic_if_changed;
+use crate::provider::{ProviderDefinition, ProviderModelSource, catalog_model_slug};
+use crate::usage::latest_session_turn;
 
 /// Per-session cache of the last model resolved for reporting.
 const MODEL_CACHE_DIRECTORY: &str = "ducx-report-models";
-/// DSH writes one session log per conversation; the model is recorded near the
-/// start, so a bounded prefix keeps the hook cheap on long sessions.
-const DSH_SESSION_HEAD_BYTES: u64 = 256 * 1024;
 const ROUTE_PREFIX: &str = "claude-sonnet-mixin-";
 const CONTEXT_SUFFIX: &str = "[1m]";
-const DSH_MODEL_POINTERS: [&str; 5] = [
-    "/data/header/config/model",
-    "/data/model",
-    "/data/route/model",
-    "/data/source/model",
-    "/data/message/source/model",
-];
+
+/// Local state directories and the DSH home the resolver may read.
+pub struct ReportPaths<'a> {
+    /// Directory writable by the hook (normal state dir or the sandboxed
+    /// fallback used for queued reports and the model cache).
+    pub report_state: &'a Path,
+    /// Gateway state directory that owns `usage.sqlite3`.
+    pub gateway_state: &'a Path,
+    pub dsh_home: &'a Path,
+}
 
 /// Resolve the catalog slug and its reporting provider for one hook event.
 ///
 /// On success the resolved slug is written back into `body["model"]` so the
 /// queued payload and the DUCX upload see the same value.
-pub(super) fn resolve(
+pub fn resolve_model(
     event: &str,
     body: &mut Value,
+    paths: &ReportPaths<'_>,
 ) -> anyhow::Result<Option<(String, ProviderDefinition)>> {
     let session_id = body
         .get("session_id")
@@ -55,27 +51,27 @@ pub(super) fn resolve(
     if let Some(raw) = payload_model.as_deref()
         && let Some(resolved) = provider_for_model(raw)?
     {
-        record_model(&session_id, &resolved)?;
+        record_model(paths, &session_id, &resolved)?;
         set_model(body, &resolved.0);
         return Ok(Some(resolved));
     }
 
     if !session_id.is_empty() {
-        if let Some(model) = cached_model(&session_id)?
+        if let Some(model) = cached_model(paths, &session_id)?
             && let Some(resolved) =
-                resolved_from_local(event, &session_id, "session_cache", &model, body)?
+                resolved_from_local(event, paths, &session_id, "session_cache", &model, body)?
         {
             return Ok(Some(resolved));
         }
-        if let Some(model) = usage_model(&session_id)?
+        if let Some(model) = usage_model(paths, &session_id)?
             && let Some(resolved) =
-                resolved_from_local(event, &session_id, "usage_ledger", &model, body)?
+                resolved_from_local(event, paths, &session_id, "usage_ledger", &model, body)?
         {
             return Ok(Some(resolved));
         }
-        if let Some(model) = dsh_model(&session_id)?
+        if let Some(model) = dsh::session_model(paths.dsh_home, &session_id)?
             && let Some(resolved) =
-                resolved_from_local(event, &session_id, "dsh_session", &model, body)?
+                resolved_from_local(event, paths, &session_id, "dsh_session", &model, body)?
         {
             return Ok(Some(resolved));
         }
@@ -97,6 +93,7 @@ pub(super) fn resolve(
 
 fn resolved_from_local(
     event: &str,
+    paths: &ReportPaths<'_>,
     session_id: &str,
     source: &str,
     model: &str,
@@ -112,7 +109,7 @@ fn resolved_from_local(
         model = %resolved.0,
         "DUCX reporting model resolved"
     );
-    record_model(session_id, &resolved)?;
+    record_model(paths, session_id, &resolved)?;
     set_model(body, &resolved.0);
     Ok(Some(resolved))
 }
@@ -194,11 +191,15 @@ fn provider_for_model(raw: &str) -> anyhow::Result<Option<(String, ProviderDefin
     Ok(None)
 }
 
-fn record_model(session_id: &str, resolved: &(String, ProviderDefinition)) -> anyhow::Result<()> {
+fn record_model(
+    paths: &ReportPaths<'_>,
+    session_id: &str,
+    resolved: &(String, ProviderDefinition),
+) -> anyhow::Result<()> {
     if session_id.is_empty() {
         return Ok(());
     }
-    let path = model_cache_path(session_id)?;
+    let path = model_cache_path(paths, session_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create DUCX model cache {}", parent.display()))?;
@@ -212,8 +213,8 @@ fn record_model(session_id: &str, resolved: &(String, ProviderDefinition)) -> an
     Ok(())
 }
 
-fn cached_model(session_id: &str) -> anyhow::Result<Option<String>> {
-    let path = model_cache_path(session_id)?;
+fn cached_model(paths: &ReportPaths<'_>, session_id: &str) -> anyhow::Result<Option<String>> {
+    let path = model_cache_path(paths, session_id)?;
     let raw = match std::fs::read(&path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -239,9 +240,10 @@ fn cached_model(session_id: &str) -> anyhow::Result<Option<String>> {
     Ok(Some(model.to_owned()))
 }
 
-fn model_cache_path(session_id: &str) -> anyhow::Result<PathBuf> {
-    super::validate_session_id(session_id)?;
-    Ok(report_state_dir()
+fn model_cache_path(paths: &ReportPaths<'_>, session_id: &str) -> anyhow::Result<PathBuf> {
+    validate_session_id(session_id)?;
+    Ok(paths
+        .report_state
         .join(MODEL_CACHE_DIRECTORY)
         .join(format!("{session_id}.json")))
 }
@@ -253,143 +255,70 @@ fn model_cache_path(session_id: &str) -> anyhow::Result<PathBuf> {
 /// turn has completed. Sandboxed hooks may be denied read-only WAL access to
 /// the ledger, in which case this source is skipped instead of failing the
 /// whole hook.
-fn usage_model(session_id: &str) -> anyhow::Result<Option<String>> {
-    let path = state_dir().join("usage.sqlite3");
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let connection = match rusqlite::Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) {
-        Ok(connection) => connection,
+fn usage_model(paths: &ReportPaths<'_>, session_id: &str) -> anyhow::Result<Option<String>> {
+    let turn = match latest_session_turn(paths.gateway_state, session_id) {
+        Ok(Some(turn)) => turn,
+        Ok(None) => return Ok(None),
         Err(error) => {
-            tracing::debug!(path = %path.display(), %error, "usage ledger is unavailable");
+            tracing::debug!(%error, "usage ledger is unavailable");
             return Ok(None);
         }
     };
-    let has_table: bool = match connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'token_usage_turns')",
-        [],
-        |row| row.get(0),
-    ) {
-        Ok(has_table) => has_table,
-        Err(error) => {
-            tracing::debug!(path = %path.display(), %error, "usage ledger is unavailable");
-            return Ok(None);
-        }
+    let Some(provider) = reporting_provider_by_id(&turn.provider_id)? else {
+        return Ok(None);
     };
-    if !has_table {
+    if !provider_owns_model(&provider, &turn.catalog_slug) {
         return Ok(None);
     }
-    let tag = codex_mixin::usage_session_tag(session_id);
-    let row = connection.query_row(
-        "SELECT provider_id, catalog_slug FROM token_usage_turns \
-         WHERE session = ?1 ORDER BY at_ms DESC LIMIT 1",
-        [&tag],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    Ok(Some(turn.catalog_slug))
+}
+
+pub fn validate_session_id(session_id: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !session_id.is_empty(),
+        "DUCX report hook is missing session_id"
     );
-    let (provider_id, model) = match row {
-        Ok(row) => row,
-        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-        Err(error) => {
-            tracing::debug!(path = %path.display(), %error, "usage ledger lookup failed");
-            return Ok(None);
-        }
+    anyhow::ensure!(
+        session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "DUCX report hook session_id contains unsupported characters"
+    );
+    Ok(())
+}
+
+fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>> {
+    Ok(reporting_providers()?
+        .into_iter()
+        .find(|provider| provider_owns_model(provider, model)))
+}
+
+pub fn reporting_provider_by_id(provider_id: &str) -> anyhow::Result<Option<ProviderDefinition>> {
+    Ok(reporting_providers()?
+        .into_iter()
+        .find(|provider| provider.id == provider_id))
+}
+
+pub fn reporting_providers() -> anyhow::Result<Vec<ProviderDefinition>> {
+    let Some(config) = load_stored_config_read_only()? else {
+        return Ok(Vec::new());
     };
-    let Some(provider) = reporting_provider_by_id(&provider_id)? else {
-        return Ok(None);
-    };
-    if !provider_owns_model(&provider, &model) {
-        return Ok(None);
-    }
-    Ok(Some(model))
+    Ok(config
+        .providers
+        .into_iter()
+        .filter(|provider| {
+            provider.enabled
+                && provider.request_policy.baidu_code_report
+                && provider.model_source == ProviderModelSource::BaiduOneApi
+        })
+        .collect())
 }
 
-/// DSH hooks run through a bridge whose payload has no model and no usable
-/// transcript path, so read the session log the app keeps under `$DSH_HOME`.
-fn dsh_model(session_id: &str) -> anyhow::Result<Option<String>> {
-    let home = crate::cli::dsh::default_dsh_home();
-    if let Some(model) = dsh_session_log_model(&home, session_id)? {
-        return Ok(Some(model));
-    }
-    dsh_projcache_model(&home, session_id)
-}
-
-fn dsh_session_log_model(home: &Path, session_id: &str) -> anyhow::Result<Option<String>> {
-    let sessions = home.join("sessions");
-    let entries = match std::fs::read_dir(&sessions) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(error).with_context(|| format!("read DSH sessions {}", sessions.display()));
-        }
-    };
-    for entry in entries {
-        let entry = entry?;
-        // DSH may hand the bridge either a bare session UUID or the
-        // `session-<uuid>` header id, so accept both directory names.
-        for directory in [format!("session-{session_id}"), session_id.to_owned()] {
-            let path = entry.path().join(directory).join("session.v4.jsonl.zstd");
-            if path.is_file() {
-                return dsh_zstd_model(&path);
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn dsh_zstd_model(path: &Path) -> anyhow::Result<Option<String>> {
-    let file = File::open(path).with_context(|| format!("open DSH session {}", path.display()))?;
-    let decoder = zstd::stream::read::Decoder::new(file)
-        .with_context(|| format!("decode DSH session {}", path.display()))?;
-    let mut head = Vec::new();
-    decoder
-        .take(DSH_SESSION_HEAD_BYTES)
-        .read_to_end(&mut head)
-        .with_context(|| format!("read DSH session {}", path.display()))?;
-    for line in head.split(|byte| *byte == b'\n') {
-        let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        for pointer in DSH_MODEL_POINTERS {
-            if let Some(model) = value
-                .pointer(pointer)
-                .and_then(Value::as_str)
-                .filter(|model| !model.is_empty())
-            {
-                return Ok(Some(model.to_owned()));
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn dsh_projcache_model(home: &Path, session_id: &str) -> anyhow::Result<Option<String>> {
-    let directory = home.join("storages/session_projcache/sessions");
-    for name in [
-        format!("session-{session_id}.json"),
-        format!("{session_id}.json"),
-    ] {
-        let path = directory.join(name);
-        let raw = match std::fs::read(&path) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("read DSH session cache {}", path.display()));
-            }
-        };
-        let Ok(value) = serde_json::from_slice::<Value>(&raw) else {
-            continue;
-        };
-        if let Some(model) = value
-            .pointer("/record/rows/modelSelection/val/lastUsed/model")
-            .and_then(Value::as_str)
-            .filter(|model| !model.is_empty())
-        {
-            return Ok(Some(model.to_owned()));
-        }
-    }
-    Ok(None)
+/// True when `model` (as Codex sees it) maps to one of the provider's models,
+/// matching the provider-qualified catalog slug for a selected model.
+pub fn provider_owns_model(provider: &ProviderDefinition, model: &str) -> bool {
+    provider
+        .selected_models
+        .iter()
+        .any(|candidate| catalog_model_slug(candidate, &provider.id) == model)
 }

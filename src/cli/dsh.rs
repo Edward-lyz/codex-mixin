@@ -11,14 +11,9 @@ use super::runtime::effective_gateway_bind;
 
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
 
-pub(in crate::cli) fn default_dsh_home() -> PathBuf {
-    std::env::var_os("DSH_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| codex_mixin::platform::home_dir().join(".dsh"))
-}
-
 fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
-    std::path::absolute(dsh_home.unwrap_or_else(default_dsh_home)).map_err(Into::into)
+    std::path::absolute(dsh_home.unwrap_or_else(codex_mixin::platform::dsh_home))
+        .map_err(Into::into)
 }
 
 pub(in crate::cli) fn dsh_is_installed() -> anyhow::Result<bool> {

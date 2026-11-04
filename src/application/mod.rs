@@ -5,10 +5,13 @@
 pub mod agent_versions;
 pub mod client;
 pub mod diagnostic;
+pub mod dsh;
 pub mod error;
 pub mod fusion;
 pub mod lifecycle;
 pub mod provider;
+
+pub mod reporting;
 
 pub mod update;
 
