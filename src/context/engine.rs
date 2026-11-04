@@ -678,7 +678,23 @@ impl ContextEngine {
                     .fold(estimate_text_tokens(GUIDANCE), |sum, item| {
                         sum.saturating_add(estimate_item_tokens(item))
                     });
-                let (tiers, _, _) = store.tier_counts(&row.session, row.revision)?;
+                // Archive byte totals require reading historical message bodies;
+                // they are not part of this statistics response.
+                let mut tiers = super::types::TierCounts::default();
+                for segment in &segments {
+                    match segment.kind {
+                        SegmentKind::Message => tiers.messages += 1,
+                        SegmentKind::Block => {
+                            if let Some(block) = store.block(&row.session, &segment.reference)? {
+                                match block.tier {
+                                    Tier::One => tiers.t1_blocks += 1,
+                                    Tier::Two => tiers.t2_blocks += 1,
+                                    Tier::Three => tiers.t3_blocks += 1,
+                                }
+                            }
+                        }
+                    }
+                }
                 (view_tokens, tiers)
             };
             let title = match displays.remove(&row.session) {
