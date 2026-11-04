@@ -139,7 +139,7 @@ pub(in crate::cli) async fn switch_to_official() -> anyhow::Result<()> {
 
     super::super::progress_step("Saving the current Codex integration mode");
     save_restore_mode(mode)?;
-    super::super::progress_step("Restoring the official Codex configuration and authentication");
+    super::super::progress_step("Resetting Codex to the official OpenAI configuration");
     if let Err(error) = uninstall_codex_preserving_restore_mode(None, None) {
         rollback_restore_mode_if_still_managed(previous_restore_mode)?;
         return Err(error);

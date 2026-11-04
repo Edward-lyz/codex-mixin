@@ -14,6 +14,7 @@ use super::managed_config::{
 
 const FORMAT_VERSION: u32 = 1;
 const MANAGED_SKILL_PREFIX: &str = "codex-mixin managed imagegen skill";
+const OFFICIAL_CONFIG: &str = "model_provider = \"openai\"\n";
 
 #[derive(Deserialize, Serialize)]
 pub(super) struct ManagedCodexRestore {
@@ -383,11 +384,14 @@ pub(super) fn install(
     apply(&paths.config, changes, validate)
 }
 
+/// Disconnect resets Codex to the official provider instead of restoring a
+/// saved config: old backups may be missing or still point at Mixin. Returns
+/// cleanup warnings and the best-effort history normalization result.
 pub(super) fn uninstall(
     config: &Path,
     explicit_catalog: Option<PathBuf>,
     clear_switch: bool,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(Vec<String>, super::history::HistoryMigrationOutcome)> {
     let explicit_catalog = explicit_catalog.map(absolute_path).transpose()?;
     if let Some(bytes) = read_file(&owner_path(config))? {
         let owned_config: PathBuf = serde_json::from_slice(&bytes)?;
@@ -397,86 +401,69 @@ pub(super) fn uninstall(
             owned_config.display()
         );
     }
+    let codex_home = config.parent().context("Codex config has no parent")?;
+    let mut warnings = Vec::new();
+    let record = ManagedCodexRestore::load(config).unwrap_or_else(|error| {
+        warnings.push(format!(
+            "ignored unreadable Codex recovery record: {error:#}"
+        ));
+        None
+    });
     let current_config = read_file(config)?;
-    let raw = std::str::from_utf8(current_config.as_deref().unwrap_or_default())?;
-    let record = match ManagedCodexRestore::load(config)? {
-        Some(record) => record,
-        None => {
-            let managed = codex_mixin::clients::codex::document_is_managed(raw);
-            if !managed && legacy_original(config)?.is_none() {
-                return Ok(false);
-            }
-            let default_catalog = config
-                .parent()
-                .context("Codex config has no parent")?
-                .join("model-catalogs/mixin-models.json");
-            let catalog = if managed {
-                managed_catalog_path(&raw.parse()?, config)?
-            } else {
-                default_catalog.clone()
-            };
-            ensure!(
-                catalog == default_catalog || explicit_catalog.as_ref() == Some(&catalog),
-                "legacy custom catalog requires an explicit --catalog path before removal"
-            );
-            let paths = CodexInstallPaths {
-                config: config.to_path_buf(),
-                catalog,
-                models_cache: config.with_file_name("models_cache.json"),
-            };
-            ManagedCodexRestore::prepare(&paths, raw)?
+    let raw = String::from_utf8_lossy(current_config.as_deref().unwrap_or_default());
+    let default_catalog = codex_home.join("model-catalogs/mixin-models.json");
+    let mut catalog = record.as_ref().map(|record| record.catalog.clone());
+    if catalog.is_none() && codex_mixin::clients::codex::document_is_managed(&raw) {
+        match raw
+            .parse()
+            .map_err(anyhow::Error::from)
+            .and_then(|document| managed_catalog_path(&document, config))
+        {
+            Ok(path) => catalog = Some(path),
+            Err(error) => warnings.push(format!("cannot locate the managed catalog: {error:#}")),
         }
-    };
-    record.check_config(raw.as_bytes())?;
-    if let Some(explicit) = explicit_catalog {
+    }
+    let catalog = catalog.unwrap_or_else(|| default_catalog.clone());
+    if let Some(explicit) = &explicit_catalog {
         ensure!(
-            explicit == record.catalog,
-            "explicit catalog does not match the recorded managed catalog"
+            *explicit == catalog,
+            "explicit catalog does not match the managed catalog {}",
+            catalog.display()
         );
     }
-    let current_catalog = read_file(&record.catalog)?;
-    ensure!(
-        current_catalog.is_none()
-            || current_catalog == record.managed_catalog
-            || current_catalog == record.catalog_before,
-        "Codex model catalog changed outside Mixin; recovery data is retained at {}",
-        directory(config).display()
-    );
+    let mut changes = vec![FileChange::new(
+        config.to_path_buf(),
+        Some(OFFICIAL_CONFIG.as_bytes().to_vec()),
+        false,
+    )?];
+    if let Some(current) = read_file(&catalog)? {
+        let owned = catalog == default_catalog
+            || explicit_catalog.is_some()
+            || record
+                .as_ref()
+                .is_some_and(|record| record.managed_catalog.as_ref() == Some(&current));
+        if owned {
+            changes.push(FileChange::new(catalog, None, true)?);
+        } else {
+            warnings.push(format!(
+                "left unrecognized model catalog in place: {}",
+                catalog.display()
+            ));
+        }
+    }
     let auth_path = config.with_file_name("auth.json");
     let current_auth = read_file(&auth_path)?;
-    let preserve_auth = current_auth.is_some()
-        && !managed_auth_bytes(current_auth.as_deref())?
-        && current_auth != record.auth_before;
-    let desired_auth = if preserve_auth {
-        current_auth
-    } else {
-        record.auth_before.clone()
-    };
-    let mut changes = vec![
-        FileChange::new(config.to_path_buf(), record.config_before.clone(), false)?,
-        FileChange::new(auth_path, desired_auth, false)?,
-        FileChange::new(record.catalog.clone(), record.catalog_before.clone(), false)?,
-    ];
-    if current_config.is_some() && current_config.as_deref() != Some(&record.managed_config) {
-        changes.push(FileChange::new(
-            directory(config).join("changed-config.toml"),
-            current_config,
-            false,
-        )?);
-    }
-    if preserve_auth {
-        changes.push(FileChange::new(
-            directory(config).join("retained-auth.json"),
-            record.auth_before,
-            false,
-        )?);
+    match managed_auth_bytes(current_auth.as_deref()) {
+        Ok(true) => changes.push(FileChange::new(auth_path, None, true)?),
+        Ok(false) => {}
+        Err(error) => warnings.push(format!(
+            "left unreadable {} in place: {error:#}",
+            auth_path.display()
+        )),
     }
     // Include skill files in this journal rather than restoring them before
     // config/auth preflight, which used to leave a partially disconnected agent.
-    let skill = config
-        .parent()
-        .context("Codex config has no parent")?
-        .join("skills/.system/imagegen");
+    let skill = codex_home.join("skills/.system/imagegen");
     for relative in ["SKILL.md", "scripts/image_gen.py"] {
         let path = skill.join(relative);
         let mut backup_name = path.as_os_str().to_owned();
@@ -493,6 +480,8 @@ pub(super) fn uninstall(
             changes.push(FileChange::new(backup, None, true)?);
         }
     }
+    // Old restore points stay as rescue copies only; they no longer drive
+    // disconnect or make the official config look drifted.
     legacy_cleanup(config, &mut changes)?;
     for path in [owner_path(config), record_path(config)] {
         changes.push(FileChange::new(path, None, true)?);
@@ -504,8 +493,15 @@ pub(super) fn uninstall(
             true,
         )?);
     }
-    apply(config, changes, || Ok(()))?;
-    Ok(true)
+    apply(config, changes, || {
+        ensure!(
+            !codex_mixin::clients::codex::is_managed(config)?,
+            "reset Codex config is still managed by Mixin"
+        );
+        Ok(())
+    })?;
+    let history = super::history::migrate_history_to_provider(codex_home, "openai")?;
+    Ok((warnings, history))
 }
 
 fn apply(

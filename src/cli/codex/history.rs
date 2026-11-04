@@ -12,6 +12,9 @@ pub struct HistoryMigrationOutcome {
     pub jsonl_files_changed: usize,
     pub jsonl_lines_changed: usize,
     pub sqlite_rows_changed: usize,
+    /// Items left unchanged because they could not be read, backed up or
+    /// rewritten; the remaining history is still processed.
+    pub failures: Vec<String>,
 }
 
 pub fn migrate_history_to_mixin_provider(
@@ -24,7 +27,12 @@ pub fn migrate_history_to_provider(
     codex_home: &Path,
     target_provider: &str,
 ) -> anyhow::Result<HistoryMigrationOutcome> {
-    migrate_history_provider(codex_home, None, target_provider, "unify-codex-mixin")
+    migrate_history_provider(
+        codex_home,
+        None,
+        target_provider,
+        &format!("unify-{target_provider}"),
+    )
 }
 
 fn migrate_history_provider(
@@ -45,43 +53,63 @@ fn migrate_history_provider(
     };
 
     let mut session_files = Vec::new();
-    collect_jsonl_files(&codex_home.join("sessions"), &mut session_files)?;
-    collect_jsonl_files(&codex_home.join("archived_sessions"), &mut session_files)?;
+    for dir in ["sessions", "archived_sessions"] {
+        let dir = codex_home.join(dir);
+        if let Err(error) = collect_jsonl_files(&dir, &mut session_files) {
+            outcome
+                .failures
+                .push(format!("scan {}: {error:#}", dir.display()));
+        }
+    }
     for path in session_files {
-        let changed_lines = rewrite_jsonl_session_meta(
+        match rewrite_jsonl_session_meta(
             &path,
             codex_home,
             &backup_root,
             source_provider,
             target_provider,
-        )?;
-        if changed_lines > 0 {
-            outcome.jsonl_files_changed += 1;
-            outcome.jsonl_lines_changed += changed_lines;
+        ) {
+            Ok(0) => {}
+            Ok(changed_lines) => {
+                outcome.jsonl_files_changed += 1;
+                outcome.jsonl_lines_changed += changed_lines;
+            }
+            Err(error) => outcome
+                .failures
+                .push(format!("{}: {error:#}", path.display())),
         }
     }
 
-    outcome.sqlite_rows_changed += migrate_sqlite_table(
-        codex_home,
-        &backup_root,
-        &codex_home.join("state_5.sqlite"),
-        "threads",
-        source_provider,
-        target_provider,
-    )?;
-    outcome.sqlite_rows_changed += migrate_sqlite_table(
-        codex_home,
-        &backup_root,
-        &codex_home.join("sqlite").join("codex-dev.db"),
-        "local_thread_catalog",
-        source_provider,
-        target_provider,
-    )?;
+    for (db_path, table) in [
+        (codex_home.join("state_5.sqlite"), "threads"),
+        (
+            codex_home.join("sqlite").join("codex-dev.db"),
+            "local_thread_catalog",
+        ),
+    ] {
+        match migrate_sqlite_table(
+            codex_home,
+            &backup_root,
+            &db_path,
+            table,
+            source_provider,
+            target_provider,
+        ) {
+            Ok(rows) => outcome.sqlite_rows_changed += rows,
+            Err(error) => outcome
+                .failures
+                .push(format!("{} ({table}): {error:#}", db_path.display())),
+        }
+    }
 
     if outcome.jsonl_files_changed == 0 && outcome.sqlite_rows_changed == 0 {
         outcome.backup_root = None;
-        if backup_root.exists() {
-            fs::remove_dir_all(&backup_root)?;
+        if backup_root.exists()
+            && let Err(error) = fs::remove_dir_all(&backup_root)
+        {
+            outcome
+                .failures
+                .push(format!("remove {}: {error}", backup_root.display()));
         }
     }
     Ok(outcome)
@@ -174,43 +202,43 @@ fn migrate_sqlite_table(
     source_provider: Option<&str>,
     target_provider: &str,
 ) -> anyhow::Result<usize> {
-    if !db_path.exists() || !sqlite_table_exists(db_path, table)? {
+    if !db_path.exists() {
         return Ok(0);
     }
-    let escaped_target = target_provider.replace('\'', "''");
-    let predicate = source_provider.map_or_else(
-        || format!("model_provider IS NOT NULL AND model_provider <> '{escaped_target}'"),
-        |source_provider| format!("model_provider = '{}'", source_provider.replace('\'', "''")),
-    );
-    let count_sql = format!("SELECT COUNT(*) FROM {table} WHERE {predicate};");
-    let count = sqlite_scalar_usize(db_path, &count_sql)?;
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(0);
+    }
+    // `table` is one of the fixed names above; provider values are bound.
+    let predicate = "model_provider IS NOT NULL AND model_provider <> ?1 AND (?2 IS NULL OR model_provider = ?2)";
+    let count: i64 = connection.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE {predicate}"),
+        rusqlite::params![target_provider, source_provider],
+        |row| row.get(0),
+    )?;
     if count == 0 {
         return Ok(0);
     }
-    backup_file(db_path, codex_home, backup_root)?;
-    let update_sql =
-        format!("UPDATE {table} SET model_provider = '{escaped_target}' WHERE {predicate};");
-    run_sqlite(db_path, &update_sql)?;
-    Ok(count)
-}
-
-fn sqlite_table_exists(db_path: &Path, table: &str) -> anyhow::Result<bool> {
-    let sql = format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}';");
-    Ok(sqlite_scalar_usize(db_path, &sql)? > 0)
-}
-
-fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
-    let connection = Connection::open(db_path)?;
-    connection.busy_timeout(std::time::Duration::from_secs(5))?;
-    let value = connection.query_row(sql, [], |row| row.get::<_, i64>(0))?;
-    usize::try_from(value).map_err(|_| anyhow::anyhow!("SQLite count is negative: {value}"))
-}
-
-fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
-    let connection = Connection::open(db_path)?;
-    connection.busy_timeout(std::time::Duration::from_secs(5))?;
-    connection.execute_batch(sql)?;
-    Ok(())
+    // VACUUM INTO reads through SQLite, so the copy includes committed WAL
+    // frames that a plain copy of the main database file would miss.
+    let backup_path = backup_root.join(db_path.strip_prefix(codex_home).unwrap_or(db_path));
+    if let Some(parent) = backup_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let backup_path = backup_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("SQLite backup path is not UTF-8"))?;
+    connection.execute("VACUUM INTO ?1", [backup_path])?;
+    Ok(connection.execute(
+        &format!("UPDATE {table} SET model_provider = ?1 WHERE {predicate}"),
+        rusqlite::params![target_provider, source_provider],
+    )?)
 }
 
 fn backup_file(path: &Path, codex_home: &Path, backup_root: &Path) -> anyhow::Result<()> {

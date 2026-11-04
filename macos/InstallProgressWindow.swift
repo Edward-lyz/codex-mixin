@@ -260,6 +260,7 @@ func localizedProgressLabel(_ raw: String) -> String {
         "Restoring pre-install config and login state": "恢复安装前配置与登录状态",
         "恢复历史会话与 SQLite 状态": "恢复历史会话与 SQLite 状态",
         "Restoring history sessions and SQLite state": "恢复历史会话与 SQLite 状态",
+        "Resetting Codex to the official OpenAI configuration": "将 Codex 重置为 OpenAI 官方配置",
     ]
     if let exact = mapping[trimmed] {
         return exact

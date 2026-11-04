@@ -24,5 +24,13 @@ pub(super) fn migrate_history(codex_home: Option<PathBuf>) -> anyhow::Result<()>
     } else {
         println!("history backup: <none; no changes>");
     }
+    for failure in &outcome.failures {
+        eprintln!("warning: history not migrated: {failure}");
+    }
+    anyhow::ensure!(
+        outcome.failures.is_empty(),
+        "{} history items were not migrated; rerun to retry",
+        outcome.failures.len()
+    );
     Ok(())
 }
