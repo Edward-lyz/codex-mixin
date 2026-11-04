@@ -608,7 +608,7 @@ impl ContextEngine {
     }
 
     /// Compression and cache totals per session for the console page.
-    pub fn stats(&self, window_tokens: u64, enabled: bool) -> Result<ContextStats> {
+    pub fn stats(&self, _window_tokens: u64, enabled: bool) -> Result<ContextStats> {
         let usage = self.lock()?.session_usage()?;
         let mut displays = HashMap::new();
         for client in crate::clients::session_titles::TITLE_CLIENTS {
@@ -667,7 +667,20 @@ impl ContextEngine {
         }
         let mut sessions = Vec::with_capacity(usage.len());
         for row in usage {
-            let status = self.status(&row.session, window_tokens, enabled)?;
+            // The console needs view size and tiers, not protection or candidate
+            // ranges. Full status reparses the archive for those tool-only fields.
+            let (view_tokens, tiers) = {
+                let store = self.lock()?;
+                let segments = store.segments(&row.session, row.revision)?;
+                let rendered = render_view(&store, &row.session, &segments)?;
+                let view_tokens = rendered
+                    .iter()
+                    .fold(estimate_text_tokens(GUIDANCE), |sum, item| {
+                        sum.saturating_add(estimate_item_tokens(item))
+                    });
+                let (tiers, _, _) = store.tier_counts(&row.session, row.revision)?;
+                (view_tokens, tiers)
+            };
             let title = match displays.remove(&row.session) {
                 Some(title) => Some(title),
                 None => self.lock()?.session_preview(&row.session)?.map(|preview| {
@@ -695,8 +708,8 @@ impl ContextEngine {
                 messages: row.messages,
                 compressions: row.compressions,
                 saved_tokens: row.saved_tokens,
-                view_tokens: status.estimated_view_tokens,
-                tiers: status.tiers,
+                view_tokens,
+                tiers,
                 cache: row.cache,
             });
         }
