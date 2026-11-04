@@ -19,17 +19,27 @@ func processFailureMessage(_ result: ProcessOutputResult) -> String {
 private final class DataAccumulator {
     private let lock = NSLock()
     private var data = Data()
+    private var exceededLimit = false
 
-    func append(_ newData: Data) {
+    func append(_ newData: Data) -> Bool {
         lock.lock()
+        defer { lock.unlock() }
+        // Match the Windows CLI boundary without handing truncated JSON to callers.
+        guard !exceededLimit, newData.count <= 8 * 1024 * 1024 - data.count else {
+            exceededLimit = true
+            return false
+        }
         data.append(newData)
-        lock.unlock()
+        return true
     }
 
     var value: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return data
+        get throws {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !exceededLimit else { throw CocoaError(.fileReadTooLarge) }
+            return data
+        }
     }
 }
 
@@ -61,6 +71,10 @@ final class ProcessCancellation: @unchecked Sendable {
 
     func cancel() {
         lock.lock()
+        guard !cancelled else {
+            lock.unlock()
+            return
+        }
         cancelled = true
         let process = child
         if let process, process.isRunning { process.terminate() }
@@ -109,12 +123,9 @@ func runProcessCollectingOutput(
     killGrace: TimeInterval = 10,
     cancellation: ProcessCancellation? = nil
 ) throws -> ProcessOutputResult {
-    if let cancellation {
-        try cancellation.start(process)
-    } else {
-        try process.run()
-    }
-    defer { cancellation?.finish() }
+    let cancellation = cancellation ?? ProcessCancellation()
+    try cancellation.start(process)
+    defer { cancellation.finish() }
     let timeout = ProcessTimeout(
         process: process,
         timeout: timeout,
@@ -137,7 +148,7 @@ func runProcessCollectingOutput(
             while true {
                 let data = handle.availableData
                 guard !data.isEmpty else { break }
-                accumulator.append(data)
+                if !accumulator.append(data) { cancellation.cancel() }
             }
         }
     }
@@ -147,8 +158,8 @@ func runProcessCollectingOutput(
 
     return ProcessOutputResult(
         terminationStatus: process.terminationStatus,
-        stdoutData: stdout.value,
-        stderrData: stderr.value
+        stdoutData: try stdout.value,
+        stderrData: try stderr.value
     )
 }
 
@@ -217,7 +228,9 @@ func runProcessCollectingStreamingOutput(
     errorPipe: Pipe,
     collector: StreamingProcessOutputCollector
 ) throws -> ProcessOutputResult {
-    try process.run()
+    let cancellation = ProcessCancellation()
+    try cancellation.start(process)
+    defer { cancellation.finish() }
 
     let stdout = DataAccumulator()
     let stderr = DataAccumulator()
@@ -229,7 +242,7 @@ func runProcessCollectingStreamingOutput(
         while true {
             let data = outputPipe.fileHandleForReading.availableData
             guard !data.isEmpty else { break }
-            stdout.append(data)
+            if !stdout.append(data) { cancellation.cancel() }
         }
     }
     drainGroup.enter()
@@ -238,7 +251,10 @@ func runProcessCollectingStreamingOutput(
         while true {
             let data = errorPipe.fileHandleForReading.availableData
             guard !data.isEmpty else { break }
-            stderr.append(data)
+            guard stderr.append(data) else {
+                cancellation.cancel()
+                continue
+            }
             collector.consume(data)
         }
     }
@@ -248,7 +264,7 @@ func runProcessCollectingStreamingOutput(
     collector.finish(remainingData: [])
     return ProcessOutputResult(
         terminationStatus: process.terminationStatus,
-        stdoutData: stdout.value,
-        stderrData: stderr.value
+        stdoutData: try stdout.value,
+        stderrData: try stderr.value
     )
 }

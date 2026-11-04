@@ -21,10 +21,9 @@ pub(crate) const MAX_TRACKED_TURNS: usize = 5_000;
 
 const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Serialises writers to `usage.sqlite3` inside this process. Each reply
-/// persists from its own blocking task, and SQLite reports "database is
-/// locked" instead of waiting while a fresh file switches to WAL.
-pub(crate) static USAGE_DB_WRITE: Mutex<()> = Mutex::new(());
+/// Serialises writers and keeps WAL open between replies. Opening and closing
+/// the last connection per write forces repeated checkpoints and filesystem work.
+pub(crate) static USAGE_DB_WRITE: Mutex<Option<(PathBuf, Connection)>> = Mutex::new(None);
 
 const TURNS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS token_usage_turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,13 +307,18 @@ fn load_turns(path: &Path) -> anyhow::Result<VecDeque<TurnUsage>> {
 }
 
 fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
-    let _write = USAGE_DB_WRITE
+    let mut write = USAGE_DB_WRITE
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    if write.as_ref().is_none_or(|(current, _)| current != path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        *write = Some((path.to_path_buf(), Connection::open(path)?));
     }
-    let connection = Connection::open(path)?;
+    let Some((_, connection)) = write.as_mut() else {
+        anyhow::bail!("usage database connection is unavailable");
+    };
     // Turn rows and the aggregate counters are written from concurrent
     // blocking tasks; wait for the writer lock instead of dropping the row.
     connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;

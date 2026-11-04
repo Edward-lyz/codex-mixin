@@ -6,14 +6,17 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use crate::error::GatewayError;
 
 pub(super) const MAX_REQUEST_BYTES: usize = 256 * 1024 * 1024;
+const MEMORY_REQUEST_BYTES: usize = 64 * 1024;
 
 pub(super) async fn parse_json(body: Body) -> Result<Value, GatewayError> {
     parse_json_with_limit(body, MAX_REQUEST_BYTES).await
 }
 
 async fn parse_json_with_limit(body: Body, max_bytes: usize) -> Result<Value, GatewayError> {
-    let file = tempfile::tempfile().map_err(GatewayError::Io)?;
-    let mut file = tokio::fs::File::from_std(file);
+    // Small JSON requests should not pay filesystem and blocking-pool costs.
+    // Spill large requests rather than buffering the full request limit.
+    let mut buffered = Vec::new();
+    let mut file: Option<tokio::fs::File> = None;
     let mut stream = body.into_data_stream();
     let mut received = 0usize;
     while let Some(chunk) = stream.next().await {
@@ -27,8 +30,26 @@ async fn parse_json_with_limit(body: Body, max_bytes: usize) -> Result<Value, Ga
         if received > max_bytes {
             return Err(GatewayError::PayloadTooLarge);
         }
-        file.write_all(&chunk).await?;
+        if received <= MEMORY_REQUEST_BYTES {
+            buffered.extend_from_slice(&chunk);
+            continue;
+        }
+        if file.is_none() {
+            let spill = tokio::task::spawn_blocking(tempfile::tempfile)
+                .await
+                .map_err(|error| GatewayError::Other(error.into()))??;
+            let mut spill = tokio::fs::File::from_std(spill);
+            spill.write_all(&buffered).await?;
+            buffered = Vec::new();
+            file = Some(spill);
+        }
+        if let Some(file) = file.as_mut() {
+            file.write_all(&chunk).await?;
+        }
     }
+    let Some(mut file) = file else {
+        return serde_json::from_slice(&buffered).map_err(GatewayError::Json);
+    };
     file.flush().await?;
     file.seek(std::io::SeekFrom::Start(0)).await?;
     let file = file.into_std().await;

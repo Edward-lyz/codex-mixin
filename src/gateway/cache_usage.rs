@@ -211,13 +211,18 @@ fn persist_usage_delta(
     model_id: &str,
     usage: &UpstreamCacheUsage,
 ) -> anyhow::Result<()> {
-    let _write = USAGE_DB_WRITE
+    let mut write = USAGE_DB_WRITE
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    if write.as_ref().is_none_or(|(current, _)| current != path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        *write = Some((path.to_path_buf(), Connection::open(path)?));
     }
-    let mut connection = Connection::open(path)?;
+    let Some((_, connection)) = write.as_mut() else {
+        anyhow::bail!("usage database connection is unavailable");
+    };
     connection.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA synchronous = NORMAL;
@@ -259,8 +264,8 @@ fn persist_usage_delta(
             PRIMARY KEY (day, provider_id, model_id)
          )",
     )?;
-    ensure_timing_columns(&connection, "token_usage")?;
-    ensure_timing_columns(&connection, "token_usage_daily")?;
+    ensure_timing_columns(connection, "token_usage")?;
+    ensure_timing_columns(connection, "token_usage_daily")?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
     let timing_recorded = is_representative_timing_sample(usage);
