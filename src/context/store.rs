@@ -472,6 +472,53 @@ impl Store {
         Ok(entries)
     }
 
+    /// Archived history length and the length of its common prefix with
+    /// `incoming` fingerprints. Rows are compared one at a time, so the
+    /// archived fingerprints are never held in memory together.
+    pub fn history_prefix(
+        &self,
+        key: &str,
+        mut incoming: impl Iterator<Item = String>,
+    ) -> Result<(usize, usize)> {
+        let history_len: i64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM history h JOIN messages m
+                   ON m.session_key = h.session_key AND m.reference = h.reference
+                 WHERE h.session_key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .context("count context history")?;
+        let history_len = usize::try_from(history_len).context("context history length")?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT m.fingerprint
+                 FROM history h JOIN messages m
+                   ON m.session_key = h.session_key AND m.reference = h.reference
+                 WHERE h.session_key = ?1 ORDER BY h.position",
+            )
+            .context("prepare history prefix query")?;
+        let mut rows = statement
+            .query(params![key])
+            .context("query context history prefix")?;
+        let mut divergence = 0;
+        while let Some(row) = rows.next().context("read context history prefix row")? {
+            let Some(next) = incoming.next() else { break };
+            let archived = row
+                .get_ref(0)
+                .context("read context history fingerprint")?
+                .as_str()
+                .context("context history fingerprint is not text")?;
+            if archived != next {
+                break;
+            }
+            divergence += 1;
+        }
+        Ok((history_len, divergence))
+    }
+
     pub fn message_json(&self, key: &str, reference: &str) -> Result<Option<String>> {
         self.connection
             .query_row(

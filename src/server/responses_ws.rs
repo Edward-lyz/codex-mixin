@@ -122,11 +122,15 @@ async fn handle_official_ws_request(
                 return Ok(());
             }
         };
-    let effective_body = effective_official_cache_body(&body, request_history.as_deref());
-    let observation = context
-        .state
-        .gateway
-        .official_prefix_observation(context.headers, &effective_body)?;
+    // The effective body copies the whole history only to measure the prompt
+    // prefix; release it before the upstream round trip.
+    let observation = {
+        let effective_body = effective_official_cache_body(&body, request_history.as_deref());
+        context
+            .state
+            .gateway
+            .official_prefix_observation(context.headers, &effective_body)?
+    };
     let mut usage_observer = observation.map(crate::gateway::UpstreamCacheObserver::new);
     let request_error = proxy_official_ws_request(
         context,

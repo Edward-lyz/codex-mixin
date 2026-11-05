@@ -1,6 +1,6 @@
 # PLAN：网关与菜单栏内存压缩
 
-状态：已完成（分支 codex/perf-disconnect-openai）。
+状态：CLI 网关阶段已完成；菜单栏 UI < 50 MB 目标暂缓（控制台打开时 63 MB，未达标）。分支 codex/perf-disconnect-openai。
 
 ## 目标
 - 网关 `codex-mixin start` 常驻 phys_footprint < 10 MB；菜单栏 UI < 50 MB。
@@ -29,6 +29,24 @@
 
 真实负载测试使用独立 HOME、`CODEX_GATEWAY_SERVICE_ID` 与独立端口 `127.0.0.1:18766`，不触碰用户正在运行的网关。启动瞬时峰值（`phys_footprint_peak`）约 44–47 MB，来自启动时的模型目录解析，稳态和负载下均低于 10 MB。
 
+## 第三步：WebSocket 与 context 的临时副本（src/server/responses_ws.rs、src/context/store.rs）
+- 官方 WS 路由：`effective_official_cache_body` 为前缀观测复制整份历史，原先这个值活到上游往返结束；
+  改为在观测的局部块里创建并释放。
+- context 引擎 `history_shape`：原先 `Store::history` 把会话所有指纹（规范化后的完整 JSON，最大会话约 10 MB）
+  一次 collect 再比前缀；改为新增 `Store::history_prefix`，逐行比较，指纹不再同时驻留。
+- 风险：前缀比较语义不变（遇到第一个不同或任一侧结束即停）；`history_len` 改用 COUNT 查询。
+
+## CLI 内存清单（测量值均为 phys_footprint，独立实例 127.0.0.1:18766）
+| 所有者 | 生命周期 | 上限 | 处理 | 实测 |
+|---|---|---|---|---|
+| `TurnLedger`（src/gateway/turn_usage.rs） | 进程 | 原 5000 行 | 按需查 SQLite | 已做，见第一步 |
+| models.dev 目录（src/provider/resolver.rs） | 原进程 | 6 MB 磁盘 | `Weak`，用完释放 | 已做，见第二步 |
+| `TokenUsageAggregator` 日表（src/gateway/cache_usage.rs:131） | 进程，按天增长 | 每天 × provider × model 一行 | 未改 | 真实库 694 行：清空日表 7.5 MB，完整 694 行 5.3 MB，差异在噪声内，暂不改 |
+| WS 连接历史（responses_ws/custom.rs、official.rs） | 连接 | 随轮数增长 | 有协议用途，未改 | 8 轮 × 180 KB 输入：改前 10 MB，断开回到 8.9 MB；改后 8.9 MB，断开 7.7 MB |
+| WS 前缀观测副本（responses_ws.rs） | 原为整轮请求 | 一份历史 | 局部释放 | 并入上一行数据 |
+| context 历史指纹（context/engine.rs history_shape） | 单次请求 | 会话全部指纹 | 逐行比较 | 最大会话 3254 条、指纹约 10 MB；独立实例未开 context，收益为推算 |
+| 共享 HTTP Client | 多处每次新建 | — | 未改 | 假设，未测 |
+
 ## 后续候选
-- tokio blocking 线程池上限与线程栈。
-- 菜单栏：仅在测量确认收益时改动，不改变外观。
+- tokio blocking 线程池上限与线程栈（假设，未测）。
+- 菜单栏：暂缓；如恢复，仅在测量确认收益时改动，不改变外观。
