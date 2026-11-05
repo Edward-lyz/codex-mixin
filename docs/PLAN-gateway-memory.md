@@ -47,6 +47,18 @@
 | context 历史指纹（context/engine.rs history_shape） | 单次请求 | 会话全部指纹 | 逐行比较 | 最大会话 3254 条、指纹约 10 MB；独立实例未开 context，收益为推算 |
 | 共享 HTTP Client | 多处每次新建 | — | 未改 | 假设，未测 |
 
+## 第五步：context 每轮 begin_turn 不再复制整段历史（src/context/engine.rs、src/context/store.rs）
+- 改前：`begin_turn` 先为全部历史生成两份 `Vec<String>`（规范化指纹、JSON 编码），`sync_history` 再把全部归档指纹读进内存比较；
+  `compute_protection` 又把所有归档消息重新解码一遍。
+- 改后：`sync_history` 用 `history_prefix` 逐行比较，只给分叉点之后的新增条目生成指纹和编码；`compute_protection` 借用 `render_view` 已解码的条目。
+- 实测（隔离实例，真实 context.db 副本，1808 条历史、4.4 MB 请求体，context 已开启并命中 `prepared context view`，0.5 秒采样）：
+
+| 阶段 | 改前 footprint / 已分配峰值 | 改后 |
+|---|---|---|
+| 首次归档整段会话 | 36.9 MB / 36.9 MB | 28.9 MB / 31.1 MB |
+| 稳态续轮（只追加 2 条） | 21.6 MB / 63.1 MB | 15.2 MB / 33.1 MB |
+| 请求结束 30 秒后 | 13.4 MB | 11.6 MB |
+
 ## 后续候选
 - tokio blocking 线程池上限与线程栈（假设，未测）。
 - 菜单栏：暂缓；如恢复，仅在测量确认收益时改动，不改变外观。
