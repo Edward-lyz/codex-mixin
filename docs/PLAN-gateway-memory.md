@@ -23,8 +23,11 @@
 |---|---|---|
 | 网关 `start`（含模型刷新线程） | 77 MB（峰值 197） | 8.1 MB；每个接口各调 30 次后 8.2 MB |
 | 网关 `serve --no-client-sync` | 19 MB | 3.7–3.9 MB |
+| 网关 `start`，真实流式负载（baidu-oneapi `DeepSeek-V4.1-Flash`，`/v1/responses` stream） | — | 空闲 5.7 MB；20 个流式请求（4 并发）6.2–7.0 MB；4 并发 180 KB 输入 7.1–7.5 MB；之后静置 8.4–8.5 MB |
 | 菜单栏（控制台已关闭） | 51 MB | 39 MB |
 | 菜单栏（控制台打开） | — | 63 MB，关闭后回到 39 MB |
+
+真实负载测试使用独立 HOME、`CODEX_GATEWAY_SERVICE_ID` 与独立端口 `127.0.0.1:18766`，不触碰用户正在运行的网关。启动瞬时峰值（`phys_footprint_peak`）约 44–47 MB，来自启动时的模型目录解析，稳态和负载下均低于 10 MB。
 
 ## 后续候选
 - tokio blocking 线程池上限与线程栈。
