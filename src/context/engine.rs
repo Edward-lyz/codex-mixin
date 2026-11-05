@@ -238,16 +238,11 @@ impl ContextEngine {
         items: &[Value],
         window_tokens: u64,
     ) -> Result<TurnView> {
-        let fingerprints: Vec<String> = items.iter().map(fingerprint).collect();
-        let encoded: Vec<String> = items
-            .iter()
-            .map(|item| serde_json::to_string(item).context("encode history item"))
-            .collect::<Result<_>>()?;
         let mut store = self.lock()?;
-        let (session_row, _) = store.sync_history(session, &fingerprints, &encoded)?;
+        let (session_row, _) = store.sync_history(session, items, fingerprint)?;
         let segments = store.segments(session, session_row.revision)?;
         let rendered = render_view(&store, session, &segments)?;
-        let protection = compute_protection(&store, session, &segments, &self.settings)?;
+        let protection = compute_protection(&segments, &rendered, &self.settings);
         let mut estimated = 0u64;
         for item in &rendered {
             estimated = estimated.saturating_add(estimate_item_tokens(item));
@@ -843,29 +838,23 @@ fn render_view(store: &Store, session: &str, segments: &[SegmentRow]) -> Result<
     Ok(items)
 }
 
+/// `rendered` is the output of `render_view` for the same segments: one item
+/// per segment, so archived messages are borrowed instead of decoded again.
 fn compute_protection(
-    store: &Store,
-    session: &str,
     segments: &[SegmentRow],
+    rendered: &[Value],
     settings: &crate::config::ContextSettings,
-) -> Result<Protection> {
-    let mut items: Vec<Option<Value>> = Vec::with_capacity(segments.len());
-    for segment in segments {
-        match segment.kind {
-            SegmentKind::Message => {
-                let raw = store
-                    .message_json(session, &segment.reference)?
-                    .with_context(|| {
-                        format!("archived message {} is missing", segment.reference)
-                    })?;
-                let item: Value = serde_json::from_str(&raw).context("decode archived message")?;
-                items.push(Some(item));
-            }
-            SegmentKind::Block => items.push(None),
-        }
-    }
+) -> Protection {
+    let items: Vec<Option<&Value>> = segments
+        .iter()
+        .zip(rendered)
+        .map(|(segment, item)| match segment.kind {
+            SegmentKind::Message => Some(item),
+            SegmentKind::Block => None,
+        })
+        .collect();
     let mut protected: HashMap<usize, String> = HashMap::new();
-    let role_of = |item: &Option<Value>| -> Option<String> {
+    let role_of = |item: &Option<&Value>| -> Option<String> {
         item.as_ref()
             .and_then(|value| value.get("role"))
             .and_then(Value::as_str)
@@ -937,10 +926,10 @@ fn compute_protection(
             protection.reasons.push(reason.clone());
         }
     }
-    Ok(protection)
+    protection
 }
 
-fn protect_tool_units(items: &[Option<Value>], protected: &mut HashMap<usize, String>) {
+fn protect_tool_units(items: &[Option<&Value>], protected: &mut HashMap<usize, String>) {
     let mut calls: Vec<(usize, String)> = Vec::new();
     let mut outputs: HashMap<String, usize> = HashMap::new();
     for (index, item) in items.iter().enumerate() {
@@ -1005,7 +994,9 @@ fn compress(
         .filter(|topic| !topic.is_empty())
         .unwrap_or("context");
     let covered = covered_segments(segments, arguments)?;
-    let protection = compute_protection(store, session, segments, settings)?;
+    let rendered = render_view(store, session, segments)?;
+    let protection = compute_protection(segments, &rendered, settings);
+    drop(rendered);
     for segment in &covered {
         if protection.protected.contains(&segment.reference) {
             bail!("cannot compress protected segment {}", segment.reference);
@@ -1224,7 +1215,7 @@ fn status(
 ) -> Result<ContextStatus> {
     let segments = store.segments(session, revision)?;
     let rendered = render_view(store, session, &segments)?;
-    let protection = compute_protection(store, session, &segments, settings)?;
+    let protection = compute_protection(&segments, &rendered, settings);
     let mut estimated = 0u64;
     for item in &rendered {
         estimated = estimated.saturating_add(estimate_item_tokens(item));

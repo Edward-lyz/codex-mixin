@@ -111,7 +111,6 @@ pub(crate) struct SessionRow {
 pub(crate) struct HistoryEntry {
     pub position: i64,
     pub reference: String,
-    pub fingerprint: String,
 }
 
 #[derive(Clone, Debug)]
@@ -450,7 +449,7 @@ impl Store {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT h.position, h.reference, m.fingerprint
+                "SELECT h.position, h.reference
                  FROM history h JOIN messages m
                    ON m.session_key = h.session_key AND m.reference = h.reference
                  WHERE h.session_key = ?1 ORDER BY h.position",
@@ -461,7 +460,6 @@ impl Store {
                 Ok(HistoryEntry {
                     position: row.get(0)?,
                     reference: row.get(1)?,
-                    fingerprint: row.get(2)?,
                 })
             })
             .context("query context history")?;
@@ -554,22 +552,18 @@ impl Store {
     /// Returns the session row after alignment and whether a new revision was
     /// opened. A mismatch, a shorter input or an edited item opens a revision
     /// and keeps the superseded originals archived.
+    ///
+    /// Only items after the divergence point are fingerprinted twice and
+    /// encoded, so an unchanged prefix never exists as owned strings.
     pub fn sync_history(
         &mut self,
         key: &str,
-        fingerprints: &[String],
-        items: &[String],
+        items: &[Value],
+        fingerprint: impl Fn(&Value) -> String,
     ) -> Result<(SessionRow, bool)> {
-        if fingerprints.len() != items.len() {
-            bail!("history fingerprint and item counts differ");
-        }
         let mut session = self.ensure_session(key)?;
+        let (_, divergence) = self.history_prefix(key, items.iter().map(&fingerprint))?;
         let history = self.history(key)?;
-        let divergence = history
-            .iter()
-            .zip(fingerprints.iter())
-            .position(|(entry, fingerprint)| entry.fingerprint != *fingerprint)
-            .unwrap_or_else(|| history.len().min(fingerprints.len()));
         let kept: Vec<SegmentRow> = self
             .segments(key, session.revision)?
             .into_iter()
@@ -649,13 +643,14 @@ impl Store {
             .connection
             .transaction()
             .context("begin append transaction")?;
-        for index in divergence..fingerprints.len() {
+        for (index, item) in items.iter().enumerate().skip(divergence) {
             let reference = format!("m{next_ref:06}");
+            let encoded = serde_json::to_string(item).context("encode history item")?;
             transaction
                 .execute(
                     "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![key, reference, fingerprints[index], items[index], unix_now()],
+                    params![key, reference, fingerprint(item), encoded, unix_now()],
                 )
                 .context("append archived message")?;
             transaction
