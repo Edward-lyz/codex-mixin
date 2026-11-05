@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
@@ -26,8 +26,10 @@ const MODELS_DEV_RETRY_INTERVAL: Duration = Duration::from_secs(5 * 60);
 static MODELS_DEV_CATALOG_CACHE: LazyLock<tokio::sync::Mutex<Option<CachedModelsDevCatalog>>> =
     LazyLock::new(|| tokio::sync::Mutex::new(None));
 
+/// Holds the parsed catalog only while a discovery pass uses it; the parsed
+/// form is several MB, and the validated disk copy re-parses in milliseconds.
 struct CachedModelsDevCatalog {
-    catalog: Arc<ModelsDevCatalog>,
+    catalog: Weak<ModelsDevCatalog>,
     cache_path: PathBuf,
     source_url: String,
     refresh_after: tokio::time::Instant,
@@ -504,21 +506,22 @@ async fn load_models_dev_catalog(
     };
     if let Some(entry) = cached.as_ref().filter(|entry| cache_matches(entry))
         && (refresh_interval.is_none() || now < entry.refresh_after)
+        && let Some(catalog) = entry.catalog.upgrade()
     {
-        return Ok(Arc::clone(&entry.catalog));
+        return Ok(catalog);
     }
 
     let mut stale_catalog = cached
         .as_ref()
         .filter(|entry| cache_matches(entry))
-        .map(|entry| Arc::clone(&entry.catalog));
+        .and_then(|entry| entry.catalog.upgrade());
     let mut http_cache = None;
     if tokio::fs::try_exists(cache_path).await? {
         match read_models_dev_catalog(cache_path).await {
             Ok(catalog) => {
                 let Some(refresh_interval) = refresh_interval else {
                     *cached = Some(CachedModelsDevCatalog {
-                        catalog: Arc::clone(&catalog),
+                        catalog: Arc::downgrade(&catalog),
                         cache_path: cache_path.to_path_buf(),
                         source_url: source_url.to_owned(),
                         refresh_after: now,
@@ -530,7 +533,7 @@ async fn load_models_dev_catalog(
                         let refresh_delay = metadata.refresh_delay(refresh_interval);
                         if !refresh_delay.is_zero() {
                             *cached = Some(CachedModelsDevCatalog {
-                                catalog: Arc::clone(&catalog),
+                                catalog: Arc::downgrade(&catalog),
                                 cache_path: cache_path.to_path_buf(),
                                 source_url: source_url.to_owned(),
                                 refresh_after: now + refresh_delay,
@@ -572,7 +575,7 @@ async fn load_models_dev_catalog(
     )
     .await?;
     *cached = Some(CachedModelsDevCatalog {
-        catalog: Arc::clone(&catalog),
+        catalog: Arc::downgrade(&catalog),
         cache_path: cache_path.to_path_buf(),
         source_url: source_url.to_owned(),
         refresh_after,
