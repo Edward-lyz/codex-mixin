@@ -2,12 +2,14 @@
 
 mod common;
 
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
-use codex_mixin::provider::ProviderPreset;
+use codex_mixin::provider::{ProviderModel, ProviderPreset};
 use serde_json::{Value, json};
 
 const SLUG: &str = "DeepSeek-V4.1-Flash-baidu-oneapi";
@@ -26,6 +28,200 @@ fn write_reporting_config(root: &Path) {
         },
     )
     .expect("save reporting config");
+}
+
+/// Config for tests that start a real gateway and let it record the turn.
+fn write_gateway_reporting_config(root: &Path, upstream: SocketAddr) {
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu-oneapi", "fixture-key");
+    provider.base_url = format!("http://{upstream}");
+    provider.quota_username = Some("fixture-user".to_owned());
+    provider.cached_models = vec![ProviderModel {
+        id: "DeepSeek-V4.1-Flash".to_owned(),
+        context_window: Some(1_000_000),
+        ..ProviderModel::default()
+    }];
+    provider.selected_models = vec!["DeepSeek-V4.1-Flash".to_owned()];
+    provider.request_policy.baidu_code_report = true;
+    provider.request_policy.data_report_client_token = Some("fixture-token".to_owned());
+    provider.models_refreshed_at_ms = Some(1);
+    let mut config = StoredGatewayConfig {
+        providers: vec![provider],
+        ..Default::default()
+    };
+    // Force the native Messages request through the gateway's converted plan
+    // so the real usage observer records the turn.
+    config.context.enabled = true;
+    save_stored_config_to_path(&root.join("config.json"), &config)
+        .expect("save gateway reporting config");
+}
+
+/// Minimal Anthropic SSE reply the gateway can persist as a usage turn.
+fn anthropic_sse() -> String {
+    [
+        json!({"type":"message_start","message":{"id":"msg_usage","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4.1-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}),
+        json!({"type":"message_stop"}),
+    ]
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let mut header_end = None;
+    let mut content_length = 0;
+    loop {
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if header_end.is_none()
+            && let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+        {
+            header_end = Some(position + 4);
+            for line in request[..position].split(|byte| *byte == b'\n') {
+                let Ok(line) = std::str::from_utf8(line) else {
+                    continue;
+                };
+                let Some((name, value)) = line.split_once(':') else {
+                    continue;
+                };
+                if name.trim().eq_ignore_ascii_case("content-length") {
+                    content_length = value.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        if let Some(end) = header_end
+            && request.len() >= end + content_length
+        {
+            break;
+        }
+    }
+    Ok(request)
+}
+
+/// Deterministic local upstream accepting the gateway's Anthropic requests.
+fn spawn_mock_anthropic() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock upstream");
+    let address = listener.local_addr().expect("mock upstream address");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                continue;
+            };
+            std::thread::spawn(move || {
+                // Read the complete request before replying; closing a socket
+                // with unread body bytes makes the gateway see a reset.
+                let _ = read_http_request(&mut stream);
+                let body = anthropic_sse();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            });
+        }
+    });
+    address
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("reserve gateway port")
+        .port()
+}
+
+fn wait_for_gateway(address: SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "gateway did not listen on {address}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn send_gateway_turn(address: SocketAddr, session_id: &str) {
+    let body = json!({
+        "model": SLUG,
+        "max_tokens": 16,
+        "stream": true,
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    .to_string();
+    let mut stream = TcpStream::connect(address).expect("connect gateway");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("gateway read timeout");
+    write!(
+        stream,
+        "POST /v1/messages HTTP/1.1\r\nhost: {address}\r\ncontent-type: application/json\r\n\
+         anthropic-version: 2023-06-01\r\nx-session-id: {session_id}\r\n\
+         content-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("write gateway request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read gateway response");
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "gateway response: {response}"
+    );
+}
+
+fn wait_for_usage_turn(root: &Path) {
+    let path = root.join("usage.sqlite3");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(connection) =
+            rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            && let Ok(count) =
+                connection.query_row("SELECT COUNT(*) FROM token_usage_turns", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            && count > 0
+        {
+            return;
+        }
+        if Instant::now() >= deadline {
+            eprintln!(
+                "root files: {:?}",
+                std::fs::read_dir(root).map(|entries| entries
+                    .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+                    .collect::<Vec<_>>())
+            );
+            for name in ["gateway.stdout", "gateway.stderr"] {
+                if let Ok(log) = std::fs::read_to_string(root.join(name)) {
+                    eprintln!("--- {name} ---\n{log}");
+                }
+            }
+            panic!("gateway did not record a usage turn in {}", path.display());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+struct GatewayProcess(std::process::Child);
+
+impl Drop for GatewayProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 fn run_hook(root: &Path, event: &str, body: &Value) {
@@ -146,32 +342,23 @@ fn session_start_seeds_the_model_for_later_events() {
 fn usage_ledger_resolves_events_without_a_model() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_reporting_config(root);
+    let upstream = spawn_mock_anthropic();
+    write_gateway_reporting_config(root, upstream);
 
-    let connection = rusqlite::Connection::open(root.join("usage.sqlite3")).unwrap();
-    connection
-        .execute_batch(
-            "CREATE TABLE token_usage_turns (
-                at_ms INTEGER NOT NULL,
-                session TEXT NOT NULL,
-                provider_id TEXT NOT NULL,
-                catalog_slug TEXT NOT NULL
-            );",
-        )
-        .unwrap();
-    connection
-        .execute(
-            "INSERT INTO token_usage_turns (at_ms, session, provider_id, catalog_slug) \
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![
-                1_i64,
-                codex_mixin::usage::session_tag("session-four"),
-                "baidu-oneapi",
-                SLUG
-            ],
-        )
-        .unwrap();
-    drop(connection);
+    let bind = format!("127.0.0.1:{}", free_port());
+    let address: SocketAddr = bind.parse().expect("gateway bind address");
+    let stdout = std::fs::File::create(root.join("gateway.stdout")).unwrap();
+    let stderr = std::fs::File::create(root.join("gateway.stderr")).unwrap();
+    let mut command = common::cli(root);
+    command
+        .args(["serve", "--bind", &bind])
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    let gateway = GatewayProcess(command.spawn().expect("spawn gateway"));
+    wait_for_gateway(address);
+    send_gateway_turn(address, "session-four");
+    wait_for_usage_turn(root);
+    drop(gateway);
 
     run_hook(
         root,

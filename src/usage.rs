@@ -111,12 +111,7 @@ pub(crate) fn first_day_start_ms(days: u64) -> u64 {
     today.saturating_sub(days.saturating_sub(1)) * DAY_MS
 }
 
-/// Stable short tag the ledger stores for a client session.
-///
-/// The gateway writes turns under this tag; external fixtures that seed the
-/// ledger must derive the same value. Production reporting resolves turns
-/// through the ledger query API instead of touching the tag or the schema.
-pub fn session_tag(session_id: &str) -> String {
+pub(crate) fn session_tag(session_id: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     session_id.hash(&mut hasher);
     format!("{:08x}", hasher.finish() as u32)
