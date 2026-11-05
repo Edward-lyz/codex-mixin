@@ -26,6 +26,10 @@ pub(crate) struct Checkpoint {
     pub created_at: u64,
     pub session: String,
     pub revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_len: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_tip: Option<String>,
 }
 
 /// Returns true when the item carries a local checkpoint token.
@@ -42,6 +46,8 @@ pub(crate) fn encode(
     model: &str,
     session: &str,
     revision: i64,
+    history_len: usize,
+    history_tip: Option<String>,
     secret: &str,
 ) -> Result<String, GatewayError> {
     let payload = Checkpoint {
@@ -50,6 +56,8 @@ pub(crate) fn encode(
         created_at: unix_seconds()?,
         session: session.to_owned(),
         revision,
+        history_len: Some(history_len),
+        history_tip,
     };
     let plaintext = serde_json::to_vec(&payload)?;
     if plaintext.len() > MAX_PAYLOAD_BYTES {

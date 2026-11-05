@@ -239,7 +239,16 @@ impl ContextEngine {
         window_tokens: u64,
     ) -> Result<TurnView> {
         let mut store = self.lock()?;
-        let (session_row, _) = store.sync_history(session, items, fingerprint)?;
+        store.sync_history(session, items, fingerprint)?;
+        drop(store);
+        self.current_view(session, window_tokens)
+    }
+
+    /// Internal rounds only refresh committed segments. Replaying the original
+    /// input here would retain a second, uncompressed history for the whole turn.
+    pub(crate) fn current_view(&self, session: &str, window_tokens: u64) -> Result<TurnView> {
+        let mut store = self.lock()?;
+        let session_row = store.ensure_session(session)?;
         let segments = store.segments(session, session_row.revision)?;
         let rendered = render_view(&store, session, &segments)?;
         let protection = compute_protection(&segments, &rendered, &self.settings);
@@ -255,6 +264,139 @@ impl ContextEngine {
             window_tokens,
             protection,
         })
+    }
+
+    pub(crate) fn history_anchor(&self, session: &str) -> Result<(usize, Option<String>)> {
+        self.lock()?.history_anchor(session)
+    }
+
+    pub(crate) fn checkpoint_token(
+        &self,
+        session: &str,
+        model: &str,
+        secret: &str,
+    ) -> Result<String> {
+        let mut store = self.lock()?;
+        let session_row = store.ensure_session(session)?;
+        let (history_len, history_tip) = store.history_anchor(session)?;
+        checkpoint::encode(
+            model,
+            session,
+            session_row.revision,
+            history_len,
+            history_tip,
+            secret,
+        )
+        .map_err(|error| anyhow!(error.to_string()))
+    }
+
+    /// Reconstruct only the effective view. Stable history references make
+    /// retries comparable even after the bodies behind a summary have expired.
+    pub(crate) fn begin_chained_turn(
+        &self,
+        session: &str,
+        response_id: &str,
+        incoming: &[Value],
+        window_tokens: u64,
+    ) -> Result<TurnView> {
+        let store = self.lock()?;
+        if let Some(owner) = store.response_owner(response_id)?
+            && owner != session
+        {
+            bail!(
+                "response id {response_id} belongs to context session {}",
+                session_display_name(&owner)
+            );
+        }
+        let (history_len, overlap) =
+            store.history_prefix(session, incoming.iter().map(fingerprint))?;
+        let full_replay =
+            history_len > 0 && overlap == history_len || overlap > 0 && overlap < incoming.len();
+        if full_replay {
+            drop(store);
+            return self.begin_turn(session, incoming, window_tokens);
+        }
+        let anchor = store.response_anchor(session, response_id)?;
+        let Some((mut output, prefix_len, tip)) = anchor else {
+            if incoming.is_empty() {
+                bail!("unknown response id {response_id}");
+            }
+            drop(store);
+            return self.begin_turn(session, incoming, window_tokens);
+        };
+        let Some(prefix_len) = prefix_len else {
+            // Legacy mappings have no position anchor. Preserve their old
+            // behavior while their originals are still available.
+            drop(store);
+            let expanded = self.expand_chained_input(session, response_id, incoming)?;
+            return self.begin_turn(session, &expanded, window_tokens);
+        };
+        store.validate_history_anchor(session, prefix_len, tip.as_deref())?;
+        output.extend_from_slice(incoming);
+        drop(store);
+        self.lock()?
+            .sync_history_from(session, &output, fingerprint, prefix_len)?;
+        self.current_view(session, window_tokens)
+    }
+
+    pub(crate) fn begin_checkpoint_turn(
+        &self,
+        session: &str,
+        items: &[Value],
+        secret: &str,
+        window_tokens: u64,
+    ) -> Result<TurnView> {
+        let index = items
+            .iter()
+            .rposition(checkpoint::is_checkpoint_item)
+            .context("context input has no checkpoint")?;
+        let token = items[index]
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .context("context checkpoint item has no token")?;
+        let decoded =
+            checkpoint::decode(token, secret).map_err(|error| anyhow!(error.to_string()))?;
+        if decoded.session != session {
+            bail!(
+                "compaction checkpoint belongs to context session {}",
+                session_display_name(&decoded.session)
+            );
+        }
+        let Some(prefix_len) = decoded.history_len else {
+            let expanded = self
+                .expand_checkpoint(session, items, secret)?
+                .context("context checkpoint could not be expanded")?;
+            return self.begin_turn(session, &expanded, window_tokens);
+        };
+        let mut store = self.lock()?;
+        let stored = store.ensure_session(session)?;
+        if decoded.revision > stored.revision {
+            bail!(
+                "compaction checkpoint revision {} is newer than the archived session revision {}",
+                decoded.revision,
+                stored.revision
+            );
+        }
+        store.validate_history_anchor(session, prefix_len, decoded.history_tip.as_deref())?;
+        store.sync_history_from(session, &items[index + 1..], fingerprint, prefix_len)?;
+        drop(store);
+        self.current_view(session, window_tokens)
+    }
+
+    /// Cleanup shares the turn's OS lock, so an active or cancelling request
+    /// keeps all content until its last database operation has finished.
+    pub(crate) fn maintain_archive(self: &std::sync::Arc<Self>) -> Result<()> {
+        let sessions = self
+            .lock()?
+            .maintenance_candidates(super::store::MAINTENANCE_BATCH_SIZE)?;
+        for session in sessions {
+            let Some(_lease) = self.try_acquire_lease(&session)? else {
+                continue;
+            };
+            self.lock()?.maintain_session(&session)?;
+        }
+        self.lock()?.reclaim_archive()?;
+        Ok(())
     }
 
     /// Replaces a local compaction checkpoint with the archived history plus
@@ -410,6 +552,7 @@ impl ContextEngine {
                     .block(session, block_id)?
                     .with_context(|| format!("block {block_id} does not exist"))?;
                 if !apply {
+                    let expired_refs = store.expired_direct_refs(session, &block.direct_refs)?;
                     return Ok(ToolExecution {
                         content: json!({
                             "ok": true,
@@ -418,6 +561,8 @@ impl ContextEngine {
                             "topic": block.topic,
                             "direct_refs": block.direct_refs.iter().map(|entry| entry.reference.clone()).collect::<Vec<_>>(),
                             "full_refs": block.full_refs,
+                            "can_decompress": expired_refs.is_empty(),
+                            "expired_refs": expired_refs,
                         })
                         .to_string(),
                         revision,
@@ -441,9 +586,12 @@ impl ContextEngine {
                     .unwrap_or(5)
                     .clamp(1, 20) as usize;
                 let hits = store.search(session, query, limit)?;
+                let expired_count = store.expired_message_count(session)?;
                 Ok(ToolExecution {
                     content: json!({
                         "ok": true,
+                        "expired_message_count": expired_count,
+                        "complete": expired_count == 0,
                         "hits": hits.iter().map(|hit| json!({
                             "kind": hit.kind,
                             "reference": hit.reference,

@@ -117,6 +117,21 @@ struct FusionMockState {
 }
 
 #[derive(Clone)]
+struct HangingWsUpstreamState {
+    requests: Arc<AtomicUsize>,
+    started: Arc<tokio::sync::Notify>,
+    cancelled: Arc<tokio::sync::Notify>,
+}
+
+struct NotifyOnDrop(Arc<tokio::sync::Notify>);
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+#[derive(Clone)]
 struct OfficialState {
     requests: Arc<Mutex<Vec<Value>>>,
     auth_headers: Arc<Mutex<Vec<Option<String>>>>,
@@ -283,6 +298,31 @@ async fn spawn_mock_upstream(mode: MockMode) -> (String, Arc<Mutex<Vec<Value>>>)
         .route("/v1/images/generations", post(mock_image_generations))
         .with_state(state);
     (spawn_router(app).await, requests)
+}
+
+async fn hanging_ws_messages(State(state): State<HangingWsUpstreamState>, body: Body) -> Response {
+    let _ = axum::body::to_bytes(body, 4 * 1024 * 1024).await.unwrap();
+    let request_index = state.requests.fetch_add(1, Ordering::SeqCst);
+    if request_index == 0 {
+        state.started.notify_one();
+        let cancel_guard = NotifyOnDrop(Arc::clone(&state.cancelled));
+        let stream = async_stream::stream! {
+            let _cancel_guard = cancel_guard;
+            std::future::pending::<()>().await;
+            yield Ok::<_, std::convert::Infallible>(bytes::Bytes::new());
+        };
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from_stream(stream))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(text_sse()))
+            .unwrap()
+    }
 }
 
 async fn mock_custom_realtime_ws(
@@ -4099,6 +4139,120 @@ async fn context_expands_a_chained_request_from_the_archive() {
     assert!(body.contains("unknown response id"), "{body}");
 }
 
+#[tokio::test]
+async fn context_chained_request_continues_after_expired_compressed_bodies() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextCompressThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    config.context.protected_messages = 1;
+    config.context.protected_tokens = 1;
+    configure_baidu_policy(&mut config);
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let client = reqwest::Client::new();
+
+    let mut first = responses_request();
+    first["input"] = json!([
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"explore two ideas"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("alpha {}", "word ".repeat(400))}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("beta {}", "word ".repeat(400))}]},
+        {"type":"configuration_update","reasoning":{"effort":"high"}},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-retention")
+        .json(&first)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let completed = drain_events(&mut encoded)
+        .into_iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .and_then(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .expect("completed response event");
+    let response_id = completed["response"]["id"].as_str().expect("response id");
+
+    // The test database is isolated. Tombstone only bodies covered by the
+    // current compressed view, as the retention worker does after six hours.
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let session_key: String = connection
+        .query_row(
+            "SELECT session_key FROM sessions ORDER BY updated_at DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let expired = connection
+        .execute(
+            "UPDATE messages SET item_json = '', expired_at = unixepoch()
+             WHERE session_key = ?1 AND item_json <> ''
+               AND EXISTS (
+                   SELECT 1 FROM segments s JOIN blocks b
+                     ON b.session_key = s.session_key AND b.block_id = s.reference
+                   WHERE s.session_key = messages.session_key
+                     AND s.revision = (SELECT revision FROM sessions WHERE session_key = ?1)
+                     AND s.kind = 'block'
+                     AND EXISTS (SELECT 1 FROM json_each(b.full_refs) r WHERE r.value = messages.reference)
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM segments s WHERE s.session_key = messages.session_key
+                     AND s.revision = (SELECT revision FROM sessions WHERE session_key = ?1)
+                     AND s.kind = 'message' AND s.reference = messages.reference
+               )",
+            [&session_key],
+        )
+        .unwrap();
+    assert!(
+        expired > 0,
+        "the current compressed block should cover old bodies"
+    );
+    drop(connection);
+
+    let mut chained = responses_request();
+    chained["previous_response_id"] = json!(response_id);
+    chained["input"] = json!([{
+        "type":"message",
+        "role":"user",
+        "content":[{"type":"input_text","text":"question after expiration"}]
+    }]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-retention")
+        .json(&chained)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+
+    let recorded = requests.lock().unwrap().clone();
+    assert!(
+        recorded.len() >= 3,
+        "continuation did not reach upstream: {recorded:?}"
+    );
+    let continued = recorded.last().unwrap()["messages"].to_string();
+    assert!(
+        continued.contains("alpha and beta explored two ideas"),
+        "{continued}"
+    );
+    assert!(
+        continued.contains("question after expiration"),
+        "{continued}"
+    );
+    assert!(
+        !continued.contains("alpha word"),
+        "expired raw body leaked: {continued}"
+    );
+}
+
 async fn request_context_checkpoint(gateway_url: &str, session: &str) -> String {
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses/compact"))
@@ -6838,6 +6992,82 @@ async fn maps_custom_websocket_to_responses_frames() {
         requests[0]["metadata"]["user_id"],
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"websocket-session").to_string()
     );
+}
+
+#[tokio::test]
+async fn custom_websocket_close_before_first_progress_releases_session_for_resume() {
+    let upstream_state = HangingWsUpstreamState {
+        requests: Arc::new(AtomicUsize::new(0)),
+        started: Arc::new(tokio::sync::Notify::new()),
+        cancelled: Arc::new(tokio::sync::Notify::new()),
+    };
+    let upstream = spawn_router(
+        Router::new()
+            .route("/v1/messages", post(hanging_ws_messages))
+            .with_state(upstream_state.clone()),
+    )
+    .await;
+    let mut config = test_config(upstream);
+    configure_baidu_policy(&mut config);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &database.path().join("context.db")).await;
+    let websocket_url = gateway.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-session-id", "cancel-before-progress".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = responses_request();
+    body.as_object_mut().unwrap().remove("stream");
+    body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), upstream_state.started.notified())
+        .await
+        .expect("the custom upstream did not receive the first request");
+    socket.send(WsMessage::Close(None)).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), upstream_state.cancelled.notified())
+        .await
+        .expect("closing the client websocket did not cancel its pending upstream stream");
+
+    let mut resume_request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    resume_request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    resume_request
+        .headers_mut()
+        .insert("x-session-id", "cancel-before-progress".parse().unwrap());
+    let (mut resumed_socket, _) = connect_async(resume_request).await.unwrap();
+    let mut resume_body = responses_request();
+    resume_body.as_object_mut().unwrap().remove("stream");
+    resume_body["type"] = json!("response.create");
+    resumed_socket
+        .send(WsMessage::Text(resume_body.to_string().into()))
+        .await
+        .unwrap();
+    let frames = tokio::time::timeout(
+        WS_RESPONSE_TIMEOUT,
+        websocket_response_frames(&mut resumed_socket),
+    )
+    .await
+    .expect("the same-session websocket resume did not complete");
+    assert!(
+        frames
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    assert_eq!(upstream_state.requests.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -11223,6 +11453,96 @@ async fn context_stream_before_done() {
             gate.notify_one();
         }
     }
+}
+
+#[tokio::test]
+async fn context_websocket_close_releases_lease_before_upstream_finishes() {
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let sender_gate = gate.clone();
+    let app = Router::new().route("/v1/responses", post(move || {
+        let gate = sender_gate.clone();
+        async move {
+            let stream = async_stream::stream! {
+                yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"review-ws-cancel\"}}\n\n"));
+                gate.acquire().await.unwrap().forget();
+                yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"review-ws-cancel\",\"status\":\"completed\",\"output\":[]}}\n\n"));
+            };
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from_stream(stream))
+                .unwrap()
+        }
+    }));
+    let upstream = spawn_router(app).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    config.providers[0].protocol = ProviderProtocol::OpenAiResponses;
+    config.providers[0].api_path = "/v1/responses".to_owned();
+    let database = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &database.path().join("context.db")).await;
+    let websocket_url = gateway.replacen("http://", "ws://", 1);
+
+    let connect = || {
+        let mut request = format!("{websocket_url}/v1/responses")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+        request
+            .headers_mut()
+            .insert("x-session-id", "thread-ws-stop-resume".parse().unwrap());
+        request
+    };
+
+    let (mut stopped, _) = connect_async(connect()).await.unwrap();
+    let mut body = responses_request();
+    body["type"] = json!("response.create");
+    stopped
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    let progress = tokio::time::timeout(Duration::from_secs(5), stopped.next())
+        .await
+        .expect("first WS turn did not emit progress")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(progress, WsMessage::Text(_)));
+    drop(stopped);
+
+    let (mut resumed, _) = connect_async(connect()).await.unwrap();
+    resumed
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    let progress = tokio::time::timeout(Duration::from_secs(2), resumed.next()).await;
+    let resumed_before_upstream_finishes = matches!(
+        progress,
+        Ok(Some(Ok(WsMessage::Text(text)))) if text.contains("response.created")
+    );
+
+    // Release both upstream rounds after measuring cancellation. This also lets
+    // the red case unwind cleanly when the first WS handler missed its Close.
+    gate.add_permits(2);
+    let completion = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(message) = resumed.next().await {
+            let message = message.unwrap();
+            if let WsMessage::Text(text) = message
+                && text.contains("response.completed")
+            {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(
+        completion.is_ok(),
+        "resumed WS turn did not complete after releasing upstream"
+    );
+    assert!(
+        resumed_before_upstream_finishes,
+        "closing the first WS must release its session lease before the upstream completes"
+    );
 }
 
 #[tokio::test]

@@ -1,5 +1,7 @@
 use super::auth::check_gateway_auth;
 use super::*;
+use futures_util::stream::SplitStream;
+use std::collections::VecDeque;
 
 mod custom;
 mod official;
@@ -11,6 +13,8 @@ use official::{
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type ResponsesClientSender = SplitSink<WebSocket, AxumWsMessage>;
+
+const MAX_QUEUED_RESPONSES_WS_REQUESTS: usize = 16;
 
 struct ResponsesWsContext<'a> {
     state: &'a AppState,
@@ -52,10 +56,17 @@ async fn route_responses_ws(
     let mut official_socket = None;
     let mut official_state = None;
     let mut custom_state = None;
+    let mut pending_messages = VecDeque::new();
+    let mut pending_pong = None;
+    let mut client_closed = false;
 
     loop {
-        let Some(mut body) =
-            next_responses_ws_body(&mut client_sender, &mut client_receiver).await?
+        let Some(mut body) = next_responses_ws_body(
+            &mut client_sender,
+            &mut client_receiver,
+            &mut pending_messages,
+        )
+        .await?
         else {
             return Ok(());
         };
@@ -89,7 +100,55 @@ async fn route_responses_ws(
             continue;
         }
 
-        handle_custom_ws_request(&mut context, body, &model).await?;
+        let custom_result = {
+            let request = handle_custom_ws_request(&mut context, body, &model);
+            tokio::pin!(request);
+            loop {
+                tokio::select! {
+                    result = &mut request => break result,
+                    incoming = client_receiver.next() => {
+                        match incoming {
+                            Some(Ok(message @ (AxumWsMessage::Text(_) | AxumWsMessage::Binary(_)))) => {
+                                let message_bytes = match &message {
+                                    AxumWsMessage::Text(text) => text.len(),
+                                    AxumWsMessage::Binary(bytes) => bytes.len(),
+                                    _ => 0,
+                                };
+                                let pending_bytes = pending_messages.iter().map(|message| match message {
+                                    AxumWsMessage::Text(text) => text.len(),
+                                    AxumWsMessage::Binary(bytes) => bytes.len(),
+                                    _ => 0,
+                                }).sum::<usize>();
+                                if pending_messages.len() >= MAX_QUEUED_RESPONSES_WS_REQUESTS
+                                    || pending_bytes.saturating_add(message_bytes)
+                                        > super::request_body::MAX_REQUEST_BYTES
+                                {
+                                    client_closed = true;
+                                    break Ok(());
+                                }
+                                pending_messages.push_back(message);
+                            }
+                            Some(Ok(AxumWsMessage::Ping(bytes))) => {
+                                pending_pong = Some(bytes);
+                            }
+                            Some(Ok(AxumWsMessage::Pong(_))) => {}
+                            Some(Ok(AxumWsMessage::Close(_))) | None => {
+                                client_closed = true;
+                                break Ok(());
+                            }
+                            Some(Err(error)) => break Err(error.into()),
+                        }
+                    }
+                }
+            }
+        };
+        if !client_closed && let Some(bytes) = pending_pong.take() {
+            client_sender.send(AxumWsMessage::Pong(bytes)).await?;
+        }
+        custom_result?;
+        if client_closed {
+            return Ok(());
+        }
     }
 }
 
@@ -221,7 +280,11 @@ fn take_custom_request_input(body: &mut Value) -> anyhow::Result<Vec<Value>> {
 async fn next_responses_ws_body(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     client_receiver: &mut SplitStream<WebSocket>,
+    pending_messages: &mut VecDeque<AxumWsMessage>,
 ) -> anyhow::Result<Option<Value>> {
+    if let Some(message) = pending_messages.pop_front() {
+        return responses_ws_body(&message).map(Some);
+    }
     loop {
         match client_receiver.next().await {
             Some(Ok(message @ (AxumWsMessage::Text(_) | AxumWsMessage::Binary(_)))) => {

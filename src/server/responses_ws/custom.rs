@@ -147,6 +147,19 @@ async fn proxy_custom_responses_ws(
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let model = requested_model;
+    let context_engine = if matches!(&route, ResolvedModelRoute::Fusion { .. }) {
+        None
+    } else {
+        state
+            .gateway
+            .context_engine()
+            .filter(|engine| engine.is_enabled())
+    };
+    let context_session = if context_engine.is_some() {
+        crate::gateway::context_session(state.gateway.as_ref(), headers, &body)?
+    } else {
+        None
+    };
     if !body.get("input").is_some_and(Value::is_array) {
         anyhow::bail!("custom request input must be an array");
     }
@@ -156,7 +169,12 @@ async fn proxy_custom_responses_ws(
         ResolvedModelRoute::Official => {
             let plan = RequestPlan::official(body, None)?;
             let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
-            (stream, Some(body))
+            if context_session.is_some() {
+                drop(body);
+                (stream, None)
+            } else {
+                (stream, Some(body))
+            }
         }
         ResolvedModelRoute::Provider { .. } => {
             let plan = RequestPlan::from_route(
@@ -166,7 +184,12 @@ async fn proxy_custom_responses_ws(
                 Some(model.clone()),
             )?;
             let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
-            (stream, Some(body))
+            if context_session.is_some() {
+                drop(body);
+                (stream, None)
+            } else {
+                (stream, Some(body))
+            }
         }
         ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state
@@ -235,9 +258,23 @@ async fn proxy_custom_responses_ws(
         .get_mut("output")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| anyhow::anyhow!("custom completed response output must be an array"))?;
-    let mut history = match returned_body {
-        Some(mut body) => take_custom_request_input(&mut body)?,
-        None => preserved_history.expect("fusion request history was preserved"),
+    let mut history = if let Some(session) = context_session {
+        let engine = context_engine
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("context engine disappeared during WebSocket turn"))?;
+        let secret = crate::config::ensure_compaction_secret()?;
+        let token = engine.checkpoint_token(&session, &model, &secret)?;
+        vec![json!({
+            "type": "compaction",
+            "id": format!("cmp_{}", Uuid::new_v4().simple()),
+            "created_by": "codex-mixin",
+            "encrypted_content": token
+        })]
+    } else {
+        match returned_body {
+            Some(mut body) => take_custom_request_input(&mut body)?,
+            None => preserved_history.expect("fusion request history was preserved"),
+        }
     };
     history.append(output);
     Ok(Some(CustomWebSocketState {

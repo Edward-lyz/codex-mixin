@@ -90,6 +90,25 @@ pub async fn serve_on_listener(
     let bind = listener.local_addr()?;
     config.bind = bind;
     let state = AppState::new(config)?;
+    let (maintenance_shutdown, mut maintenance_stopped) = tokio::sync::watch::channel(false);
+    let maintenance_task = state.gateway.context_engine().map(|engine| {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = maintenance_stopped.changed() => break,
+                    _ = interval.tick() => {}
+                }
+                let engine = Arc::clone(&engine);
+                match tokio::task::spawn_blocking(move || engine.maintain_archive()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(error = %format!("{error:#}"), "context maintenance deferred"),
+                    Err(error) => tracing::warn!(%error, "context maintenance task failed"),
+                }
+            }
+        })
+    });
     let ducx_warmup_state = state.clone();
     let ducx_warmup_task = tokio::spawn(async move {
         if let Err(error) = ducx_warmup_state
@@ -146,6 +165,13 @@ pub async fn serve_on_listener(
         }
     })
     .await;
+    let _ = maintenance_shutdown.send(true);
+    if let Some(task) = maintenance_task {
+        // A running SQLite operation must finish before its session lock drops.
+        if let Err(error) = task.await {
+            tracing::warn!(%error, "join context maintenance task");
+        }
+    }
     if let Some(probe_task) = probe_task {
         probe_task.abort();
     }
