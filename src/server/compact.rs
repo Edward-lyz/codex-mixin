@@ -166,13 +166,20 @@ pub(super) async fn context_checkpoint(
         .acquire_lease(&session)
         .await
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
-    let items = crate::gateway::context_input(&engine, &session, body)?;
     let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
-    let view = engine
-        .begin_turn(&session, &items, window_tokens)
-        .map_err(GatewayError::Other)?;
+    let view = crate::gateway::context_input(&engine, &session, body, window_tokens)?;
     let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
-    let token = checkpoint::encode(model, &session, view.revision, &secret)?;
+    let (history_len, history_tip) = engine
+        .history_anchor(&session)
+        .map_err(GatewayError::Other)?;
+    let token = checkpoint::encode(
+        model,
+        &session,
+        view.revision,
+        history_len,
+        history_tip,
+        &secret,
+    )?;
     let response = json!({
         "id": format!("resp_compact_{}", Uuid::new_v4().simple()),
         "object": "response",

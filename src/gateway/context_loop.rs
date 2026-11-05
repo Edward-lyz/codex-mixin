@@ -123,15 +123,12 @@ impl ContextRun {
             .acquire_lease(&self.session)
             .await
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
-        let original = context_input(&self.engine, &self.session, &plan.body)?;
+        let view = context_input(&self.engine, &self.session, &plan.body, self.window_tokens)?;
         if !self.enabled {
             return self
-                .stream_read_only(executor, plan, headers, original, lease)
+                .stream_read_only(executor, plan, headers, view, lease)
                 .await;
         }
-        let view = self
-            .engine
-            .begin_turn(&self.session, &original, self.window_tokens)?;
         tracing::info!(
             session = %crate::context::types::session_display_name(&self.session),
             revision = view.revision,
@@ -154,7 +151,7 @@ impl ContextRun {
         let mut first_plan = plan.clone();
         first_plan.body = compose_body(
             &template,
-            &view.items,
+            view.items,
             &[],
             &self.engine,
             !self.guidance_only,
@@ -176,7 +173,7 @@ impl ContextRun {
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
             let _lease = lease;
-            let mut base = view.items;
+            let mut base = Vec::new();
             let mut appended: Vec<Value> = Vec::new();
             let mut revision = view.revision;
             let mut internal_rounds = 0usize;
@@ -189,7 +186,7 @@ impl ContextRun {
                     None => {
                         let body = compose_body(
                             &template,
-                            &base,
+                            std::mem::take(&mut base),
                             &appended,
                             &self.engine,
                             !self.guidance_only,
@@ -321,7 +318,7 @@ impl ContextRun {
                 }
                 let view = match self
                     .engine
-                    .begin_turn(&self.session, &original, self.window_tokens)
+                    .current_view(&self.session, self.window_tokens)
                 {
                     Ok(view) => view,
                     Err(error) => {
@@ -350,21 +347,16 @@ impl ContextRun {
         executor: GatewayExecutor,
         plan: RequestPlan,
         headers: HeaderMap,
-        original: Vec<Value>,
+        view: crate::context::TurnView,
         lease: crate::context::engine::Lease,
     ) -> Result<ResponseStream, GatewayError> {
-        let view = self
-            .engine
-            .begin_turn(&self.session, &original, self.window_tokens)
-            .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
         tracing::info!(
             session = %crate::context::types::session_display_name(&self.session),
             revision = view.revision,
             "expanded a context checkpoint with the feature off"
         );
-        let template = plan.body.clone();
         let mut read_plan = plan;
-        read_plan.body = compose_read_only_body(&template, &view.items);
+        read_plan.body = compose_read_only_body(read_plan.body, view.items);
         let (mut upstream, _) = executor.send_round(read_plan, &headers).await?;
         Ok(async_stream::stream! {
             let _lease = lease;
@@ -644,7 +636,7 @@ fn encode_sse(event: Option<&str>, data: &str) -> Bytes {
 
 fn compose_body(
     template: &Value,
-    base: &[Value],
+    mut input: Vec<Value>,
     appended: &[Value],
     engine: &ContextEngine,
     inject_tools: bool,
@@ -652,7 +644,6 @@ fn compose_body(
     native_messages: bool,
 ) -> Value {
     let mut body = template.clone();
-    let mut input: Vec<Value> = base.to_vec();
     input.extend(appended.iter().cloned());
     // The state rides at the end of the input instead of the instructions: an
     // instruction that changes every round would invalidate the provider prefix
@@ -704,9 +695,8 @@ fn pressure_note(
 
 /// Replaces the input with a view read from the archive without injecting the
 /// internal tools, so a disabled session keeps its compressed history.
-fn compose_read_only_body(template: &Value, items: &[Value]) -> Value {
-    let mut body = template.clone();
-    body["input"] = Value::Array(items.to_vec());
+fn compose_read_only_body(mut body: Value, items: Vec<Value>) -> Value {
+    body["input"] = Value::Array(items);
     if let Some(object) = body.as_object_mut() {
         object.remove("previous_response_id");
     }
@@ -786,7 +776,8 @@ pub(crate) fn context_input(
     engine: &ContextEngine,
     session: &str,
     body: &Value,
-) -> Result<Vec<Value>, GatewayError> {
+    window_tokens: u64,
+) -> Result<crate::context::TurnView, GatewayError> {
     let incoming = match body.get("input") {
         Some(Value::Array(items)) => items
             .iter()
@@ -811,18 +802,17 @@ pub(crate) fn context_input(
     };
     if incoming.iter().any(checkpoint::is_checkpoint_item) {
         let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
-        if let Some(expanded) = engine
-            .expand_checkpoint(session, &incoming, &secret)
-            .map_err(|error| GatewayError::BadRequest(error.to_string()))?
-        {
-            return Ok(expanded);
-        }
+        return engine
+            .begin_checkpoint_turn(session, &incoming, &secret, window_tokens)
+            .map_err(|error| GatewayError::BadRequest(error.to_string()));
     }
     match body.get("previous_response_id").and_then(Value::as_str) {
         Some(previous) => engine
-            .expand_chained_input(session, previous, &incoming)
+            .begin_chained_turn(session, previous, &incoming, window_tokens)
             .map_err(|error| GatewayError::BadRequest(error.to_string())),
-        None => Ok(incoming),
+        None => engine
+            .begin_turn(session, &incoming, window_tokens)
+            .map_err(|error| GatewayError::BadRequest(error.to_string())),
     }
 }
 

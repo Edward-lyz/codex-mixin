@@ -12,9 +12,13 @@ const REASONING_FINGERPRINT_VERSION: i64 = 1;
 /// From this data version `messages.fingerprint` holds a SHA-256 of the
 /// normalized item instead of the normalized JSON itself.
 const HASHED_FINGERPRINT_VERSION: i64 = 2;
-/// Sessions untouched this long are removed by the daily maintenance.
+/// Archived message bodies are eligible for removal after six idle hours.
+pub(crate) const RAW_RETENTION_SECONDS: i64 = 6 * 60 * 60;
+/// The archive worker limits each pass to this many sessions.
+pub(crate) const MAINTENANCE_BATCH_SIZE: usize = 8;
 const IDLE_SESSION_SECONDS: i64 = 30 * 86_400;
-const MAINTENANCE_INTERVAL_SECONDS: i64 = 86_400;
+type StoredResponseAnchor = (String, Option<i64>, Option<i64>, Option<String>);
+type ResponseAnchor = (Vec<Value>, Option<usize>, Option<String>);
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -35,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
     fingerprint TEXT NOT NULL,
     item_json TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    expired_at INTEGER,
     PRIMARY KEY (session_key, reference)
 );
 CREATE TABLE IF NOT EXISTS history (
@@ -74,6 +79,9 @@ CREATE TABLE IF NOT EXISTS responses (
     revision INTEGER NOT NULL,
     output_json TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
+    expired_at INTEGER,
+    history_len INTEGER,
+    history_tip TEXT,
     PRIMARY KEY (session_key, response_id)
 );
 CREATE TABLE IF NOT EXISTS leases (
@@ -212,6 +220,9 @@ impl Store {
         self.connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .context("set context busy timeout")?;
+        self.connection
+            .pragma_update(None, "cache_size", -256)
+            .context("set context sqlite cache size")?;
         // A new database starts in the current format, so it needs neither
         // the digest upgrade, its backup, nor a full VACUUM later.
         let fresh: bool = self
@@ -258,17 +269,17 @@ impl Store {
                 .execute("ALTER TABLE turns ADD COLUMN codex_thread_id TEXT", [])
                 .context("upgrade context thread metadata")?;
         }
+        self.upgrade_retention_columns()
+            .context("upgrade context retention schema")?;
+        self.backfill_latest_response_anchor()
+            .context("backfill latest context response anchor")?;
         self.upgrade_reasoning_fingerprints()?;
         // CLI readers share this database with the gateway. Opening another
         // connection must never revoke a live turn's lease.
         self.connection
             .execute("DELETE FROM leases WHERE expires_at <= ?1", [unix_now()])
             .context("clear expired context leases")?;
-        let migrated = self.upgrade_hashed_fingerprints()?;
-        // Cleanup only saves space; a busy database retries on the next open.
-        if let Err(error) = self.maintain(migrated && !fresh) {
-            tracing::warn!(error = %format!("{error:#}"), "context maintenance skipped");
-        }
+        self.upgrade_hashed_fingerprints()?;
         Ok(())
     }
 
@@ -339,109 +350,220 @@ impl Store {
         Ok(true)
     }
 
-    /// Daily cleanup: drops sessions idle for 30 days and archived messages no
-    /// history, segment or block refers to any more, then returns the freed
-    /// pages to the file system. `force` runs it right after an upgrade.
-    fn maintain(&self, force: bool) -> Result<()> {
-        let now = unix_now();
-        let due = |connection: &Connection| -> Result<bool> {
-            let last: Option<i64> = connection
-                .query_row(
-                    "SELECT at FROM maintenance WHERE name = 'prune'",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()
-                .context("read context maintenance time")?;
-            Ok(force || last.is_none_or(|at| at > now || now - at >= MAINTENANCE_INTERVAL_SECONDS))
-        };
-        // Frequent CLI readers check without taking the write lock.
-        if !due(&self.connection)? {
+    fn upgrade_retention_columns(&self) -> Result<()> {
+        for (table, column, definition) in [
+            ("messages", "expired_at", "expired_at INTEGER"),
+            ("responses", "expired_at", "expired_at INTEGER"),
+            ("responses", "history_len", "history_len INTEGER"),
+            ("responses", "history_tip", "history_tip TEXT"),
+        ] {
+            if self.has_column(table, column)? {
+                continue;
+            }
+            self.connection
+                .execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])
+                .with_context(|| format!("add context {table}.{column}"))?;
+        }
+        Ok(())
+    }
+
+    fn backfill_latest_response_anchor(&self) -> Result<()> {
+        let done: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maintenance WHERE name = 'response-anchors')",
+            [],
+            |row| row.get(0),
+        )?;
+        if done {
             return Ok(());
         }
         let transaction =
-            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
-                .context("begin context maintenance")?;
-        if !due(&transaction)? {
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let done: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maintenance WHERE name = 'response-anchors')",
+            [],
+            |row| row.get(0),
+        )?;
+        if done {
             return Ok(());
         }
+        transaction.execute(
+            "WITH latest AS (
+                 SELECT rowid AS id, ROW_NUMBER() OVER (
+                     PARTITION BY session_key ORDER BY created_at DESC, rowid DESC
+                 ) AS rank FROM responses
+             ) UPDATE responses SET
+                 history_len = (SELECT COUNT(*) FROM history h WHERE h.session_key = responses.session_key),
+                 history_tip = (SELECT h.reference FROM history h
+                     WHERE h.session_key = responses.session_key ORDER BY h.position DESC LIMIT 1)
+             WHERE history_len IS NULL AND rowid IN (SELECT id FROM latest WHERE rank = 1)
+               AND revision = (SELECT s.revision FROM sessions s WHERE s.session_key = responses.session_key)
+               AND created_at > (SELECT s.updated_at FROM sessions s WHERE s.session_key = responses.session_key)",
+            [],
+        ).context("backfill current response history anchor")?;
+        transaction.execute(
+            "INSERT INTO maintenance(name,at) VALUES ('response-anchors',?1)",
+            [unix_now()],
+        )?;
         transaction
-            .execute(
-                "CREATE TEMP TABLE idle_sessions AS SELECT session_key FROM sessions
-                 WHERE updated_at < ?1
-                   AND session_key NOT IN (SELECT session_key FROM leases)",
-                [now - IDLE_SESSION_SECONDS],
+            .commit()
+            .context("commit context response anchors")?;
+        Ok(())
+    }
+
+    /// Returns sessions with old archived bodies, oldest work first. The
+    /// caller holds each session's OS lease while it expires that session.
+    pub(crate) fn maintenance_candidates(&self, limit: usize) -> Result<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT session_key FROM (
+                 SELECT s.session_key, MIN(m.created_at) AS oldest
+                 FROM sessions s
+                 JOIN segments v ON v.session_key = s.session_key AND v.revision = s.revision AND v.kind = 'block'
+                 JOIN blocks b ON b.session_key = v.session_key AND b.block_id = v.reference
+                 JOIN json_each(b.full_refs) r
+                 JOIN messages m ON m.session_key = s.session_key AND m.reference = r.value
+                 WHERE s.updated_at < ?1 AND m.item_json <> ''
+                   AND NOT EXISTS (SELECT 1 FROM segments current_message
+                       WHERE current_message.session_key = s.session_key AND current_message.revision = s.revision
+                         AND current_message.kind = 'message' AND current_message.reference = m.reference)
+                 GROUP BY s.session_key
+                 UNION ALL
+                 SELECT r.session_key, MIN(r.created_at) AS oldest
+                 FROM responses r JOIN sessions s ON s.session_key = r.session_key
+                 WHERE s.updated_at < ?1 AND r.output_json NOT IN ('', '[]')
+                   AND r.response_id <> COALESCE((SELECT latest.response_id FROM responses latest
+                       WHERE latest.session_key = r.session_key
+                       ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1), '')
+                 GROUP BY r.session_key
+                 UNION ALL
+                 SELECT session_key, updated_at AS oldest FROM sessions WHERE updated_at < ?2
+             ) GROUP BY session_key ORDER BY MIN(oldest) LIMIT ?3",
+        ).context("prepare context retention candidates")?;
+        let now = unix_now();
+        let rows = statement
+            .query_map(
+                params![
+                    now - RAW_RETENTION_SECONDS,
+                    now - IDLE_SESSION_SECONDS,
+                    limit as i64
+                ],
+                |row| row.get(0),
             )
-            .context("select idle context sessions")?;
-        // Turn usage stays so lifetime statistics keep their totals.
-        transaction
-            .execute_batch(
-                "DELETE FROM messages WHERE session_key IN idle_sessions;
-                 DELETE FROM history WHERE session_key IN idle_sessions;
-                 DELETE FROM segments WHERE session_key IN idle_sessions;
-                 DELETE FROM blocks WHERE session_key IN idle_sessions;
-                 DELETE FROM responses WHERE session_key IN idle_sessions;
-                 DELETE FROM nudge_state WHERE session_key IN idle_sessions;
-                 DELETE FROM sessions WHERE session_key IN idle_sessions;
-                 CREATE TEMP TABLE live_messages (
-                     session_key TEXT NOT NULL,
-                     reference TEXT NOT NULL,
-                     PRIMARY KEY (session_key, reference)
-                 ) WITHOUT ROWID;
-                 INSERT OR IGNORE INTO live_messages SELECT session_key, reference FROM history;
-                 INSERT OR IGNORE INTO live_messages
-                     SELECT session_key, reference FROM segments WHERE kind = 'message';
-                 INSERT OR IGNORE INTO live_messages
-                     SELECT b.session_key, r.value FROM blocks b, json_each(b.full_refs) r;
-                 INSERT OR IGNORE INTO live_messages
-                     SELECT b.session_key, json_extract(r.value, '$.reference')
-                     FROM blocks b, json_each(b.direct_refs) r;",
-            )
-            .context("prune idle context sessions")?;
-        let orphans = transaction
-            .execute(
-                "DELETE FROM messages WHERE NOT EXISTS (
-                     SELECT 1 FROM live_messages l
-                     WHERE l.session_key = messages.session_key AND l.reference = messages.reference)",
-                [],
-            )
-            .context("prune superseded context messages")?;
-        let sessions: i64 = transaction
-            .query_row("SELECT COUNT(*) FROM idle_sessions", [], |row| row.get(0))
-            .context("count idle context sessions")?;
-        transaction
-            .execute_batch("DROP TABLE temp.idle_sessions; DROP TABLE temp.live_messages;")
-            .context("drop context maintenance tables")?;
-        transaction
-            .execute(
-                "INSERT INTO maintenance (name, at) VALUES ('prune', ?1)
-                 ON CONFLICT(name) DO UPDATE SET at = excluded.at",
-                [now],
-            )
-            .context("record context maintenance time")?;
-        transaction.commit().context("commit context maintenance")?;
-        tracing::info!(
-            sessions,
-            messages = orphans,
-            "pruned idle context sessions and superseded messages"
-        );
-        let auto_vacuum: i64 = self
+            .context("query context retention candidates")?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .context("read context retention candidate")
+    }
+
+    /// Expires only compressed-away message bodies, keeping fingerprints and
+    /// references so history alignment and checkpoint anchors remain stable.
+    pub(crate) fn maintain_session(&mut self, key: &str) -> Result<()> {
+        let now = unix_now();
+        let cutoff = now - RAW_RETENTION_SECONDS;
+        let transaction = self
             .connection
-            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
-            .context("read context auto vacuum mode")?;
-        let reclaim = if auto_vacuum == 2 {
-            self.connection.execute_batch("PRAGMA incremental_vacuum")
-        } else {
-            // Older databases never return freed pages; switching the mode
-            // takes one full rewrite, after which daily cleanup is incremental.
-            self.connection
-                .pragma_update(None, "auto_vacuum", "INCREMENTAL")
-                .and_then(|()| self.connection.execute_batch("VACUUM"))
-        };
-        // A reader holding the database only delays reclaiming the space.
-        if let Err(error) = reclaim {
-            tracing::warn!(error = %error, "context database space was not reclaimed");
+            .transaction()
+            .context("begin context retention transaction")?;
+        let idle = transaction
+            .query_row(
+                "SELECT updated_at < ?2 FROM sessions WHERE session_key = ?1",
+                params![key, now - IDLE_SESSION_SECONDS],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .unwrap_or(false);
+        if idle {
+            for table in [
+                "messages",
+                "history",
+                "segments",
+                "blocks",
+                "responses",
+                "nudge_state",
+                "sessions",
+            ] {
+                transaction
+                    .execute(
+                        &format!("DELETE FROM {table} WHERE session_key = ?1"),
+                        [key],
+                    )
+                    .with_context(|| format!("prune idle context {table}"))?;
+            }
+            transaction
+                .commit()
+                .context("commit idle context pruning")?;
+            return Ok(());
         }
+        let messages = transaction.execute(
+            "UPDATE messages SET item_json = '', expired_at = ?2
+             WHERE session_key = ?1 AND item_json <> ''
+               AND reference IN (
+                   SELECT r.value FROM sessions s
+                   JOIN segments v ON v.session_key = s.session_key AND v.revision = s.revision AND v.kind = 'block'
+                   JOIN blocks b ON b.session_key = v.session_key AND b.block_id = v.reference
+                   JOIN json_each(b.full_refs) r
+                   WHERE s.session_key = ?1 AND s.updated_at < ?3
+               )
+               AND reference NOT IN (
+                   SELECT reference FROM segments
+                   WHERE session_key = ?1
+                     AND revision = (SELECT revision FROM sessions WHERE session_key = ?1)
+                     AND kind = 'message'
+               )",
+            params![key, now, cutoff],
+        ).context("expire compressed context message bodies")?;
+        let responses = transaction
+            .execute(
+                "UPDATE responses SET output_json = '', expired_at = ?2
+             WHERE session_key = ?1 AND output_json NOT IN ('', '[]')
+               AND EXISTS (SELECT 1 FROM sessions s WHERE s.session_key = ?1 AND s.updated_at < ?3)
+               AND response_id <> COALESCE((
+                   SELECT response_id FROM responses WHERE session_key = ?1
+                   ORDER BY created_at DESC, rowid DESC LIMIT 1
+               ), '')",
+                params![key, now, cutoff],
+            )
+            .context("expire old context response outputs")?;
+        transaction.execute(
+            "DELETE FROM messages WHERE session_key = ?1 AND NOT EXISTS (
+                 SELECT 1 FROM history h WHERE h.session_key = messages.session_key AND h.reference = messages.reference
+             ) AND NOT EXISTS (
+                 SELECT 1 FROM segments s WHERE s.session_key = messages.session_key AND s.reference = messages.reference
+             ) AND NOT EXISTS (
+                 SELECT 1 FROM blocks b, json_each(b.full_refs) r
+                 WHERE b.session_key = messages.session_key AND r.value = messages.reference
+             ) AND NOT EXISTS (
+                 SELECT 1 FROM blocks b, json_each(b.direct_refs) r
+                 WHERE b.session_key = messages.session_key AND json_extract(r.value, '$.reference') = messages.reference
+             )",
+            [key],
+        ).context("prune unreferenced context messages")?;
+        transaction.commit().context("commit context retention")?;
+        tracing::debug!(
+            session = key,
+            messages,
+            responses,
+            "expired context archive bodies"
+        );
+        Ok(())
+    }
+
+    pub(crate) fn reclaim_archive(&self) -> Result<()> {
+        // This pragma yields one row per page; stopping after the first row
+        // would return only one page even when a larger batch was requested.
+        {
+            let mut statement = self.connection.prepare("PRAGMA incremental_vacuum(8192)")?;
+            let mut pages = statement.query([])?;
+            while pages
+                .next()
+                .context("reclaim context archive pages")?
+                .is_some()
+            {}
+        }
+        let _: (i64, i64, i64) = self
+            .connection
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .context("checkpoint context archive WAL")?;
         Ok(())
     }
 
@@ -611,32 +733,278 @@ impl Store {
     ) -> Result<()> {
         let output_json =
             serde_json::to_string(output).context("encode recorded response output")?;
+        let (history_len, history_tip) = self.history_anchor(key)?;
         self.connection
             .execute(
-                "INSERT INTO responses (session_key, response_id, revision, output_json, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO responses (session_key, response_id, revision, output_json, created_at, history_len, history_tip)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(session_key, response_id) DO UPDATE SET
                    revision = excluded.revision,
-                   output_json = excluded.output_json",
-                params![key, response_id, revision, output_json, unix_now()],
+                   output_json = excluded.output_json,
+                   expired_at = NULL,
+                   history_len = excluded.history_len,
+                   history_tip = excluded.history_tip",
+                params![key, response_id, revision, output_json, unix_now(), history_len as i64, history_tip],
             )
             .context("record context response")?;
         Ok(())
     }
 
     pub fn response_output(&self, key: &str, response_id: &str) -> Result<Option<Vec<Value>>> {
-        let recorded: Option<String> = self
+        let recorded: Option<(String, Option<i64>)> = self
             .connection
             .query_row(
-                "SELECT output_json FROM responses WHERE session_key = ?1 AND response_id = ?2",
+                "SELECT output_json, expired_at FROM responses WHERE session_key = ?1 AND response_id = ?2",
                 params![key, response_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .context("read recorded response output")?;
         recorded
-            .map(|json| serde_json::from_str(&json).context("parse recorded response output"))
+            .map(|(json, expired_at)| {
+                if expired_at.is_some() {
+                    bail!("response {response_id} output expired from the context archive")
+                }
+                serde_json::from_str(&json).context("parse recorded response output")
+            })
             .transpose()
+    }
+
+    pub(crate) fn response_anchor(
+        &self,
+        key: &str,
+        response_id: &str,
+    ) -> Result<Option<ResponseAnchor>> {
+        let record: Option<StoredResponseAnchor> = self
+            .connection
+            .query_row(
+                "SELECT output_json, expired_at, history_len, history_tip FROM responses
+                 WHERE session_key = ?1 AND response_id = ?2",
+                params![key, response_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .context("read context response anchor")?;
+        let Some((output, expired_at, history_len, history_tip)) = record else {
+            return Ok(None);
+        };
+        if expired_at.is_some() {
+            bail!("response {response_id} output expired from the context archive");
+        }
+        let output = serde_json::from_str(&output).context("parse recorded response output")?;
+        let history_len = history_len
+            .map(|length| usize::try_from(length).context("response history anchor length"))
+            .transpose()?;
+        Ok(Some((output, history_len, history_tip)))
+    }
+
+    pub(crate) fn history_anchor(&self, key: &str) -> Result<(usize, Option<String>)> {
+        let (length, tip): (i64, Option<String>) = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*), (SELECT h.reference FROM history h
+                 WHERE h.session_key = ?1 ORDER BY h.position DESC LIMIT 1)
+             FROM history WHERE session_key = ?1",
+                [key],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .context("read context history anchor")?;
+        Ok((
+            usize::try_from(length).context("context history anchor length")?,
+            tip,
+        ))
+    }
+
+    pub(crate) fn validate_history_anchor(
+        &self,
+        key: &str,
+        length: usize,
+        tip: Option<&str>,
+    ) -> Result<()> {
+        let (current_len, _) = self.history_anchor(key)?;
+        if length > current_len {
+            bail!("context history anchor is ahead of the archive");
+        }
+        if length > 0 && tip.is_none() {
+            bail!("context history anchor is missing its tip reference");
+        }
+        if let Some(expected) = tip {
+            if length == 0 {
+                bail!("empty context history anchor has a fingerprint");
+            }
+            let actual: Option<String> = self.connection.query_row(
+                "SELECT h.reference FROM history h WHERE h.session_key = ?1 AND h.position = ?2",
+                params![key, length as i64 - 1],
+                |row| row.get(0),
+            ).optional().context("read context anchor fingerprint")?;
+            if actual.as_deref() != Some(expected) {
+                bail!("context history anchor does not match the archive");
+            }
+        }
+        Ok(())
+    }
+
+    /// Continues from a known history prefix without loading expired bodies.
+    /// An already appended prefix is deduplicated; divergent suffixes fork.
+    pub(crate) fn sync_history_from(
+        &mut self,
+        key: &str,
+        items: &[Value],
+        fingerprint: impl Fn(&Value) -> String,
+        prefix_len: usize,
+    ) -> Result<()> {
+        let mut session = self.ensure_session(key)?;
+        let history = self.history(key)?;
+        let history_len = history.len();
+        if prefix_len > history_len {
+            bail!("context history anchor is ahead of the archive");
+        }
+        if items.is_empty() {
+            return Ok(());
+        }
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT m.fingerprint FROM history h JOIN messages m
+               ON m.session_key = h.session_key AND m.reference = h.reference
+             WHERE h.session_key = ?1 AND h.position >= ?2 ORDER BY h.position",
+            )
+            .context("prepare context continuation suffix")?;
+        let suffix = statement
+            .query_map(params![key, prefix_len as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("read context continuation suffix")?;
+        drop(statement);
+        let fingerprints = items.iter().map(&fingerprint).collect::<Vec<_>>();
+        let common = suffix
+            .iter()
+            .zip(&fingerprints)
+            .take_while(|(left, right)| left == right)
+            .count();
+        if common == items.len() {
+            return Ok(());
+        }
+        let divergence = prefix_len + common;
+        let kept: Vec<SegmentRow> = self
+            .segments(key, session.revision)?
+            .into_iter()
+            .filter(|segment| segment.end_position < divergence as i64)
+            .collect();
+        let mut coverage = kept.iter().peekable();
+        let uncovered: Vec<&HistoryEntry> = history
+            .iter()
+            .take(divergence)
+            .filter(|entry| {
+                while coverage
+                    .peek()
+                    .is_some_and(|segment| segment.end_position < entry.position)
+                {
+                    coverage.next();
+                }
+                coverage
+                    .peek()
+                    .is_none_or(|segment| segment.position > entry.position)
+            })
+            .collect();
+        for entry in &uncovered {
+            if self.message_json(key, &entry.reference)?.is_none() {
+                bail!(
+                    "cannot fork context history: original {} expired from the archive",
+                    entry.reference
+                );
+            }
+        }
+        if divergence < history_len || !uncovered.is_empty() {
+            let next_revision = session.revision + 1;
+            let transaction = self
+                .connection
+                .transaction()
+                .context("begin context continuation fork")?;
+            transaction
+                .execute("DELETE FROM segments WHERE session_key = ?1", [key])
+                .context("clear segments for continuation fork")?;
+            for segment in &kept {
+                insert_segment(&transaction, key, next_revision, segment)?;
+            }
+            for entry in &uncovered {
+                insert_segment(
+                    &transaction,
+                    key,
+                    next_revision,
+                    &SegmentRow {
+                        position: entry.position,
+                        end_position: entry.position,
+                        kind: SegmentKind::Message,
+                        reference: entry.reference.clone(),
+                    },
+                )?;
+            }
+            transaction
+                .execute(
+                    "DELETE FROM history WHERE session_key = ?1 AND position >= ?2",
+                    params![key, divergence as i64],
+                )
+                .context("trim context history at continuation fork")?;
+            transaction
+                .execute(
+                    "UPDATE sessions SET revision = ?2, updated_at = ?3 WHERE session_key = ?1",
+                    params![key, next_revision, unix_now()],
+                )
+                .context("bump context revision for continuation fork")?;
+            transaction
+                .execute("DELETE FROM nudge_state WHERE session_key = ?1", [key])
+                .context("reset context nudge at continuation fork")?;
+            transaction
+                .commit()
+                .context("commit context continuation fork")?;
+            session.revision = next_revision;
+        }
+        let mut next_ref = session.next_ref;
+        let transaction = self
+            .connection
+            .transaction()
+            .context("begin context continuation")?;
+        for (offset, item) in items.iter().enumerate().skip(common) {
+            let reference = format!("m{next_ref:06}");
+            let position = prefix_len + offset;
+            let encoded =
+                serde_json::to_string(item).context("encode context continuation item")?;
+            transaction.execute(
+                "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![key, reference, fingerprints[offset], encoded, unix_now()],
+            ).context("append context continuation message")?;
+            transaction
+                .execute(
+                    "INSERT INTO history (session_key, position, reference) VALUES (?1, ?2, ?3)",
+                    params![key, position as i64, reference],
+                )
+                .context("append context continuation history")?;
+            insert_segment(
+                &transaction,
+                key,
+                session.revision,
+                &SegmentRow {
+                    position: position as i64,
+                    end_position: position as i64,
+                    kind: SegmentKind::Message,
+                    reference,
+                },
+            )?;
+            next_ref += 1;
+        }
+        transaction
+            .execute(
+                "UPDATE sessions SET next_ref = ?2, updated_at = ?3 WHERE session_key = ?1",
+                params![key, next_ref as i64, unix_now()],
+            )
+            .context("update context continuation reference counter")?;
+        transaction
+            .commit()
+            .context("commit context continuation")?;
+        Ok(())
     }
 
     pub fn response_owner(&self, response_id: &str) -> Result<Option<String>> {
@@ -735,14 +1103,51 @@ impl Store {
     }
 
     pub fn message_json(&self, key: &str, reference: &str) -> Result<Option<String>> {
-        self.connection
+        let record: Option<(String, Option<i64>)> = self.connection
             .query_row(
-                "SELECT item_json FROM messages WHERE session_key = ?1 AND reference = ?2",
+                "SELECT item_json, expired_at FROM messages WHERE session_key = ?1 AND reference = ?2",
                 params![key, reference],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
-            .context("read archived message")
+            .context("read archived message")?;
+        let Some((item_json, expired_at)) = record else {
+            return Ok(None);
+        };
+        if expired_at.is_some() || item_json.is_empty() {
+            bail!("original {reference} expired from the context archive");
+        }
+        Ok(Some(item_json))
+    }
+
+    pub(crate) fn expired_message_count(&self, key: &str) -> Result<u64> {
+        let count: i64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE session_key = ?1 AND expired_at IS NOT NULL",
+                [key],
+                |row| row.get(0),
+            )
+            .context("count expired context archive bodies")?;
+        u64::try_from(count).context("expired context body count")
+    }
+
+    pub(crate) fn expired_direct_refs(&self, key: &str, refs: &[DirectRef]) -> Result<Vec<String>> {
+        let mut expired = Vec::new();
+        for reference in refs
+            .iter()
+            .filter(|reference| reference.kind == SegmentKind::Message)
+        {
+            let exists: Option<(String, Option<i64>)> = self.connection.query_row(
+                "SELECT item_json, expired_at FROM messages WHERE session_key = ?1 AND reference = ?2",
+                params![key, reference.reference],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().context("check direct reference expiration")?;
+            if exists.is_none_or(|(body, expired_at)| expired_at.is_some() || body.is_empty()) {
+                expired.push(reference.reference.clone());
+            }
+        }
+        Ok(expired)
     }
 
     pub(super) fn session_preview(&self, key: &str) -> Result<Option<String>> {
@@ -1105,6 +1510,13 @@ impl Store {
             .find(|segment| segment.kind == SegmentKind::Block && segment.reference == block_id)
             .with_context(|| format!("context block {block_id} is not in the current view"))?
             .clone();
+        let expired = self.expired_direct_refs(key, &block.direct_refs)?;
+        if !expired.is_empty() {
+            bail!(
+                "cannot restore context block {block_id}: original messages expired ({})",
+                expired.join(", ")
+            );
+        }
         let new_revision = expected_revision + 1;
         let transaction = self.connection.transaction().context("begin restore")?;
         for segment in current
