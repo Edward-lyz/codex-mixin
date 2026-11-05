@@ -2,13 +2,19 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
 
 use super::guidance::NudgeState;
 use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
 const REASONING_FINGERPRINT_VERSION: i64 = 1;
+/// From this data version `messages.fingerprint` holds a SHA-256 of the
+/// normalized item instead of the normalized JSON itself.
+const HASHED_FINGERPRINT_VERSION: i64 = 2;
+/// Sessions untouched this long are removed by the daily maintenance.
+const IDLE_SESSION_SECONDS: i64 = 30 * 86_400;
+const MAINTENANCE_INTERVAL_SECONDS: i64 = 86_400;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -86,7 +92,20 @@ CREATE TABLE IF NOT EXISTS turns (
     codex_thread_id TEXT
 );
 CREATE INDEX IF NOT EXISTS turns_session ON turns (session_key, at_ms);
+CREATE TABLE IF NOT EXISTS maintenance (
+    name TEXT PRIMARY KEY,
+    at INTEGER NOT NULL
+);
 ";
+
+/// Stored fingerprint of one normalized history item.
+pub(super) fn fingerprint_digest(normalized: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, normalized.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Cached prompt tokens are a subset of the billed input tokens.
 pub(crate) fn cache_hit_percent(cached_tokens: u64, input_tokens: u64) -> Option<f64> {
@@ -193,9 +212,29 @@ impl Store {
         self.connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .context("set context busy timeout")?;
+        // A new database starts in the current format, so it needs neither
+        // the digest upgrade, its backup, nor a full VACUUM later.
+        let fresh: bool = self
+            .connection
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages')",
+                [],
+                |row| row.get(0),
+            )
+            .context("inspect context schema")?;
+        if fresh {
+            self.connection
+                .pragma_update(None, "auto_vacuum", "INCREMENTAL")
+                .context("set context auto vacuum mode")?;
+        }
         self.connection
             .execute_batch(SCHEMA)
             .context("create context schema")?;
+        if fresh {
+            self.connection
+                .pragma_update(None, "user_version", HASHED_FINGERPRINT_VERSION)
+                .context("save context data version")?;
+        }
         self.upgrade_response_output()
             .context("upgrade context schema")?;
         self.upgrade_block_tokens()
@@ -225,6 +264,184 @@ impl Store {
         self.connection
             .execute("DELETE FROM leases WHERE expires_at <= ?1", [unix_now()])
             .context("clear expired context leases")?;
+        let migrated = self.upgrade_hashed_fingerprints()?;
+        // Cleanup only saves space; a busy database retries on the next open.
+        if let Err(error) = self.maintain(migrated && !fresh) {
+            tracing::warn!(error = %format!("{error:#}"), "context maintenance skipped");
+        }
+        Ok(())
+    }
+
+    /// Rewrites archived JSON fingerprints as digests. Returns whether this
+    /// connection performed the upgrade.
+    fn upgrade_hashed_fingerprints(&self) -> Result<bool> {
+        let version: i64 = self
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .context("read context data version")?;
+        if version >= HASHED_FINGERPRINT_VERSION {
+            return Ok(false);
+        }
+        // The upgrade itself is one transaction; the copy keeps the original
+        // archive for a manual rollback to an older gateway.
+        if let Some(path) = self.connection.path().filter(|path| !path.is_empty()) {
+            let backup = format!("{path}.pre-digest.bak");
+            if !Path::new(&backup).exists()
+                && let Err(error) = self.connection.execute("VACUUM INTO ?1", [&backup])
+            {
+                tracing::warn!(error = %error, backup, "context database backup before upgrade failed");
+            }
+        }
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+                .context("begin fingerprint digest upgrade")?;
+        let version: i64 = transaction
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .context("read context data version")?;
+        if version >= HASHED_FINGERPRINT_VERSION {
+            return Ok(false);
+        }
+        let mut last_rowid = 0_i64;
+        loop {
+            let batch = {
+                let mut statement = transaction
+                    .prepare_cached(
+                        "SELECT rowid, fingerprint FROM messages WHERE rowid > ?1 ORDER BY rowid LIMIT 512",
+                    )
+                    .context("prepare fingerprint digest batch")?;
+                statement
+                    .query_map([last_rowid], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })
+                    .context("read fingerprint digest batch")?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .context("read fingerprint digest row")?
+            };
+            let Some((rowid, _)) = batch.last() else {
+                break;
+            };
+            last_rowid = *rowid;
+            let mut update = transaction
+                .prepare_cached("UPDATE messages SET fingerprint = ?2 WHERE rowid = ?1")
+                .context("prepare fingerprint digest update")?;
+            for (rowid, normalized) in &batch {
+                update
+                    .execute(params![rowid, fingerprint_digest(normalized)])
+                    .context("store fingerprint digest")?;
+            }
+        }
+        transaction
+            .pragma_update(None, "user_version", HASHED_FINGERPRINT_VERSION)
+            .context("save context data version")?;
+        transaction
+            .commit()
+            .context("commit fingerprint digest upgrade")?;
+        Ok(true)
+    }
+
+    /// Daily cleanup: drops sessions idle for 30 days and archived messages no
+    /// history, segment or block refers to any more, then returns the freed
+    /// pages to the file system. `force` runs it right after an upgrade.
+    fn maintain(&self, force: bool) -> Result<()> {
+        let now = unix_now();
+        let due = |connection: &Connection| -> Result<bool> {
+            let last: Option<i64> = connection
+                .query_row(
+                    "SELECT at FROM maintenance WHERE name = 'prune'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("read context maintenance time")?;
+            Ok(force || last.is_none_or(|at| at > now || now - at >= MAINTENANCE_INTERVAL_SECONDS))
+        };
+        // Frequent CLI readers check without taking the write lock.
+        if !due(&self.connection)? {
+            return Ok(());
+        }
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+                .context("begin context maintenance")?;
+        if !due(&transaction)? {
+            return Ok(());
+        }
+        transaction
+            .execute(
+                "CREATE TEMP TABLE idle_sessions AS SELECT session_key FROM sessions
+                 WHERE updated_at < ?1
+                   AND session_key NOT IN (SELECT session_key FROM leases)",
+                [now - IDLE_SESSION_SECONDS],
+            )
+            .context("select idle context sessions")?;
+        // Turn usage stays so lifetime statistics keep their totals.
+        transaction
+            .execute_batch(
+                "DELETE FROM messages WHERE session_key IN idle_sessions;
+                 DELETE FROM history WHERE session_key IN idle_sessions;
+                 DELETE FROM segments WHERE session_key IN idle_sessions;
+                 DELETE FROM blocks WHERE session_key IN idle_sessions;
+                 DELETE FROM responses WHERE session_key IN idle_sessions;
+                 DELETE FROM nudge_state WHERE session_key IN idle_sessions;
+                 DELETE FROM sessions WHERE session_key IN idle_sessions;
+                 CREATE TEMP TABLE live_messages (
+                     session_key TEXT NOT NULL,
+                     reference TEXT NOT NULL,
+                     PRIMARY KEY (session_key, reference)
+                 ) WITHOUT ROWID;
+                 INSERT OR IGNORE INTO live_messages SELECT session_key, reference FROM history;
+                 INSERT OR IGNORE INTO live_messages
+                     SELECT session_key, reference FROM segments WHERE kind = 'message';
+                 INSERT OR IGNORE INTO live_messages
+                     SELECT b.session_key, r.value FROM blocks b, json_each(b.full_refs) r;
+                 INSERT OR IGNORE INTO live_messages
+                     SELECT b.session_key, json_extract(r.value, '$.reference')
+                     FROM blocks b, json_each(b.direct_refs) r;",
+            )
+            .context("prune idle context sessions")?;
+        let orphans = transaction
+            .execute(
+                "DELETE FROM messages WHERE NOT EXISTS (
+                     SELECT 1 FROM live_messages l
+                     WHERE l.session_key = messages.session_key AND l.reference = messages.reference)",
+                [],
+            )
+            .context("prune superseded context messages")?;
+        let sessions: i64 = transaction
+            .query_row("SELECT COUNT(*) FROM idle_sessions", [], |row| row.get(0))
+            .context("count idle context sessions")?;
+        transaction
+            .execute_batch("DROP TABLE temp.idle_sessions; DROP TABLE temp.live_messages;")
+            .context("drop context maintenance tables")?;
+        transaction
+            .execute(
+                "INSERT INTO maintenance (name, at) VALUES ('prune', ?1)
+                 ON CONFLICT(name) DO UPDATE SET at = excluded.at",
+                [now],
+            )
+            .context("record context maintenance time")?;
+        transaction.commit().context("commit context maintenance")?;
+        tracing::info!(
+            sessions,
+            messages = orphans,
+            "pruned idle context sessions and superseded messages"
+        );
+        let auto_vacuum: i64 = self
+            .connection
+            .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
+            .context("read context auto vacuum mode")?;
+        let reclaim = if auto_vacuum == 2 {
+            self.connection.execute_batch("PRAGMA incremental_vacuum")
+        } else {
+            // Older databases never return freed pages; switching the mode
+            // takes one full rewrite, after which daily cleanup is incremental.
+            self.connection
+                .pragma_update(None, "auto_vacuum", "INCREMENTAL")
+                .and_then(|()| self.connection.execute_batch("VACUUM"))
+        };
+        // A reader holding the database only delays reclaiming the space.
+        if let Err(error) = reclaim {
+            tracing::warn!(error = %error, "context database space was not reclaimed");
+        }
         Ok(())
     }
 

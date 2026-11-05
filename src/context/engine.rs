@@ -794,7 +794,7 @@ fn fingerprint(item: &Value) -> String {
             object.remove("content");
         }
     }
-    value.to_string()
+    super::store::fingerprint_digest(&value.to_string())
 }
 fn render_view(store: &Store, session: &str, segments: &[SegmentRow]) -> Result<Vec<Value>> {
     let mut items = Vec::new();
