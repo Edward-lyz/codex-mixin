@@ -216,15 +216,8 @@ impl ContextEngine {
     /// Longest common prefix between the archived history and the incoming
     /// items, plus the archived length.
     fn history_shape(&self, key: &str, items: &[Value]) -> Result<(usize, usize)> {
-        let fingerprints = items.iter().map(fingerprint);
         let store = self.lock()?;
-        let history = store.history(key)?;
-        let divergence = history
-            .iter()
-            .zip(fingerprints)
-            .position(|(entry, incoming)| entry.fingerprint != incoming)
-            .unwrap_or_else(|| history.len().min(items.len()));
-        Ok((history.len(), divergence))
+        store.history_prefix(key, items.iter().map(fingerprint))
     }
 
     fn lock_anchors(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, String>>> {
