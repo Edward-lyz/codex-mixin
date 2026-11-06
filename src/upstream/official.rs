@@ -1,5 +1,7 @@
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 
 use super::UpstreamAccess;
@@ -65,27 +67,31 @@ impl UpstreamAccess {
         &self,
         headers: &HeaderMap,
         body: Value,
-    ) -> Result<reqwest::Response, GatewayError> {
-        let body = normalize_official_responses_body(body)?;
-        let response = self.send_official_body(headers, body.clone()).await?;
+    ) -> Result<(reqwest::Response, Value), GatewayError> {
+        let body = OfficialResponsesBody::new(body)?;
+        let (response, body) = self.send_official_body(headers, body).await?;
         if response.status().is_success() {
-            return Ok(response);
+            return Ok((response, body.0));
         }
-        let Some(fallback) = materialize_official_responses_body(&body)? else {
-            return Ok(response);
+        let Some(fallback) = materialize_official_responses_body(&body.0)? else {
+            return Ok((response, body.0));
         };
         tracing::warn!(
             status = %response.status(),
             "retrying official responses request with materialized agent messages"
         );
-        self.send_official_body(headers, fallback).await
+        drop(response);
+        let (response, _) = self
+            .send_official_body(headers, OfficialResponsesBody::new(fallback)?)
+            .await?;
+        Ok((response, body.0))
     }
 
     async fn send_official_body(
         &self,
         headers: &HeaderMap,
-        body: Value,
-    ) -> Result<reqwest::Response, GatewayError> {
+        body: OfficialResponsesBody,
+    ) -> Result<(reqwest::Response, OfficialResponsesBody), GatewayError> {
         let (authorization, account_id) =
             self.official_auth().await.map_err(GatewayError::Other)?;
         let request = forward_official_headers(
@@ -100,7 +106,72 @@ impl UpstreamAccess {
             .header(header::ACCEPT, "text/event-stream"),
             headers,
         );
-        self.send_json(request, body, None).await
+        self.send_json_retaining(request, body, None).await
+    }
+}
+
+struct OfficialResponsesBody(Value);
+
+impl OfficialResponsesBody {
+    fn new(body: Value) -> Result<Self, GatewayError> {
+        if let Some(object) = body.as_object() {
+            if object.contains_key("top_k") {
+                return Err(GatewayError::BadRequest("the official Responses API does not support topK; disable topK or choose a provider that supports it".to_owned()));
+            }
+            if let Some(input) = object.get("input").and_then(Value::as_array) {
+                for item in input {
+                    if !is_foreign_reasoning(item) {
+                        validate_agent_message_content(item)?;
+                    }
+                }
+            }
+        }
+        Ok(Self(body))
+    }
+}
+
+impl Serialize for OfficialResponsesBody {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(object) = self.0.as_object() else {
+            return self.0.serialize(serializer);
+        };
+        let mut output = serializer.serialize_map(None)?;
+        for (key, value) in object {
+            if matches!(
+                key.as_str(),
+                "__mixin_gemini_generation_config" | "max_output_tokens"
+            ) {
+                continue;
+            }
+            if key == "input"
+                && let Some(input) = value.as_array()
+            {
+                output.serialize_entry(key, &OfficialResponsesInput(input))?;
+            } else {
+                output.serialize_entry(key, value)?;
+            }
+        }
+        output.end()
+    }
+}
+
+struct OfficialResponsesInput<'a>(&'a [Value]);
+
+impl Serialize for OfficialResponsesInput<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut output = serializer.serialize_seq(None)?;
+        for item in self.0 {
+            if !is_foreign_reasoning(item) {
+                output.serialize_element(item)?;
+            }
+        }
+        output.end()
     }
 }
 
@@ -153,6 +224,15 @@ fn validate_agent_message_content(item: &Value) -> Result<(), GatewayError> {
 pub(crate) fn materialize_official_responses_body(
     body: &Value,
 ) -> Result<Option<Value>, GatewayError> {
+    let Some(input) = body.get("input").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let has_convertible = input.iter().try_fold(false, |changed, item| {
+        has_materializable_agent_message_content(item).map(|item_changed| changed || item_changed)
+    })?;
+    if !has_convertible {
+        return Ok(None);
+    }
     let mut materialized = body.clone();
     let Some(input) = materialized.get_mut("input").and_then(Value::as_array_mut) else {
         return Ok(None);
@@ -162,6 +242,29 @@ pub(crate) fn materialize_official_responses_body(
         changed |= materialize_agent_message_content(item)?;
     }
     Ok(changed.then_some(materialized))
+}
+
+fn has_materializable_agent_message_content(item: &Value) -> Result<bool, GatewayError> {
+    if item.get("type").and_then(Value::as_str) != Some("agent_message") {
+        return Ok(false);
+    }
+    let Some(content) = item.get("content").and_then(Value::as_array) else {
+        return Ok(false);
+    };
+    for part in content {
+        if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
+            continue;
+        }
+        part.get("encrypted_content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                GatewayError::BadRequest(
+                    "agent_message encrypted_content missing payload".to_owned(),
+                )
+            })?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn materialize_agent_message_content(item: &mut Value) -> Result<bool, GatewayError> {

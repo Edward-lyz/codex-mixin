@@ -27,13 +27,13 @@ use crate::provider::{ProviderRegistry, ProviderRuntime};
 use crate::upstream::UpstreamAccess;
 use crate::web_search::WebSearchCapabilities;
 
-struct ProviderStreamPlan {
-    downstream_model: Option<String>,
-    catalog_slug: String,
-    provider_id: String,
-    upstream_model_id: String,
-    routing: Option<super::UpstreamRouting>,
-    native_messages: Option<(crate::anthropic::MessageRequest, serde_json::Value)>,
+struct ProviderStreamPlan<'a> {
+    downstream_model: Option<&'a str>,
+    catalog_slug: &'a str,
+    provider_id: &'a str,
+    upstream_model_id: &'a str,
+    routing: Option<&'a super::UpstreamRouting>,
+    native_messages: Option<&'a (crate::anthropic::MessageRequest, serde_json::Value)>,
 }
 
 /// Gateway execution component: routing, single-request execution, and cache
@@ -274,20 +274,20 @@ impl GatewayExecutor {
 
     pub(crate) async fn stream(
         &self,
-        plan: RequestPlan,
+        mut plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
         if let Some(run) = ContextRun::prepare(self, &plan.body, headers).await? {
             return run.stream(self.clone(), plan, headers.clone()).await;
         }
-        self.send_round(plan, headers)
+        self.send_round(&mut plan, headers)
             .await
             .map(|(stream, _)| stream)
     }
 
     pub(crate) async fn stream_and_return_body(
         &self,
-        plan: RequestPlan,
+        mut plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         if let Some(run) = ContextRun::prepare(self, &plan.body, headers).await? {
@@ -295,33 +295,35 @@ impl GatewayExecutor {
             let stream = run.stream(self.clone(), plan, headers.clone()).await?;
             return Ok((stream, body));
         }
-        self.send_round(plan, headers).await
+        self.send_round(&mut plan, headers).await
     }
 
     /// Prepare and dispatch exactly one model request. The context loop calls
     /// this for every internal round; externally it covers the whole request.
     pub(crate) async fn send_round(
         &self,
-        mut plan: RequestPlan,
+        plan: &mut RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
-        plan.body = prepare_body(plan.body, &plan.target).await?;
-        self.dispatch_round(plan, headers).await
+        let body = std::mem::take(&mut plan.body);
+        let body = prepare_body(body, &plan.target).await?;
+        self.dispatch_round(plan, body, headers).await
     }
 
     async fn dispatch_round(
         &self,
-        plan: RequestPlan,
+        plan: &RequestPlan,
+        body: serde_json::Value,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
-        match plan.target {
+        match &plan.target {
             UpstreamTarget::Official => {
-                let stream = self.stream_official(headers, &plan.body).await?;
-                let stream = match plan.downstream_model {
-                    Some(model) => rewrite_response_model(stream, model),
+                let (stream, body) = self.stream_official(headers, body).await?;
+                let stream = match plan.downstream_model.as_deref() {
+                    Some(model) => rewrite_response_model(stream, model.to_owned()),
                     None => stream,
                 };
-                Ok((stream, plan.body))
+                Ok((stream, body))
             }
             UpstreamTarget::Provider {
                 catalog_slug,
@@ -330,14 +332,14 @@ impl GatewayExecutor {
                 routing,
             } => {
                 self.stream_provider(
-                    plan.body,
+                    body,
                     ProviderStreamPlan {
-                        downstream_model: plan.downstream_model,
+                        downstream_model: plan.downstream_model.as_deref(),
                         catalog_slug,
                         provider_id,
                         upstream_model_id,
-                        routing,
-                        native_messages: plan.native_messages,
+                        routing: routing.as_ref(),
+                        native_messages: plan.native_messages.as_ref(),
                     },
                     headers,
                 )
@@ -349,18 +351,15 @@ impl GatewayExecutor {
     pub(crate) async fn stream_official(
         &self,
         headers: &HeaderMap,
-        body: &serde_json::Value,
-    ) -> Result<ResponseStream, GatewayError> {
+        body: serde_json::Value,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         let model = body
             .get("model")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("official")
             .to_owned();
-        let observation = self.official_prefix_observation(headers, body)?;
-        let mut upstream = self
-            .upstream
-            .send_official_responses(headers, body.clone())
-            .await?;
+        let observation = self.official_prefix_observation(headers, &body)?;
+        let (mut upstream, body) = self.upstream.send_official_responses(headers, body).await?;
         if upstream.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) =
                 normalize_provider_images_for_fallback(body.clone()).await?;
@@ -373,7 +372,8 @@ impl GatewayExecutor {
                 upstream = self
                     .upstream
                     .send_official_responses(headers, fallback_body)
-                    .await?;
+                    .await?
+                    .0;
             }
         }
         let status = upstream.status();
@@ -410,7 +410,7 @@ impl GatewayExecutor {
                 }
             }
         };
-        Ok(stream.boxed())
+        Ok((stream.boxed(), body))
     }
 
     /// Send an official request, returning the raw response plus its prefix
@@ -421,10 +421,7 @@ impl GatewayExecutor {
         body: serde_json::Value,
     ) -> Result<OfficialSendResult, GatewayError> {
         let observation = self.official_prefix_observation(headers, &body)?;
-        let mut response = self
-            .upstream
-            .send_official_responses(headers, body.clone())
-            .await?;
+        let (mut response, body) = self.upstream.send_official_responses(headers, body).await?;
         if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) = normalize_provider_images_for_fallback(body).await?;
             if stats.normalized_images > 0 && stats.saved_bytes > 0 {
@@ -436,7 +433,8 @@ impl GatewayExecutor {
                 response = self
                     .upstream
                     .send_official_responses(headers, fallback_body)
-                    .await?;
+                    .await?
+                    .0;
             }
         }
         Ok(OfficialSendResult {
@@ -467,21 +465,21 @@ impl GatewayExecutor {
 
     async fn stream_provider(
         &self,
-        body: serde_json::Value,
-        plan: ProviderStreamPlan,
+        mut body: serde_json::Value,
+        plan: ProviderStreamPlan<'_>,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         let first = stream_provider_response(
             self,
             ProviderResponseRequest {
-                body: &body,
-                catalog_slug: &plan.catalog_slug,
-                provider_id: &plan.provider_id,
-                upstream_model_id: &plan.upstream_model_id,
-                routing: plan.routing.as_ref(),
-                downstream_model: plan.downstream_model.as_deref(),
+                body: &mut body,
+                catalog_slug: plan.catalog_slug,
+                provider_id: plan.provider_id,
+                upstream_model_id: plan.upstream_model_id,
+                routing: plan.routing,
+                downstream_model: plan.downstream_model,
                 headers,
-                native_messages: plan.native_messages.as_ref(),
+                native_messages: plan.native_messages,
             },
         )
         .await;
@@ -492,13 +490,14 @@ impl GatewayExecutor {
             return Err(error);
         }
         // Callers retain the prepared history, not the retry-only image encoding.
-        let (fallback_body, stats) = normalize_provider_images_for_fallback(body.clone()).await?;
+        let (mut fallback_body, stats) =
+            normalize_provider_images_for_fallback(body.clone()).await?;
         if stats.normalized_images == 0 || stats.saved_bytes == 0 {
             return Err(error);
         }
         tracing::warn!(
-            provider_id = %plan.provider_id,
-            upstream_model_id = %plan.upstream_model_id,
+            provider_id = plan.provider_id,
+            upstream_model_id = plan.upstream_model_id,
             normalized_images = stats.normalized_images,
             saved_image_bytes = stats.saved_bytes,
             "retrying provider request after 413 with aggressively compressed images"
@@ -506,14 +505,14 @@ impl GatewayExecutor {
         stream_provider_response(
             self,
             ProviderResponseRequest {
-                body: &fallback_body,
-                catalog_slug: &plan.catalog_slug,
-                provider_id: &plan.provider_id,
-                upstream_model_id: &plan.upstream_model_id,
-                routing: plan.routing.as_ref(),
-                downstream_model: plan.downstream_model.as_deref(),
+                body: &mut fallback_body,
+                catalog_slug: plan.catalog_slug,
+                provider_id: plan.provider_id,
+                upstream_model_id: plan.upstream_model_id,
+                routing: plan.routing,
+                downstream_model: plan.downstream_model,
                 headers,
-                native_messages: plan.native_messages.as_ref(),
+                native_messages: plan.native_messages,
             },
         )
         .await

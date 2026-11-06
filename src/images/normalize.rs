@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
-use image::{ColorType, DynamicImage, ImageEncoder, ImageReader, Rgb, RgbImage};
+use image::{ColorType, DynamicImage, GenericImageView, ImageEncoder, ImageReader, Rgb, RgbImage};
 use serde_json::{Value, json};
 use std::io::Cursor;
 use std::ops::Range;
@@ -237,13 +237,50 @@ fn normalize_tool_output_images(
     let Some(parts) = item.get("output").and_then(Value::as_array) else {
         return Ok(());
     };
-    let mut normalized = parts.clone();
     let mut fresh = ImageNormalizationStats::default();
-    for part in &mut normalized {
-        normalize_image_part(part, profile, &mut fresh)?;
+    let mut replacements = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
+        if part.get("type").and_then(Value::as_str) != Some("input_image") {
+            continue;
+        }
+        let Some(image_url) = part.get("image_url").and_then(image_url_str) else {
+            continue;
+        };
+        let Some((media_type, data)) = data_image_url_parts(image_url) else {
+            continue;
+        };
+        let raw = match STANDARD.decode(data) {
+            Ok(raw) => raw,
+            Err(error) => {
+                tracing::warn!(%error, "input image is not valid base64; forwarding it unchanged");
+                continue;
+            }
+        };
+        let Some(normalized) = normalize_image_bytes(media_type, &raw, profile)? else {
+            continue;
+        };
+        if normalized != image_url {
+            fresh.normalized_images += 1;
+            fresh.saved_bytes += image_url.len().saturating_sub(normalized.len());
+            replacements.push((index, normalized));
+        }
     }
     if fresh.normalized_images > 0 {
-        item["output"] = Value::Array(normalized);
+        let Some(parts) = item.get_mut("output").and_then(Value::as_array_mut) else {
+            return Err(GatewayError::Other(anyhow::anyhow!(
+                "image output changed during normalization"
+            )));
+        };
+        for (index, normalized) in replacements {
+            let image_url = &mut parts[index]["image_url"];
+            match image_url {
+                Value::String(url) => *url = normalized,
+                Value::Object(object) => {
+                    object.insert("url".to_owned(), Value::String(normalized));
+                }
+                _ => {}
+            }
+        }
         stats.normalized_images += fresh.normalized_images;
         stats.saved_bytes += fresh.saved_bytes;
     }
@@ -294,10 +331,10 @@ fn normalize_image_part(
     let Some(image_url) = part.get_mut("image_url") else {
         return Ok(());
     };
-    let Some(original_url) = image_url_str(image_url).map(str::to_owned) else {
+    let Some(original_url) = image_url_str(image_url) else {
         return Ok(());
     };
-    let Some((media_type, data)) = data_image_url_parts(&original_url) else {
+    let Some((media_type, data)) = data_image_url_parts(original_url) else {
         return Ok(());
     };
     let raw = match STANDARD.decode(data) {
@@ -561,13 +598,18 @@ fn encode_for_vision(
 }
 
 fn image_has_transparency(image: &DynamicImage) -> bool {
-    image.to_rgba8().pixels().any(|pixel| pixel[3] != u8::MAX)
+    match image {
+        DynamicImage::ImageRgba8(rgba) => rgba.pixels().any(|pixel| pixel[3] != u8::MAX),
+        DynamicImage::ImageLumaA8(luma_alpha) => {
+            luma_alpha.pixels().any(|pixel| pixel[1] != u8::MAX)
+        }
+        _ => image.color().has_alpha() && image.pixels().any(|(_, _, pixel)| pixel[3] != u8::MAX),
+    }
 }
 
 fn flatten_onto_white(image: &DynamicImage) -> RgbImage {
-    let rgba = image.to_rgba8();
-    RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
-        let pixel = rgba.get_pixel(x, y);
+    RgbImage::from_fn(image.width(), image.height(), |x, y| {
+        let pixel = image.get_pixel(x, y);
         let alpha = u16::from(pixel[3]);
         let blend =
             |channel: u8| ((u16::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;

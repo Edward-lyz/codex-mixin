@@ -89,7 +89,7 @@ pub(super) async fn run_custom_ws_request(
 
 async fn complete_custom_compaction(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
-    response: Value,
+    mut response: Value,
     model: String,
     route: ResolvedModelRoute,
 ) -> anyhow::Result<CustomWebSocketState> {
@@ -102,10 +102,12 @@ async fn complete_custom_compaction(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("local compaction response is missing its id"))?
         .to_owned();
-    let history = response["output"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("local compaction response is missing its output"))?
-        .clone();
+    let history = std::mem::take(
+        response
+            .get_mut("output")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| anyhow::anyhow!("local compaction response is missing its output"))?,
+    );
     Ok(CustomWebSocketState {
         response_id,
         model,
@@ -168,11 +170,10 @@ async fn proxy_custom_responses_ws(
     let (stream, returned_body) = match &route {
         ResolvedModelRoute::Official => {
             let plan = RequestPlan::official(body, None)?;
-            let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
             if context_session.is_some() {
-                drop(body);
-                (stream, None)
+                (state.gateway.stream(plan, headers).await?, None)
             } else {
+                let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
                 (stream, Some(body))
             }
         }
@@ -180,14 +181,13 @@ async fn proxy_custom_responses_ws(
             let plan = RequestPlan::from_route(
                 route.clone(),
                 body,
-                provider_routing.clone(),
+                provider_routing,
                 Some(model.clone()),
             )?;
-            let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
             if context_session.is_some() {
-                drop(body);
-                (stream, None)
+                (state.gateway.stream(plan, headers).await?, None)
             } else {
+                let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
                 (stream, Some(body))
             }
         }
@@ -320,11 +320,14 @@ async fn expand_custom_websocket_history(
         );
     }
     let incremental_input = body
-        .get("input")
-        .and_then(Value::as_array)
+        .get_mut("input")
+        .map(Value::take)
         .ok_or_else(|| anyhow::anyhow!("custom incremental input must be an array"))?;
+    let Value::Array(incremental_input) = incremental_input else {
+        anyhow::bail!("custom incremental input must be an array");
+    };
     let mut full_input = state.history;
-    full_input.extend(incremental_input.iter().cloned());
+    full_input.extend(incremental_input);
     body["input"] = Value::Array(full_input);
     Ok(())
 }

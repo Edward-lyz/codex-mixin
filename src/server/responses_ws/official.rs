@@ -377,20 +377,6 @@ fn official_websocket_error(event: Option<&Value>) -> Value {
     }
 }
 
-pub(super) fn effective_official_cache_body(
-    body: &Value,
-    request_history: Option<&[Value]>,
-) -> Value {
-    let mut effective = body.clone();
-    if let Some(request_history) = request_history {
-        effective["input"] = Value::Array(request_history.to_vec());
-        if let Some(effective) = effective.as_object_mut() {
-            effective.remove("previous_response_id");
-        }
-    }
-    effective
-}
-
 fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Value> {
     if response_id.is_some()
         && memmem::find(bytes, b"response.output_text.delta").is_none()

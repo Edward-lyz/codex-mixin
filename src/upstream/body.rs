@@ -64,7 +64,7 @@ pub(super) async fn prepare_json_body<T>(
     value: T,
     compress: bool,
     signed: bool,
-) -> Result<PreparedJson, GatewayError>
+) -> Result<(PreparedJson, T), GatewayError>
 where
     T: Serialize + Send + 'static,
 {
@@ -97,10 +97,13 @@ where
         } else {
             None
         };
-        Ok::<_, anyhow::Error>(PreparedJson {
-            raw: finish_json_file(writer)?,
-            gzip,
-        })
+        Ok::<_, anyhow::Error>((
+            PreparedJson {
+                raw: finish_json_file(writer)?,
+                gzip,
+            },
+            value,
+        ))
     })
     .await
     .map_err(|error| GatewayError::Other(error.into()))?

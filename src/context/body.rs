@@ -23,7 +23,7 @@ pub(super) struct BodyTags {
     pub name: Option<String>,
 }
 
-pub(super) fn encode(raw: &str) -> Result<EncodedBody> {
+pub(super) fn encode(raw: String, verify_migration: bool) -> Result<EncodedBody> {
     ensure!(
         raw.len() <= MAX_BODY_BYTES,
         "context body exceeds storage limit"
@@ -36,37 +36,38 @@ pub(super) fn encode(raw: &str) -> Result<EncodedBody> {
     } else {
         None
     };
+    let bytes = raw.len() as i64;
     let (payload, codec) = match compressed {
-        Some(bytes) if bytes.len() < raw.len() => (Value::Blob(bytes), 1),
-        _ => (Value::Text(raw.to_owned()), 0),
+        Some(compressed) if compressed.len() < raw.len() => {
+            if verify_migration {
+                let decoded = zstd::bulk::decompress(&compressed, raw.len())
+                    .context("verify compressed context body")?;
+                ensure!(
+                    decoded == raw.as_bytes(),
+                    "context body compression round trip failed"
+                );
+            }
+            (Value::Blob(compressed), 1)
+        }
+        _ => (Value::Text(raw), 0),
     };
     let result = EncodedBody {
         payload,
         codec,
-        bytes: raw.len() as i64,
+        bytes,
         checksum,
     };
-    // Verify the encoded representation before it replaces the only stored body.
-    ensure!(
-        decode(
-            &result.payload,
-            result.codec,
-            result.bytes,
-            Some(&result.checksum)
-        )? == raw,
-        "context body compression round trip failed"
-    );
     Ok(result)
 }
 
 pub(super) fn decode(
-    payload: &Value,
+    payload: Value,
     codec: i64,
     bytes: i64,
     checksum: Option<&[u8]>,
 ) -> Result<String> {
     let raw = match (codec, payload) {
-        (0, Value::Text(raw)) => raw.clone(),
+        (0, Value::Text(raw)) => raw,
         (1, Value::Blob(compressed)) => {
             let limit = usize::try_from(bytes).context("invalid context body length")?;
             ensure!(

@@ -22,8 +22,45 @@ impl UpstreamAccess {
         endpoint.set_query(None);
         endpoint.set_fragment(None);
         let support = self.gzip_support.lock().await.get(&endpoint).copied();
-        let compress = support != Some(false);
-        let prepared = prepare_json_body(value, compress, aws.is_some()).await?;
+        let (prepared, value) =
+            prepare_json_body(value, support != Some(false), aws.is_some()).await?;
+        drop(value);
+        self.send_prepared_json(client, base, endpoint, support, prepared, aws)
+            .await
+    }
+
+    pub(crate) async fn send_json_retaining<T>(
+        &self,
+        request: reqwest::RequestBuilder,
+        value: T,
+        aws: Option<&AwsSigV4AuthConfig>,
+    ) -> Result<(reqwest::Response, T), GatewayError>
+    where
+        T: Serialize + Send + 'static,
+    {
+        let (client, base) = request.build_split();
+        let base = base?;
+        let mut endpoint = base.url().clone();
+        endpoint.set_query(None);
+        endpoint.set_fragment(None);
+        let support = self.gzip_support.lock().await.get(&endpoint).copied();
+        let (prepared, value) =
+            prepare_json_body(value, support != Some(false), aws.is_some()).await?;
+        let response = self
+            .send_prepared_json(client, base, endpoint, support, prepared, aws)
+            .await?;
+        Ok((response, value))
+    }
+
+    async fn send_prepared_json(
+        &self,
+        client: reqwest::Client,
+        base: reqwest::Request,
+        endpoint: reqwest::Url,
+        support: Option<bool>,
+        prepared: super::body::PreparedJson,
+        aws: Option<&AwsSigV4AuthConfig>,
+    ) -> Result<reqwest::Response, GatewayError> {
         let Some(gzip) = prepared.gzip else {
             return self
                 .send_json_file(&client, base, prepared.raw, false, aws)

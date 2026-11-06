@@ -74,8 +74,7 @@ internal sealed class CliClient(string executable)
                 exitCode = 0;
                 try
                 {
-                    using var document = JsonDocument.Parse(output);
-                    return document.RootElement.Clone();
+                    return JsonSerializer.Deserialize<JsonElement>(output);
                 }
                 catch (JsonException error)
                 {

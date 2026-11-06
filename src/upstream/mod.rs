@@ -82,20 +82,21 @@ impl UpstreamAccess {
         T: serde::Serialize + Send + 'static,
     {
         if provider.definition().preset_id.as_deref() == Some("agy-business") {
-            let payload = serde_json::to_value(body)?;
+            let mut payload = serde_json::to_value(body)?;
             let mut response = None;
             for force in [false, true] {
-                let (url, headers, payload) = crate::provider::agy_business::prepare_request(
+                let (url, headers, wire_payload) = crate::provider::agy_business::prepare_request(
                     &self.client,
                     provider,
                     upstream_model_id,
-                    payload.clone(),
+                    payload,
                     force,
                 )
                 .await?;
-                let reply = self
-                    .send_json(self.client.post(url).headers(headers), payload, None)
+                let (reply, retained) = self
+                    .send_json_retaining(self.client.post(url).headers(headers), wire_payload, None)
                     .await?;
+                payload = retained;
                 let unauthorized = reply.status() == reqwest::StatusCode::UNAUTHORIZED;
                 response = Some(reply);
                 if !unauthorized || force || !provider.definition().auth.api_key.is_empty() {
@@ -124,6 +125,51 @@ impl UpstreamAccess {
             .apply_session_affinity(authenticated, hash_key)
             .header(reqwest::header::ACCEPT, "text/event-stream");
         self.send_json(request, body, None).await
+    }
+
+    pub(crate) async fn send_provider_json_retaining<T>(
+        &self,
+        provider: &ProviderRuntime,
+        protocol: ProviderProtocol,
+        upstream_model_id: &str,
+        hash_key: Option<&str>,
+        native_headers: Option<&reqwest::header::HeaderMap>,
+        body: T,
+    ) -> Result<(reqwest::Response, T), GatewayError>
+    where
+        T: serde::Serialize + Send + 'static,
+    {
+        if provider.definition().preset_id.as_deref() == Some("agy-business") {
+            // Business wraps the supplied representation in a different wire
+            // envelope; retain its source for the caller's explicit retries.
+            let payload = serde_json::to_value(&body)?;
+            let response = self
+                .send_provider_json(
+                    provider,
+                    protocol,
+                    upstream_model_id,
+                    hash_key,
+                    native_headers,
+                    payload,
+                )
+                .await?;
+            return Ok((response, body));
+        }
+        let mut url = provider.api_url_for_model(upstream_model_id).into_owned();
+        if protocol == ProviderProtocol::GoogleGemini
+            && !url.query_pairs().any(|(key, _)| key == "alt")
+        {
+            url.query_pairs_mut().append_pair("alt", "sse");
+        }
+        let base = self.request(reqwest::Method::POST, url).await?;
+        let authenticated = match native_headers {
+            Some(headers) => base.headers(headers.clone()),
+            None => provider.apply_auth_for_protocol(base, protocol),
+        };
+        let request = provider
+            .apply_session_affinity(authenticated, hash_key)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        self.send_json_retaining(request, body, None).await
     }
 
     pub(crate) async fn agy_native_project(
@@ -296,18 +342,19 @@ impl UpstreamAccess {
     pub(crate) async fn send_anthropic_request(
         &self,
         provider: &ProviderRuntime,
-        request: &crate::anthropic::MessageRequest,
+        mut request: crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
         client_beta: Option<&str>,
-        native_body: Option<&Value>,
-    ) -> Result<AnthropicByteStream, GatewayError> {
+        native_body: &mut Option<Value>,
+    ) -> Result<(AnthropicByteStream, crate::anthropic::MessageRequest), GatewayError> {
         if provider.definition().preset_id.as_deref() == Some("kiro") {
             if native_body.is_some() {
                 return Err(GatewayError::BadRequest(
                     "native opaque Messages blocks are unsupported by the Kiro adapter".to_owned(),
                 ));
             }
-            return self.send_kiro(provider, request, hash_key).await;
+            let stream = self.send_kiro(provider, &request, hash_key).await?;
+            return Ok((stream, request));
         }
         let provider_beta = if request.speed.as_deref() == Some("fast") {
             Some(match provider.definition().anthropic_beta.as_deref() {
@@ -350,24 +397,26 @@ impl UpstreamAccess {
             let upstream_request = provider
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
-            let response = self
-                .send_json(
-                    upstream_request,
-                    match native_body {
-                        Some(body) => body.clone(),
-                        None => serde_json::to_value(request)?,
-                    },
-                    provider.aws_sigv4(),
-                )
-                .await
-                .inspect_err(|error| {
+            let response = if let Some(body) = native_body.take() {
+                let (response, body) = self
+                    .send_json_retaining(upstream_request, body, provider.aws_sigv4())
+                    .await?;
+                *native_body = Some(body);
+                response
+            } else {
+                let sent = self
+                    .send_json_retaining(upstream_request, request, provider.aws_sigv4())
+                    .await;
+                let (response, retained) = sent.inspect_err(|error| {
                     tracing::error!(
                         provider_id = provider.id(),
-                        upstream_model_id = %request.model,
                         error = %crate::error::format_error_chain(error),
                         "provider messages request failed before receiving a response"
                     );
                 })?;
+                request = retained;
+                response
+            };
             let status = response.status();
             if status == reqwest::StatusCode::UNAUTHORIZED
                 && provider.uses_ducx_loopback()
@@ -389,7 +438,7 @@ impl UpstreamAccess {
                 )
                 .await?);
             }
-            return Ok(response.bytes_stream().boxed());
+            return Ok((response.bytes_stream().boxed(), request));
         }
     }
 
@@ -398,10 +447,10 @@ impl UpstreamAccess {
     pub(crate) async fn anthropic_stream_with_web_search_retry(
         &self,
         provider: &ProviderRuntime,
-        mut request: crate::anthropic::MessageRequest,
+        request: crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
         client_beta: Option<&str>,
-        mut native_body: Option<Value>,
+        native_body: &mut Option<Value>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         let has_hosted_web_search = request.tools.iter().any(|tool| {
             tool.get("name").and_then(Value::as_str) == Some("web_search")
@@ -410,14 +459,8 @@ impl UpstreamAccess {
                     .and_then(Value::as_str)
                     .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
         });
-        let upstream = self
-            .send_anthropic_request(
-                provider,
-                &request,
-                hash_key,
-                client_beta,
-                native_body.as_ref(),
-            )
+        let (upstream, mut request) = self
+            .send_anthropic_request(provider, request, hash_key, client_beta, native_body)
             .await?;
         if !has_hosted_web_search {
             return Ok(upstream);
@@ -442,13 +485,13 @@ impl UpstreamAccess {
                         body["metadata"] = metadata.clone();
                     }
                 }
-                let retry = self
+                let (retry, request) = self
                     .send_anthropic_request(
                         provider,
-                        &request,
+                        request,
                         retry_hash_key.as_deref().or(hash_key),
                         client_beta,
-                        native_body.as_ref(),
+                        native_body,
                     )
                     .await?;
                 match inspect_anthropic_stream(retry).await? {

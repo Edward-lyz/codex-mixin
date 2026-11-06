@@ -483,12 +483,12 @@ pub(crate) fn from_collected(
     model: &str,
 ) -> Result<Value, GatewayError> {
     let mut parts = Vec::new();
-    for item in &collected.output {
+    for item in collected.output_items() {
         parts.extend(item_parts(item).map_err(|error| GatewayError::Upstream(error.to_string()))?);
     }
     let mut mapped = response(parts, model);
     mapped["candidates"][0]["finishReason"] = json!(finish(&collected.response)?);
-    mapped["usageMetadata"] = metadata(&collected.usage);
+    mapped["usageMetadata"] = metadata(collected.response.get("usage").unwrap_or(&Value::Null));
     Ok(mapped)
 }
 fn data(payload: Value) -> Bytes {

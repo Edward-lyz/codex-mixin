@@ -926,7 +926,7 @@ pub(crate) fn collected_to_anthropic_message(
 ) -> Result<Value, GatewayError> {
     let mut content = Vec::new();
     let mut used_tool = false;
-    for item in collected.output {
+    for item in collected.output_items() {
         match item.get("type").and_then(Value::as_str) {
             Some("reasoning") => {
                 if let Some(block) = item
@@ -1010,8 +1010,8 @@ pub(crate) fn collected_to_anthropic_message(
         "stop_reason":stop_reason,
         "stop_sequence":native.and_then(|native| native.pointer("/delta/stop_sequence")).cloned().unwrap_or(Value::Null),
         "usage":native.and_then(|native| native.get("usage")).cloned().unwrap_or_else(|| json!({
-            "input_tokens":collected.usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
-            "output_tokens":collected.usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0)
+            "input_tokens":collected.response.pointer("/usage/input_tokens").and_then(Value::as_u64).unwrap_or(0),
+            "output_tokens":collected.response.pointer("/usage/output_tokens").and_then(Value::as_u64).unwrap_or(0)
         }))
     }))
 }

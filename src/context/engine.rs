@@ -1,9 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 
 use super::checkpoint;
@@ -497,7 +500,7 @@ impl ContextEngine {
         };
         let mut full = store.history_items(session)?;
         full.extend(recorded);
-        let overlap = common_prefix_length(&full, incoming);
+        let overlap = common_prefix_length(&full, incoming)?;
         if overlap == full.len() && incoming.len() >= full.len() {
             return Ok(incoming.to_vec());
         }
@@ -953,11 +956,15 @@ fn session_aliases(id: &str) -> [String; 4] {
     ]
 }
 
-fn common_prefix_length(left: &[Value], right: &[Value]) -> usize {
-    left.iter()
-        .zip(right)
-        .take_while(|(left, right)| fingerprint(left) == fingerprint(right))
-        .count()
+fn common_prefix_length(left: &[Value], right: &[Value]) -> Result<usize> {
+    let mut length = 0;
+    for (left, right) in left.iter().zip(right) {
+        if fingerprint(left)? != fingerprint(right)? {
+            break;
+        }
+        length += 1;
+    }
+    Ok(length)
 }
 
 /// Stable short fingerprint of a persona's instructions text.
@@ -970,19 +977,60 @@ fn forked_session(base: &str, persona: &str) -> String {
     format!("{base}{SESSION_SEPARATOR}sub:{persona}")
 }
 
-fn fingerprint(item: &Value) -> String {
-    let mut value = item.clone();
-    if let Some(object) = value.as_object_mut() {
-        object.remove("id");
-        object.remove("status");
-        // Codex adds this optional field when replaying reasoning items.
-        if object.get("type").and_then(Value::as_str) == Some("reasoning")
-            && object.get("content").is_some_and(Value::is_null)
-        {
-            object.remove("content");
-        }
+fn fingerprint(item: &Value) -> Result<String> {
+    let mut serializer = serde_json::Serializer::new(DigestWriter {
+        context: ring::digest::Context::new(&ring::digest::SHA256),
+    });
+    FingerprintValue(item)
+        .serialize(&mut serializer)
+        .context("serialize context fingerprint")?;
+    let digest = serializer.into_inner().context.finish();
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        hex.push(char::from(HEX[usize::from(*byte >> 4)]));
+        hex.push(char::from(HEX[usize::from(*byte & 0x0f)]));
     }
-    super::store::fingerprint_digest(&value.to_string())
+    Ok(hex)
+}
+
+struct DigestWriter {
+    context: ring::digest::Context,
+}
+
+impl Write for DigestWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.context.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct FingerprintValue<'a>(&'a Value);
+
+impl Serialize for FingerprintValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(object) = self.0.as_object() else {
+            return self.0.serialize(serializer);
+        };
+        let omit_reasoning_content = object.get("type").and_then(Value::as_str)
+            == Some("reasoning")
+            && object.get("content").is_some_and(Value::is_null);
+        let mut map = serializer.serialize_map(None)?;
+        for (key, value) in object {
+            if key == "id" || key == "status" || (omit_reasoning_content && key == "content") {
+                continue;
+            }
+            map.serialize_entry(key, value)?;
+        }
+        map.end()
+    }
 }
 fn render_view(store: &Store, session: &str, segments: &[SegmentRow]) -> Result<Vec<Value>> {
     let mut items = Vec::new();

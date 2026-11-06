@@ -168,7 +168,7 @@ fn backup_legacy_config_if_needed(path: &std::path::Path) -> anyhow::Result<()> 
         .open(&backup_path)
         .with_context(|| format!("create legacy config backup {}", backup_path.display()))?;
     set_private_file_permissions(&backup_path)?;
-    let encrypted = encrypt_config(path, raw.as_bytes())?;
+    let encrypted = encrypt_config(path, raw.into_bytes())?;
     backup
         .write_all(&encrypted)
         .with_context(|| format!("write {}", backup_path.display()))?;
@@ -210,7 +210,7 @@ fn save_stored_config_to_path_unlocked(
         .with_context(|| format!("open {}", temporary_path.display()))?;
     set_private_file_permissions(&temporary_path)?;
     let plaintext = serde_json::to_vec_pretty(config)?;
-    let content = encrypt_config(path, &plaintext)?;
+    let content = encrypt_config(path, plaintext)?;
     file.write_all(&content)
         .with_context(|| format!("write {}", temporary_path.display()))?;
     file.write_all(b"\n")
@@ -361,7 +361,7 @@ fn load_config_key(key_path: &std::path::Path) -> anyhow::Result<[u8; CONFIG_KEY
         .map_err(|_| anyhow!("config encryption key must contain 32 bytes"))
 }
 
-fn encrypt_config(path: &std::path::Path, plaintext: &[u8]) -> anyhow::Result<Vec<u8>> {
+fn encrypt_config(path: &std::path::Path, mut ciphertext: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     let key = load_or_create_config_key(path)?;
     let key = LessSafeKey::new(
         UnboundKey::new(&AES_256_GCM, &key).map_err(|_| anyhow!("create config encryption key"))?,
@@ -369,7 +369,6 @@ fn encrypt_config(path: &std::path::Path, plaintext: &[u8]) -> anyhow::Result<Ve
     let mut nonce = [0_u8; CONFIG_NONCE_BYTES];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce)
         .map_err(|_| anyhow!("generate config encryption nonce"))?;
-    let mut ciphertext = plaintext.to_vec();
     key.seal_in_place_append_tag(
         Nonce::assume_unique_for_key(nonce),
         Aad::empty(),
@@ -420,7 +419,9 @@ fn decrypt_config_if_needed(path: &std::path::Path, raw: &[u8]) -> anyhow::Resul
         .map_err(|_| {
             anyhow!("decrypt configuration; the config key is missing or does not match")
         })?;
-    Ok((plaintext.to_vec(), true))
+    let plaintext_len = plaintext.len();
+    ciphertext.truncate(plaintext_len);
+    Ok((ciphertext, true))
 }
 fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
     if let Some(parent) = path.parent() {

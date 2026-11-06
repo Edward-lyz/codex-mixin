@@ -306,16 +306,6 @@ impl Store {
         if version >= HASHED_FINGERPRINT_VERSION {
             return Ok(false);
         }
-        // The upgrade itself is one transaction; the copy keeps the original
-        // archive for a manual rollback to an older gateway.
-        if let Some(path) = self.connection.path().filter(|path| !path.is_empty()) {
-            let backup = format!("{path}.pre-digest.bak");
-            if !Path::new(&backup).exists()
-                && let Err(error) = self.connection.execute("VACUUM INTO ?1", [&backup])
-            {
-                tracing::warn!(error = %error, backup, "context database backup before upgrade failed");
-            }
-        }
         let transaction =
             Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
                 .context("begin fingerprint digest upgrade")?;
@@ -478,62 +468,7 @@ impl Store {
             .context("read body migration candidates")
     }
 
-    fn backup_before_body_migration(&self) -> Result<()> {
-        let done: bool = self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM maintenance WHERE name LIKE 'lossless-backup:%')",
-            [],
-            |row| row.get(0),
-        )?;
-        if done {
-            return Ok(());
-        }
-        let Some(path) = self.connection.path().filter(|path| !path.is_empty()) else {
-            // An explicitly in-memory SQLite connection has no durable file.
-            return Ok(());
-        };
-        let path = Path::new(path);
-        let parent = path.parent().context("context database has no directory")?;
-        let temporary = tempfile::NamedTempFile::new_in(parent)?;
-        // SQLite includes committed WAL contents in this consistent snapshot.
-        self.connection
-            .execute(
-                "VACUUM INTO ?1",
-                [temporary.path().to_string_lossy().as_ref()],
-            )
-            .context("back up context before lossless body migration")?;
-        let backup = Connection::open_with_flags(
-            temporary.path(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
-        let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-        anyhow::ensure!(
-            integrity == "ok",
-            "context migration backup failed integrity check"
-        );
-        drop(backup);
-        temporary.as_file().sync_all()?;
-        let destination =
-            path.with_extension(format!("db.pre-lossless-{}.bak", uuid::Uuid::new_v4()));
-        temporary
-            .persist_noclobber(&destination)
-            .context("preserve context migration backup")?;
-        crate::platform::restrict_owner_only_file(&destination)?;
-        let name = format!(
-            "lossless-backup:{}",
-            destination
-                .file_name()
-                .context("backup has no name")?
-                .to_string_lossy()
-        );
-        self.connection.execute(
-            "INSERT INTO maintenance(name,at) VALUES (?1,?2)",
-            params![name, unix_now()],
-        )?;
-        Ok(())
-    }
-
     pub(crate) fn maintain_session(&mut self, key: &str) -> Result<()> {
-        self.backup_before_body_migration()?;
         let transaction = self
             .connection
             .transaction()
@@ -558,7 +493,16 @@ impl Store {
                     [id],
                     |row| row.get(0),
                 )?;
-                let encoded = body::encode(&raw)?;
+                let tags = if table == "messages" {
+                    Some(
+                        serde_json::from_str::<BodyTags>(&raw)
+                            .context("read message tags for compression")?,
+                    )
+                } else {
+                    None
+                };
+                processed += raw.len();
+                let encoded = body::encode(raw, true)?;
                 transaction.execute(
                     &format!(
                         "UPDATE {table} SET {column} = ?2, body_codec = ?3,
@@ -572,15 +516,12 @@ impl Store {
                         encoded.checksum
                     ],
                 )?;
-                if table == "messages" {
-                    let tags: BodyTags =
-                        serde_json::from_str(&raw).context("read message tags for compression")?;
+                if let Some(tags) = tags {
                     transaction.execute(
                         "UPDATE messages SET body_kind = ?2, body_tool = ?3 WHERE rowid = ?1",
                         params![id, tags.role.or(tags.item_type), tags.name],
                     )?;
                 }
-                processed += raw.len();
             }
         }
         let fingerprints = {
@@ -635,7 +576,6 @@ impl Store {
     }
 
     pub(crate) fn compact(&self) -> Result<()> {
-        self.backup_before_body_migration()?;
         self.connection
             .execute_batch("VACUUM")
             .context("compact context database")?;
@@ -858,7 +798,7 @@ impl Store {
     ) -> Result<()> {
         let output_json =
             serde_json::to_string(output).context("encode recorded response output")?;
-        let encoded = body::encode(&output_json)?;
+        let encoded = body::encode(output_json, false)?;
         let (history_len, history_tip) = self.history_anchor(key)?;
         self.connection
             .execute(
@@ -895,7 +835,7 @@ impl Store {
                 if expired_at.is_some() {
                     bail!("response {response_id} output expired from the context archive")
                 }
-                serde_json::from_str(&body::decode(&json.0, json.1, json.2, json.3.as_deref())?)
+                serde_json::from_str(&body::decode(json.0, json.1, json.2, json.3.as_deref())?)
                     .context("parse recorded response output")
             })
             .transpose()
@@ -923,7 +863,7 @@ impl Store {
             bail!("response {response_id} output expired from the context archive");
         }
         let output = serde_json::from_str(&body::decode(
-            &output.0,
+            output.0,
             output.1,
             output.2,
             output.3.as_deref(),
@@ -987,7 +927,7 @@ impl Store {
         &mut self,
         key: &str,
         items: &[Value],
-        fingerprint: impl Fn(&Value) -> String,
+        fingerprint: impl Fn(&Value) -> Result<String>,
         prefix_len: usize,
     ) -> Result<()> {
         let mut session = self.ensure_session(key)?;
@@ -1014,7 +954,7 @@ impl Store {
             .collect::<std::result::Result<Vec<_>, _>>()
             .context("read context continuation suffix")?;
         drop(statement);
-        let fingerprints = items.iter().map(&fingerprint).collect::<Vec<_>>();
+        let fingerprints = items.iter().map(&fingerprint).collect::<Result<Vec<_>>>()?;
         let common = suffix
             .iter()
             .zip(&fingerprints)
@@ -1108,7 +1048,7 @@ impl Store {
             let position = prefix_len + offset;
             let encoded =
                 serde_json::to_string(item).context("encode context continuation item")?;
-            let stored = body::encode(&encoded)?;
+            let stored = body::encode(encoded, false)?;
             transaction.execute(
                 "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at,
                     body_codec, body_bytes, body_checksum, body_kind, body_tool)
@@ -1202,7 +1142,7 @@ impl Store {
     pub fn history_prefix(
         &self,
         key: &str,
-        mut incoming: impl Iterator<Item = String>,
+        mut incoming: impl Iterator<Item = Result<String>>,
     ) -> Result<(usize, usize)> {
         let history_len: i64 = self
             .connection
@@ -1235,7 +1175,7 @@ impl Store {
                 .context("read context history fingerprint")?
                 .as_str()
                 .context("context history fingerprint is not text")?;
-            if archived != next {
+            if archived != next? {
                 break;
             }
             divergence += 1;
@@ -1261,7 +1201,7 @@ impl Store {
             bail!("original {reference} expired from the context archive");
         }
         Ok(Some(body::decode(
-            &stored.0,
+            stored.0,
             stored.1,
             stored.2,
             stored.3.as_deref(),
@@ -1329,7 +1269,7 @@ impl Store {
         &mut self,
         key: &str,
         items: &[Value],
-        fingerprint: impl Fn(&Value) -> String,
+        fingerprint: impl Fn(&Value) -> Result<String>,
     ) -> Result<(SessionRow, bool)> {
         let mut session = self.ensure_session(key)?;
         let (_, divergence) = self.history_prefix(key, items.iter().map(&fingerprint))?;
@@ -1388,7 +1328,7 @@ impl Store {
                 continue;
             }
             let item = &items[position as usize];
-            let stored = body::encode(&serde_json::to_string(item)?)?;
+            let stored = body::encode(serde_json::to_string(item)?, false)?;
             transaction
                 .execute(
                     "UPDATE messages SET item_json = ?3, expired_at = NULL, body_codec = ?4,
@@ -1452,13 +1392,13 @@ impl Store {
         for (index, item) in items.iter().enumerate().skip(divergence) {
             let reference = format!("m{next_ref:06}");
             let encoded = serde_json::to_string(item).context("encode history item")?;
-            let stored = body::encode(&encoded)?;
+            let stored = body::encode(encoded, false)?;
             transaction
                 .execute(
                     "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at,
                         body_codec, body_bytes, body_checksum, body_kind, body_tool)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![key, reference, fingerprint(item), stored.payload, unix_now(), stored.codec,
+                    params![key, reference, fingerprint(item)?, stored.payload, unix_now(), stored.codec,
                         stored.bytes, stored.checksum, item.get("role").or_else(|| item.get("type")).and_then(Value::as_str),
                         item.get("name").and_then(Value::as_str)],
                 )
@@ -1786,7 +1726,7 @@ impl Store {
              AND item_json <> '' ORDER BY created_at DESC, rowid DESC",
         )?;
         let mut rows = statement.query([key])?;
-        let needle = query.to_ascii_lowercase();
+        let needle = query.as_bytes();
         while hits.len() < limit {
             let Some(row) = rows.next()? else {
                 break;
@@ -1795,7 +1735,13 @@ impl Store {
             let item = self
                 .message_json(key, &reference)?
                 .context("search original missing")?;
-            if item.to_ascii_lowercase().contains(&needle) {
+            let item_bytes = item.as_bytes();
+            let matches = needle.is_empty()
+                || (needle.len() <= item_bytes.len()
+                    && item_bytes
+                        .windows(needle.len())
+                        .any(|window| window.eq_ignore_ascii_case(needle)));
+            if matches {
                 hits.push(SearchHit {
                     kind: "message".to_owned(),
                     reference,

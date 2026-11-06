@@ -25,7 +25,6 @@ const state = {
   page: "home",
   usage: "7d",
   snapshot: null,
-  snapshotKey: "",
   loadError: null,
   quota: null,
   quotaLoading: false,
@@ -620,6 +619,22 @@ function userIsEditing() {
   return Boolean(active && $("#view").contains(active) && active.matches("input, select, textarea"));
 }
 
+function sameSnapshot(left, right, root = true) {
+  if (Object.is(left, right)) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && left.length !== right.length) return false;
+  for (const key in left) {
+    if (root && key === "refreshed_at_ms") continue;
+    if (!Object.hasOwn(right, key) || !sameSnapshot(left[key], right[key], false)) return false;
+  }
+  for (const key in right) {
+    if (root && key === "refreshed_at_ms") continue;
+    if (!Object.hasOwn(left, key)) return false;
+  }
+  return true;
+}
+
 async function refresh(force = false) {
   clearTimeout(state.timer);
   if (!state.token) return;
@@ -629,10 +644,8 @@ async function refresh(force = false) {
   try {
     const snapshot = await api(`/api/snapshot?usage=${state.usage}`);
     if (sequence !== state.refreshSequence) return;
-    const key = JSON.stringify({ ...snapshot, refreshed_at_ms: 0 });
-    const changed = key !== state.snapshotKey || state.loadError;
+    const changed = !sameSnapshot(state.snapshot, snapshot) || state.loadError;
     state.snapshot = snapshot;
-    state.snapshotKey = key;
     state.loadError = null;
     updateChrome();
     // An unrelated usage snapshot must not collapse the archive being read.

@@ -236,10 +236,12 @@ fn finish_reason(response: &Value, used_tool: bool) -> &'static str {
 }
 
 pub(crate) fn collected_to_chat(collected: CollectedResponse, model: &str) -> Value {
-    let tools: Vec<Value> = collected.output.iter().filter(|i| i["type"] == "function_call").map(|i| json!({"id":i["call_id"],"type":"function","function":{"name":i["name"],"arguments":i["arguments"]}})).collect();
-    let mut message = json!({"role":"assistant","content":collected.output_text});
+    let output_text = collected.output_text();
+    let has_output_text = !output_text.is_empty();
+    let tools: Vec<Value> = collected.output_items().iter().filter(|i| i["type"] == "function_call").map(|i| json!({"id":i["call_id"],"type":"function","function":{"name":i["name"],"arguments":i["arguments"]}})).collect();
+    let mut message = json!({"role":"assistant","content":output_text});
     let reasoning: String = collected
-        .output
+        .output_items()
         .iter()
         .filter(|item| item["type"] == "reasoning")
         .flat_map(|item| item["content"].as_array().into_iter().flatten())
@@ -251,12 +253,12 @@ pub(crate) fn collected_to_chat(collected: CollectedResponse, model: &str) -> Va
     }
     if !tools.is_empty() {
         message["tool_calls"] = json!(tools);
-        if collected.output_text.is_empty() {
+        if !has_output_text {
             message["content"] = Value::Null;
         }
     }
     json!({"id":collected.response["id"],"object":"chat.completion","created":chrono::Utc::now().timestamp(),"model":model,
-        "choices":[{"index":0,"message":message,"finish_reason":finish_reason(&collected.response,!tools.is_empty())}],"usage":usage(&collected.usage)})
+        "choices":[{"index":0,"message":message,"finish_reason":finish_reason(&collected.response,!tools.is_empty())}],"usage":usage(collected.response.get("usage").unwrap_or(&Value::Null))})
 }
 
 fn data(payload: Value) -> Bytes {

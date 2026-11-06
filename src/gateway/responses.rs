@@ -198,42 +198,12 @@ pub(crate) async fn collect_response_stream(
     let mut response = completed.ok_or_else(|| {
         GatewayError::Upstream("upstream ended without response.completed".to_owned())
     })?;
-    let mut output = response
+    let output_is_empty = response
         .get("output")
         .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if output.is_empty() && !observed_output.is_empty() {
-        output = observed_output;
-        response["output"] = Value::Array(output.clone());
+        .is_none_or(Vec::is_empty);
+    if output_is_empty && !observed_output.is_empty() {
+        response["output"] = Value::Array(observed_output);
     }
-    let output_text = collect_output_text(&output);
-    let usage = response.get("usage").cloned().unwrap_or(Value::Null);
-    Ok(CollectedResponse {
-        response,
-        output,
-        output_text,
-        usage,
-    })
-}
-
-fn collect_output_text(output: &[Value]) -> String {
-    output
-        .iter()
-        .flat_map(|item| {
-            item.get("content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .filter_map(|part| {
-            matches!(
-                part.get("type").and_then(Value::as_str),
-                Some("output_text" | "text")
-            )
-            .then(|| part.get("text").and_then(Value::as_str))
-            .flatten()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    Ok(CollectedResponse { response })
 }

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -8,9 +10,7 @@ use crate::gateway::{
 };
 use crate::protocol::convert::{WebSearchTool, gateway_thinking_text, responses_to_anthropic};
 use crate::protocol::gemini::responses_to_gemini;
-use crate::protocol::model_reasoning::{
-    anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
-};
+use crate::protocol::model_reasoning::anthropic_thinking_kind_with_advertised;
 use crate::protocol::openai_chat::responses_to_openai_chat;
 use crate::protocol::openai_events::{
     map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes, map_openai_chat_sse,
@@ -26,7 +26,7 @@ fn compaction_secret() -> Result<String, GatewayError> {
 }
 
 pub(crate) struct ProviderResponseRequest<'a> {
-    pub(crate) body: &'a Value,
+    pub(crate) body: &'a mut Value,
     pub(crate) catalog_slug: &'a str,
     pub(crate) provider_id: &'a str,
     pub(crate) upstream_model_id: &'a str,
@@ -43,7 +43,7 @@ struct ProviderRequestContext<'a> {
     catalog_slug: &'a str,
     downstream_model: &'a str,
     routing: Option<&'a UpstreamRouting>,
-    body: &'a Value,
+    body: &'a mut Value,
     advertised_thinking: Option<bool>,
     web_search_enabled: bool,
     native_messages: Option<&'a (crate::anthropic::MessageRequest, Value)>,
@@ -72,7 +72,7 @@ pub(crate) async fn stream_provider_response(
     let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
-    let mut effective_body = std::borrow::Cow::Borrowed(body);
+    let mut updates = Vec::new();
     if protocol != ProviderProtocol::OpenAiResponses
         && let Some(input) = body.get("input").and_then(Value::as_array)
     {
@@ -124,14 +124,15 @@ pub(crate) async fn stream_provider_response(
                 }
                 // Preserve sibling fields such as summary/verbosity. Each setting
                 // changes independently and the last update in input wins.
-                let target = &mut effective_body.to_mut()[field];
-                if target.is_null() {
-                    *target = json!({});
+                if body
+                    .get(field)
+                    .is_some_and(|target| !target.is_null() && !target.is_object())
+                {
+                    return Err(GatewayError::BadRequest(format!(
+                        "{field} must be an object"
+                    )));
                 }
-                let target = target.as_object_mut().ok_or_else(|| {
-                    GatewayError::BadRequest(format!("{field} must be an object"))
-                })?;
-                target.insert(setting.to_owned(), value.clone());
+                updates.push((field, setting, value.clone()));
                 applied = true;
             }
             if !applied {
@@ -141,8 +142,23 @@ pub(crate) async fn stream_provider_response(
             }
         }
     }
-    let body = effective_body.as_ref();
     executor.require_ducx_client(provider, headers).await?;
+    let mut restored = Vec::new();
+    for (field, setting, value) in updates {
+        let parent = if body.get(field).is_some_and(Value::is_object) {
+            None
+        } else {
+            let parent = body.as_object_mut().and_then(|fields| fields.remove(field));
+            body[field] = json!({});
+            Some(parent)
+        };
+        let target = body
+            .get_mut(field)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| GatewayError::BadRequest(format!("{field} must be an object")))?;
+        let previous = target.insert(setting.to_owned(), value);
+        restored.push((field, setting, previous, parent));
+    }
     let ctx = ProviderRequestContext {
         executor,
         provider,
@@ -150,18 +166,26 @@ pub(crate) async fn stream_provider_response(
         catalog_slug,
         downstream_model,
         routing,
-        body,
+        body: &mut *body,
         advertised_thinking,
         web_search_enabled,
         native_messages,
         headers,
     };
-    match protocol {
+    let result = match protocol {
         ProviderProtocol::AnthropicMessages => stream_anthropic_messages(ctx).await,
         ProviderProtocol::OpenAiChat => stream_openai_chat(ctx).await,
         ProviderProtocol::OpenAiResponses => stream_openai_responses(ctx).await,
         ProviderProtocol::GoogleGemini => stream_gemini(ctx).await,
+    };
+    for (field, setting, previous, parent) in restored.into_iter().rev() {
+        if let Some(parent) = parent {
+            restore_optional_field(body, field, parent);
+        } else if let Some(target) = body.get_mut(field).and_then(Value::as_object_mut) {
+            restore_optional_field_in_map(target, setting, previous);
+        }
     }
+    result
 }
 
 async fn stream_anthropic_messages(
@@ -180,6 +204,7 @@ async fn stream_anthropic_messages(
         native_messages,
         headers,
     } = ctx;
+    let body: &Value = body;
     let mut downstream_body = response_metadata_request(body, downstream_model);
     if native_messages.is_some() {
         downstream_body["__mixin_native_messages"] = Value::Bool(true);
@@ -191,7 +216,7 @@ async fn stream_anthropic_messages(
         let mut converted = responses_to_anthropic(
             body,
             Some(upstream_model_id),
-            reasoning.as_ref(),
+            reasoning.as_deref(),
             if native_messages.is_some() {
                 crate::config::ThinkingMode::Off
             } else {
@@ -237,7 +262,7 @@ async fn stream_anthropic_messages(
     };
     let send = |converted: crate::protocol::convert::ConvertedRequest| async move {
         let shape = CacheShape::from_anthropic(&converted.request);
-        let native_body = native_messages
+        let mut native_body = native_messages
             .map(|(_, original)| {
                 crate::protocol::convert::native_messages_body(
                     body,
@@ -265,7 +290,7 @@ async fn stream_anthropic_messages(
                         (!values.is_empty()).then(|| values.join(","))
                     })
                     .as_deref(),
-                native_body,
+                &mut native_body,
             )
             .await?;
         Ok::<_, GatewayError>((upstream, shape, converted.tool_names))
@@ -348,11 +373,10 @@ async fn stream_openai_chat(
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
     let downstream_body = response_metadata_request(body, downstream_model);
-    let mut upstream_body = body.clone();
-    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let converted =
-        responses_to_openai_chat(&upstream_body, Some(upstream_model_id), &compaction_secret)?;
-    drop(upstream_body);
+    let saved_reasoning = prepare_reasoning(body, advertised_thinking);
+    let converted = responses_to_openai_chat(body, Some(upstream_model_id), &compaction_secret);
+    restore_reasoning(body, saved_reasoning);
+    let converted = converted?;
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
@@ -413,22 +437,26 @@ async fn stream_openai_responses(
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
-    let mut upstream_body = body.clone();
-    if let Some(fields) = upstream_body.as_object_mut() {
-        fields.remove("__mixin_gemini_generation_config");
-    }
-    upstream_body["model"] = Value::String(upstream_model_id.to_owned());
-    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    if is_deepseek_responses_provider(provider, upstream_model_id) {
-        let normalized = normalize_portable_responses_reasoning(&mut upstream_body);
-        if normalized > 0 {
-            tracing::debug!(
-                provider_id = provider.id(),
-                upstream_model_id,
-                normalized_reasoning_items = normalized,
-                "converted reasoning history to DeepSeek reasoning text"
-            );
-        }
+    let original_model = body
+        .as_object_mut()
+        .and_then(|fields| fields.remove("model"));
+    let original_gemini_config = body
+        .as_object_mut()
+        .and_then(|fields| fields.remove("__mixin_gemini_generation_config"));
+    let saved_reasoning = prepare_reasoning(body, advertised_thinking);
+    body["model"] = Value::String(upstream_model_id.to_owned());
+    let normalized_reasoning = if is_deepseek_responses_provider(provider, upstream_model_id) {
+        normalize_portable_responses_reasoning(body)
+    } else {
+        Vec::new()
+    };
+    if !normalized_reasoning.is_empty() {
+        tracing::debug!(
+            provider_id = provider.id(),
+            upstream_model_id,
+            normalized_reasoning_items = normalized_reasoning.len(),
+            "converted reasoning history to DeepSeek reasoning text"
+        );
     }
     let observation = record_provider_prefix(
         &executor.cache_shapes,
@@ -436,17 +464,18 @@ async fn stream_openai_responses(
         catalog_slug,
         upstream_model_id,
         routing,
-        CacheShape::from_openai_responses(&upstream_body),
+        CacheShape::from_openai_responses(body),
     );
-    let upstream = executor
+    let request_body = std::mem::take(body);
+    let (upstream, mut request_body) = executor
         .upstream
-        .send_provider_json(
+        .send_provider_json_retaining(
             provider,
             ProviderProtocol::OpenAiResponses,
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
             baidu_native.as_ref(),
-            upstream_body,
+            request_body,
         )
         .await
         .inspect_err(|error| {
@@ -458,6 +487,15 @@ async fn stream_openai_responses(
                 "provider responses request failed before receiving a response"
             );
         })?;
+    restore_reasoning(&mut request_body, saved_reasoning);
+    restore_portable_responses_reasoning(&mut request_body, normalized_reasoning);
+    restore_optional_field(&mut request_body, "model", original_model);
+    restore_optional_field(
+        &mut request_body,
+        "__mixin_gemini_generation_config",
+        original_gemini_config,
+    );
+    *body = request_body;
     let status = upstream.status();
     if !status.is_success() {
         return Err(crate::upstream::body::response_error(
@@ -482,27 +520,79 @@ fn is_deepseek_responses_provider(provider: &ProviderRuntime, upstream_model_id:
 /// `reasoning_text` and rejects tool continuations that only carry another
 /// provider's opaque state. Recover Mixin-owned thinking tokens and use the
 /// visible summary when a native opaque item has no readable content.
-fn normalize_portable_responses_reasoning(body: &mut Value) -> usize {
+struct PortableReasoningRestore {
+    index: usize,
+    content: Option<Value>,
+    encrypted_content: Option<Value>,
+    summary: Option<Value>,
+}
+
+fn normalize_portable_responses_reasoning(body: &mut Value) -> Vec<PortableReasoningRestore> {
     const UNAVAILABLE_REASONING: &str =
         "[Reasoning from a different provider was not exposed in plaintext.]";
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
-        return 0;
+        return Vec::new();
     };
-    let mut normalized = 0;
-    for item in input {
+    let mut normalized = Vec::new();
+    for (index, item) in input.iter_mut().enumerate() {
         if item.get("type").and_then(Value::as_str) != Some("reasoning") {
             continue;
         }
         let text =
             portable_reasoning_text(item).unwrap_or_else(|| UNAVAILABLE_REASONING.to_owned());
+        let Some(fields) = item.as_object_mut() else {
+            continue;
+        };
+        let original_content = fields.remove("content");
+        let encrypted_content = fields.remove("encrypted_content");
+        let summary = fields.remove("summary");
         item["content"] = json!([{"type": "reasoning_text", "text": text}]);
-        if let Some(item) = item.as_object_mut() {
-            item.remove("encrypted_content");
-            item.remove("summary");
-        }
-        normalized += 1;
+        normalized.push(PortableReasoningRestore {
+            index,
+            content: original_content,
+            encrypted_content,
+            summary,
+        });
     }
     normalized
+}
+
+fn restore_portable_responses_reasoning(
+    body: &mut Value,
+    normalized: Vec<PortableReasoningRestore>,
+) {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for restored in normalized {
+        let Some(fields) = input.get_mut(restored.index).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        restore_optional_field_in_map(fields, "content", restored.content);
+        restore_optional_field_in_map(fields, "encrypted_content", restored.encrypted_content);
+        restore_optional_field_in_map(fields, "summary", restored.summary);
+    }
+}
+
+fn restore_optional_field(body: &mut Value, key: &str, value: Option<Value>) {
+    if let Some(fields) = body.as_object_mut() {
+        restore_optional_field_in_map(fields, key, value);
+    }
+}
+
+fn restore_optional_field_in_map(
+    fields: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<Value>,
+) {
+    match value {
+        Some(value) => {
+            fields.insert(key.to_owned(), value);
+        }
+        None => {
+            fields.remove(key);
+        }
+    }
 }
 
 fn portable_reasoning_text(item: &Value) -> Option<String> {
@@ -593,7 +683,7 @@ async fn handle_gemini_bad_request(
     provider: &ProviderRuntime,
     upstream_model_id: &str,
     routing: Option<&UpstreamRouting>,
-    payload: &Value,
+    payload: Value,
     upstream: reqwest::Response,
 ) -> Result<reqwest::Response, GatewayError> {
     let content_type = upstream
@@ -607,7 +697,7 @@ async fn handle_gemini_bad_request(
             upstream_model_id = %upstream_model_id,
             "upstream rejected thought signature, retrying with sentinel bypass"
         );
-        let mut retry_payload = payload.clone();
+        let mut retry_payload = payload;
         crate::protocol::gemini::sanitize_thought_signatures_in_gemini_payload(&mut retry_payload);
         let retry_headers = executor.upstream.agy_native_headers(provider).await?;
         executor
@@ -644,16 +734,21 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         ..
     } = ctx;
     let agy_native = executor.upstream.agy_native_headers(provider).await?;
-    let mut upstream_body = body.clone();
-    if upstream_body.get("max_output_tokens").is_none() {
-        upstream_body["max_output_tokens"] = json!(
+    let needs_max_tokens = body.get("max_output_tokens").is_none();
+    let saved_reasoning = prepare_reasoning(body, advertised_thinking);
+    if needs_max_tokens {
+        body["max_output_tokens"] = json!(
             provider
                 .model_max_output_tokens(upstream_model_id)
                 .unwrap_or(executor.config.default_max_tokens)
         );
     }
-    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let converted = responses_to_gemini(&upstream_body, Some(upstream_model_id))?;
+    let converted = responses_to_gemini(body, Some(upstream_model_id));
+    restore_reasoning(body, saved_reasoning);
+    if needs_max_tokens && let Some(object) = body.as_object_mut() {
+        object.remove("max_output_tokens");
+    }
+    let converted = converted?;
     let mut payload = build_gemini_payload(provider, upstream_model_id, converted.request);
     let observation = record_provider_prefix(
         &executor.cache_shapes,
@@ -671,15 +766,15 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
                 .await?
         );
     }
-    let mut upstream = executor
+    let (mut upstream, mut payload) = executor
         .upstream
-        .send_provider_json(
+        .send_provider_json_retaining(
             provider,
             ProviderProtocol::GoogleGemini,
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
             agy_native.as_ref(),
-            payload.clone(),
+            payload,
         )
         .await
         .inspect_err(|error| {
@@ -698,17 +793,19 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         );
         crate::provider::auth::agy::invalidate_agy_cache().await;
         let refreshed_headers = executor.upstream.agy_native_headers(provider).await?;
-        upstream = executor
+        let (response, retained_payload) = executor
             .upstream
-            .send_provider_json(
+            .send_provider_json_retaining(
                 provider,
                 ProviderProtocol::GoogleGemini,
                 upstream_model_id,
                 routing.map(|routing| routing.hash_key.as_str()),
                 refreshed_headers.as_ref(),
-                payload.clone(),
+                payload,
             )
             .await?;
+        upstream = response;
+        payload = retained_payload;
     }
     if upstream.status() == reqwest::StatusCode::BAD_REQUEST {
         upstream = handle_gemini_bad_request(
@@ -716,7 +813,7 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
             provider,
             upstream_model_id,
             routing,
-            &payload,
+            payload,
             upstream,
         )
         .await?;
@@ -769,13 +866,46 @@ fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {
     Value::Object(request)
 }
 
-fn upstream_reasoning(body: &Value, advertised_thinking: Option<bool>) -> Option<Value> {
+fn upstream_reasoning(body: &Value, advertised_thinking: Option<bool>) -> Option<Cow<'_, Value>> {
     if advertised_thinking == Some(false) {
         return None;
     }
-    let mut reasoning = body.get("reasoning")?.clone();
+    let reasoning = body.get("reasoning")?;
     if reasoning.get("effort").and_then(Value::as_str) == Some("ultra") {
-        reasoning["effort"] = Value::String("max".to_owned());
+        let mut normalized = reasoning.clone();
+        normalized["effort"] = Value::String("max".to_owned());
+        Some(Cow::Owned(normalized))
+    } else {
+        Some(Cow::Borrowed(reasoning))
     }
-    Some(reasoning)
+}
+
+enum ReasoningRestore {
+    Removed(Value),
+    Effort(Value),
+}
+
+fn prepare_reasoning(body: &mut Value, advertised: Option<bool>) -> Option<ReasoningRestore> {
+    if advertised == Some(false) {
+        return body
+            .as_object_mut()?
+            .remove("reasoning")
+            .map(ReasoningRestore::Removed);
+    }
+    let effort = body.pointer_mut("/reasoning/effort")?;
+    if effort.as_str() != Some("ultra") {
+        return None;
+    }
+    Some(ReasoningRestore::Effort(std::mem::replace(
+        effort,
+        Value::String("max".to_owned()),
+    )))
+}
+
+fn restore_reasoning(body: &mut Value, original: Option<ReasoningRestore>) {
+    match original {
+        Some(ReasoningRestore::Removed(reasoning)) => body["reasoning"] = reasoning,
+        Some(ReasoningRestore::Effort(effort)) => body["reasoning"]["effort"] = effort,
+        None => {}
+    }
 }

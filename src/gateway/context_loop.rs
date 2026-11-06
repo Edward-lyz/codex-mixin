@@ -118,8 +118,8 @@ impl ContextRun {
         mut plan: RequestPlan,
         headers: HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
-        let engine = Arc::clone(&self.engine);
-        let lease = engine
+        let lease = self
+            .engine
             .acquire_lease(&self.session)
             .await
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
@@ -148,8 +148,7 @@ impl ContextRun {
         // The first round runs before the response starts, so an upstream status
         // or transport error keeps its own status instead of reaching the client
         // as a successful stream that only carries a failure event.
-        let mut first_plan = plan.clone();
-        first_plan.body = compose_body(
+        plan.body = compose_body(
             &template,
             view.items,
             &[],
@@ -158,7 +157,7 @@ impl ContextRun {
             &note,
             plan.native_messages.is_some(),
         );
-        let (first, _) = executor.send_round(first_plan, &headers).await?;
+        let (first, _) = executor.send_round(&mut plan, &headers).await?;
         let cache_metrics_available = match &plan.target {
             super::plan::UpstreamTarget::Official => true,
             super::plan::UpstreamTarget::Provider {
@@ -193,9 +192,8 @@ impl ContextRun {
                             &note,
                             plan.native_messages.is_some(),
                         );
-                        let mut round_plan = plan.clone();
-                        round_plan.body = body;
-                        match executor.send_round(round_plan, &headers).await {
+                        plan.body = body;
+                        match executor.send_round(&mut plan, &headers).await {
                             Ok((stream, _)) => stream,
                             Err(error) => {
                                 yield Ok::<Bytes, Infallible>(client.failure(
@@ -357,7 +355,7 @@ impl ContextRun {
         );
         let mut read_plan = plan;
         read_plan.body = compose_read_only_body(read_plan.body, view.items);
-        let (mut upstream, _) = executor.send_round(read_plan, &headers).await?;
+        let (mut upstream, _) = executor.send_round(&mut read_plan, &headers).await?;
         Ok(async_stream::stream! {
             let _lease = lease;
             while let Some(chunk) = upstream.next().await {

@@ -7,8 +7,7 @@ mod custom;
 mod official;
 use custom::{CustomWebSocketState, run_custom_ws_request};
 use official::{
-    OfficialWebSocketState, effective_official_cache_body, official_websocket_request_history,
-    proxy_official_ws_request,
+    OfficialWebSocketState, official_websocket_request_history, proxy_official_ws_request,
 };
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -181,14 +180,34 @@ async fn handle_official_ws_request(
                 return Ok(());
             }
         };
-    // The effective body copies the whole history only to measure the prompt
-    // prefix; release it before the upstream round trip.
     let observation = {
-        let effective_body = effective_official_cache_body(&body, request_history.as_deref());
-        context
-            .state
-            .gateway
-            .official_prefix_observation(context.headers, &effective_body)?
+        if let Some(request_history) = request_history.as_mut() {
+            let original_input = std::mem::replace(
+                &mut body["input"],
+                Value::Array(std::mem::take(request_history)),
+            );
+            let previous_response_id = body
+                .as_object_mut()
+                .and_then(|request| request.remove("previous_response_id"));
+            let observation = context
+                .state
+                .gateway
+                .official_prefix_observation(context.headers, &body);
+            let Value::Array(history) = body["input"].take() else {
+                unreachable!("official cache observation input was not an array");
+            };
+            *request_history = history;
+            body["input"] = original_input;
+            if let Some(previous_response_id) = previous_response_id {
+                body["previous_response_id"] = previous_response_id;
+            }
+            observation?
+        } else {
+            context
+                .state
+                .gateway
+                .official_prefix_observation(context.headers, &body)?
+        }
     };
     let mut usage_observer = observation.map(crate::gateway::UpstreamCacheObserver::new);
     let request_error = proxy_official_ws_request(

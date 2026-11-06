@@ -4281,30 +4281,20 @@ async fn context_chained_request_continues_after_expired_compressed_bodies() {
         replies > 0,
         "completed replies also need lossless compression"
     );
-    let backup_path = std::fs::read_dir(database.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
+    assert!(
+        std::fs::read_dir(database.path()).unwrap().all(|entry| {
+            !entry
                 .unwrap()
+                .file_name()
                 .to_string_lossy()
-                .contains("pre-lossless-")
-        })
-        .expect("consistent migration backup");
-    let backup = rusqlite::Connection::open(&backup_path).unwrap();
-    let original: String = backup
-        .query_row(
-            "SELECT item_json FROM messages WHERE reference = 'm000003'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(original, legacy_body);
-    let integrity: String = backup
+                .contains(".bak")
+        }),
+        "in-place migration must not create a whole-database backup"
+    );
+    let integrity: String = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .unwrap();
     assert_eq!(integrity, "ok");
-    drop(backup);
     let maintenance: Value = serde_json::from_slice(&maintained.stdout).unwrap();
     assert_eq!(maintenance["missing_messages"], 0);
     let preserved_session: String = connection

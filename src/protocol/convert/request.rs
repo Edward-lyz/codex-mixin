@@ -21,13 +21,17 @@ pub(crate) fn native_messages_body(
     original: &Value,
     compaction_secret: SecretSource<'_>,
 ) -> Result<Value, GatewayError> {
-    let mut result = original.clone();
-    let converted = serde_json::to_value(request)?;
-    let object = result.as_object_mut().ok_or_else(|| {
+    let original_fields = original.as_object().ok_or_else(|| {
         GatewayError::BadRequest("native Messages body must be an object".to_owned())
     })?;
-    if let Some(fields) = converted.as_object() {
-        object.extend(fields.clone());
+    let mut result = serde_json::to_value(request)?;
+    let object = result.as_object_mut().ok_or_else(|| {
+        GatewayError::BadRequest("native Messages request must be an object".to_owned())
+    })?;
+    for (key, value) in original_fields {
+        if !matches!(key.as_str(), "messages" | "system") && !object.contains_key(key) {
+            object.insert(key.clone(), value.clone());
+        }
     }
     let mut system = match original.get("system") {
         Some(Value::Array(blocks)) => blocks.clone(),

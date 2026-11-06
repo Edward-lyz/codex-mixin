@@ -107,28 +107,31 @@ impl FusionEngine {
             };
 
             let mut pending = FuturesUnordered::new();
-            for (index, model) in self.profile.panel_models.iter().cloned().enumerate() {
-                let gateway = self.executor.clone();
-                let profile = self.profile.clone();
-                let task = task.clone();
-                let executor = executor.clone();
-                let routing = routing.clone();
-                let headers = self.headers.clone();
+            for (index, model) in self.profile.panel_models.iter().enumerate() {
+                let model = model.as_str();
+                let executor = executor.as_ref();
+                let routing = routing.as_ref();
+                let gateway = &self.executor;
+                let profile = &self.profile;
+                let headers = &self.headers;
+                let task = &task;
                 pending.push(async move {
                     let timeout = Duration::from_millis(profile.timeout_ms);
                     let result = tokio::time::timeout(
                         timeout,
                         run_panel_model(
-                            &gateway,
-                            &profile,
-                            &model,
-                            &task,
+                            gateway,
+                            profile,
+                            model,
+                            task,
                             executor,
-                            &headers,
-                            routing.as_ref(),
+                            headers,
+                            routing,
                         ),
                     )
-                    .map_err(|_| format!("panel {model} timed out after {} ms", profile.timeout_ms))
+                    .map_err(|_| {
+                        format!("panel {model} timed out after {} ms", profile.timeout_ms)
+                    })
                     .and_then(|result| async move { result })
                     .await;
                     (index, model, result)
@@ -145,11 +148,11 @@ impl FusionEngine {
                     Ok(text) => {
                         panel_details.push(FusionPanelDetail {
                             index,
-                            model: model.clone(),
+                            model: model.to_owned(),
                             status: FusionPanelStatus::Completed,
                             text: text.clone(),
                         });
-                        successful.push(PanelResult { index, model: model.clone(), text });
+                        successful.push(PanelResult { index, model: model.to_owned(), text });
                         yield Ok::<Bytes, Infallible>(progress_event(
                             &fusion_model,
                             &format!("panel {model} 完成 ({finished}/{total})…"),
@@ -159,9 +162,9 @@ impl FusionEngine {
                         tracing::warn!(model, error = %error, "fusion panel failed");
                         panel_details.push(FusionPanelDetail {
                             index,
-                            model: model.clone(),
+                            model: model.to_owned(),
                             status: FusionPanelStatus::Failed,
-                            text: error.clone(),
+                            text: error,
                         });
                         yield Ok(progress_event(
                             &fusion_model,
@@ -173,10 +176,7 @@ impl FusionEngine {
             successful.sort_by_key(|result| result.index);
             panel_details.sort_by_key(|result| result.index);
 
-            let mut final_body = body.clone();
-            final_body["model"] = Value::String(self.profile.final_model.clone());
-            final_body["stream"] = Value::Bool(true);
-            let judge_detail = if successful.len() >= self.profile.min_successful {
+            let (judge_detail, judge_analysis) = if successful.len() >= self.profile.min_successful {
                 yield Ok(progress_event(&fusion_model, "judge 分析中…"));
                 let panel_bundle = format_panel_bundle(&successful);
                 let judge_body = judge_request(&self.profile, &panel_bundle, &task);
@@ -191,20 +191,19 @@ impl FusionEngine {
                     ),
                 )
                 .await;
-                let (analysis, judge_detail) = match judge_result {
+                match judge_result {
                     Ok(Ok(collected)) => {
-                        let analysis = normalize_judge_analysis(&collected.output_text);
+                        let analysis = normalize_judge_analysis(&collected.output_text());
                         let detail = FusionJudgeDetail {
                             model: self.profile.judge_model.clone(),
                             status: FusionJudgeStatus::Completed,
                             text: analysis.clone(),
                         };
-                        (analysis, detail)
+                        (detail, Some(analysis))
                     }
                     Ok(Err(error)) => {
                         tracing::warn!(error = %error, "fusion judge failed; using panel outputs");
                         (
-                            panel_bundle.clone(),
                             FusionJudgeDetail {
                                 model: self.profile.judge_model.clone(),
                                 status: FusionJudgeStatus::Failed,
@@ -212,12 +211,12 @@ impl FusionEngine {
                                     "{error}\n\nFalling back to the successful panel outputs."
                                 ),
                             },
+                            Some(panel_bundle),
                         )
                     }
                     Err(_) => {
                         tracing::warn!("fusion judge timed out; using panel outputs");
                         (
-                            panel_bundle.clone(),
                             FusionJudgeDetail {
                                 model: self.profile.judge_model.clone(),
                                 status: FusionJudgeStatus::TimedOut,
@@ -226,11 +225,10 @@ impl FusionEngine {
                                     self.profile.timeout_ms
                                 ),
                             },
+                            Some(panel_bundle),
                         )
                     }
-                };
-                inject_fusion_analysis(&mut final_body, &analysis, &successful);
-                judge_detail
+                }
             } else {
                 tracing::warn!(
                     successful = successful.len(),
@@ -241,15 +239,18 @@ impl FusionEngine {
                     &fusion_model,
                     "panel 成功数不足，回退 final 模型…",
                 ));
-                FusionJudgeDetail {
-                    model: self.profile.judge_model.clone(),
-                    status: FusionJudgeStatus::Skipped,
-                    text: format!(
+                (
+                    FusionJudgeDetail {
+                        model: self.profile.judge_model.clone(),
+                        status: FusionJudgeStatus::Skipped,
+                        text: format!(
                             "Only {} panel(s) succeeded; {} required. The final model ran without judge analysis.",
                             successful.len(),
                             self.profile.min_successful
                         ),
-                }
+                    },
+                    None,
+                )
             };
 
             let mut details = Vec::new();
@@ -275,6 +276,13 @@ impl FusionEngine {
                     details.push(panel_results_detail(&panel_details));
                     details.push(judge_result_detail(&judge_detail));
                 }
+            }
+
+            let mut final_body = body;
+            final_body["model"] = Value::String(self.profile.final_model.clone());
+            final_body["stream"] = Value::Bool(true);
+            if let Some(analysis) = judge_analysis {
+                inject_fusion_analysis(&mut final_body, &analysis, &successful);
             }
 
             match stream_fusion_response(
@@ -345,7 +353,7 @@ pub(super) async fn run_panel_model(
     profile: &FusionProfile,
     model: &str,
     task: &str,
-    panel_tool_executor: Option<PanelToolExecutor>,
+    panel_tool_executor: Option<&PanelToolExecutor>,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
 ) -> Result<String, String> {
@@ -355,22 +363,38 @@ pub(super) async fn run_panel_model(
     let mut tool_evidence = Vec::new();
     let mut conclusion_attempted = false;
     loop {
-        let (collected, returned_body) =
+        let (mut collected, returned_body) =
             collect_fusion_response_preserving_body(executor, model, body, headers, routing)
                 .await
                 .map_err(|error| error.to_string())?;
         body = returned_body;
         let tool_calls = collected
-            .output
+            .output_items()
             .iter()
             .filter(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
-            .cloned()
+            .map(|call| {
+                (
+                    call.get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("missing-call-id")
+                        .to_owned(),
+                    call.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                    call.get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}")
+                        .to_owned(),
+                )
+            })
             .collect::<Vec<_>>();
         if tool_calls.is_empty() {
-            if collected.output_text.trim().is_empty() {
+            let output_text = collected.output_text();
+            if output_text.trim().is_empty() {
                 return Err(format!("panel {model} returned no text"));
             }
-            return normalize_panel_analysis(&collected.output_text)
+            return normalize_panel_analysis(&output_text)
                 .map_err(|error| format!("panel {model} {error}"));
         }
         if conclusion_attempted {
@@ -379,29 +403,25 @@ pub(super) async fn run_panel_model(
             ));
         }
 
-        let Some(panel_tool_executor) = panel_tool_executor.as_ref() else {
+        let Some(panel_tool_executor) = panel_tool_executor else {
             return Err(format!("panel {model} requested unavailable tools"));
         };
         let input = body
             .get_mut("input")
             .and_then(Value::as_array_mut)
             .ok_or_else(|| "panel request input is not an array".to_owned())?;
-        input.extend(collected.output);
-        for call in tool_calls {
-            let call_id = call
-                .get("call_id")
-                .and_then(Value::as_str)
-                .unwrap_or("missing-call-id");
-            let name = call.get("name").and_then(Value::as_str).unwrap_or("");
-            let arguments = call
-                .get("arguments")
-                .and_then(Value::as_str)
-                .unwrap_or("{}");
+        let output_items = collected
+            .response
+            .get_mut("output")
+            .and_then(Value::as_array_mut)
+            .map(std::mem::take)
+            .unwrap_or_default();
+        input.extend(output_items);
+        for (call_id, name, arguments) in tool_calls {
+            let evidence_prefix = format!("Tool: {name}\nArguments: {arguments}\nOutput:\n");
             let output = if calls < profile.panel_tools.max_calls_per_model {
                 calls += 1;
                 let panel_tool_executor = panel_tool_executor.clone();
-                let name = name.to_owned();
-                let arguments = arguments.to_owned();
                 tokio::task::spawn_blocking(move || panel_tool_executor.execute(&name, &arguments))
                     .await
                     .map_err(|error| format!("panel tool task failed: {error}"))?
@@ -409,9 +429,7 @@ pub(super) async fn run_panel_model(
             } else {
                 "tool error: per-model call limit reached".to_owned()
             };
-            tool_evidence.push(format!(
-                "Tool: {name}\nArguments: {arguments}\nOutput:\n{output}"
-            ));
+            tool_evidence.push(format!("{evidence_prefix}{output}"));
             input.push(json!({
                 "type":"function_call_output",
                 "call_id":call_id,
