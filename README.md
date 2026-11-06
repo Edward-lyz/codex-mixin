@@ -5,8 +5,8 @@
 <h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <b>让官方 Codex 和 50 款 AI Coding Agent 用上任意模型</b><br>
-  <sub>本地 Rust 网关：保留官方账号与 GPT 模型，同时接入 Claude、Gemini、DeepSeek 等第三方供应商。</sub>
+  <b>面向官方 OpenAI Codex 与主流 AI Coding Agent 的本地模型网关</b><br>
+  <sub>小而美的本地网关 · 在保留官方账号、GPT 模型和远程任务的同时，接入第三方模型供应商。</sub>
 </p>
 
 <p align="center">
@@ -22,131 +22,106 @@
 </p>
 
 <p align="center">
-  <a href="#亮点">亮点</a> ·
-  <a href="#安装">安装</a> ·
-  <a href="#概述">概述</a> ·
-  <a href="#快速上手">快速上手</a> ·
-  <a href="#功能">功能</a> ·
+  <a href="#概览">概览</a> ·
+  <a href="#资源占用">资源占用</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#界面">界面</a> ·
+  <a href="#核心功能">功能</a> ·
   <a href="#供应商">供应商</a> ·
   <a href="#agent-接入">Agent 接入</a> ·
   <a href="#文档">文档</a>
 </p>
 
-## 亮点
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>与官方 Codex 共存</h3>
-      自定义模型和官方 GPT 并列出现在 Codex 模型选择器里。ChatGPT 登录、历史会话和移动端远程任务照常可用，断开后恢复原配置。
-    </td>
-    <td width="50%" valign="top">
-      <h3>上下文引擎</h3>
-      集成 Billion Context 算法，推理时分段压缩历史、原文归档可随时恢复，缓存命中率保持在 90% 以上，长任务不再频繁失忆。
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>一处配置，50 款 Agent</h3>
-      Codex、Claude Code、Gemini CLI、OpenCode、Cursor 等一键接入同一套模型，只改托管字段，无关配置原样保留。
-    </td>
-    <td width="50%" valign="top">
-      <h3>协议互转</h3>
-      在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间转换请求与流式响应，保留思考内容、工具调用和多轮上下文。
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>用量与额度一目了然</h3>
-      每天和每次回复的 Token、缓存命中、首字延迟与输出速度；菜单栏 / 托盘直接看供应商额度。
-    </td>
-    <td width="50%" valign="top">
-      <h3>三端原生</h3>
-      macOS 菜单栏 App、Windows WinUI 3 托盘 App，以及 Linux / 远程机器的 Web 控制面板，背后是同一个 CLI。
-    </td>
-  </tr>
-</table>
-
 ---
 
-## 安装
-
-**Linux（CLI + Web 面板）**，一条命令安装到 `~/.local/bin`：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
-codex-mixin panel
-```
-
-`codex-mixin panel` 会打印带 Token 的访问地址，在浏览器打开即可。需要指定版本或目录时，在 `sh` 前设置 `CODEX_MIXIN_VERSION=0.7.5` 或 `CODEX_MIXIN_INSTALL_DIR=/usr/local/bin`。重复运行同一命令即可升级。
-
-**桌面 App**，从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载：
-
-| 平台 | 安装包 | 入口 |
-| --- | --- | --- |
-| macOS | Apple Silicon / Intel 的 `.dmg`，拖入「应用程序」 | 菜单栏图标 →「打开控制台…」 |
-| Windows | `windows-x86_64-setup.exe`，或便携版 `.zip` | 系统托盘图标 →「打开控制台…」 |
-| Debian / Ubuntu | x86_64 / ARM64 的 `.deb`：`sudo apt install ./codex-mixin-*.deb` | `codex-mixin panel` |
-
-系统要求和远程访问见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
-
----
-
-## 概述
+## 概览
 
 Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI、Anthropic 和 Gemini 兼容接口，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
 
-管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置，Cursor CLI、Copilot CLI、Devin 这三款提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。所有操作都可以在图形界面完成，也可以在无 GUI 的机器上用 `codex-mixin --no-tui` 完成。
+接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。断开接入后，网关恢复客户端原来的配置。
+
+日常使用从图形界面开始：macOS 菜单栏、Windows 系统托盘，或 Linux / 远程机器的 Web 控制面板。添加供应商、选择模型、接入 Agent 和查看用量，都可以在界面中完成。管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置或原生应用接入，Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。
 
 ---
 
-## 快速上手
+## 资源占用
+
+Apple M2、16 GiB 内存、macOS 27.2 同机初测：Mixin 的核心、UI 及辅助进程空闲物理内存占用 **76.8 MiB**，40 路并发时为 **113.5 MiB**。每个请求携带 100 万文本 token 和两张图片。
+
+![Mixin、Magpie 与 CC Switch 的桌面内存和网关宿主进程 CPU 对比](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png)
+
+左图统计核心、UI 及辅助进程的内存；右图统计网关宿主进程 CPU，Magpie 和 CC Switch 的原生 UI 与网关共用进程。下轴为主会话数，每个主会话另带四个子会话，上轴为实际并发请求数。
+
+[测试方法与原始数据](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md) · [矢量 PDF](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.pdf) · [可编辑 SVG](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.svg)
+
+---
+
+## 快速开始
+
+### 1. 下载并打开
+
+从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 选择对应平台和架构的发布包，无需安装 Rust 或从源码编译。
+
+| 平台 | 下载与运行 | 图形入口 |
+| --- | --- | --- |
+| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」后启动 | 点击菜单栏图标 →「打开控制台…」 |
+| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
+| Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
+
+Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
+
+### 2. 配置模型并接入 Agent
 
 1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
 2. 刷新模型列表，选择要使用的模型并保存，确认网关已启动。
 3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
 4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
 
-需要恢复客户端原配置时，在 Agent 页面断开接入。Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token；访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+### 3. 查看状态与用量
+
+菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
+
+Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+
+---
+
+## 界面
+
+以下为 macOS App 实际界面。
+
+<p align="center">
+  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="macOS 控制台的模型与服务页面"></a><br>
+  <sub><b>模型与服务</b> · 供应商、模型选择、能力与上下文设置</sub>
+</p>
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS 控制台的模型接入页面"></a><br>
-      <sub><b>模型接入</b> · 供应商配置、模型选择与排序</sub>
-    </td>
-    <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS 控制台的 Agent 接入页面"></a><br>
       <sub><b>Agent 接入</b> · 安装版本、接入状态与恢复入口</sub>
     </td>
-  </tr>
-  <tr>
     <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS 控制台的用量明细页面"></a><br>
       <sub><b>用量明细</b> · 每日统计、逐次回复、缓存与速度</sub>
     </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS 控制台的上下文压缩管理页面"></a><br>
-      <sub><b>上下文压缩管理</b> · 会话统计、上下文增长与压缩摘要</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows 控制台的模型与服务页面"></a><br>
-      <sub><b>Windows 控制台</b> · 原生 WinUI 3</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="260" alt="Windows 托盘，显示网关状态与额度圆环"></a><br>
-      <sub><b>Windows 托盘</b> · 网关状态与额度圆环</sub>
-    </td>
   </tr>
 </table>
 
-更多界面说明见 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。截图中的模型和统计值仅反映采集时状态。
+Windows 原生 WinUI 3 界面：托盘查看额度，控制台管理模型与服务、Agent 接入、用量明细和上下文。
+
+<p align="center">
+  <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows 浅色模式托盘，显示网关状态与额度圆环"></a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows 控制台的模型与服务页面"></a>
+</p>
+
+界面说明见 Wiki 的 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。截图中的模型和统计值仅反映采集时状态。
 
 ---
 
-## 功能
+## 核心功能
 
 **【NEW】上下文引擎。** 长任务边推进、边压缩：使用 Billion Context 原版算法，在 mixin 内部集成，可以实现在推理的同时，分段压缩替换历史，在保持缓存命中率 90% 以上的同时，让 1M 窗口的上下文能塞进 1B 的内容。
 
@@ -193,8 +168,7 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
 
 50 款 Agent 均提供接入或原生模型管理。47 款支持网关配置或原生应用接入，断开时恢复托管字段并保留无关配置。Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型，不经过自定义模型网关。
 
-<details>
-<summary><b>展开 50 款已支持 Agent</b></summary>
+### 已支持 Agent（50 款）
 
 <table>
   <tr>
@@ -419,8 +393,6 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
   </tr>
 </table>
 
-</details>
-
 **原生应用前提。** Alma、Hanako 需要保持运行；Zed 使用系统凭据存储。Aside 离线时先暂存配置，待原生运行时确认后才显示已接入。Cindy 需要在应用内确认导入和手动删除提供商；等待删除时，断开操作已撤销网关访问。
 
 **必须从终端启动。** 接入 agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante 后，请重新打开终端，再照常输入 `agy`、`cursor`、`muse`、`command-code` 等命令。Mixin 在 zsh、bash、fish 或 PowerShell 的用户启动配置中加入可恢复的入口，自动注入托管环境；无需手动使用 `agent run`。Cursor 必须先完全退出已有进程，再从终端执行 `cursor`，Dock、开始菜单和桌面图标启动不受托管；Windows 的 cmd 也不加载这些入口。密钥只保存在私有托管记录和子进程环境中，启动配置只保存 Mixin 路径与配置文件路径。断开后重新打开终端，原生命令恢复。也可显式使用 `codex-mixin agent run <id> -- <参数>` 或 `codex-mixin agent launch <id>`。
@@ -431,7 +403,7 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
 
 **厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。接入时沿用已有的厂商原生模型；尚未选择时，先用上述命令指定模型。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
 
----
+
 
 ## 文档
 

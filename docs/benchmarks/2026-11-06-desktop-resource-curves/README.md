@@ -6,7 +6,7 @@ Mixin used the least physical memory at every measured point. With the UI loaded
 
 ![Desktop physical memory and CPU against concurrent main sessions](desktop-resource-curves.png)
 
-[Vector PDF](desktop-resource-curves.pdf) · [Vector SVG](desktop-resource-curves.svg) · [Results and validation](results.json) · [Process samples](samples.jsonl.gz)
+[English PDF](desktop-resource-curves.pdf) · [English SVG](desktop-resource-curves.svg) · [中文 PNG](desktop-resource-curves-zh.png) · [中文 PDF](desktop-resource-curves-zh.pdf) · [中文 SVG](desktop-resource-curves-zh.svg) · [Results and validation](results.json) · [Process samples](samples.jsonl.gz)
 
 ## Results
 
