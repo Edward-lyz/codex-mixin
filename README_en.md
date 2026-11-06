@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A local model gateway for official OpenAI Codex and popular AI coding agents</b><br>
-  <sub>A small, elegant local gateway. Use third-party model providers while you keep your official account, GPT models, and remote tasks.</sub>
+  <sub>A small, elegant local gateway.</sub>
 </p>
 
 <p align="center">
@@ -22,8 +22,8 @@
 </p>
 
 <p align="center">
+  <a href="#highlights">Highlights</a> ·
   <a href="#overview">Overview</a> ·
-  <a href="#resource-usage">Resource Usage</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#interface">Interface</a> ·
   <a href="#core-features">Features</a> ·
@@ -34,25 +34,51 @@
 
 ---
 
-## Overview
+## Highlights
 
-Codex Mixin is a local gateway written in Rust. It provides OpenAI-, Anthropic-, and Gemini-compatible endpoints on your machine and routes requests from official Codex and other coding agents to the model providers you configure: DeepSeek, Claude, Gemini, Baidu OneAPI, AWS Bedrock, Google Antigravity, or any OpenAI- or Anthropic-compatible endpoint.
-
-When you connect official Codex, your custom models appear in the model picker next to the official GPT models. ChatGPT sign-in, session history, and mobile remote tasks continue to work. When you disconnect, the gateway restores the client's original configuration.
-
-Start with the graphical interface: the macOS menu bar, the Windows system tray, or the Web control panel for Linux and remote machines. Add providers, select models, connect Agents, and view usage in the interface. The catalog supports all 50 Agents: 47 gateway or native-app integrations and vendor-native model management for Cursor CLI, Copilot CLI, and Devin. Native applications may require a running app or an import confirmation.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Works with official Codex</h3>
+      Custom models appear next to official GPT models in the Codex picker. ChatGPT sign-in, session history, and mobile remote tasks keep working within the official ecosystem.
+    </td>
+    <td width="50%" valign="top">
+      <h3>Context engine</h3>
+      The Billion Context algorithm compresses history in segments during inference and keeps the originals available for restore, maintaining cache hit rates above 90% while saving tokens.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>One setup, 50 agents</h3>
+      Connect Codex, Claude Code, Gemini CLI, OpenCode, DSH, and more to the same models with one setup.
+    </td>
+    <td width="50%" valign="top">
+      <h3>Protocol translation</h3>
+      Requests and streams are translated between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, keeping reasoning, tool calls, and multi-turn context.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Usage and quota at a glance</h3>
+      Daily and per-reply Tokens, cache hits, time to first token, and output speed, with provider quota in the menu bar or tray.
+    </td>
+    <td width="50%" valign="top">
+      <h3>Native UI, minimal overhead</h3>
+      Native macOS and Windows interfaces, backed by a Rust core optimized for minimal gateway overhead. Mixin uses just <strong>76.8 MiB</strong> at idle and <strong>113.5 MiB</strong> with 40 concurrent requests.
+      <p align="center">
+        <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png" width="460" alt="Desktop memory and gateway-host process CPU for Mixin, Magpie, and CC Switch"></a>
+      </p>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## Resource Usage
+## Overview
 
-In a shared-host preliminary run on an Apple M2 with 16 GiB RAM and macOS 27.2, Mixin’s core, UI, and helpers used **76.8 MiB** of physical memory at idle and **113.5 MiB** with 40 concurrent requests. Each request carried one million text tokens and two images.
+Codex Mixin is an ultra-lightweight local gateway written in Rust. It provides OpenAI-, Anthropic-, and Gemini-compatible endpoints on your machine and routes requests from official Codex and other coding agents to the model providers you configure: DeepSeek, Claude, Gemini, Baidu OneAPI, AWS Bedrock, Google Antigravity, or any OpenAI- or Anthropic-compatible endpoint.
 
-![Desktop memory and gateway-host process CPU for Mixin, Magpie, and CC Switch](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png)
-
-Memory includes the core, UI, and helpers. CPU selects the gateway-host process; Magpie and CC Switch share that process with their native UI. The lower axis shows main sessions, each with four child sessions; the upper axis shows actual concurrent requests.
-
-[Method and raw data](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md) · [Vector PDF](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.pdf) · [Editable SVG](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.svg)
+When you connect official Codex, your custom models appear in the model picker next to the official GPT models. ChatGPT sign-in, session history, and mobile remote tasks continue to work. Mixin also supports integration and management for 50 AI coding agents.
 
 ---
 

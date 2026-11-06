@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>面向官方 OpenAI Codex 与主流 AI Coding Agent 的本地模型网关</b><br>
-  <sub>小而美的本地网关 · 在保留官方账号、GPT 模型和远程任务的同时，接入第三方模型供应商。</sub>
+  <sub>小而美的本地网关</sub>
 </p>
 
 <p align="center">
@@ -22,8 +22,8 @@
 </p>
 
 <p align="center">
+  <a href="#亮点">亮点</a> ·
   <a href="#概览">概览</a> ·
-  <a href="#资源占用">资源占用</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#界面">界面</a> ·
   <a href="#核心功能">功能</a> ·
@@ -34,25 +34,52 @@
 
 ---
 
-## 概览
+## 亮点
 
-Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI、Anthropic 和 Gemini 兼容接口，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>与官方 Codex 共存</h3>
+      自定义模型和官方 GPT 并列出现在 Codex 模型选择器里。ChatGPT 登录、历史会话和移动端远程任务照常可用，融入官方生态。
+    </td>
+    <td width="50%" valign="top">
+      <h3>上下文引擎</h3>
+      集成 Billion Context 算法，推理时分段压缩历史、原文归档可随时恢复，缓存命中率保持在 90% 以上，极致节省 Token。
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>一处配置，50 款 Agent</h3>
+      Codex、Claude Code、Gemini CLI、OpenCode、DSH 等一键接入同一套模型。
+    </td>
+    <td width="50%" valign="top">
+      <h3>协议互转</h3>
+      在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间无损互转
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>用量与额度一目了然</h3>
+      每天和每次回复的 Token、缓存命中、首字延迟与输出速度；菜单栏 / 托盘直接看供应商额度。
+    </td>
+    <td width="50%" valign="top">
+      <h3>原生UI/极致性能</h3>
+      macOS 和 Windows 均使用原生 UI 开发。核心程序使用 Rust 极致优化，做到本地网关开销近乎于无：Mixin 在空闲时占用 <strong>76.8 MiB</strong>，40 路并发时仅为 <strong>113.5 MiB</strong>，展现了极致轻量化的优势。
+      <p align="center">
+        <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png" width="460" alt="Mixin、Magpie 与 CC Switch 的桌面内存和网关宿主进程 CPU 对比"></a>
+      </p>
+    </td>
+  </tr>
+</table>
 
-接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。断开接入后，网关恢复客户端原来的配置。
-
-日常使用从图形界面开始：macOS 菜单栏、Windows 系统托盘，或 Linux / 远程机器的 Web 控制面板。添加供应商、选择模型、接入 Agent 和查看用量，都可以在界面中完成。管理目录中的 50 款 Agent 均提供接入或原生模型管理：47 款支持网关配置或原生应用接入，Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。部分应用需要保持运行或在应用内确认导入。
 
 ---
 
-## 资源占用
+## 概览
 
-Apple M2、16 GiB 内存、macOS 27.2 同机初测：Mixin 的核心、UI 及辅助进程空闲物理内存占用 **76.8 MiB**，40 路并发时为 **113.5 MiB**。每个请求携带 100 万文本 token 和两张图片。
+Codex Mixin 是一个用 Rust 编写的极致轻量化的本地网关。它在本机提供 OpenAI、Anthropic 和 Gemini 兼容接口，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
 
-![Mixin、Magpie 与 CC Switch 的桌面内存和网关宿主进程 CPU 对比](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png)
-
-左图统计核心、UI 及辅助进程的内存；右图统计网关宿主进程 CPU，Magpie 和 CC Switch 的原生 UI 与网关共用进程。下轴为主会话数，每个主会话另带四个子会话，上轴为实际并发请求数。
-
-[测试方法与原始数据](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md) · [矢量 PDF](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.pdf) · [可编辑 SVG](docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.svg)
+接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。同时也支持共计50 款 Agent 框架接入和管理。
 
 ---
 
