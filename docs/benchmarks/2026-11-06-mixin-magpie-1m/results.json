@@ -1,0 +1,2785 @@
+{
+  "date": "2026-11-06T08:02:35.597Z",
+  "scenario": "8 main sessions, 4 sub-sessions per main; 40 concurrent requests per gateway",
+  "contextEnabled": true,
+  "contextWindow": 1048576,
+  "corpus": {
+    "tokenizer": "tiktoken 0.14.0",
+    "encoding": "o200k_base",
+    "text_tokens": 1000000,
+    "messages": 558,
+    "json_bytes": 4492373,
+    "sha256": "3f4fef911604a723c051f33d432e0144adf8812df63ceb608d1fff97e0875f76"
+  },
+  "images": [
+    {
+      "width": 1024,
+      "height": 768,
+      "bytes": 25684,
+      "sha256": "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8"
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "bytes": 25177,
+      "sha256": "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+    }
+  ],
+  "cpu": "Apple M2",
+  "logicalCpus": 8,
+  "memoryBytes": 17179869184,
+  "osRelease": "27.2.0",
+  "versions": {
+    "mixin": "codex-mixin 0.7.7",
+    "magpie": "0.1.3051"
+  },
+  "mixinCommit": "3e372ab90dad4de499643acf01172a753f435386",
+  "binarySha256": {
+    "mixin": "ee6af4940d24b0546f4f737016fe6156849460ce37160f09e5f3a4d8aebc297c",
+    "magpie": "8bca87ee5e6d7248382b8dd6c9f7a106f2288a5ab00353cf1a8fe9a44ae3f776"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "upstreamInfo": {
+        "port": 49709,
+        "historyHash": "dd29ec5cd324d534fa53baa36f319b11e6a73477965208dda19dd70fbcb709c9",
+        "imageHashes": [
+          "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+          "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+        ]
+      },
+      "idle": {
+        "label": "scenario idle",
+        "elapsedSeconds": 5.3221662080000005,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0,
+            "rssMedianBytes": 18038784,
+            "rssMaxBytes": 18087936,
+            "footprintMedianBytes": 4686848,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.5636802540083318,
+            "rssMedianBytes": 60014592,
+            "rssMaxBytes": 61243392,
+            "footprintMedianBytes": 26843545.6,
+            "processCount": 1
+          }
+        }
+      },
+      "activeProof": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "footprints": [
+        {
+          "mixin": 38482739.2,
+          "magpie": 509817651.2
+        },
+        {
+          "mixin": 38482739.2,
+          "magpie": 509817651.2
+        },
+        {
+          "mixin": 38482739.2,
+          "magpie": 509817651.2
+        }
+      ],
+      "products": {
+        "mixin": {
+          "loadSeconds": 4.472095958999998,
+          "loadCpuSeconds": 7.03,
+          "loadCpuPercentOneCore": 157.19698469019374,
+          "steadySeconds": 20.016560374999997,
+          "steadyCpuSeconds": 0.22999999999999954,
+          "steadyCpuPercentOneCore": 1.1490485662424885,
+          "rssPeakBytes": 319815680,
+          "steadyRssMedianBytes": 266682368,
+          "footprintMedianBytes": 38482739.2,
+          "processCount": 1
+        },
+        "magpie": {
+          "loadSeconds": 4.472095958999998,
+          "loadCpuSeconds": 6.92,
+          "loadCpuPercentOneCore": 154.73728791694748,
+          "steadySeconds": 20.016560374999997,
+          "steadyCpuSeconds": 0.5800000000000001,
+          "steadyCpuPercentOneCore": 2.8976007322636725,
+          "rssPeakBytes": 604520448,
+          "steadyRssMedianBytes": 554844160,
+          "footprintMedianBytes": 509817651.2,
+          "processCount": 1
+        },
+        "replay": {
+          "loadSeconds": 4.472095958999998,
+          "loadCpuSeconds": 16.68,
+          "loadCpuPercentOneCore": 372.9794743431624,
+          "steadySeconds": 20.016560374999997,
+          "steadyCpuSeconds": 1.8000000000000007,
+          "steadyCpuPercentOneCore": 8.992553996680366,
+          "rssPeakBytes": 2084061184,
+          "steadyRssMedianBytes": 1755938816,
+          "footprintMedianBytes": null,
+          "processCount": 7
+        },
+        "fakeUpstream": {
+          "loadSeconds": 4.472095958999998,
+          "loadCpuSeconds": 1.6800000000000002,
+          "loadCpuPercentOneCore": 37.566277991397655,
+          "steadySeconds": 20.016560374999997,
+          "steadyCpuSeconds": 0.31000000000000005,
+          "steadyCpuPercentOneCore": 1.5487176327616183,
+          "rssPeakBytes": 381108224,
+          "steadyRssMedianBytes": 213991424,
+          "footprintMedianBytes": null,
+          "processCount": 1
+        }
+      },
+      "responses": {
+        "mixin": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 910.4279999999999,
+            "elapsedMs": 26706.197083,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 811.6736250000013,
+            "elapsedMs": 26694.0305,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 730.1638750000002,
+            "elapsedMs": 26681.426000000003,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 692.7382080000007,
+            "elapsedMs": 26668.490125000004,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 834.7461669999993,
+            "elapsedMs": 26671.519375000003,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 728.8808339999996,
+            "elapsedMs": 26644.195249999997,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 781.632834,
+            "elapsedMs": 26631.964625,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 613.7469999999994,
+            "elapsedMs": 26617.833167000004,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3358.9173329999994,
+            "elapsedMs": 25798.534207999997,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3226.470458,
+            "elapsedMs": 25795.177874999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3230.998916999999,
+            "elapsedMs": 25785.192209,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3270.584541,
+            "elapsedMs": 25767.460791,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3132.487416,
+            "elapsedMs": 25763.403833,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3334.4519170000003,
+            "elapsedMs": 25745.49775,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3350.708832999999,
+            "elapsedMs": 25736.619042,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3248.2840419999993,
+            "elapsedMs": 25717.942624999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3197.060874999999,
+            "elapsedMs": 25703.911541999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3142.7898750000004,
+            "elapsedMs": 25686.322041999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3268.4679160000014,
+            "elapsedMs": 25681.707125,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3322.524374999999,
+            "elapsedMs": 25660.823334,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3376.529125000001,
+            "elapsedMs": 25652.77725,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3160.6985409999998,
+            "elapsedMs": 25635.708208,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3012.9908749999995,
+            "elapsedMs": 25628.519874999998,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 2955.9304580000007,
+            "elapsedMs": 25603.082208000003,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3069.841042,
+            "elapsedMs": 25595.957625,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3099.06775,
+            "elapsedMs": 25589.493792,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 2982.3579169999994,
+            "elapsedMs": 25569.047667000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3269.4615840000006,
+            "elapsedMs": 25563.720500000003,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2972.316499999999,
+            "elapsedMs": 25544.569292,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3234.229374999999,
+            "elapsedMs": 25532.693957999996,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3218.37075,
+            "elapsedMs": 25526.474084,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2986.671791999999,
+            "elapsedMs": 25507.631624999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3068.540166999999,
+            "elapsedMs": 25500.388042000002,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3060.6614580000005,
+            "elapsedMs": 25490.3065,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3110.8254589999997,
+            "elapsedMs": 25475.737542,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 2852.825666999999,
+            "elapsedMs": 25461.482167,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2810.5229170000002,
+            "elapsedMs": 25453.078083999997,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3166.9125000000004,
+            "elapsedMs": 25435.362708,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2982.715666,
+            "elapsedMs": 25430.600457999997,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3014.7328749999997,
+            "elapsedMs": 25416.4115,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          }
+        ],
+        "magpie": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 902.5821250000008,
+            "elapsedMs": 26700.620082999998,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 804.662875,
+            "elapsedMs": 26701.904917,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 723.6840420000008,
+            "elapsedMs": 26678.777917000003,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 686.3911249999983,
+            "elapsedMs": 26671.187542,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 827.2475409999988,
+            "elapsedMs": 26657.654375,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 721.5133750000005,
+            "elapsedMs": 26646.119542,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 774.9966249999998,
+            "elapsedMs": 26633.643666999997,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 607.1143339999999,
+            "elapsedMs": 26622.050209,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3351.685042000001,
+            "elapsedMs": 25795.927041999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3232.6241250000003,
+            "elapsedMs": 25791.065167000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3224.256041999999,
+            "elapsedMs": 25784.397292,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3274.977167000001,
+            "elapsedMs": 25781.460042,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3125.8042079999996,
+            "elapsedMs": 25751.559500000003,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3342.3606249999993,
+            "elapsedMs": 25754.791874999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3342.949584,
+            "elapsedMs": 25724.23375,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3254.1380420000005,
+            "elapsedMs": 25720.271250000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3189.9421669999992,
+            "elapsedMs": 25701.064958000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3149.064375,
+            "elapsedMs": 25701.712917000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3261.247958,
+            "elapsedMs": 25680.622666,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3328.5604999999996,
+            "elapsedMs": 25674.004375000004,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3370.205959000001,
+            "elapsedMs": 25655.163209,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3167.2215000000015,
+            "elapsedMs": 25645.615875000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3006.340709,
+            "elapsedMs": 25621.644375,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 2961.7268750000003,
+            "elapsedMs": 25614.980041999996,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3064.0176250000004,
+            "elapsedMs": 25589.673584,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3105.791542000001,
+            "elapsedMs": 25596.466582999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 2975.9456659999996,
+            "elapsedMs": 25568.83625,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3275.507707999999,
+            "elapsedMs": 25563.687166000003,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2963.2286249999997,
+            "elapsedMs": 25536.318875,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3240.0463340000006,
+            "elapsedMs": 25529.942959,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3211.180042,
+            "elapsedMs": 25523.574291999998,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2992.840875,
+            "elapsedMs": 25521.635666999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3062.5144579999996,
+            "elapsedMs": 25497.122500000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3066.2516659999983,
+            "elapsedMs": 25498.486124999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3100.6292090000006,
+            "elapsedMs": 25478.508541999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 2859.1489579999998,
+            "elapsedMs": 25471.329790999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2804.4685419999987,
+            "elapsedMs": 25445.437208999996,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3172.6676659999994,
+            "elapsedMs": 25447.027540999996,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2976.302208000001,
+            "elapsedMs": 25430.008833000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3020.335416,
+            "elapsedMs": 25422.129915999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          }
+        ]
+      },
+      "finishedAudit": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "warmIdle": {
+        "label": "completed idle",
+        "elapsedSeconds": 5.3512702920000015,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0,
+            "rssMedianBytes": 233422848,
+            "rssMaxBytes": 233684992,
+            "footprintMedianBytes": 43830476.8,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.18687151749649994,
+            "rssMedianBytes": 489308160,
+            "rssMaxBytes": 490405888,
+            "footprintMedianBytes": 435788185.6,
+            "processCount": 1
+          }
+        }
+      },
+      "totalCpu": {
+        "mixin": 7.3100000000000005,
+        "magpie": 7.63,
+        "replay": 18.790000000000003,
+        "fakeUpstream": 2.02
+      }
+    },
+    {
+      "round": 2,
+      "upstreamInfo": {
+        "port": 49924,
+        "historyHash": "dd29ec5cd324d534fa53baa36f319b11e6a73477965208dda19dd70fbcb709c9",
+        "imageHashes": [
+          "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+          "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+        ]
+      },
+      "idle": {
+        "label": "scenario idle",
+        "elapsedSeconds": 5.3154202079999955,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0,
+            "rssMedianBytes": 18055168,
+            "rssMaxBytes": 18104320,
+            "footprintMedianBytes": 4703232,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.3762637612337573,
+            "rssMedianBytes": 58933248,
+            "rssMaxBytes": 60555264,
+            "footprintMedianBytes": 25899827.2,
+            "processCount": 1
+          }
+        }
+      },
+      "activeProof": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "footprints": [
+        {
+          "mixin": 39636172.8,
+          "magpie": 486539264
+        },
+        {
+          "mixin": 39636172.8,
+          "magpie": 486539264
+        },
+        {
+          "mixin": 39636172.8,
+          "magpie": 486539264
+        }
+      ],
+      "products": {
+        "mixin": {
+          "loadSeconds": 4.462406416999999,
+          "loadCpuSeconds": 6.98,
+          "loadCpuPercentOneCore": 156.41784606191334,
+          "steadySeconds": 20.027605499999996,
+          "steadyCpuSeconds": 0.21999999999999975,
+          "steadyCpuPercentOneCore": 1.0984837902863613,
+          "rssPeakBytes": 343834624,
+          "steadyRssMedianBytes": 264077312,
+          "footprintMedianBytes": 39636172.8,
+          "processCount": 1
+        },
+        "magpie": {
+          "loadSeconds": 4.462406416999999,
+          "loadCpuSeconds": 6.91,
+          "loadCpuPercentOneCore": 154.84918571458755,
+          "steadySeconds": 20.027605499999996,
+          "steadyCpuSeconds": 0.5499999999999998,
+          "steadyCpuPercentOneCore": 2.746209475715906,
+          "rssPeakBytes": 539787264,
+          "steadyRssMedianBytes": 400146432,
+          "footprintMedianBytes": 486539264,
+          "processCount": 1
+        },
+        "replay": {
+          "loadSeconds": 4.462406416999999,
+          "loadCpuSeconds": 16.59,
+          "loadCpuPercentOneCore": 371.77250231620945,
+          "steadySeconds": 20.027605499999996,
+          "steadyCpuSeconds": 1.6099999999999994,
+          "steadyCpuPercentOneCore": 8.038904101641107,
+          "rssPeakBytes": 2248261632,
+          "steadyRssMedianBytes": 1318289408,
+          "footprintMedianBytes": null,
+          "processCount": 7
+        },
+        "fakeUpstream": {
+          "loadSeconds": 4.462406416999999,
+          "loadCpuSeconds": 1.7100000000000002,
+          "loadCpuPercentOneCore": 38.32013134181545,
+          "steadySeconds": 20.027605499999996,
+          "steadyCpuSeconds": 0.27,
+          "steadyCpuPercentOneCore": 1.348139197169627,
+          "rssPeakBytes": 330383360,
+          "steadyRssMedianBytes": 189087744,
+          "footprintMedianBytes": null,
+          "processCount": 1
+        }
+      },
+      "responses": {
+        "mixin": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 651.0371670000022,
+            "elapsedMs": 26711.160667000004,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 698.2817080000023,
+            "elapsedMs": 26667.362500000003,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 812.0554999999949,
+            "elapsedMs": 26662.042584000003,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 769.6991669999989,
+            "elapsedMs": 26644.563334,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 633.2103329999954,
+            "elapsedMs": 26657.859332999993,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 657.437582999999,
+            "elapsedMs": 26597.489415999997,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 765.6831249999959,
+            "elapsedMs": 26596.713834000002,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 664.5143339999995,
+            "elapsedMs": 26583.257167000003,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3485.858791999999,
+            "elapsedMs": 25844.183582999998,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3220.5441250000003,
+            "elapsedMs": 25809.144125,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3273.7663749999992,
+            "elapsedMs": 25802.556958,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3293.2494580000057,
+            "elapsedMs": 25795.800000000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3171.211374999999,
+            "elapsedMs": 25766.709665999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3218.943459000002,
+            "elapsedMs": 25772.132708999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3487.433874999995,
+            "elapsedMs": 25755.24879099999,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3381.1065000000017,
+            "elapsedMs": 25729.302958999993,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3052.0188749999943,
+            "elapsedMs": 25724.6625,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3135.9738750000033,
+            "elapsedMs": 25722.192041999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3151.090167000002,
+            "elapsedMs": 25704.777625000002,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3170.813500000004,
+            "elapsedMs": 25679.056416,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3250.409083000006,
+            "elapsedMs": 25679.424042000006,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3021.352791999998,
+            "elapsedMs": 25654.597417000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3234.1461659999986,
+            "elapsedMs": 25655.226500000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3227.3285839999953,
+            "elapsedMs": 25629.58245899999,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3183.9421250000014,
+            "elapsedMs": 25622.771125,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3330.4634579999984,
+            "elapsedMs": 25620.297082999998,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 2980.5993329999983,
+            "elapsedMs": 25614.222167,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3187.303332999996,
+            "elapsedMs": 25584.574082999992,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3244.298791999994,
+            "elapsedMs": 25571.504375000004,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2895.970125,
+            "elapsedMs": 25568.795290999995,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3049.9165409999987,
+            "elapsedMs": 25552.456958000002,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3078.3270830000038,
+            "elapsedMs": 25545.046625000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3149.3383329999997,
+            "elapsedMs": 25537.988040999997,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3038.197417000003,
+            "elapsedMs": 25519.347917,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3210.725041999998,
+            "elapsedMs": 25513.902125,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3228.3330419999984,
+            "elapsedMs": 25500.54825,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2914.6380419999987,
+            "elapsedMs": 25489.609791999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3094.514083000002,
+            "elapsedMs": 25471.735042000008,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2974.628583999998,
+            "elapsedMs": 25449.210167000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3190.4850000000006,
+            "elapsedMs": 25429.71875,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          }
+        ],
+        "magpie": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 641.8560829999988,
+            "elapsedMs": 26687.230208,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 692.2678329999981,
+            "elapsedMs": 26662.664124999996,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 805.9016659999979,
+            "elapsedMs": 26661.586291,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 762.416959000002,
+            "elapsedMs": 26650.990208999996,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 626.8428330000024,
+            "elapsedMs": 26630.283208,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 649.820249999997,
+            "elapsedMs": 26596.886999999995,
+            "outputBytes": 13312,
+            "outputSha256": "eb52e77d6732a946240c4cef2e6f466c3e79181b8769aa45595cb179cd01f379"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 759.393624999997,
+            "elapsedMs": 26590.150832999992,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 658.4346250000017,
+            "elapsedMs": 26577.431582999998,
+            "outputBytes": 13184,
+            "outputSha256": "7a2460c3fb7b0f5c973c2bbe59da790369b7331642f6753621abe455de0a60df"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3476.914958000001,
+            "elapsedMs": 25814.989875000007,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3225.742999999995,
+            "elapsedMs": 25827.201541999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3267.904334000006,
+            "elapsedMs": 25796.930459000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 3299.110916999998,
+            "elapsedMs": 25803.754417000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3164.4633329999997,
+            "elapsedMs": 25773.18425,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3224.999124999995,
+            "elapsedMs": 25781.476875,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3480.864125,
+            "elapsedMs": 25760.199125,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 3386.9145419999986,
+            "elapsedMs": 25736.347083000008,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3041.357959000001,
+            "elapsedMs": 25728.565625000003,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3142.0383750000037,
+            "elapsedMs": 25730.878041999997,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3144.6664999999994,
+            "elapsedMs": 25708.398708,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 3177.347916999999,
+            "elapsedMs": 25697.554958,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3237.7845000000016,
+            "elapsedMs": 25682.592708000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3027.373166999998,
+            "elapsedMs": 25676.546500000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3227.948750000003,
+            "elapsedMs": 25660.054667000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 3232.3593330000003,
+            "elapsedMs": 25648.260708,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3176.6351670000004,
+            "elapsedMs": 25631.811417000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3336.4873329999973,
+            "elapsedMs": 25627.669708,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 2973.454334000002,
+            "elapsedMs": 25609.845792,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 3193.837416999995,
+            "elapsedMs": 25583.097458999997,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3236.808167000003,
+            "elapsedMs": 25583.337750000006,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 2900.3150419999947,
+            "elapsedMs": 25578.499917,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3043.706542,
+            "elapsedMs": 25557.891667000004,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3084.3191249999945,
+            "elapsedMs": 25552.714834,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3142.552291999993,
+            "elapsedMs": 25532.959667000003,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3044.312582999999,
+            "elapsedMs": 25530.394208000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3204.5255419999958,
+            "elapsedMs": 25511.54987499999,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 3234.1280840000036,
+            "elapsedMs": 25501.384459000008,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2908.4507920000033,
+            "elapsedMs": 25486.180750000007,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3100.096666999998,
+            "elapsedMs": 25481.010624999995,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 2968.5970420000012,
+            "elapsedMs": 25450.223542000007,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 3196.345957999998,
+            "elapsedMs": 25436.762833,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          }
+        ]
+      },
+      "finishedAudit": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "warmIdle": {
+        "label": "completed idle",
+        "elapsedSeconds": 5.335655207999997,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0.18741840711533084,
+            "rssMedianBytes": 61390848,
+            "rssMaxBytes": 184434688,
+            "footprintMedianBytes": 46137344,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.37483681423067833,
+            "rssMedianBytes": 155959296,
+            "rssMaxBytes": 390217728,
+            "footprintMedianBytes": 406637772.8,
+            "processCount": 1
+          }
+        }
+      },
+      "totalCpu": {
+        "mixin": 7.24,
+        "magpie": 7.61,
+        "replay": 18.52,
+        "fakeUpstream": 2.01
+      }
+    },
+    {
+      "round": 3,
+      "upstreamInfo": {
+        "port": 50165,
+        "historyHash": "dd29ec5cd324d534fa53baa36f319b11e6a73477965208dda19dd70fbcb709c9",
+        "imageHashes": [
+          "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+          "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+        ]
+      },
+      "idle": {
+        "label": "scenario idle",
+        "elapsedSeconds": 5.378354915999997,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0,
+            "rssMedianBytes": 18055168,
+            "rssMaxBytes": 18104320,
+            "footprintMedianBytes": 4391936,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.371860918670545,
+            "rssMedianBytes": 58146816,
+            "rssMaxBytes": 60293120,
+            "footprintMedianBytes": 25585254.4,
+            "processCount": 1
+          }
+        }
+      },
+      "activeProof": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 0,
+            "active": 40,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "footprints": [
+        {
+          "mixin": 36909875.2,
+          "magpie": 489894707.2
+        },
+        {
+          "mixin": 37014732.8,
+          "magpie": 489894707.2
+        },
+        {
+          "mixin": 37014732.8,
+          "magpie": 489894707.2
+        }
+      ],
+      "products": {
+        "mixin": {
+          "loadSeconds": 5.965090124999988,
+          "loadCpuSeconds": 7.8100000000000005,
+          "loadCpuPercentOneCore": 130.92844929983377,
+          "steadySeconds": 20.036403958000008,
+          "steadyCpuSeconds": 0.2599999999999998,
+          "steadyCpuPercentOneCore": 1.2976380419610607,
+          "rssPeakBytes": 317308928,
+          "steadyRssMedianBytes": 291782656,
+          "footprintMedianBytes": 37014732.8,
+          "processCount": 1
+        },
+        "magpie": {
+          "loadSeconds": 5.965090124999988,
+          "loadCpuSeconds": 7.090000000000001,
+          "loadCpuPercentOneCore": 118.85822093928573,
+          "steadySeconds": 20.036403958000008,
+          "steadyCpuSeconds": 0.6999999999999993,
+          "steadyCpuPercentOneCore": 3.4936408822028553,
+          "rssPeakBytes": 594149376,
+          "steadyRssMedianBytes": 472219648,
+          "footprintMedianBytes": 489894707.2,
+          "processCount": 1
+        },
+        "replay": {
+          "loadSeconds": 5.965090124999988,
+          "loadCpuSeconds": 17.95,
+          "loadCpuPercentOneCore": 300.9174987108855,
+          "steadySeconds": 20.036403958000008,
+          "steadyCpuSeconds": 2.080000000000002,
+          "steadyCpuPercentOneCore": 10.381104335688503,
+          "rssPeakBytes": 1900314624,
+          "steadyRssMedianBytes": 1162166272,
+          "footprintMedianBytes": null,
+          "processCount": 7
+        },
+        "fakeUpstream": {
+          "loadSeconds": 5.965090124999988,
+          "loadCpuSeconds": 1.78,
+          "loadCpuPercentOneCore": 29.840286780243805,
+          "steadySeconds": 20.036403958000008,
+          "steadyCpuSeconds": 0.3699999999999999,
+          "steadyCpuPercentOneCore": 1.8466387520215104,
+          "rssPeakBytes": 427900928,
+          "steadyRssMedianBytes": 198590464,
+          "footprintMedianBytes": null,
+          "processCount": 1
+        }
+      },
+      "responses": {
+        "mixin": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 746.6960410000029,
+            "elapsedMs": 28264.182541000002,
+            "outputBytes": 13952,
+            "outputSha256": "b5ca26657d1d0d848a762cfe1fcb93fa5abf4c1ee8dcb3d9d2817fe16d9c7c22"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 1043.6196669999918,
+            "elapsedMs": 28260.234291999994,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 957.4682500000054,
+            "elapsedMs": 28236.270541000005,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 970.3501669999969,
+            "elapsedMs": 28239.719125000003,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 904.5169579999929,
+            "elapsedMs": 28221.562458,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 967.332917000007,
+            "elapsedMs": 28196.729959000004,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 819.7985420000041,
+            "elapsedMs": 28164.567417,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 740.0326250000071,
+            "elapsedMs": 28148.104709000007,
+            "outputBytes": 13952,
+            "outputSha256": "b5ca26657d1d0d848a762cfe1fcb93fa5abf4c1ee8dcb3d9d2817fe16d9c7c22"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4552.550750000009,
+            "elapsedMs": 27220.561375000005,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4636.266707999996,
+            "elapsedMs": 27186.822207999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4568.108833000006,
+            "elapsedMs": 27189.56504100001,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4491.900667000009,
+            "elapsedMs": 27132.502542000002,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4773.0459589999955,
+            "elapsedMs": 27123.209708999988,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4592.099250000014,
+            "elapsedMs": 27110.936042,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4421.231083000006,
+            "elapsedMs": 27104.989208,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4476.006583000009,
+            "elapsedMs": 27067.484750000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4312.720124999993,
+            "elapsedMs": 27066.828792,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4458.849000000002,
+            "elapsedMs": 27044.142416999995,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4306.414416,
+            "elapsedMs": 27002.225749999998,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4641.144749999992,
+            "elapsedMs": 26972.226375,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4196.854124999998,
+            "elapsedMs": 26963.264165999994,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4190.333916999996,
+            "elapsedMs": 26900.476167,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4395.602666999999,
+            "elapsedMs": 26903.762833999994,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4491.721875000003,
+            "elapsedMs": 26886.693,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4065.8832919999986,
+            "elapsedMs": 26878.51625,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4156.278833999997,
+            "elapsedMs": 26850.144333999997,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4216.427249999993,
+            "elapsedMs": 26845.904125,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4256.695208000005,
+            "elapsedMs": 26820.368125000008,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4468.215667000011,
+            "elapsedMs": 26814.927500000005,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4298.500709,
+            "elapsedMs": 26796.599959,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4325.13629200001,
+            "elapsedMs": 26792.778707999998,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3978.6176660000056,
+            "elapsedMs": 26774.932249999998,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4018.466542000009,
+            "elapsedMs": 26756.417457999996,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4412.636415999994,
+            "elapsedMs": 26736.189790999997,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4154.070124999998,
+            "elapsedMs": 26736.116125,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4060.2100000000064,
+            "elapsedMs": 26699.572791,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4156.1285840000055,
+            "elapsedMs": 26690.295417,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4117.029999999999,
+            "elapsedMs": 26655.236124999996,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4166.83312499999,
+            "elapsedMs": 26648.639417,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4253.461083000002,
+            "elapsedMs": 26636.377540999994,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          }
+        ],
+        "magpie": [
+          {
+            "session": "main-0",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 737.4734169999865,
+            "elapsedMs": 28269.575958999994,
+            "outputBytes": 13952,
+            "outputSha256": "b5ca26657d1d0d848a762cfe1fcb93fa5abf4c1ee8dcb3d9d2817fe16d9c7c22"
+          },
+          {
+            "session": "main-1",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 1037.5477090000059,
+            "elapsedMs": 28257.008459000004,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-2",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 951.413916999998,
+            "elapsedMs": 28248.418542,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-3",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 963.9524170000077,
+            "elapsedMs": 28234.725707999998,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-4",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 898.372292,
+            "elapsedMs": 28218.708042,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-5",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 959.6053749999992,
+            "elapsedMs": 28193.85149999999,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-6",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 812.2476670000033,
+            "elapsedMs": 28169.950708000004,
+            "outputBytes": 13824,
+            "outputSha256": "5c2ac46996e60c95df0fcd5d7f4484abab9ea2d0fdc12a14de4841b21dc27ef0"
+          },
+          {
+            "session": "main-7",
+            "role": "main",
+            "parent": null,
+            "ttftMs": 733.4763329999987,
+            "elapsedMs": 28160.114125000007,
+            "outputBytes": 13952,
+            "outputSha256": "b5ca26657d1d0d848a762cfe1fcb93fa5abf4c1ee8dcb3d9d2817fe16d9c7c22"
+          },
+          {
+            "session": "main-0-sub-0",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4544.655125000005,
+            "elapsedMs": 27206.247042000003,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-0-sub-1",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4646.514082999987,
+            "elapsedMs": 27202.615458,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-2",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4547.683499999999,
+            "elapsedMs": 27154.540833000006,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-0-sub-3",
+            "role": "sub",
+            "parent": "main-0",
+            "ttftMs": 4499.734167000002,
+            "elapsedMs": 27154.328041999994,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-0",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4765.1104170000035,
+            "elapsedMs": 27120.158750000002,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-1",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4600.132958000002,
+            "elapsedMs": 27118.122917,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-1-sub-2",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4411.975582999992,
+            "elapsedMs": 27088.073707999996,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-1-sub-3",
+            "role": "sub",
+            "parent": "main-1",
+            "ttftMs": 4482.83329200001,
+            "elapsedMs": 27074.438792,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-0",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4302.975917000003,
+            "elapsedMs": 27067.237999999998,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-1",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4466.300583000004,
+            "elapsedMs": 27060.74037500001,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-2-sub-2",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4294.583375000002,
+            "elapsedMs": 27008.161959000005,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-2-sub-3",
+            "role": "sub",
+            "parent": "main-2",
+            "ttftMs": 4655.776792000004,
+            "elapsedMs": 26984.228959,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-3-sub-0",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4174.242832999997,
+            "elapsedMs": 26944.123666,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-1",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4198.451082999993,
+            "elapsedMs": 26912.627250000005,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-3-sub-2",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4387.079041999998,
+            "elapsedMs": 26894.140792000006,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-3-sub-3",
+            "role": "sub",
+            "parent": "main-3",
+            "ttftMs": 4498.517917000005,
+            "elapsedMs": 26890.577833000003,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-0",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4056.4814590000024,
+            "elapsedMs": 26868.390499999994,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-1",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4163.756374999997,
+            "elapsedMs": 26858.820416999995,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-4-sub-2",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4209.664374999993,
+            "elapsedMs": 26838.70329199999,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-4-sub-3",
+            "role": "sub",
+            "parent": "main-4",
+            "ttftMs": 4262.991832999993,
+            "elapsedMs": 26833.389165999994,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-0",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4461.646458999996,
+            "elapsedMs": 26803.110417000004,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-5-sub-1",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4305.065457999997,
+            "elapsedMs": 26800.629916000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-2",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 4311.428584000008,
+            "elapsedMs": 26779.284125000006,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-5-sub-3",
+            "role": "sub",
+            "parent": "main-5",
+            "ttftMs": 3985.906541999997,
+            "elapsedMs": 26777.736082999996,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-6-sub-0",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4010.5679170000076,
+            "elapsedMs": 26759.122667000003,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-6-sub-1",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4418.197875000013,
+            "elapsedMs": 26751.76008400001,
+            "outputBytes": 11392,
+            "outputSha256": "2c9cf1a9579d82148bd1ee3d4cca57e80a45b1e6dbceff88625d4dbb61cae977"
+          },
+          {
+            "session": "main-6-sub-2",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4145.410250000001,
+            "elapsedMs": 26722.51804200001,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-6-sub-3",
+            "role": "sub",
+            "parent": "main-6",
+            "ttftMs": 4070.4467920000025,
+            "elapsedMs": 26705.387333000006,
+            "outputBytes": 11648,
+            "outputSha256": "d034195919a609fb01db57724fd0ccff231c37c1b2a85aad36c581f965c9398d"
+          },
+          {
+            "session": "main-7-sub-0",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4145.237292000005,
+            "elapsedMs": 26680.499584000005,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-1",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4124.27558300001,
+            "elapsedMs": 26673.535417000006,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-2",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4157.609792000003,
+            "elapsedMs": 26651.139917000008,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          },
+          {
+            "session": "main-7-sub-3",
+            "role": "sub",
+            "parent": "main-7",
+            "ttftMs": 4261.019958000004,
+            "elapsedMs": 26639.085583000007,
+            "outputBytes": 11520,
+            "outputSha256": "50ae6c52f8c856e330b82a3fdb4166a4565f7792692eefd81e621efd4ad63279"
+          }
+        ]
+      },
+      "finishedAudit": {
+        "audit": {
+          "mixin": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          },
+          "magpie": {
+            "requests": 40,
+            "completed": 40,
+            "active": 0,
+            "maxActive": 40,
+            "images": 80,
+            "validated": 40,
+            "main": 8,
+            "sub": 32
+          }
+        },
+        "pairs": 40,
+        "paired": 40
+      },
+      "warmIdle": {
+        "label": "completed idle",
+        "elapsedSeconds": 5.3453787909999955,
+        "products": {
+          "mixin": {
+            "cpuPercentOneCore": 0,
+            "rssMedianBytes": 152125440,
+            "rssMaxBytes": 152125440,
+            "footprintMedianBytes": 43725619.2,
+            "processCount": 1
+          },
+          "magpie": {
+            "cpuPercentOneCore": 0.18707748114758058,
+            "rssMedianBytes": 262602752,
+            "rssMaxBytes": 262799360,
+            "footprintMedianBytes": 494403584,
+            "processCount": 1
+          }
+        }
+      },
+      "totalCpu": {
+        "mixin": 8.120000000000001,
+        "magpie": 7.92,
+        "replay": 20.32,
+        "fakeUpstream": 2.18
+      }
+    }
+  ],
+  "methodology": {
+    "transport": "OpenAI Responses HTTP SSE",
+    "gatewayMode": "headless; Mixin serve --no-client-sync, context enabled; Magpie web --no-open --gateway",
+    "context": "each main and child receives all 1,000,000 text tokens plus 2 images; model window 1,048,576",
+    "cpu": "ps cumulative process CPU time, user+system, summed over gateway descendants; 100% means one logical core",
+    "rss": "ps resident set, sampled every 250 ms from initial request loading through streaming",
+    "physicalFootprint": "vmmap -summary; median of 3 snapshots after CPU steady window, with all 40 streams still active",
+    "load": "8 parent requests, then 32 child requests after parents produce first text; 40 simultaneous streams per gateway",
+    "stream": "paired per-session upstream responses; same 128-character delta every 250ms; paired completion text checked for exact equality",
+    "steady": "20 seconds after all 40 requests per gateway have reached upstream and begun streaming",
+    "totalCpu": "from before initial load to after all responses complete and post-completion idle snapshots",
+    "isolation": "fresh HOME, config, data, cache, context DB, runtime, daemon and service identity each round; loopback-only endpoints and dead outbound proxies",
+    "replayMetric": "products.replay is the entire benchmark process tree, including gateways, fake upstream, and transient measurement children; it is not exclusive load-generator usage",
+    "memoryUnits": "MiB = 1,048,576 bytes",
+    "tokenizer": "tiktoken 0.14.0, o200k_base; sum of independently encoded message text fields, excluding image and protocol overhead",
+    "repeats": 3,
+    "summary": "median of per-round measurements"
+  },
+  "disposableScriptSha256": "0a5fbf6a5945f28a219388767547218755bb96086f83c17496c7cf8c8ba64f37",
+  "contextDatabaseProof": [
+    {
+      "round": 1,
+      "sessions": 40,
+      "messages": 22320,
+      "compressed_messages": 22320,
+      "responses": 40,
+      "integrity": "ok"
+    },
+    {
+      "round": 2,
+      "sessions": 40,
+      "messages": 22320,
+      "compressed_messages": 22320,
+      "responses": 40,
+      "integrity": "ok"
+    },
+    {
+      "round": 3,
+      "sessions": 40,
+      "messages": 22320,
+      "compressed_messages": 22320,
+      "responses": 40,
+      "integrity": "ok"
+    }
+  ]
+}
