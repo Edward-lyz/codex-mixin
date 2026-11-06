@@ -2,9 +2,11 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde_json::{Value, json};
 
+use super::body::{self, BodyTags};
 use super::guidance::NudgeState;
 use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
@@ -12,12 +14,11 @@ const REASONING_FINGERPRINT_VERSION: i64 = 1;
 /// From this data version `messages.fingerprint` holds a SHA-256 of the
 /// normalized item instead of the normalized JSON itself.
 const HASHED_FINGERPRINT_VERSION: i64 = 2;
-/// Archived message bodies are eligible for removal after six idle hours.
-pub(crate) const RAW_RETENTION_SECONDS: i64 = 6 * 60 * 60;
 /// The archive worker limits each pass to this many sessions.
 pub(crate) const MAINTENANCE_BATCH_SIZE: usize = 8;
-const IDLE_SESSION_SECONDS: i64 = 30 * 86_400;
-type StoredResponseAnchor = (String, Option<i64>, Option<i64>, Option<String>);
+const BODY_BATCH_BYTES: usize = 4 * 1024 * 1024;
+type StoredBody = (SqlValue, i64, i64, Option<Vec<u8>>);
+type StoredResponseAnchor = (StoredBody, Option<i64>, Option<i64>, Option<String>);
 type ResponseAnchor = (Vec<Value>, Option<usize>, Option<String>);
 
 const SCHEMA: &str = "
@@ -40,6 +41,11 @@ CREATE TABLE IF NOT EXISTS messages (
     item_json TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     expired_at INTEGER,
+    body_codec INTEGER NOT NULL DEFAULT 0,
+    body_bytes INTEGER NOT NULL DEFAULT 0,
+    body_checksum BLOB,
+    body_kind TEXT,
+    body_tool TEXT,
     PRIMARY KEY (session_key, reference)
 );
 CREATE TABLE IF NOT EXISTS history (
@@ -78,6 +84,9 @@ CREATE TABLE IF NOT EXISTS responses (
     response_id TEXT NOT NULL,
     revision INTEGER NOT NULL,
     output_json TEXT NOT NULL DEFAULT '[]',
+    body_codec INTEGER NOT NULL DEFAULT 0,
+    body_bytes INTEGER NOT NULL DEFAULT 0,
+    body_checksum BLOB,
     created_at INTEGER NOT NULL,
     expired_at INTEGER,
     history_len INTEGER,
@@ -212,14 +221,18 @@ impl Store {
 
     fn configure(&self) -> Result<()> {
         self.connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .context("set context busy timeout")?;
+        self.connection
             .pragma_update(None, "journal_mode", "WAL")
             .context("set context journal mode")?;
         self.connection
             .pragma_update(None, "synchronous", "NORMAL")
             .context("set context synchronous mode")?;
         self.connection
-            .busy_timeout(std::time::Duration::from_secs(5))
-            .context("set context busy timeout")?;
+            .pragma_update(None, "journal_size_limit", 8 * 1024 * 1024)?;
+        self.connection
+            .pragma_update(None, "wal_autocheckpoint", 256)?;
         self.connection
             .pragma_update(None, "cache_size", -256)
             .context("set context sqlite cache size")?;
@@ -351,19 +364,57 @@ impl Store {
     }
 
     fn upgrade_retention_columns(&self) -> Result<()> {
-        for (table, column, definition) in [
+        let columns = [
             ("messages", "expired_at", "expired_at INTEGER"),
             ("responses", "expired_at", "expired_at INTEGER"),
             ("responses", "history_len", "history_len INTEGER"),
             ("responses", "history_tip", "history_tip TEXT"),
-        ] {
+            (
+                "messages",
+                "body_codec",
+                "body_codec INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "messages",
+                "body_bytes",
+                "body_bytes INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("messages", "body_checksum", "body_checksum BLOB"),
+            ("messages", "body_kind", "body_kind TEXT"),
+            ("messages", "body_tool", "body_tool TEXT"),
+            (
+                "responses",
+                "body_codec",
+                "body_codec INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "responses",
+                "body_bytes",
+                "body_bytes INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("responses", "body_checksum", "body_checksum BLOB"),
+        ];
+        let mut missing = Vec::new();
+        for (table, column, definition) in columns {
+            if !self.has_column(table, column)? {
+                missing.push((table, column, definition));
+            }
+        }
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        // A concurrent CLI may have completed the same schema upgrade.
+        for (table, column, definition) in missing {
             if self.has_column(table, column)? {
                 continue;
             }
-            self.connection
+            transaction
                 .execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])
                 .with_context(|| format!("add context {table}.{column}"))?;
         }
+        transaction.commit().context("commit context body schema")?;
         Ok(())
     }
 
@@ -410,143 +461,216 @@ impl Store {
         Ok(())
     }
 
-    /// Returns sessions with old archived bodies, oldest work first. The
-    /// caller holds each session's OS lease while it expires that session.
+    /// Migrate bounded batches; session age never permits deleting history.
     pub(crate) fn maintenance_candidates(&self, limit: usize) -> Result<Vec<String>> {
         let mut statement = self.connection.prepare(
             "SELECT session_key FROM (
-                 SELECT s.session_key, MIN(m.created_at) AS oldest
-                 FROM sessions s
-                 JOIN segments v ON v.session_key = s.session_key AND v.revision = s.revision AND v.kind = 'block'
-                 JOIN blocks b ON b.session_key = v.session_key AND b.block_id = v.reference
-                 JOIN json_each(b.full_refs) r
-                 JOIN messages m ON m.session_key = s.session_key AND m.reference = r.value
-                 WHERE s.updated_at < ?1 AND m.item_json <> ''
-                   AND NOT EXISTS (SELECT 1 FROM segments current_message
-                       WHERE current_message.session_key = s.session_key AND current_message.revision = s.revision
-                         AND current_message.kind = 'message' AND current_message.reference = m.reference)
-                 GROUP BY s.session_key
-                 UNION ALL
-                 SELECT r.session_key, MIN(r.created_at) AS oldest
-                 FROM responses r JOIN sessions s ON s.session_key = r.session_key
-                 WHERE s.updated_at < ?1 AND r.output_json NOT IN ('', '[]')
-                   AND r.response_id <> COALESCE((SELECT latest.response_id FROM responses latest
-                       WHERE latest.session_key = r.session_key
-                       ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1), '')
-                 GROUP BY r.session_key
-                 UNION ALL
-                 SELECT session_key, updated_at AS oldest FROM sessions WHERE updated_at < ?2
-             ) GROUP BY session_key ORDER BY MIN(oldest) LIMIT ?3",
-        ).context("prepare context retention candidates")?;
-        let now = unix_now();
-        let rows = statement
-            .query_map(
-                params![
-                    now - RAW_RETENTION_SECONDS,
-                    now - IDLE_SESSION_SECONDS,
-                    limit as i64
-                ],
-                |row| row.get(0),
-            )
-            .context("query context retention candidates")?;
+                SELECT session_key, MIN(created_at) AS oldest FROM messages
+                WHERE (body_bytes = 0 AND item_json <> '' AND expired_at IS NULL)
+                   OR length(fingerprint) > 64 GROUP BY session_key
+                UNION ALL
+                SELECT session_key, MIN(created_at) AS oldest FROM responses
+                WHERE body_bytes = 0 AND output_json <> '' AND expired_at IS NULL GROUP BY session_key
+             ) GROUP BY session_key ORDER BY MIN(oldest) LIMIT ?1",
+        ).context("prepare lossless body migration")?;
+        let rows = statement.query_map([limit as i64], |row| row.get(0))?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
-            .context("read context retention candidate")
+            .context("read body migration candidates")
     }
 
-    /// Expires only compressed-away message bodies, keeping fingerprints and
-    /// references so history alignment and checkpoint anchors remain stable.
-    pub(crate) fn maintain_session(&mut self, key: &str) -> Result<()> {
-        let now = unix_now();
-        let cutoff = now - RAW_RETENTION_SECONDS;
-        let transaction = self
-            .connection
-            .transaction()
-            .context("begin context retention transaction")?;
-        let idle = transaction
-            .query_row(
-                "SELECT updated_at < ?2 FROM sessions WHERE session_key = ?1",
-                params![key, now - IDLE_SESSION_SECONDS],
-                |row| row.get::<_, bool>(0),
-            )
-            .optional()?
-            .unwrap_or(false);
-        if idle {
-            for table in [
-                "messages",
-                "history",
-                "segments",
-                "blocks",
-                "responses",
-                "nudge_state",
-                "sessions",
-            ] {
-                transaction
-                    .execute(
-                        &format!("DELETE FROM {table} WHERE session_key = ?1"),
-                        [key],
-                    )
-                    .with_context(|| format!("prune idle context {table}"))?;
-            }
-            transaction
-                .commit()
-                .context("commit idle context pruning")?;
+    fn backup_before_body_migration(&self) -> Result<()> {
+        let done: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM maintenance WHERE name LIKE 'lossless-backup:%')",
+            [],
+            |row| row.get(0),
+        )?;
+        if done {
             return Ok(());
         }
-        let messages = transaction.execute(
-            "UPDATE messages SET item_json = '', expired_at = ?2
-             WHERE session_key = ?1 AND item_json <> ''
-               AND reference IN (
-                   SELECT r.value FROM sessions s
-                   JOIN segments v ON v.session_key = s.session_key AND v.revision = s.revision AND v.kind = 'block'
-                   JOIN blocks b ON b.session_key = v.session_key AND b.block_id = v.reference
-                   JOIN json_each(b.full_refs) r
-                   WHERE s.session_key = ?1 AND s.updated_at < ?3
-               )
-               AND reference NOT IN (
-                   SELECT reference FROM segments
-                   WHERE session_key = ?1
-                     AND revision = (SELECT revision FROM sessions WHERE session_key = ?1)
-                     AND kind = 'message'
-               )",
-            params![key, now, cutoff],
-        ).context("expire compressed context message bodies")?;
-        let responses = transaction
+        let Some(path) = self.connection.path().filter(|path| !path.is_empty()) else {
+            // An explicitly in-memory SQLite connection has no durable file.
+            return Ok(());
+        };
+        let path = Path::new(path);
+        let parent = path.parent().context("context database has no directory")?;
+        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        // SQLite includes committed WAL contents in this consistent snapshot.
+        self.connection
             .execute(
-                "UPDATE responses SET output_json = '', expired_at = ?2
-             WHERE session_key = ?1 AND output_json NOT IN ('', '[]')
-               AND EXISTS (SELECT 1 FROM sessions s WHERE s.session_key = ?1 AND s.updated_at < ?3)
-               AND response_id <> COALESCE((
-                   SELECT response_id FROM responses WHERE session_key = ?1
-                   ORDER BY created_at DESC, rowid DESC LIMIT 1
-               ), '')",
-                params![key, now, cutoff],
+                "VACUUM INTO ?1",
+                [temporary.path().to_string_lossy().as_ref()],
             )
-            .context("expire old context response outputs")?;
-        transaction.execute(
-            "DELETE FROM messages WHERE session_key = ?1 AND NOT EXISTS (
-                 SELECT 1 FROM history h WHERE h.session_key = messages.session_key AND h.reference = messages.reference
-             ) AND NOT EXISTS (
-                 SELECT 1 FROM segments s WHERE s.session_key = messages.session_key AND s.reference = messages.reference
-             ) AND NOT EXISTS (
-                 SELECT 1 FROM blocks b, json_each(b.full_refs) r
-                 WHERE b.session_key = messages.session_key AND r.value = messages.reference
-             ) AND NOT EXISTS (
-                 SELECT 1 FROM blocks b, json_each(b.direct_refs) r
-                 WHERE b.session_key = messages.session_key AND json_extract(r.value, '$.reference') = messages.reference
-             )",
-            [key],
-        ).context("prune unreferenced context messages")?;
-        transaction.commit().context("commit context retention")?;
-        tracing::debug!(
-            session = key,
-            messages,
-            responses,
-            "expired context archive bodies"
+            .context("back up context before lossless body migration")?;
+        let backup = Connection::open_with_flags(
+            temporary.path(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let integrity: String = backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        anyhow::ensure!(
+            integrity == "ok",
+            "context migration backup failed integrity check"
         );
+        drop(backup);
+        temporary.as_file().sync_all()?;
+        let destination =
+            path.with_extension(format!("db.pre-lossless-{}.bak", uuid::Uuid::new_v4()));
+        temporary
+            .persist_noclobber(&destination)
+            .context("preserve context migration backup")?;
+        crate::platform::restrict_owner_only_file(&destination)?;
+        let name = format!(
+            "lossless-backup:{}",
+            destination
+                .file_name()
+                .context("backup has no name")?
+                .to_string_lossy()
+        );
+        self.connection.execute(
+            "INSERT INTO maintenance(name,at) VALUES (?1,?2)",
+            params![name, unix_now()],
+        )?;
         Ok(())
     }
 
-    pub(crate) fn reclaim_archive(&self) -> Result<()> {
+    pub(crate) fn maintain_session(&mut self, key: &str) -> Result<()> {
+        self.backup_before_body_migration()?;
+        let transaction = self
+            .connection
+            .transaction()
+            .context("begin lossless body migration")?;
+        let mut processed = 0;
+        for (table, column) in [("messages", "item_json"), ("responses", "output_json")] {
+            let ids = {
+                let mut statement = transaction.prepare(&format!(
+                    "SELECT rowid FROM {table} WHERE session_key = ?1 AND body_bytes = 0
+                     AND {column} <> '' AND expired_at IS NULL ORDER BY rowid LIMIT 128"
+                ))?;
+                statement
+                    .query_map([key], |row| row.get::<_, i64>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+            };
+            for id in ids {
+                if processed >= BODY_BATCH_BYTES {
+                    break;
+                }
+                let raw: String = transaction.query_row(
+                    &format!("SELECT {column} FROM {table} WHERE rowid = ?1"),
+                    [id],
+                    |row| row.get(0),
+                )?;
+                let encoded = body::encode(&raw)?;
+                transaction.execute(
+                    &format!(
+                        "UPDATE {table} SET {column} = ?2, body_codec = ?3,
+                    body_bytes = ?4, body_checksum = ?5 WHERE rowid = ?1"
+                    ),
+                    params![
+                        id,
+                        encoded.payload,
+                        encoded.codec,
+                        encoded.bytes,
+                        encoded.checksum
+                    ],
+                )?;
+                if table == "messages" {
+                    let tags: BodyTags =
+                        serde_json::from_str(&raw).context("read message tags for compression")?;
+                    transaction.execute(
+                        "UPDATE messages SET body_kind = ?2, body_tool = ?3 WHERE rowid = ?1",
+                        params![id, tags.role.or(tags.item_type), tags.name],
+                    )?;
+                }
+                processed += raw.len();
+            }
+        }
+        let fingerprints = {
+            let mut statement = transaction.prepare(
+                "SELECT reference, fingerprint FROM messages
+                WHERE session_key = ?1 AND length(fingerprint) > 64 LIMIT 128",
+            )?;
+            statement
+                .query_map([key], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for (reference, fingerprint) in fingerprints {
+            transaction.execute(
+                "UPDATE messages SET fingerprint = ?3 WHERE session_key = ?1 AND reference = ?2",
+                params![key, reference, fingerprint_digest(&fingerprint)],
+            )?;
+        }
+        transaction
+            .commit()
+            .context("commit lossless body migration")?;
+        Ok(())
+    }
+
+    pub(crate) fn storage_stats(&self) -> Result<Value> {
+        let mut result = json!({});
+        for (table, column) in [("messages", "item_json"), ("responses", "output_json")] {
+            let (count, original, stored, compressed, missing): (i64,i64,i64,i64,i64) = self.connection.query_row(
+                &format!("SELECT COUNT(*), COALESCE(SUM(CASE WHEN body_bytes > 0 THEN body_bytes
+                    ELSE length(CAST({column} AS BLOB)) END),0), COALESCE(SUM(length(CAST({column} AS BLOB))),0),
+                    COALESCE(SUM(body_codec = 1 AND {column} <> '' AND expired_at IS NULL),0),
+                    COALESCE(SUM({column} = '' OR expired_at IS NOT NULL),0) FROM {table}"), [],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)))?;
+            result[table] = json!({"count":count,"original_bytes":original,"stored_bytes":stored,
+                "compressed":compressed,"missing":missing});
+        }
+        result["missing_messages"] = result["messages"]["missing"].clone();
+        result["page_count"] = json!(self.connection.query_row(
+            "PRAGMA page_count",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?);
+        result["free_pages"] = json!(self.connection.query_row(
+            "PRAGMA freelist_count",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?);
+        let (busy, log, checkpointed) = self.checkpoint()?;
+        result["wal"] = json!({"busy":busy,"log_pages":log,"checkpointed_pages":checkpointed});
+        Ok(result)
+    }
+
+    pub(crate) fn compact(&self) -> Result<()> {
+        self.backup_before_body_migration()?;
+        self.connection
+            .execute_batch("VACUUM")
+            .context("compact context database")?;
+        self.checkpoint()?;
+        Ok(())
+    }
+
+    fn checkpoint(&self) -> Result<(i64, i64, i64)> {
+        let checkpoint: (i64, i64, i64) =
+            self.connection
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+        if checkpoint.0 != 0 || checkpoint.1 != checkpoint.2 || checkpoint.1 < 2048 {
+            tracing::debug!(
+                busy = checkpoint.0,
+                log_pages = checkpoint.1,
+                checkpointed_pages = checkpoint.2,
+                "context WAL checkpoint"
+            );
+            return Ok(checkpoint);
+        }
+        // A pinned reader must not stall forwarding just to reclaim WAL space.
+        self.connection.busy_timeout(std::time::Duration::ZERO)?;
+        let truncated = self
+            .connection
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            });
+        self.connection
+            .busy_timeout(std::time::Duration::from_secs(5))?;
+        truncated.context("truncate checkpointed context WAL")
+    }
+
+    pub(crate) fn reclaim_archive(&self) -> Result<bool> {
         // This pragma yields one row per page; stopping after the first row
         // would return only one page even when a larger batch was requested.
         {
@@ -558,13 +682,14 @@ impl Store {
                 .is_some()
             {}
         }
-        let _: (i64, i64, i64) = self
+        self.checkpoint()?;
+        let free_pages: i64 = self
             .connection
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .context("checkpoint context archive WAL")?;
-        Ok(())
+            .query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+        let auto_vacuum: i64 = self
+            .connection
+            .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
+        Ok(auto_vacuum == 2 && free_pages > 0)
     }
 
     /// Context databases written before response mapping existed lack the
@@ -733,30 +858,35 @@ impl Store {
     ) -> Result<()> {
         let output_json =
             serde_json::to_string(output).context("encode recorded response output")?;
+        let encoded = body::encode(&output_json)?;
         let (history_len, history_tip) = self.history_anchor(key)?;
         self.connection
             .execute(
-                "INSERT INTO responses (session_key, response_id, revision, output_json, created_at, history_len, history_tip)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO responses (session_key, response_id, revision, output_json, created_at, history_len, history_tip,
+                     body_codec, body_bytes, body_checksum)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(session_key, response_id) DO UPDATE SET
                    revision = excluded.revision,
                    output_json = excluded.output_json,
+                   body_codec = excluded.body_codec,
+                   body_bytes = excluded.body_bytes,
+                   body_checksum = excluded.body_checksum,
                    expired_at = NULL,
                    history_len = excluded.history_len,
                    history_tip = excluded.history_tip",
-                params![key, response_id, revision, output_json, unix_now(), history_len as i64, history_tip],
+                params![key, response_id, revision, encoded.payload, unix_now(), history_len as i64, history_tip, encoded.codec, encoded.bytes, encoded.checksum],
             )
             .context("record context response")?;
         Ok(())
     }
 
     pub fn response_output(&self, key: &str, response_id: &str) -> Result<Option<Vec<Value>>> {
-        let recorded: Option<(String, Option<i64>)> = self
+        let recorded: Option<(StoredBody, Option<i64>)> = self
             .connection
             .query_row(
-                "SELECT output_json, expired_at FROM responses WHERE session_key = ?1 AND response_id = ?2",
+                "SELECT output_json, body_codec, body_bytes, body_checksum, expired_at FROM responses WHERE session_key = ?1 AND response_id = ?2",
                 params![key, response_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((stored_body(row, 0)?, row.get(4)?)),
             )
             .optional()
             .context("read recorded response output")?;
@@ -765,7 +895,8 @@ impl Store {
                 if expired_at.is_some() {
                     bail!("response {response_id} output expired from the context archive")
                 }
-                serde_json::from_str(&json).context("parse recorded response output")
+                serde_json::from_str(&body::decode(&json.0, json.1, json.2, json.3.as_deref())?)
+                    .context("parse recorded response output")
             })
             .transpose()
     }
@@ -778,10 +909,10 @@ impl Store {
         let record: Option<StoredResponseAnchor> = self
             .connection
             .query_row(
-                "SELECT output_json, expired_at, history_len, history_tip FROM responses
+                "SELECT output_json, body_codec, body_bytes, body_checksum, expired_at, history_len, history_tip FROM responses
                  WHERE session_key = ?1 AND response_id = ?2",
                 params![key, response_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((stored_body(row, 0)?, row.get(4)?, row.get(5)?, row.get(6)?)),
             )
             .optional()
             .context("read context response anchor")?;
@@ -791,7 +922,13 @@ impl Store {
         if expired_at.is_some() {
             bail!("response {response_id} output expired from the context archive");
         }
-        let output = serde_json::from_str(&output).context("parse recorded response output")?;
+        let output = serde_json::from_str(&body::decode(
+            &output.0,
+            output.1,
+            output.2,
+            output.3.as_deref(),
+        )?)
+        .context("parse recorded response output")?;
         let history_len = history_len
             .map(|length| usize::try_from(length).context("response history anchor length"))
             .transpose()?;
@@ -971,10 +1108,14 @@ impl Store {
             let position = prefix_len + offset;
             let encoded =
                 serde_json::to_string(item).context("encode context continuation item")?;
+            let stored = body::encode(&encoded)?;
             transaction.execute(
-                "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![key, reference, fingerprints[offset], encoded, unix_now()],
+                "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at,
+                    body_codec, body_bytes, body_checksum, body_kind, body_tool)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![key, reference, fingerprints[offset], stored.payload, unix_now(), stored.codec,
+                    stored.bytes, stored.checksum, item.get("role").or_else(|| item.get("type")).and_then(Value::as_str),
+                    item.get("name").and_then(Value::as_str)],
             ).context("append context continuation message")?;
             transaction
                 .execute(
@@ -1103,21 +1244,28 @@ impl Store {
     }
 
     pub fn message_json(&self, key: &str, reference: &str) -> Result<Option<String>> {
-        let record: Option<(String, Option<i64>)> = self.connection
+        let record: Option<(StoredBody, Option<i64>)> = self
+            .connection
             .query_row(
-                "SELECT item_json, expired_at FROM messages WHERE session_key = ?1 AND reference = ?2",
+                "SELECT item_json, body_codec, body_bytes, body_checksum, expired_at FROM messages
+             WHERE session_key = ?1 AND reference = ?2",
                 params![key, reference],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((stored_body(row, 0)?, row.get(4)?)),
             )
             .optional()
             .context("read archived message")?;
-        let Some((item_json, expired_at)) = record else {
+        let Some((stored, expired_at)) = record else {
             return Ok(None);
         };
-        if expired_at.is_some() || item_json.is_empty() {
+        if expired_at.is_some() || matches!(&stored.0, SqlValue::Text(raw) if raw.is_empty()) {
             bail!("original {reference} expired from the context archive");
         }
-        Ok(Some(item_json))
+        Ok(Some(body::decode(
+            &stored.0,
+            stored.1,
+            stored.2,
+            stored.3.as_deref(),
+        )?))
     }
 
     pub(crate) fn expired_message_count(&self, key: &str) -> Result<u64> {
@@ -1138,12 +1286,12 @@ impl Store {
             .iter()
             .filter(|reference| reference.kind == SegmentKind::Message)
         {
-            let exists: Option<(String, Option<i64>)> = self.connection.query_row(
-                "SELECT item_json, expired_at FROM messages WHERE session_key = ?1 AND reference = ?2",
+            let exists: Option<(i64, Option<i64>)> = self.connection.query_row(
+                "SELECT length(item_json), expired_at FROM messages WHERE session_key = ?1 AND reference = ?2",
                 params![key, reference.reference],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).optional().context("check direct reference expiration")?;
-            if exists.is_none_or(|(body, expired_at)| expired_at.is_some() || body.is_empty()) {
+            if exists.is_none_or(|(length, expired_at)| expired_at.is_some() || length == 0) {
                 expired.push(reference.reference.clone());
             }
         }
@@ -1151,17 +1299,17 @@ impl Store {
     }
 
     pub(super) fn session_preview(&self, key: &str) -> Result<Option<String>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT item_json FROM messages WHERE session_key = ?1
-             AND json_extract(item_json, '$.role') = 'user' ORDER BY reference",
-            )
-            .context("prepare session preview")?;
-        let mut rows = statement.query([key]).context("query session preview")?;
+        let mut statement = self.connection.prepare(
+            "SELECT reference FROM messages WHERE session_key = ?1 AND expired_at IS NULL
+             AND item_json <> '' AND (body_kind = 'user' OR body_kind IS NULL) ORDER BY reference",
+        )?;
+        let mut rows = statement.query([key])?;
         while let Some(row) = rows.next()? {
-            let item: String = row.get(0)?;
-            let item = serde_json::from_str(&item).context("decode session preview message")?;
+            let reference: String = row.get(0)?;
+            let raw = self
+                .message_json(key, &reference)?
+                .context("session preview original missing")?;
+            let item = serde_json::from_str(&raw).context("decode session preview message")?;
             if let Some(preview) = crate::clients::session_titles::request_preview(&item) {
                 return Ok(Some(preview));
             }
@@ -1210,12 +1358,60 @@ impl Store {
             })
             .collect();
         let changed = divergence < history.len() || !uncovered.is_empty();
+        let transaction = self
+            .connection
+            .transaction()
+            .context("begin history synchronization")?;
+        // A fork through a block exposes part of its raw prefix. Restore only
+        // visible originals from the fingerprint-verified full replay; leave
+        // bodies still covered by summaries expired. This also repairs views
+        // left incomplete by older versions, even without a new divergence.
+        for (position, reference) in kept
+            .iter()
+            .filter(|segment| segment.kind == SegmentKind::Message)
+            .map(|segment| (segment.position, segment.reference.as_str()))
+            .chain(
+                uncovered
+                    .iter()
+                    .map(|entry| (entry.position, entry.reference.as_str())),
+            )
+        {
+            let expired: bool = transaction
+                .query_row(
+                    "SELECT expired_at IS NOT NULL OR item_json = '' FROM messages
+                     WHERE session_key = ?1 AND reference = ?2",
+                    params![key, reference],
+                    |row| row.get(0),
+                )
+                .context("check replayed visible original")?;
+            if !expired {
+                continue;
+            }
+            let item = &items[position as usize];
+            let stored = body::encode(&serde_json::to_string(item)?)?;
+            transaction
+                .execute(
+                    "UPDATE messages SET item_json = ?3, expired_at = NULL, body_codec = ?4,
+                        body_bytes = ?5, body_checksum = ?6, body_kind = ?7, body_tool = ?8
+                 WHERE session_key = ?1 AND reference = ?2
+                   AND (expired_at IS NOT NULL OR item_json = '')",
+                    params![
+                        key,
+                        reference,
+                        stored.payload,
+                        stored.codec,
+                        stored.bytes,
+                        stored.checksum,
+                        item.get("role")
+                            .or_else(|| item.get("type"))
+                            .and_then(Value::as_str),
+                        item.get("name").and_then(Value::as_str)
+                    ],
+                )
+                .context("restore replayed visible original")?;
+        }
         if changed {
             let next_revision = session.revision + 1;
-            let transaction = self
-                .connection
-                .transaction()
-                .context("begin fork transaction")?;
             transaction
                 .execute("DELETE FROM segments WHERE session_key = ?1", params![key])
                 .context("clear segments for fork")?;
@@ -1250,29 +1446,21 @@ impl Store {
             transaction
                 .execute("DELETE FROM nudge_state WHERE session_key = ?1", [key])
                 .context("reset context nudge at history fork")?;
-            transaction.commit().context("commit fork")?;
             session.revision = next_revision;
-            if !uncovered.is_empty() {
-                tracing::info!(
-                    session = key,
-                    restored_messages = uncovered.len(),
-                    "restored uncovered archived messages to the context view"
-                );
-            }
         }
         let mut next_ref = session.next_ref;
-        let transaction = self
-            .connection
-            .transaction()
-            .context("begin append transaction")?;
         for (index, item) in items.iter().enumerate().skip(divergence) {
             let reference = format!("m{next_ref:06}");
             let encoded = serde_json::to_string(item).context("encode history item")?;
+            let stored = body::encode(&encoded)?;
             transaction
                 .execute(
-                    "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![key, reference, fingerprint(item), encoded, unix_now()],
+                    "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at,
+                        body_codec, body_bytes, body_checksum, body_kind, body_tool)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![key, reference, fingerprint(item), stored.payload, unix_now(), stored.codec,
+                        stored.bytes, stored.checksum, item.get("role").or_else(|| item.get("type")).and_then(Value::as_str),
+                        item.get("name").and_then(Value::as_str)],
                 )
                 .context("append archived message")?;
             transaction
@@ -1300,7 +1488,16 @@ impl Store {
                 params![key, next_ref as i64, unix_now()],
             )
             .context("update session reference counter")?;
-        transaction.commit().context("commit history append")?;
+        transaction
+            .commit()
+            .context("commit history synchronization")?;
+        if !uncovered.is_empty() {
+            tracing::info!(
+                session = key,
+                restored_messages = uncovered.len(),
+                "restored uncovered archived messages to the context view"
+            );
+        }
         session.next_ref = next_ref;
         Ok((session, changed))
     }
@@ -1584,27 +1781,28 @@ impl Store {
                 snippet: snippet(&summary),
             });
         }
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT reference, item_json FROM messages
-                 WHERE session_key = ?1 AND item_json LIKE ?2
-                 ORDER BY created_at DESC LIMIT ?3",
-            )
-            .context("prepare message search")?;
-        let rows = statement
-            .query_map(params![key, pattern, limit as i64], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .context("search messages")?;
-        for row in rows {
-            let (reference, item) = row.context("read message search hit")?;
-            hits.push(SearchHit {
-                kind: "message".to_owned(),
-                reference,
-                title: String::new(),
-                snippet: snippet(&item),
-            });
+        let mut statement = self.connection.prepare(
+            "SELECT reference FROM messages WHERE session_key = ?1 AND expired_at IS NULL
+             AND item_json <> '' ORDER BY created_at DESC, rowid DESC",
+        )?;
+        let mut rows = statement.query([key])?;
+        let needle = query.to_ascii_lowercase();
+        while hits.len() < limit {
+            let Some(row) = rows.next()? else {
+                break;
+            };
+            let reference: String = row.get(0)?;
+            let item = self
+                .message_json(key, &reference)?
+                .context("search original missing")?;
+            if item.to_ascii_lowercase().contains(&needle) {
+                hits.push(SearchHit {
+                    kind: "message".to_owned(),
+                    reference,
+                    title: String::new(),
+                    snippet: snippet(&item),
+                });
+            }
         }
         hits.truncate(limit);
         Ok(hits)
@@ -1633,7 +1831,8 @@ impl Store {
         let (archive_messages, archive_bytes) = self
             .connection
             .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(LENGTH(item_json)), 0) FROM messages WHERE session_key = ?1",
+                "SELECT COUNT(*), COALESCE(SUM(CASE WHEN body_bytes > 0 AND expired_at IS NULL AND item_json <> ''
+                    THEN body_bytes ELSE length(CAST(item_json AS BLOB)) END), 0) FROM messages WHERE session_key = ?1",
                 params![key],
                 |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
             )
@@ -1777,10 +1976,15 @@ impl Store {
             let mut statement = self
                 .connection
                 .prepare(
-                    "SELECT h.position, h.reference, length(CAST(m.item_json AS BLOB)),
-                        COALESCE(json_extract(m.item_json, '$.role'),
-                                 json_extract(m.item_json, '$.type'), 'other'),
-                        json_extract(m.item_json, '$.name')
+                    "SELECT h.position, h.reference, CASE WHEN m.body_bytes > 0 AND m.item_json <> ''
+                            AND m.expired_at IS NULL THEN m.body_bytes ELSE length(CAST(m.item_json AS BLOB)) END,
+                        CASE WHEN m.expired_at IS NOT NULL OR m.item_json = '' THEN 'expired'
+                             ELSE COALESCE(m.body_kind, json_extract(CASE WHEN m.body_codec = 0 THEN NULLIF(m.item_json, '') END, '$.role'),
+                                           json_extract(CASE WHEN m.body_codec = 0 THEN NULLIF(m.item_json, '') END, '$.type'), 'other') END,
+                        COALESCE(m.body_tool, json_extract(CASE WHEN m.body_codec = 0 THEN NULLIF(m.item_json, '') END, '$.name')),
+                        m.expired_at IS NOT NULL OR m.item_json = '',
+                        CASE WHEN m.expired_at IS NOT NULL OR m.item_json = '' THEN 'missing'
+                             WHEN m.body_codec = 1 THEN 'zstd' ELSE 'plain' END
                  FROM history h JOIN messages m
                    ON m.session_key = h.session_key AND m.reference = h.reference
                  WHERE h.session_key = ?1 ORDER BY h.position",
@@ -1794,6 +1998,8 @@ impl Store {
                         "bytes": row.get::<_, i64>(2)?,
                         "kind": row.get::<_, String>(3)?,
                         "tool": row.get::<_, Option<String>>(4)?,
+                        "expired": row.get::<_, bool>(5)?,
+                        "storage": row.get::<_, String>(6)?,
                     }))
                 })
                 .context("export compact history")?;
@@ -1860,6 +2066,32 @@ impl Store {
             document["compact"] = json!(true);
         }
         Ok(document)
+    }
+}
+
+fn stored_body(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<StoredBody> {
+    Ok((
+        row.get(offset)?,
+        row.get(offset + 1)?,
+        row.get(offset + 2)?,
+        row.get(offset + 3)?,
+    ))
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = self.connection.busy_timeout(std::time::Duration::ZERO);
+        let result = self
+            .connection
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                row.get::<_, i64>(0)
+            });
+        if !matches!(result, Ok(0)) {
+            tracing::debug!(
+                ?result,
+                "context WAL retained by another connection at close"
+            );
+        }
     }
 }
 

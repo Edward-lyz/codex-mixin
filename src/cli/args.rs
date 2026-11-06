@@ -1028,6 +1028,16 @@ pub(super) enum AgentCommand {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum ContextCommand {
+    /// Losslessly compress stored bodies and checkpoint WAL; preserve all history.
+    Maintain {
+        #[arg(long, default_value_t = 1)]
+        batches: usize,
+        /// Explicitly compact the database after taking a consistent backup.
+        #[arg(long)]
+        compact: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read or update the global context settings.
     Config {
         #[command(subcommand)]

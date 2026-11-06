@@ -1,3 +1,4 @@
+mod body;
 pub mod checkpoint;
 pub mod engine;
 pub mod guidance;

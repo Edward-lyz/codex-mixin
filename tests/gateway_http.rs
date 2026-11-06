@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod common;
+
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{OriginalUri, State};
@@ -1750,16 +1752,20 @@ fn web_search_sse() -> String {
 }
 
 async fn spawn_gateway(upstream_base_url: String) -> String {
-    let state = AppState::new(test_config(upstream_base_url)).unwrap();
-    spawn_router(router(state)).await
+    spawn_gateway_with_config(test_config(upstream_base_url)).await
 }
 
 async fn spawn_gateway_with_config(config: GatewayConfig) -> String {
-    let state = AppState::with_env_lookup(config, |name| {
-        (name == "TEST_EXAMPLE_AUTH").then(|| "signed-value".to_owned())
+    let database = tempfile::tempdir().unwrap();
+    let state = AppState::with_env_lookup(config, |name| match name {
+        codex_mixin::context::DATABASE_ENV => {
+            Some(database.path().join("context.db").display().to_string())
+        }
+        "TEST_EXAMPLE_AUTH" => Some("signed-value".to_owned()),
+        _ => None,
     })
     .unwrap();
-    spawn_router(router(state)).await
+    spawn_router(router(state).layer(axum::Extension(Arc::new(database)))).await
 }
 
 async fn spawn_gateway_with_context(
@@ -4178,8 +4184,249 @@ async fn context_chained_request_continues_after_expired_compressed_bodies() {
         .expect("completed response event");
     let response_id = completed["response"]["id"].as_str().expect("response id");
 
+    // Lossless maintenance must keep even idle histories and preserve exact
+    // JSON bodies while moving their storage to compressed SQLite BLOBs.
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let legacy_body = serde_json::to_string(&first["input"][2]).unwrap();
+    connection
+        .execute(
+            "UPDATE messages SET item_json = ?1, body_codec = 0, body_bytes = 0,
+        body_checksum = NULL, body_kind = NULL WHERE reference = 'm000003'",
+            [&legacy_body],
+        )
+        .unwrap();
+    let legacy_reply = format!("{}{}", " ".repeat(512), completed["response"]["output"]);
+    connection
+        .execute(
+            "UPDATE responses SET output_json = ?1, body_codec = 0, body_bytes = 0,
+        body_checksum = NULL",
+            [&legacy_reply],
+        )
+        .unwrap();
+    // A fork can leave old messages without live references. They remain history.
+    connection.execute("INSERT INTO messages(session_key, reference, fingerprint, item_json, created_at)
+        SELECT session_key, 'm999999', fingerprint, item_json, created_at FROM messages WHERE reference = 'm000003'", []).unwrap();
+    connection
+        .execute(
+            "UPDATE sessions SET updated_at = unixepoch() - 40 * 86400",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE messages SET created_at = unixepoch() - 40 * 86400",
+            [],
+        )
+        .unwrap();
+    let original_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+        .unwrap();
+    connection.execute_batch("BEGIN").unwrap();
+    let _: i64 = connection
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+        .unwrap();
+    let pinned_reader = connection;
+    let maintained = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args([
+            "context",
+            "maintain",
+            "--batches",
+            "100",
+            "--compact",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        maintained.status.success(),
+        "lossless maintenance failed: {}",
+        String::from_utf8_lossy(&maintained.stderr)
+    );
+    let pinned_report: Value = serde_json::from_slice(&maintained.stdout).unwrap();
+    assert!(
+        pinned_report["wal"]["log_pages"].as_i64().unwrap()
+            > pinned_report["wal"]["checkpointed_pages"].as_i64().unwrap(),
+        "maintenance must report a reader-pinned WAL without deleting it"
+    );
+    pinned_reader.execute_batch("COMMIT").unwrap();
+    drop(pinned_reader);
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let after_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        after_count, original_count,
+        "maintenance must retain idle history"
+    );
+    let compressed: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE body_codec = 1 AND typeof(item_json) = 'blob'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        compressed > 0,
+        "large original bodies must use lossless compression"
+    );
+    let replies: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM responses WHERE body_codec = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        replies > 0,
+        "completed replies also need lossless compression"
+    );
+    let backup_path = std::fs::read_dir(database.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("pre-lossless-")
+        })
+        .expect("consistent migration backup");
+    let backup = rusqlite::Connection::open(&backup_path).unwrap();
+    let original: String = backup
+        .query_row(
+            "SELECT item_json FROM messages WHERE reference = 'm000003'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(original, legacy_body);
+    let integrity: String = backup
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+    drop(backup);
+    let maintenance: Value = serde_json::from_slice(&maintained.stdout).unwrap();
+    assert_eq!(maintenance["missing_messages"], 0);
+    let preserved_session: String = connection
+        .query_row("SELECT session_key FROM sessions LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    drop(connection);
+    let exported = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args(["context", "export", "--session", &preserved_session])
+        .output()
+        .unwrap();
+    assert!(
+        exported.status.success(),
+        "compressed export failed: {}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let exported: Value = serde_json::from_slice(&exported.stdout).unwrap();
+    for (actual, expected) in exported["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(first["input"].as_array().unwrap())
+    {
+        assert_eq!(
+            &actual["item"], expected,
+            "lossless export must match original input"
+        );
+    }
+
+    let engine = codex_mixin::context::ContextEngine::open(
+        codex_mixin::config::ContextSettings {
+            enabled: true,
+            protected_messages: 1,
+            protected_tokens: 1,
+            ..Default::default()
+        },
+        &database_path,
+    )
+    .unwrap();
+    let revision = engine
+        .status(&preserved_session, 100_000, true)
+        .unwrap()
+        .revision;
+    let search = engine
+        .execute_tool(
+            &preserved_session,
+            revision,
+            "mixin_context_search",
+            &json!({"query":"alpha word","limit":20}),
+            100_000,
+        )
+        .unwrap();
+    let search: Value = serde_json::from_str(&search.content).unwrap();
+    assert_eq!(search["complete"], true);
+    assert!(
+        search["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|hit| hit["reference"] == "m000003"),
+        "search must decode compressed originals"
+    );
+    let block = &exported["blocks"][0];
+    let compressed_tokens = engine
+        .status(&preserved_session, 100_000, true)
+        .unwrap()
+        .estimated_view_tokens;
+    let restored = engine
+        .execute_tool(
+            &preserved_session,
+            revision,
+            "mixin_context_decompress",
+            &json!({"block_id":block["id"],"apply":true}),
+            100_000,
+        )
+        .unwrap();
+    let restored_status = engine.status(&preserved_session, 100_000, true).unwrap();
+    assert!(
+        restored_status.estimated_view_tokens > compressed_tokens,
+        "decompression must restore original text from compressed SQLite bodies"
+    );
+    let refs: Value = serde_json::from_str(block["direct_refs"].as_str().unwrap()).unwrap();
+    engine.execute_tool(&preserved_session, restored.revision, "mixin_context_compress",
+        &json!({"ranges":[{"start":refs[0]["reference"],"end":refs.as_array().unwrap().last().unwrap()["reference"]}],
+            "topic":block["topic"],"summary":block["summary"]}), 100_000).unwrap();
+    drop(engine);
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let checksum: Vec<u8> = connection
+        .query_row(
+            "SELECT body_checksum FROM messages WHERE reference = 'm000003'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE messages SET body_checksum = X'00' WHERE reference = 'm000003'",
+            [],
+        )
+        .unwrap();
+    let corrupt = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args(["context", "export", "--session", &preserved_session])
+        .output()
+        .unwrap();
+    assert!(
+        !corrupt.status.success(),
+        "corrupt stored body must not be presented as valid history"
+    );
+    assert!(String::from_utf8_lossy(&corrupt.stderr).contains("checksum mismatch"));
+    connection
+        .execute(
+            "UPDATE messages SET body_checksum = ?1 WHERE reference = 'm000003'",
+            [checksum],
+        )
+        .unwrap();
+    drop(connection);
+
     // The test database is isolated. Tombstone only bodies covered by the
-    // current compressed view, as the retention worker does after six hours.
+    // current compressed view to reproduce data lost by the old retention worker.
     let connection = rusqlite::Connection::open(&database_path).unwrap();
     let session_key: String = connection
         .query_row(
@@ -4213,6 +4460,25 @@ async fn context_chained_request_continues_after_expired_compressed_bodies() {
         "the current compressed block should cover old bodies"
     );
     drop(connection);
+
+    let metadata = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args(["context", "export", "--compact", "--session", &session_key])
+        .output()
+        .unwrap();
+    assert!(
+        metadata.status.success(),
+        "console metadata must survive retention: {}",
+        String::from_utf8_lossy(&metadata.stderr)
+    );
+    let metadata: Value = serde_json::from_slice(&metadata.stdout).unwrap();
+    assert!(
+        metadata["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["expired"] == true)
+    );
 
     let mut chained = responses_request();
     chained["previous_response_id"] = json!(response_id);
@@ -4250,6 +4516,76 @@ async fn context_chained_request_continues_after_expired_compressed_bodies() {
     assert!(
         !continued.contains("alpha word"),
         "expired raw body leaked: {continued}"
+    );
+
+    // Editing the second half of a compressed block restores its unchanged
+    // prefix from the full replay, including a previously expired original.
+    let mut forked = first;
+    forked["input"][3]["content"][0]["text"] = json!("revised beta answer");
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-retention")
+        .json(&forked)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(
+        stream.contains("hello codex"),
+        "full replay failed: {stream}"
+    );
+
+    // Reproduce the persisted state left by the old fork path, including an
+    // expired first user message used by the console's title fallback.
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE messages SET item_json = '', expired_at = unixepoch()
+         WHERE session_key = ?1 AND reference IN ('m000002', 'm000003')",
+            [&session_key],
+        )
+        .unwrap();
+    drop(connection);
+    let stats = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args(["context", "stats", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        stats.status.success(),
+        "console statistics must survive expired originals: {}",
+        String::from_utf8_lossy(&stats.stderr)
+    );
+    let stats: Value = serde_json::from_slice(&stats.stdout).unwrap();
+    assert_eq!(stats["sessions"][0]["expired_messages"], 2);
+    let status = common::cli(database.path())
+        .env("CODEX_MIXIN_CONTEXT_DB", &database_path)
+        .args(["context", "status", "--session", &session_key, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "session status must survive expired originals: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["expired_messages"], 2);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-retention")
+        .json(&forked)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(
+        stream.contains("hello codex"),
+        "unchanged replay failed: {stream}"
     );
 }
 

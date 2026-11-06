@@ -93,16 +93,17 @@ pub async fn serve_on_listener(
     let (maintenance_shutdown, mut maintenance_stopped) = tokio::sync::watch::channel(false);
     let maintenance_task = state.gateway.context_engine().map(|engine| {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut delay = std::time::Duration::ZERO;
             loop {
                 tokio::select! {
                     _ = maintenance_stopped.changed() => break,
-                    _ = interval.tick() => {}
+                    _ = tokio::time::sleep(delay) => {}
                 }
                 let engine = Arc::clone(&engine);
+                delay = std::time::Duration::from_secs(300);
                 match tokio::task::spawn_blocking(move || engine.maintain_archive()).await {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(true)) => delay = std::time::Duration::from_secs(5),
+                    Ok(Ok(false)) => {}
                     Ok(Err(error)) => tracing::warn!(error = %format!("{error:#}"), "context maintenance deferred"),
                     Err(error) => tracing::warn!(%error, "context maintenance task failed"),
                 }

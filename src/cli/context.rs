@@ -24,6 +24,21 @@ struct ContextUpdate {
 
 pub(super) async fn run(command: ContextCommand) -> Result<()> {
     match command {
+        ContextCommand::Maintain {
+            batches,
+            compact,
+            json: json_output,
+        } => {
+            let settings = stored_settings()?;
+            let engine = std::sync::Arc::new(open_engine(&settings)?);
+            let report = engine.maintain(batches, compact)?;
+            if json_output {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            Ok(())
+        }
         ContextCommand::Config { command } => match command {
             ContextConfigCommand::Get { json: json_output } => config_get(json_output),
             ContextConfigCommand::Set {

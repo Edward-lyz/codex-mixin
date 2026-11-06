@@ -133,6 +133,8 @@ pub struct ContextStatus {
     pub enabled: bool,
     pub window_tokens: u64,
     pub estimated_view_tokens: u64,
+    #[serde(default)]
+    pub expired_messages: u64,
     pub growth_threshold_tokens: u64,
     pub pressure: f64,
     pub tiers: TierCounts,
@@ -198,6 +200,9 @@ pub struct SessionStats {
     /// Tokens the live blocks removed from the view.
     pub saved_tokens: u64,
     pub view_tokens: u64,
+    /// Unavailable originals referenced by this view; excluded from view_tokens.
+    #[serde(default)]
+    pub expired_messages: u64,
     pub tiers: TierCounts,
     pub cache: CacheStats,
 }
@@ -209,6 +214,8 @@ pub struct StatsTotals {
     pub compressions: u64,
     pub saved_tokens: u64,
     pub view_tokens: u64,
+    #[serde(default)]
+    pub expired_messages: u64,
     pub cache: CacheStats,
 }
 

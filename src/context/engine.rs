@@ -385,18 +385,40 @@ impl ContextEngine {
 
     /// Cleanup shares the turn's OS lock, so an active or cancelling request
     /// keeps all content until its last database operation has finished.
-    pub(crate) fn maintain_archive(self: &std::sync::Arc<Self>) -> Result<()> {
+    pub(crate) fn maintain_archive(self: &std::sync::Arc<Self>) -> Result<bool> {
         let sessions = self
             .lock()?
             .maintenance_candidates(super::store::MAINTENANCE_BATCH_SIZE)?;
+        let more_sessions = !sessions.is_empty();
         for session in sessions {
             let Some(_lease) = self.try_acquire_lease(&session)? else {
                 continue;
             };
             self.lock()?.maintain_session(&session)?;
         }
-        self.lock()?.reclaim_archive()?;
-        Ok(())
+        let more_pages = self.lock()?.reclaim_archive()?;
+        Ok(more_sessions || more_pages)
+    }
+
+    /// CLI maintenance uses the same leased, bounded migration as the worker.
+    pub fn maintain(self: &std::sync::Arc<Self>, batches: usize, compact: bool) -> Result<Value> {
+        anyhow::ensure!(
+            (1..=1000).contains(&batches),
+            "maintenance batches must be between 1 and 1000"
+        );
+        let mut pending = false;
+        for _ in 0..batches {
+            pending = self.maintain_archive()?;
+            if !pending {
+                break;
+            }
+        }
+        if compact {
+            self.lock()?.compact()?;
+        }
+        let mut report = self.lock()?.storage_stats()?;
+        report["pending"] = json!(pending);
+        Ok(report)
     }
 
     /// Replaces a local compaction checkpoint with the archived history plus
@@ -805,9 +827,19 @@ impl ContextEngine {
         for row in usage {
             // The console needs view size and tiers, not protection or candidate
             // ranges. Full status reparses the archive for those tool-only fields.
-            let (view_tokens, tiers) = {
+            let (view_tokens, tiers, expired_messages) = {
                 let store = self.lock()?;
                 let segments = store.segments(&row.session, row.revision)?;
+                let refs = segments
+                    .iter()
+                    .map(|segment| DirectRef {
+                        kind: segment.kind,
+                        reference: segment.reference.clone(),
+                        position: segment.position,
+                        end_position: segment.end_position,
+                    })
+                    .collect::<Vec<_>>();
+                let expired = store.expired_direct_refs(&row.session, &refs)?;
                 let mut view_tokens = estimate_text_tokens(GUIDANCE);
                 // Archive byte totals require reading historical message bodies;
                 // they are not part of this statistics response.
@@ -815,8 +847,12 @@ impl ContextEngine {
                 for segment in &segments {
                     // Statistics only need the total; release each rendered
                     // item before decoding the next archived message.
-                    for item in render_view(&store, &row.session, std::slice::from_ref(segment))? {
-                        view_tokens = view_tokens.saturating_add(estimate_item_tokens(&item));
+                    if !expired.contains(&segment.reference) {
+                        for item in
+                            render_view(&store, &row.session, std::slice::from_ref(segment))?
+                        {
+                            view_tokens = view_tokens.saturating_add(estimate_item_tokens(&item));
+                        }
                     }
                     match segment.kind {
                         SegmentKind::Message => tiers.messages += 1,
@@ -831,7 +867,7 @@ impl ContextEngine {
                         }
                     }
                 }
-                (view_tokens, tiers)
+                (view_tokens, tiers, expired.len() as u64)
             };
             let title = match displays.remove(&row.session) {
                 Some(title) => Some(title),
@@ -861,6 +897,7 @@ impl ContextEngine {
                 compressions: row.compressions,
                 saved_tokens: row.saved_tokens,
                 view_tokens,
+                expired_messages,
                 tiers,
                 cache: row.cache,
             });
@@ -874,6 +911,9 @@ impl ContextEngine {
             totals.compressions = totals.compressions.saturating_add(session.compressions);
             totals.saved_tokens = totals.saved_tokens.saturating_add(session.saved_tokens);
             totals.view_tokens = totals.view_tokens.saturating_add(session.view_tokens);
+            totals.expired_messages = totals
+                .expired_messages
+                .saturating_add(session.expired_messages);
             totals.cache.merge(&session.cache);
         }
         Ok(ContextStats {
@@ -1362,8 +1402,24 @@ fn status(
     settings: &crate::config::ContextSettings,
 ) -> Result<ContextStatus> {
     let segments = store.segments(session, revision)?;
-    let rendered = render_view(store, session, &segments)?;
-    let protection = compute_protection(&segments, &rendered, settings);
+    let refs = segments
+        .iter()
+        .map(|segment| DirectRef {
+            kind: segment.kind,
+            reference: segment.reference.clone(),
+            position: segment.position,
+            end_position: segment.end_position,
+        })
+        .collect::<Vec<_>>();
+    let expired = store.expired_direct_refs(session, &refs)?;
+    let available = segments
+        .iter()
+        .filter(|segment| !expired.contains(&segment.reference))
+        .cloned()
+        .collect::<Vec<_>>();
+    let rendered = render_view(store, session, &available)?;
+    let mut protection = compute_protection(&available, &rendered, settings);
+    protection.protected.extend(expired.iter().cloned());
     let mut estimated = 0u64;
     for item in &rendered {
         estimated = estimated.saturating_add(estimate_item_tokens(item));
@@ -1378,6 +1434,7 @@ fn status(
         enabled: settings.enabled,
         window_tokens,
         estimated_view_tokens: estimated,
+        expired_messages: expired.len() as u64,
         growth_threshold_tokens: settings.growth_threshold_tokens,
         pressure: if window_tokens == 0 {
             0.0
