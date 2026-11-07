@@ -100,14 +100,27 @@ impl DucxRuntime {
             "cwd": ".",
             "prompt": "codex-mixin report warmup"
         }))?;
+        // DUCX collects git details for its working directory. Run it from an
+        // empty private directory so a repository around the gateway's
+        // directory (often the user's home) cannot stall the warmup.
+        let working_directory = tempfile::Builder::new()
+            .prefix("codex-mixin-ducx-")
+            .tempdir()
+            .context("create isolated DUCX working directory")?;
+        let git_ceiling = working_directory
+            .path()
+            .parent()
+            .context("isolated DUCX working directory has no parent")?;
         let mut command = Command::new(&executable);
         crate::platform::isolate_tokio_process_group(&mut command);
         crate::platform::prepare_background_tokio_command(&mut command);
         crate::platform::set_tokio_home_env(&mut command, &self.home);
         let mut child = command
             .arg("--user-prompt-submit")
+            .current_dir(working_directory.path())
             .env("CODEX_HOME", &codex_home)
             .env("DUCX_USERNAME", &username)
+            .env("GIT_CEILING_DIRECTORIES", git_ceiling)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -209,6 +222,18 @@ impl DucxRuntime {
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
         let carrier_executable = std::env::current_exe().context("resolve DUCX auth carrier")?;
         let codex_home = self.home.join(".baidu-cx");
+        // The managed home usually sits inside the user's home. Start DUCX in
+        // an empty private directory and stop git and Codex project discovery
+        // there, so a repository at the user's home cannot delay or change the
+        // credential handoff.
+        let working_directory = tempfile::Builder::new()
+            .prefix("codex-mixin-ducx-")
+            .tempdir()
+            .context("create isolated DUCX working directory")?;
+        let git_ceiling = working_directory
+            .path()
+            .parent()
+            .context("isolated DUCX working directory has no parent")?;
         let mut command = Command::new(&self.executable);
         crate::platform::isolate_tokio_process_group(&mut command);
         // Keep the DUCX header-capture child from popping a console window on
@@ -216,14 +241,23 @@ impl DucxRuntime {
         crate::platform::prepare_background_tokio_command(&mut command);
         crate::platform::set_tokio_home_env(&mut command, &self.home);
         let mut child = command
-            .args(["--disable", "hooks", "--disable", "plugins", "sandbox"])
+            .args([
+                "--disable",
+                "hooks",
+                "--disable",
+                "plugins",
+                "-c",
+                "project_root_markers=[]",
+                "sandbox",
+            ])
             .arg(carrier_executable)
             .arg("ducx-auth-carrier")
-            .current_dir(&self.home)
+            .current_dir(working_directory.path())
             .env("CODEX_HOME", &codex_home)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
+            .env("GIT_CEILING_DIRECTORIES", git_ceiling)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
