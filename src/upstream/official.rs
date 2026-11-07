@@ -5,7 +5,9 @@ use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 
 use super::UpstreamAccess;
+use crate::config::ensure_compaction_secret;
 use crate::error::GatewayError;
+use crate::protocol::compaction;
 use crate::protocol::convert::is_gateway_thinking;
 
 /// Headers the official backend understands from the Codex client. Kept at
@@ -113,7 +115,7 @@ impl UpstreamAccess {
 struct OfficialResponsesBody(Value);
 
 impl OfficialResponsesBody {
-    fn new(body: Value) -> Result<Self, GatewayError> {
+    fn new(mut body: Value) -> Result<Self, GatewayError> {
         if let Some(object) = body.as_object() {
             if object.contains_key("top_k") {
                 return Err(GatewayError::BadRequest("the official Responses API does not support topK; disable topK or choose a provider that supports it".to_owned()));
@@ -126,6 +128,7 @@ impl OfficialResponsesBody {
                 }
             }
         }
+        materialize_local_compactions(&mut body)?;
         Ok(Self(body))
     }
 }
@@ -189,7 +192,47 @@ pub(crate) fn normalize_official_responses_body(mut body: Value) -> Result<Value
             }
         }
     }
+    materialize_local_compactions(&mut body)?;
     Ok(body)
+}
+
+/// The official endpoint cannot read Mixin's encrypted local summaries. Replace
+/// only tokens Mixin owns with their provider-visible text; official compaction
+/// tokens remain untouched so same-provider continuation keeps its native path.
+fn materialize_local_compactions(body: &mut Value) -> Result<(), GatewayError> {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    let has_local = input.iter().any(|item| {
+        item.get("type").and_then(Value::as_str) == Some("compaction")
+            && item
+                .get("encrypted_content")
+                .and_then(Value::as_str)
+                .is_some_and(compaction::is_local_token)
+    });
+    if !has_local {
+        return Ok(());
+    }
+    let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
+    for item in input {
+        let Some(token) = item
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .filter(|token| compaction::is_local_token(token))
+        else {
+            continue;
+        };
+        let summary = compaction::decode(token, &secret)?;
+        *item = json!({
+            "type": "message",
+            "role": "developer",
+            "content": [{
+                "type": "input_text",
+                "text": compaction::summary_text(&summary),
+            }],
+        });
+    }
+    Ok(())
 }
 
 fn validate_agent_message_content(item: &Value) -> Result<(), GatewayError> {

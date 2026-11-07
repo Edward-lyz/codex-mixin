@@ -551,8 +551,30 @@ async fn prepare_provider_body(
             "rewrote named function outputs without call ids as user messages"
         );
     }
-    // Provider converters need only the authenticated token. Response item metadata is
-    // meaningful to Codex but must not affect a custom provider continuation.
+    normalize_provider_compaction_items(&mut body);
+    let (body, image_stats) = normalize_provider_images_blocking(body).await?;
+    if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
+        tracing::info!(
+            normalized_images = image_stats.normalized_images,
+            omitted_tool_images = image_stats.omitted_tool_images,
+            saved_image_bytes = image_stats.saved_bytes,
+            "normalized provider image payloads for cache-stable replay"
+        );
+    }
+    Ok(body)
+}
+
+fn normalize_provider_compaction_items(body: &mut serde_json::Value) {
+    let omitted_compactions = make_foreign_compaction_portable(body);
+    if omitted_compactions > 0 {
+        tracing::warn!(
+            omitted_compactions,
+            "replaced provider-foreign compaction checkpoints with portable context notices"
+        );
+    }
+    // Provider converters need only the authenticated token. Response item
+    // metadata is meaningful to Codex but must not affect a custom provider
+    // continuation.
     if let Some(items) = body
         .get_mut("input")
         .and_then(serde_json::Value::as_array_mut)
@@ -570,16 +592,40 @@ async fn prepare_provider_body(
             }
         }
     }
-    let (body, image_stats) = normalize_provider_images_blocking(body).await?;
-    if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
-        tracing::info!(
-            normalized_images = image_stats.normalized_images,
-            omitted_tool_images = image_stats.omitted_tool_images,
-            saved_image_bytes = image_stats.saved_bytes,
-            "normalized provider image payloads for cache-stable replay"
-        );
+}
+
+fn make_foreign_compaction_portable(body: &mut serde_json::Value) -> usize {
+    const NOTICE: &str = "[Compaction checkpoint from a different provider was omitted because its opaque state cannot be transferred. Continue from the messages that remain visible.]";
+    let Some(items) = body
+        .get_mut("input")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return 0;
+    };
+    let mut rewritten = 0;
+    for item in items {
+        if item.get("type").and_then(serde_json::Value::as_str) != Some("compaction") {
+            continue;
+        }
+        let Some(token) = item
+            .get("encrypted_content")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        if token.starts_with(TOKEN_PREFIX)
+            || token.starts_with(crate::context::checkpoint::CHECKPOINT_PREFIX)
+        {
+            continue;
+        }
+        *item = serde_json::json!({
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": NOTICE}],
+        });
+        rewritten += 1;
     }
-    Ok(body)
+    rewritten
 }
 
 fn rewrite_named_unpaired_function_outputs(body: &mut serde_json::Value) -> usize {

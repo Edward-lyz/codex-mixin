@@ -6594,7 +6594,7 @@ async fn locally_handles_v2_compaction_trigger_for_custom_responses() {
 }
 
 #[tokio::test]
-async fn locally_compacts_custom_provider_and_omits_tool_payloads() {
+async fn locally_compacts_custom_provider_and_replays_across_models() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let client = reqwest::Client::new();
@@ -6633,7 +6633,7 @@ async fn locally_compacts_custom_provider_and_omits_tool_payloads() {
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
         .json(&json!({
-            "model": "Claude Sonnet 5-custom",
+            "model": "DeepSeek-V4-Flash-custom",
             "stream": true,
             "input": [
                 {"type":"compaction","encrypted_content":token},
@@ -6645,12 +6645,88 @@ async fn locally_compacts_custom_provider_and_omits_tool_payloads() {
         .unwrap();
     assert_eq!(replay.status(), StatusCode::OK);
     let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["model"], "DeepSeek-V4-Flash");
     let compacted = request["system"][0]["text"].as_str().unwrap();
     assert!(compacted.contains("fix the parser"));
     assert!(compacted.contains("The parser fix is complete."));
     assert!(!compacted.contains("cargo test"));
     assert!(!compacted.contains("all tests passed"));
     assert!(!compacted.contains("sensitive reasoning"));
+}
+
+#[tokio::test]
+async fn materializes_local_compaction_before_switching_to_official_model() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (
+        official_url,
+        official_requests,
+        _auth_headers,
+        _account_headers,
+        _official_websocket_connections,
+        _official_forwarded_headers,
+    ) = spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let codex_home = tempfile::tempdir().unwrap();
+    let auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    config.codex_auth_path = auth_path;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let compacted: Value = client
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "input": [
+                {"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"portable local context"}
+                ]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let token = compacted["output"][0]["encrypted_content"].clone();
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gpt-6.1-sol",
+            "stream": true,
+            "input": [
+                {"type":"compaction","encrypted_content":token},
+                {"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"continue officially"}
+                ]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let requests = official_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let input = requests[0]["input"].as_array().unwrap();
+    assert_eq!(input[0]["type"], "message");
+    assert_eq!(input[0]["role"], "developer");
+    assert!(
+        input[0]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("portable local context")
+    );
+    assert_eq!(input[1]["role"], "user");
 }
 
 #[tokio::test]
@@ -8112,6 +8188,66 @@ async fn switches_between_official_and_custom_models_on_one_websocket() {
                         == Some("true")
             })
     );
+}
+
+#[tokio::test]
+async fn websocket_switches_from_opaque_official_compaction_to_custom_model() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "Claude Sonnet 5-custom",
+                "instructions": "Continue the task.",
+                "input": [
+                    {
+                        "type": "compaction",
+                        "id": "cmp_official",
+                        "created_by": "openai",
+                        "encrypted_content": "official-opaque-token"
+                    },
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "continue after switching models"}]
+                    }
+                ]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(
+        frames.contains("\"type\":\"response.completed\""),
+        "{frames}"
+    );
+
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let upstream = requests[0].to_string();
+    assert!(
+        !upstream.contains("official-opaque-token"),
+        "the provider-foreign opaque checkpoint was replayed: {upstream}"
+    );
+    assert!(
+        upstream.contains(
+            "Compaction checkpoint from a different provider was omitted because its opaque state cannot be transferred"
+        ),
+        "the switch must make the context degradation explicit: {upstream}"
+    );
+    assert!(upstream.contains("continue after switching models"));
 }
 
 #[tokio::test]
