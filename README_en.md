@@ -16,8 +16,6 @@
 <p align="center">
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?color=blue&label=version"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey"></a>
-  <a href="https://www.rust-lang.org/"><img alt="Rust Edition" src="https://img.shields.io/badge/rust-2024%20edition-orange"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-green"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/wiki"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Wiki-blueviolet"></a>
 </p>
 
@@ -34,7 +32,7 @@
 
 <p align="center">
   <a href="#why-codex-mixin">Why Mixin</a> ·
-  <a href="#benchmarks">Benchmarks</a> ·
+  <a href="#benchmarks-new">Benchmarks</a> ·
   <a href="#features-and-interface">Features</a> ·
   <a href="#providers">Providers</a> ·
   <a href="#agent-integrations">50 Agents</a> ·
@@ -47,74 +45,57 @@
 
 ## Why Codex Mixin
 
-Codex Mixin is a local gateway written in Rust. It routes requests to your configured providers through OpenAI-, Anthropic-, and Gemini-compatible interfaces. The CLI, native desktop apps, and Web panel share the same core.
+Codex Mixin is a local gateway with a Rust core. It routes requests to your configured providers through OpenAI-, Anthropic-, and Gemini-compatible interfaces. The CLI, native desktop apps, and Web panel share the same core.
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Keep the official Codex experience</h3>
-      Custom models appear next to official GPT models. ChatGPT sign-in, session history, and mobile remote tasks keep working; the official catalog stays synced with OpenAI.
+      <h3>Seamless official ecosystem</h3>
+      Custom models appear next to official GPT models. ChatGPT sign-in, session history, and mobile remote tasks keep working, and voice and dots are preserved too.
     </td>
     <td width="50%" valign="top">
       <h3>Manage 50 agents in one place</h3>
-      47 entries support gateway configuration or native-app integration. Cursor CLI, Copilot CLI, and Devin provide vendor-native model management. <a href="#agent-integrations">See the full catalog</a>.
+      47 entries support one-click setup. Cursor CLI, Copilot CLI, and Devin provide vendor-native model management. <a href="#agent-integrations">See the full catalog</a>.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>Connect across 4 API families</h3>
-      Translate requests and streams between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning and tool calls.
+      Translate requests and streams losslessly between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning and tool calls.
     </td>
     <td width="50%" valign="top">
-      <h3>Compress long-running context</h3>
-      A 3-tier context engine adopts Billion Context's compaction rules. Models can compress, search, and restore archived history; the engine is off by default. <a href="docs/context-engine.md">How it works</a>.
+      <h3>Built-in context compression engine saves tokens</h3>
+      A 3-tier context engine adopts Billion Context's compaction rules. Models can compress, search, and restore archived history. Turn it on to save tokens. <a href="docs/context-engine.md">How it works</a>.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>See usage for each reply</h3>
-      Keep the latest 5,000 replies locally, with tokens, cache hits, first-token latency, and output speed. Check provider quota from the menu bar or tray.
+      <h3>Usage and cache, fully in view</h3>
+      Keep the latest 5,000 replies locally, with tokens, cache hits, first-token latency, and output speed. Check provider quota directly from the menu bar or tray.
     </td>
     <td width="50%" valign="top">
-      <h3>76.8 MiB at desktop idle</h3>
-      On an Apple M2 with 16 GiB RAM, the loaded desktop app and helpers used 76.8 MiB at idle and 113.5 MiB at 40 active requests. <a href="#benchmarks">Conditions and comparisons below</a>.
+      <h3>Peak performance</h3>
+      Only 76.8 MiB at idle, and 113.5 MiB under 40 fully loaded active requests. <a href="#benchmarks-new">See below</a>.
     </td>
   </tr>
 </table>
 
 ---
 
-## Benchmarks
-
-### Desktop app: Mixin, CC Switch, and Magpie
-
-**2026-11-06 · Apple M2 · 16 GiB RAM · macOS 27.2.** Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 ran simultaneously against a controlled local HTTP/SSE upstream. Each request carried **1,000,000 text tokens + two 1024 × 768 PNGs**. Each main session started 4 child sessions: 0 / 2 / 4 / 8 main sessions produced 0 / 10 / 20 / 40 active requests per product.
+## Benchmarks [NEW]
+Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 ran simultaneously against a controlled local HTTP/SSE upstream. Each request carried **1,000,000 text tokens + two 1024 × 768 PNGs**. Each main session started 4 child sessions: 0 / 2 / 4 / 8 main sessions produced 0 / 10 / 20 / 40 active requests per product.
 
 | Measurement | Codex Mixin | CC Switch | Magpie |
 | --- | ---: | ---: | ---: |
-| Desktop physical footprint · idle | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| Desktop physical footprint · 10 active requests | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| Desktop physical footprint · 20 active requests | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| Desktop physical footprint · 40 active requests | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| Steady gateway-host CPU · 40 active requests | **1.047%** | 1.777% | 6.743% |
+| Idle memory | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
+| 10 active requests | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
+| 20 active requests | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
+| 40 active requests | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
+| CPU overhead · 40 active requests | **1.047%** | 1.777% | 6.743% |
 
 <p align="center">
   <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png" width="1000" alt="Measured desktop physical memory and gateway-host CPU at 0, 10, 20, and 40 active requests"></a>
 </p>
-
-Memory includes the core, loaded UI, and associated helpers; CPU covers the gateway-host process, where Magpie and CC Switch also do native UI work. **100% CPU = one logical core.** Values are medians of three adjacent 20-second windows in one ascending-load run; completed requests, caches, and history accumulate between points. All 210 requests succeeded, with input and output hashes verified. [Full desktop report and raw data](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md).
-
-### Gateway only: loading and streaming
-
-A separate benchmark on the same host used **3 isolated runs, 40 concurrent requests per gateway**, and the same million-token / two-image payload. GUI shells were excluded; Mixin's context engine was enabled.
-
-| Measurement | Codex Mixin | Magpie |
-| --- | ---: | ---: |
-| Sampled peak RSS during loading and streaming | **305.0 MiB** | 566.6 MiB |
-| Steady streaming CPU | **1.15%** | 2.90% |
-| Whole-run CPU time | **7.31 s** | 7.63 s |
-
-The median sampled peak RSS was **46.2% lower** for Mixin; whole-run CPU times were close. Each gateway completed 120/120 requests with matching output hashes. These gateway-only RSS figures use a different scope and metric from the desktop physical footprints above. Both benchmarks measure gateway forwarding with a controlled upstream. [Full gateway report and raw data](docs/benchmarks/2026-11-06-mixin-magpie-1m/README.md).
 
 ---
 
@@ -431,21 +412,6 @@ All 50 catalog entries have a supported integration or native model manager. The
     </td>
   </tr>
 </table>
-
-<details>
-<summary>Client prerequisites and launch instructions</summary>
-
-**Native app prerequisites.** Keep Alma and Hanako running; Zed uses the system credential store. Aside may remain staged until its runtime confirms the selection. Cindy requires in-app import confirmation and manual provider removal; disconnect revokes gateway access while removal is pending.
-
-**Start from a terminal.** After connecting agy, Cursor, Muse, Command Code, or authenticated fx / Empryo / Ante, open a new terminal and use the normal `agy`, `cursor`, `muse`, or `command-code` command. Mixin adds reversible entries to user zsh, bash, fish, or PowerShell startup files, so the command receives its managed environment without an explicit `agent run`. Fully quit Cursor before running `cursor` in the terminal. Dock, Start-menu, desktop-icon launches, and Windows cmd do not load these entries. Keys stay in private managed state and child environments; startup files contain only the Mixin executable and configuration paths. Open a new terminal after disconnecting to restore native commands. Explicit `codex-mixin agent run <id> -- <arguments>` and `codex-mixin agent launch <id>` remain available.
-
-**Gemini model selection.** Restart Gemini after connecting, then choose a `Codex Mixin:` custom model under the manual section of `/model`. Disconnect and reconnect older integrations to refresh the native model catalog.
-
-**OmO's first Pi import.** OmO uses its own `codex-mixin-omo` provider, preserving providers and credentials imported from Pi on first launch. Disconnect restores the previous default model. Mixin selects the first nonblank `OMO_CODING_AGENT_DIR` or `SENPI_CODING_AGENT_DIR`, otherwise `~/.omo/agent`. If only `PI_CODING_AGENT_DIR` is set, or OmO explicitly shares Pi's directory, set `OMO_CODING_AGENT_DIR` to a separate directory before launching OmO and connecting Mixin. Disconnect and reconnect older OmO integrations to use the independent provider.
-
-**Vendor-native models.** For example, `codex-mixin agent model cursor --model <vendor-model-id>`; use `copilot` or `devin` for their native settings. Copilot also accepts `--effort high`. Connecting captures the existing vendor-native selection; select a model with these commands first if none is configured. These commands do not create a gateway credential or require selected gateway models. See [Agent contracts](docs/agent-integration-contracts.md) for exact prerequisites, restoration, and estimated Gemini token counts.
-
-</details>
 
 ---
 

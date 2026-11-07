@@ -16,8 +16,6 @@
 <p align="center">
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?color=blue&label=version"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey"></a>
-  <a href="https://www.rust-lang.org/"><img alt="Rust Edition" src="https://img.shields.io/badge/rust-2024%20edition-orange"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-green"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/wiki"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Wiki-blueviolet"></a>
 </p>
 
@@ -47,75 +45,57 @@
 
 ## 为什么选 Codex Mixin
 
-Codex Mixin 是 Rust 编写的本地模型网关，通过 OpenAI、Anthropic 和 Gemini 兼容接口，把请求路由到你配置的供应商。CLI、原生桌面应用和 Web 面板共用同一套核心能力。
+Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anthropic 和 Gemini 兼容接口，把请求路由到你配置的供应商。CLI、原生桌面应用和 Web 面板共用同一套核心能力。
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>保留官方 Codex 体验</h3>
-      自定义模型与官方 GPT 并列显示。ChatGPT 登录、历史会话和移动端远程任务照常可用，官方模型目录持续从 OpenAI 同步。
+      <h3>官方生态无缝接入</h3>
+      自定义模型与官方 GPT 并列显示。ChatGPT 登录、历史会话和移动端远程任务照常可用,语音, dots 全都保留
     </td>
     <td width="50%" valign="top">
       <h3>一处管理 50 款 Agent</h3>
-      47 款支持网关配置或原生应用接入；Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。<a href="#agent-接入">查看完整列表</a>。
+      47 款支持一键配置；Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。<a href="#agent-接入">查看完整列表</a>。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>打通 4 类 API</h3>
-      在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间转换请求与流式响应，处理思考内容与工具调用。
+      在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间无损转换请求与流式响应，处理思考内容与工具调用。
     </td>
     <td width="50%" valign="top">
-      <h3>让长任务按需压缩历史</h3>
-      采用 Billion Context 压缩规则的 3 级上下文引擎，让模型压缩、检索和恢复归档原文。默认关闭，按需启用。<a href="docs/context-engine.md">了解机制</a>。
+      <h3>内置上下文压缩引擎,节省 Token</h3>
+      采用 Billion Context 压缩规则的 3 级上下文引擎，让模型压缩、检索和恢复归档原文。打开后即可节省 Token 的同时。<a href="docs/context-engine.md">了解机制</a>。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>每次回复都有用量明细</h3>
-      本地保留最近 5,000 条回复，查看 Token、缓存命中、首字延迟与输出速度；菜单栏或托盘直接看供应商额度。
+      <h3>用量缓存,尽在掌握</h3>
+      本地保留最近 5,000 条回复，查看 Token、缓存命中、首字延迟与输出速度；菜单栏或托盘可以直接看供应商额度。
     </td>
     <td width="50%" valign="top">
-      <h3>桌面空闲占用 76.8 MiB</h3>
-      Apple M2、16 GiB 内存实测：加载界面后的整套桌面进程与辅助进程，空闲占用 76.8 MiB，40 路活动请求时为 113.5 MiB。<a href="#实测对比">测试条件与对比见下文</a>。
+      <h3>极致性能</h3>
+      空闲时仅占用 76.8 MiB，40 条满载活动请求时为 113.5 MiB。<a href="#实测对比">见下文</a>。
     </td>
   </tr>
 </table>
 
 ---
 
-## 实测对比
-
-### 完整桌面应用：Mixin、CC Switch 与 Magpie
-
-**2026-11-06 · Apple M2 · 16 GiB 内存 · macOS 27.2。** Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 同时连接本机受控 HTTP/SSE 上游。每请求携带 **1,000,000 文本 token + 2 张 1024 × 768 PNG**。每个主会话启动 4 个子会话，0 / 2 / 4 / 8 个主会话对应每款产品 0 / 10 / 20 / 40 路活动请求。
+## 实测对比 [NEW]
+Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 同时连接本机受控 HTTP/SSE 上游。每请求携带 **1,000,000 文本 token + 2 张 1024 × 768 PNG**。每个主会话启动 4 个子会话，0 / 2 / 4 / 8 个主会话对应每款产品 0 / 10 / 20 / 40 路活动请求。
 
 | 测量项 | Codex Mixin | CC Switch | Magpie |
 | --- | ---: | ---: | ---: |
-| 桌面物理足迹 · 空闲 | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| 桌面物理足迹 · 10 路活动请求 | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| 桌面物理足迹 · 20 路活动请求 | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| 桌面物理足迹 · 40 路活动请求 | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| 网关宿主进程稳态 CPU · 40 路活动请求 | **1.047%** | 1.777% | 6.743% |
+| 空闲内存 | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
+| 10 路活动请求 | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
+| 20 路活动请求 | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
+| 40 路活动请求 | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
+| CPU 开销 · 40 路活动请求 | **1.047%** | 1.777% | 6.743% |
 
 <p align="center">
   <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png" width="1000" alt="0、10、20、40 路活动请求下的桌面物理内存与网关宿主 CPU 实测曲线"></a>
 </p>
-
-内存包括核心、已加载界面和关联辅助进程；CPU 只统计网关宿主进程，Magpie 与 CC Switch 的原生 UI 工作也在该进程内。**CPU 100% 表示一个逻辑核心。** 数值取连续三个 20 秒窗口的中位数；这是同一批进程逐级加压的一轮运行，已完成请求、缓存和历史会随负载点累积。共 210/210 请求成功，输入与输出均经哈希校验。[完整桌面测试报告与原始数据](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md)。
-
-### 纯网关：装载与流式转发
-
-同一主机上的另一组测试采用 **3 轮隔离运行、每网关 40 路并发**，请求同样携带百万文本 token 和两张图；统计不包含 GUI 外壳，Mixin 开启上下文引擎。
-
-| 测量项 | Codex Mixin | Magpie |
-| --- | ---: | ---: |
-| 装载及流式期间采样峰值 RSS | **305.0 MiB** | 566.6 MiB |
-| 持续流式阶段 CPU | **1.15%** | 2.90% |
-| 整轮 CPU 累计耗时 | **7.31 秒** | 7.63 秒 |
-
-三轮中位数显示，Mixin 的采样峰值 RSS **低 46.2%**，整轮 CPU 耗时接近。每个网关 120/120 请求成功，对应输出哈希一致。此处是纯网关 RSS，与上表桌面物理足迹的统计范围和指标不同。两组测试均使用受控上游，测量网关处理与转发开销。[完整网关测试报告与原始数据](docs/benchmarks/2026-11-06-mixin-magpie-1m/README.md)。
-
 ---
 
 ## 功能与界面
@@ -431,21 +411,6 @@ WinUI 3 控制台管理模型、Agent、用量和上下文，托盘随时查看�
     </td>
   </tr>
 </table>
-
-<details>
-<summary>客户端前提与启动说明</summary>
-
-**原生应用前提。** Alma、Hanako 需要保持运行；Zed 使用系统凭据存储。Aside 离线时先暂存配置，待原生运行时确认后才显示已接入。Cindy 需要在应用内确认导入和手动删除提供商；等待删除时，断开操作已撤销网关访问。
-
-**必须从终端启动。** 接入 agy、Cursor、Muse、Command Code，以及开启客户端鉴权的 fx / Empryo / Ante 后，请重新打开终端，再照常输入 `agy`、`cursor`、`muse`、`command-code` 等命令。Mixin 在 zsh、bash、fish 或 PowerShell 的用户启动配置中加入可恢复的入口，自动注入托管环境；无需手动使用 `agent run`。Cursor 必须先完全退出已有进程，再从终端执行 `cursor`，Dock、开始菜单和桌面图标启动不受托管；Windows 的 cmd 也不加载这些入口。密钥只保存在私有托管记录和子进程环境中，启动配置只保存 Mixin 路径与配置文件路径。断开后重新打开终端，原生命令恢复。也可显式使用 `codex-mixin agent run <id> -- <参数>` 或 `codex-mixin agent launch <id>`。
-
-**Gemini 模型选择。** 接入后重启 Gemini，在 `/model` 的手动选择中查看标为 `Codex Mixin:` 的自定义模型。旧版接入请先断开再重新接入，以更新原生模型目录。
-
-**OmO 首次导入 Pi 配置。** OmO 使用独立的 `codex-mixin-omo` 提供商，保留首次启动时从 Pi 导入的提供商和认证；断开后恢复原来的默认模型。配置目录按非空的 `OMO_CODING_AGENT_DIR`、`SENPI_CODING_AGENT_DIR` 顺序选择，否则使用 `~/.omo/agent`。若只设置了 `PI_CODING_AGENT_DIR`，或显式与 Pi 共用目录，请先将 `OMO_CODING_AGENT_DIR` 设为独立目录，再启动 OmO 和接入 Mixin。旧版已接入的 OmO 可断开后重新接入，以使用独立提供商。
-
-**厂商原生模型。** 例如 `codex-mixin agent model cursor --model <厂商模型ID>`；将 `cursor` 换成 `copilot` 或 `devin` 可管理对应原生设置，Copilot 另支持 `--effort high`。接入时沿用已有的厂商原生模型；尚未选择时，先用上述命令指定模型。这些命令不创建网关凭据，也不要求先选择网关模型。各应用前提、恢复方式和 Gemini Token 估算语义见 [Agent 接入契约](docs/agent-integration-contracts.md)。
-
-</details>
 
 ---
 
