@@ -23,15 +23,17 @@ use codex_mixin::provider::ProviderDefinition;
 
 mod installation;
 mod queue;
+mod skill;
 mod transport;
 
 pub(super) use installation::{reporting_enabled, sync_installation_at};
 use transport::{post_json, post_transcript, report_with_provider};
 
 /// (Codex hooks.json event name, our `--event` argument value).
-const REPORT_EVENTS: [(&str, &str); 3] = [
+const REPORT_EVENTS: [(&str, &str); 4] = [
     ("SessionStart", "session-start"),
     ("UserPromptSubmit", "user-prompt-submit"),
+    ("PostToolUse", "post-tool-use"),
     ("Stop", "stop"),
 ];
 
@@ -103,6 +105,16 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     std::io::stdin()
         .read_to_end(&mut hook_body)
         .context("read Codex report hook input")?;
+    // PostToolUse runs after every tool call. Only calls that use a skill are
+    // reported, so the others return before any logging or model lookup.
+    let skill_use = if event == "post-tool-use" {
+        let Some(skill_use) = skill::detect(&hook_body)? else {
+            return Ok(());
+        };
+        Some(skill_use)
+    } else {
+        None
+    };
     tracing::info!(
         event,
         hook_bytes = hook_body.len(),
@@ -136,29 +148,99 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     if event == "model-switch" {
         return Ok(());
     }
+    let context = ReportContext {
+        event,
+        provider_id: &provider.id,
+        model: &model,
+        session_id: &session_id,
+    };
     if event == "session-start" {
-        report_session_start(ReportContext {
-            event,
-            provider_id: &provider.id,
-            model: &model,
-            session_id: &session_id,
-        });
+        report_session_start(context);
         return Ok(());
+    }
+    if let Some(skill_use) = skill_use {
+        return report_skill_use(context, &payload, skill_use).await;
     }
     ensure!(
         matches!(event, "user-prompt-submit" | "stop"),
         "unsupported Codex report hook event {event}"
     );
-    persist_and_drain_event(
-        ReportContext {
-            event,
-            provider_id: &provider.id,
-            model: &model,
-            session_id: &session_id,
-        },
-        &hook_body,
-    )
+    persist_and_drain_event(context, &hook_body).await
+}
+
+/// Queues the `upload/skill` record for the first use of a skill in a turn.
+///
+/// DUCX reports a skill once per session turn. The marker file is created
+/// atomically, so parallel or repeated tool calls that use the same skill
+/// queue a single record.
+async fn report_skill_use(
+    context: ReportContext<'_>,
+    payload: &Value,
+    skill_use: skill::SkillUse,
+) -> anyhow::Result<()> {
+    validate_session_id(context.session_id)?;
+    let turn_id = payload.get("turn_id").and_then(Value::as_str);
+    let marks = report_state_dir().join("ducx-report-skill-marks");
+    let identity = format!(
+        "{}\0{}\0{}",
+        context.session_id,
+        turn_id.unwrap_or_default(),
+        skill_use.name
+    );
+    let marker = marks.join(
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes())
+            .simple()
+            .to_string(),
+    );
+    let first_use = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+        std::fs::create_dir_all(&marks)
+            .with_context(|| format!("create DUCX skill marker directory {}", marks.display()))?;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)
+        {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => {
+                Err(error).with_context(|| format!("create DUCX skill marker {}", marker.display()))
+            }
+        }
+    })
     .await
+    .context("join DUCX skill marker write")??;
+    tracing::info!(
+        provider = context.provider_id,
+        session_id = context.session_id,
+        skill = %skill_use.name,
+        trigger_kind = skill_use.trigger_kind,
+        first_use,
+        "DUCX skill use detected"
+    );
+    if !first_use {
+        return Ok(());
+    }
+    let mut body = json!({
+        "session_id": context.session_id,
+        "platform": "",
+        "skill_name": skill_use.name,
+        "execution_mode": "auto",
+        "trigger_kind": skill_use.trigger_kind,
+        "os": codex_mixin::platform::os_name(),
+        "version": "",
+        "model": context.model,
+    });
+    if let Some(turn_id) = turn_id {
+        body["turn_id"] = json!(turn_id);
+    }
+    if let Some(version) = skill_use.version {
+        body["skill_version"] = json!(version);
+    }
+    if let Some(content) = skill_use.content {
+        body["skill_content"] = json!(content);
+    }
+    let hook_body = serde_json::to_vec(&body).context("serialize DUCX skill report")?;
+    persist_and_drain_event(context, &hook_body).await
 }
 
 async fn persist_and_drain_event(
@@ -601,6 +683,16 @@ async fn report_ducx_event(
             Ok(())
         }
         "stop" => report_stop(context, hook_body, token, client).await,
+        "post-tool-use" => {
+            let mut payload: Value =
+                serde_json::from_slice(hook_body).context("parse queued DUCX skill report")?;
+            let body = payload
+                .as_object_mut()
+                .context("queued DUCX skill report is not an object")?;
+            body.remove("model");
+            body.insert("username".to_owned(), Value::String(username.to_owned()));
+            post_json(context, client, "upload/skill", token, payload).await
+        }
         other => {
             let message = format!(
                 "unsupported Codex report hook event {other} for provider {}",

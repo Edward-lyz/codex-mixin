@@ -115,7 +115,7 @@ private func ducxEventLabel(_ event: String) -> String {
     switch event {
     case "user-prompt-submit": return "用户请求"
     case "pre-tool-use": return "代码生成"
-    case "post-tool-use": return "代码采纳"
+    case "post-tool-use": return "技能使用"
     case "stop": return "Session 文件"
     default: return event
     }

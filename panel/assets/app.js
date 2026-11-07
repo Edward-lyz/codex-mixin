@@ -2443,7 +2443,7 @@ async function loadEch() {
   if (state.page === "advanced") render({ animate: false });
 }
 
-const DUCX_EVENTS = { "user-prompt-submit": "用户请求", "pre-tool-use": "代码生成", "post-tool-use": "代码采纳", stop: "Session 文件" };
+const DUCX_EVENTS = { "user-prompt-submit": "用户请求", "pre-tool-use": "代码生成", "post-tool-use": "技能使用", stop: "Session 文件" };
 
 function replayReportView(report) {
   const line = (item, label) => h("div", { class: "row" }, h("span", { class: `badge ${label === "OK" ? "badge-ok" : "badge-bad"}`, text: label }), h("div", { class: "row-main" }, h("div", { class: "row-title", text: `${DUCX_EVENTS[item.event] || item.event} · ${item.provider_id}` }), h("div", { class: "row-sub mono", text: item.error ? `${item.session_id} · ${item.error}` : item.session_id })));

@@ -356,6 +356,12 @@ where
     });
     let json_errors = cli.json_errors;
     let ducx_auth_carrier = matches!(&cli.command, Some(Command::DucxAuthCarrier));
+    // The PostToolUse report hook runs after every tool call, so it skips the
+    // startup log line and the Codex config migration.
+    let tool_report_hook = matches!(
+        &cli.command,
+        Some(Command::ReportHook { event }) if event == "post-tool-use"
+    );
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let interactive_start = requested_interactive_start(
         &cli,
@@ -402,14 +408,14 @@ where
             json_errors,
         );
     }
-    if foreground_log_file.is_some() {
+    if foreground_log_file.is_some() && !tool_report_hook {
         tracing::info!(
             version = env!("CARGO_PKG_VERSION"),
             pid = std::process::id(),
             "gateway process starting"
         );
     }
-    if !ducx_auth_carrier {
+    if !ducx_auth_carrier && !tool_report_hook {
         migrate_managed_codex_auth();
     }
     let result = if let Some(start_page) = interactive_start {

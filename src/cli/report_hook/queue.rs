@@ -125,8 +125,14 @@ pub(super) fn load_pending_at(state_directory: &Path) -> anyhow::Result<Vec<Queu
             entry.path().display()
         );
         // Queue upgrades remove events that the current reporting contract no
-        // longer sends (for example the retired code upload events).
-        if !matches!(record.event.as_str(), "user-prompt-submit" | "stop") {
+        // longer sends, such as the retired code uploads that older versions
+        // queued as `pre-tool-use` and as `post-tool-use` without a skill.
+        let current = match record.event.as_str() {
+            "user-prompt-submit" | "stop" => true,
+            "post-tool-use" => record.hook_body.get("skill_name").is_some(),
+            _ => false,
+        };
+        if !current {
             fs::remove_file(entry.path()).with_context(|| {
                 format!("remove obsolete DUCX report {}", entry.path().display())
             })?;
