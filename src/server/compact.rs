@@ -205,7 +205,7 @@ pub(super) fn local_compaction_response(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
     let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
-    let summary = local_compaction_summary(body, token_model, &secret)?;
+    let summary = local_compaction_summary(body, &secret)?;
     let token = compaction::encode(token_model, summary, &secret)?;
     let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
     let item_id = format!("cmp_{}", Uuid::new_v4().simple());
@@ -288,11 +288,7 @@ pub(super) async fn prepare_v2_custom_compaction(
     }
 }
 
-fn local_compaction_summary(
-    body: &Value,
-    model: &str,
-    secret: &str,
-) -> Result<CompactionSummary, GatewayError> {
+fn local_compaction_summary(body: &Value, secret: &str) -> Result<CompactionSummary, GatewayError> {
     let input = body
         .get("input")
         .ok_or_else(|| GatewayError::BadRequest("compact request missing input".to_owned()))?;
@@ -301,7 +297,7 @@ fn local_compaction_summary(
         Value::String(text) => push_fragment(&mut fragments, "user", text),
         Value::Array(items) => {
             for item in items {
-                append_local_fragment(item, model, secret, &mut fragments)?;
+                append_local_fragment(item, secret, &mut fragments)?;
             }
         }
         _ => {
@@ -325,7 +321,6 @@ fn local_compaction_summary(
 
 fn append_local_fragment(
     item: &Value,
-    model: &str,
     secret: &str,
     fragments: &mut Vec<String>,
 ) -> Result<(), GatewayError> {
@@ -334,9 +329,9 @@ fn append_local_fragment(
         if let Some(token) = item
             .get("encrypted_content")
             .and_then(Value::as_str)
-            .filter(|token| token.starts_with(compaction::TOKEN_PREFIX))
+            .filter(|token| compaction::is_local_token(token))
         {
-            let previous = compaction::decode(token, model, secret)?;
+            let previous = compaction::decode(token, secret)?;
             push_fragment(
                 fragments,
                 "previous compacted context",
