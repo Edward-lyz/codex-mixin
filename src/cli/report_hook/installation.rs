@@ -106,14 +106,16 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
     if enabled {
         let executable = codex_mixin::platform::installation::installed_cli_executable()?;
         for (event_name, event_argument) in REPORT_EVENTS {
-            let group = serde_json::json!({
-                "hooks": [{
-                    "type": "command",
-                    "command": codex_mixin::platform::report_hook_command(&executable, event_argument),
-                    "timeout": 30,
-                    "statusMessage": "Reporting Baidu AI code usage"
-                }]
+            let mut hook = serde_json::json!({
+                "type": "command",
+                "command": codex_mixin::platform::report_hook_command(&executable, event_argument),
+                "timeout": 30
             });
+            // PostToolUse runs after every tool call, so it shows no status line.
+            if event_name != "PostToolUse" {
+                hook["statusMessage"] = serde_json::json!("Reporting Baidu AI code usage");
+            }
+            let group = serde_json::json!({ "hooks": [hook] });
             hooks
                 .entry(event_name)
                 .or_insert_with(|| serde_json::json!([]))

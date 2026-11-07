@@ -927,6 +927,14 @@ pub(super) async fn start(
                 "failed to refresh connected client model catalogs"
             ),
         }
+        // Updates can add reporting hooks. Installing them here reaches users
+        // who upgrade without changing a provider.
+        if let Err(err) = crate::cli::report_hook::sync_installation() {
+            tracing::warn!(
+                error = %format!("{err:#}"),
+                "failed to synchronize reporting hooks"
+            );
+        }
     });
     let startup_catalog_task = tokio::spawn(async move {
         if let Err(error) = startup_catalog_task.await {
