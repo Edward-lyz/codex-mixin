@@ -29,13 +29,14 @@ pub(super) fn append_input_item(
                 .ok_or_else(|| {
                     GatewayError::BadRequest("compaction item missing encrypted_content".to_owned())
                 })?;
-            let summary = compaction::decode(
-                token,
-                replay_model.ok_or_else(|| {
-                    GatewayError::BadRequest("compaction item missing model".to_owned())
-                })?,
-                &compaction_secret()?,
-            )?;
+            if !compaction::is_local_token(token) {
+                tracing::warn!(
+                    model = replay_model.unwrap_or("<unknown>"),
+                    "ignoring opaque compaction checkpoint from another provider"
+                );
+                return Ok(());
+            }
+            let summary = compaction::decode(token, &compaction_secret()?)?;
             messages.push(json!({
                 "role": "system",
                 "content": compaction::summary_text(&summary)

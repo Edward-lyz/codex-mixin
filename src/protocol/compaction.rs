@@ -28,7 +28,9 @@ pub(crate) struct CompactionSummary {
 #[serde(deny_unknown_fields)]
 struct CompactionPayload {
     version: u8,
-    model: String,
+    // Retained for token-format compatibility; checkpoints are model-portable.
+    #[serde(rename = "model")]
+    _model: String,
     created_at: u64,
     summary: CompactionSummary,
 }
@@ -44,7 +46,7 @@ pub(crate) fn encode(
 ) -> Result<String, GatewayError> {
     let payload = CompactionPayload {
         version: 1,
-        model: model.to_owned(),
+        _model: model.to_owned(),
         created_at: unix_seconds()?,
         summary,
     };
@@ -68,11 +70,11 @@ pub(crate) fn encode(
     Ok(format!("{TOKEN_PREFIX}{}", URL_SAFE_NO_PAD.encode(token)))
 }
 
-pub(crate) fn decode(
-    token: &str,
-    expected_model: &str,
-    secret: &str,
-) -> Result<CompactionSummary, GatewayError> {
+pub(crate) fn is_local_token(token: &str) -> bool {
+    token.starts_with(TOKEN_PREFIX)
+}
+
+pub(crate) fn decode(token: &str, secret: &str) -> Result<CompactionSummary, GatewayError> {
     let encoded = token
         .strip_prefix(TOKEN_PREFIX)
         .ok_or_else(|| GatewayError::BadRequest("unsupported compaction token".to_owned()))?;
@@ -98,9 +100,9 @@ pub(crate) fn decode(
         )
         .map_err(|_| GatewayError::BadRequest("invalid compaction token".to_owned()))?;
     let payload: CompactionPayload = serde_json::from_slice(plaintext)?;
-    if payload.version != 1 || payload.model != expected_model {
+    if payload.version != 1 {
         return Err(GatewayError::BadRequest(
-            "compaction token model or version mismatch".to_owned(),
+            "compaction token version mismatch".to_owned(),
         ));
     }
     let summary = serde_json::to_vec(&payload.summary)?;
@@ -143,4 +145,38 @@ fn unix_seconds() -> Result<u64, GatewayError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| GatewayError::Other(error.into()))?
         .as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary() -> CompactionSummary {
+        CompactionSummary {
+            local_transcript: Some("portable context".to_owned()),
+            goal: String::new(),
+            constraints: Vec::new(),
+            decisions: Vec::new(),
+            files: Vec::new(),
+            tool_results: Vec::new(),
+            pending_work: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn local_tokens_are_replayable_across_models() {
+        let secret = URL_SAFE_NO_PAD.encode([7_u8; 32]);
+        let token = encode("model-a", summary(), &secret).unwrap();
+
+        assert!(is_local_token(&token));
+        assert_eq!(
+            decode(&token, &secret).unwrap().local_transcript.as_deref(),
+            Some("portable context")
+        );
+    }
+
+    #[test]
+    fn foreign_tokens_are_not_mistaken_for_local_checkpoints() {
+        assert!(!is_local_token("opaque-token-from-another-provider"));
+    }
 }
