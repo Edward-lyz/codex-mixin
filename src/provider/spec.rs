@@ -450,7 +450,7 @@ static SPECS: [ProviderSpec; 11] = [
     ProviderSpec {
         preset: ProviderPreset::ClaudeCode,
         id: CLAUDE_CODE_PRESET_ID,
-        display_name: "Claude Code (subscription)",
+        display_name: "ClaudeCode",
         description: "Signed-in local Claude Code CLI; requests run through the official client",
         icon: "claude",
         website_url: Some("https://claude.com/claude-code"),
