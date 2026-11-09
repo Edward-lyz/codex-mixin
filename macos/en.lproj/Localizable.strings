@@ -126,6 +126,8 @@
 "agentManagement.versionsFailed" = "Unable to check versions: %@";
 "agentManagement.emptyTitle" = "No agents found";
 "agentManagement.emptyHint" = "Install Codex, Claude Code, Claude Desktop, DSH, OpenCode, or Pi, and they show up here.";
+"agentManagement.section.connected" = "Connected";
+"agentManagement.section.available" = "Available";
 "agentManagement.undetectedFold" = "Agents not detected (%@)";
 "agentManagement.connectHelp" = "Connect %@ to the local gateway";
 "agentManagement.disconnectHelp" = "Disconnect %@ and restore the settings it had before";
@@ -178,7 +180,6 @@
 "settings.agyBusinessCredentials" = "Select Business in agy and configure its Cloud project and location, or use authorized-user Application Default Credentials.";
 "settings.optionalAPIKey" = "Optional; leave empty to use local OAuth";
 "settings.providerCatalogUnavailable" = "The CLI provider catalog is unavailable. Reopen settings or update the complete app bundle.";
-"quota.resetsAt" = "Resets %@";
 
 "provider.oauthWaiting" = "Waiting for browser authorization. Closing the browser does not cancel this request; use Cancel or wait for the configured timeout.";
 "provider.oauthTimeout" = "OAuth authorization timeout (seconds)";
@@ -231,13 +232,28 @@
 "console.usage.reasoning" = "Reasoning";
 "console.usage.chars" = "%@ chars";
 "console.usage.speed" = "Speed";
+"console.usage.metric" = "Chart metric";
+"console.usage.perRequest" = "%@ tokens per request";
+"console.usage.outputDetail" = "%@ output";
+"console.usage.cachedDetail" = "%@ tokens from cache";
+"console.usage.repliesDetail" = "Across %@ replies";
+"console.usage.noData" = "No usage in this period";
+"console.usage.truncated" = "Covers the latest %@ replies only";
+"console.usage.clearFilter" = "Clear filter";
+"console.usage.slotHelp" = "Click a bar to list only its replies";
+"console.usage.replyCount" = "%@ replies";
+"menu.lightweight" = "Lightweight Mode";
+"lightweight.confirmTitle" = "Enter lightweight mode?";
+"lightweight.confirmMessage" = "The menu bar app quits while the local gateway keeps running in the background and starts at login through the CLI. The menu bar app no longer starts at login. Open Codex Mixin from Applications to bring it back.";
+"lightweight.entering" = "Switching to lightweight mode...";
+"lightweight.failedTitle" = "Couldn't enter lightweight mode";
+"lightweight.notRunning" = "The local gateway is not running. Lightweight mode keeps only the gateway, so start it first.";
 
 "console.page.context" = "Context";
 "context.enabled" = "Enable context engine";
-"context.restartNote" = "Saving changes automatically restarts the running gateway to apply them.";
+"context.restartNote" = "Changes are saved right away and restart the running gateway.";
 "context.section.settings" = "Context engine";
 "context.section.stats" = "Context statistics";
-"context.save" = "Save";
 "context.reload" = "Reload";
 "context.stats.sessions" = "Archived sessions";
 "context.stats.compressions" = "Compressions";
@@ -280,6 +296,9 @@
 "provider.reviewModelOverrideDetail" = "Choose a review model independently. Turn off to use the default route.";
 
 // Context archive inspector
+"context.filter.compressed" = "Compressed";
+"context.filter.all" = "All";
+"context.stats.viewTokens" = "Context";
 "context.search" = "Search sessions";
 "context.inspect.loading" = "Loading archive…";
 "context.inspect.tokens" = "Current view %@ tokens · Saved %@ tokens";
@@ -305,3 +324,6 @@
 "context.inspect.hint" = "Explore context growth and how messages and tools become compact summaries.";
 "console.usage.previousPage" = "Previous page";
 "console.usage.nextPage" = "Next page";
+"menu.quitCompletely" = "Quit Mixin Completely";
+"quota.resetsIn" = "Resets %@";
+"console.usage.noSlotReplies" = "No reply details for this period. Details cover about the latest 100,000 replies; older days keep daily totals only.";

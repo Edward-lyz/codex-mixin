@@ -217,6 +217,43 @@ extension AppDelegate {
         quitApplication()
     }
 
+    /// Lightweight mode leaves only the CLI gateway running: the gateway moves
+    /// under the CLI's own login startup, and the menu app's login launch
+    /// exits at once until the user opens the app again.
+    @objc func enterLightweightMode() {
+        guard isRunning else {
+            showAlert(
+                title: AppLocalization.string("lightweight.failedTitle"),
+                message: AppLocalization.string("lightweight.notRunning")
+            )
+            return
+        }
+        guard confirm(
+            title: AppLocalization.string("lightweight.confirmTitle"),
+            message: AppLocalization.string("lightweight.confirmMessage")
+        ) else { return }
+        serviceBusy = true
+        serviceStatus = AppLocalization.string("lightweight.entering")
+        Task { @MainActor in
+            do {
+                if try await interfaceCapabilities()["gateway_autostart"] == true {
+                    _ = try await runGateway(["service", "autostart", "enable", "--json"])
+                } else {
+                    _ = try await runGateway(["service", "ensure", "--json"])
+                }
+                UserDefaults.standard.set(true, forKey: lightweightModeDefaultsKey)
+                NSApp.terminate(nil)
+            } catch {
+                serviceBusy = false
+                await refreshStatusNow()
+                showAlert(
+                    title: AppLocalization.string("lightweight.failedTitle"),
+                    message: String(describing: error)
+                )
+            }
+        }
+    }
+
     /// Quit is a real quit: the gateway stops even when a client still routes
     /// through it.
     private func quitApplication() {

@@ -2,6 +2,10 @@ import Cocoa
 import Darwin
 import Sparkle
 
+/// Set when the user leaves the menu bar for lightweight mode; cleared by the
+/// next launch the user starts themselves.
+let lightweightModeDefaultsKey = "lightweightMode"
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuLaunchLabel = "local.codex-mixin.menu-launch"
@@ -52,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var presentedModelRefreshFailureKeys = Set<String>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Reaching here means the user opened the app (a login launch in
+        // lightweight mode exits in main), so the menu bar is wanted again.
+        UserDefaults.standard.removeObject(forKey: lightweightModeDefaultsKey)
         NSApp.setActivationPolicy(.accessory)
         // Resolve the login shell PATH off the main thread before the first
         // agent command needs it.
@@ -232,7 +239,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actionItem("打开配置目录", #selector(openConfigFolder), "folder")
         ]))
         menu.addItem(.separator())
-        menu.addItem(actionItem("退出 Codex Mixin", #selector(quit), "power"))
+        menu.addItem(actionItem(
+            AppLocalization.string("menu.lightweight"),
+            #selector(enterLightweightMode),
+            "leaf"
+        ))
+        let quitItem = actionItem(AppLocalization.string("menu.quitCompletely"), #selector(quit), "power")
+        quitItem.keyEquivalent = "q"
+        menu.addItem(quitItem)
         updateActionStates()
         return menu
     }
@@ -367,6 +381,12 @@ struct CodexMixinApplication {
         }
         if UpdateWatchdog.runIfRequested(arguments: CommandLine.arguments) {
             return
+        }
+        if CommandLine.arguments.contains("--background"),
+           UserDefaults.standard.bool(forKey: lightweightModeDefaultsKey) {
+            // The CLI starts the gateway at login itself. A clean exit also
+            // keeps launchd's KeepAlive (SuccessfulExit = false) from relaunching.
+            exit(0)
         }
         let app = NSApplication.shared
         app.delegate = delegate

@@ -3,7 +3,7 @@ import SwiftUI
 
 private let agentManagementContentWidth: CGFloat = 720
 private let agentManagementContentHeight: CGFloat = 560
-private let agentIconSize: CGFloat = 28
+private let agentIconSize: CGFloat = 22
 
 @MainActor
 final class AgentManagementModel: ObservableObject {
@@ -333,6 +333,11 @@ final class AgentManagementModel: ObservableObject {
             if let index = entries.firstIndex(where: { $0.id == rowID }) {
                 entries[index] = entries[index].replacingCLI(response.cli)
             }
+            // The CLI exits cleanly when the updater ran but left the old
+            // version; its report then carries the reason.
+            if let error = response.cli.error, !error.isEmpty {
+                return UpgradeOutcome(response: nil, errorMessage: error)
+            }
             return UpgradeOutcome(response: response, errorMessage: nil)
         } catch {
             return UpgradeOutcome(response: nil, errorMessage: errorDescription(error))
@@ -440,10 +445,25 @@ private struct AgentManagementView: View {
         if model.entries.isEmpty {
             emptyState
         } else {
+            let connected = model.detectedEntries.filter { agentIsConnected($0) }
+            let available = model.detectedEntries.filter { !agentIsConnected($0) }
             Form {
-                Section {
-                    ForEach(model.detectedEntries, id: \.id) { entry in
-                        AgentRowView(model: model, entry: entry)
+                if !connected.isEmpty {
+                    Section {
+                        ForEach(connected, id: \.id) { entry in
+                            AgentRowView(model: model, entry: entry)
+                        }
+                    } header: {
+                        sectionHeader(AppLocalization.string("agentManagement.section.connected"), count: connected.count)
+                    }
+                }
+                if !available.isEmpty {
+                    Section {
+                        ForEach(available, id: \.id) { entry in
+                            AgentRowView(model: model, entry: entry)
+                        }
+                    } header: {
+                        sectionHeader(AppLocalization.string("agentManagement.section.available"), count: available.count)
                     }
                 }
                 if !model.undetectedEntries.isEmpty {
@@ -459,7 +479,19 @@ private struct AgentManagementView: View {
                 }
             }
             .formStyle(.grouped)
+            .animation(.easeInOut(duration: 0.18), value: connected.map(\.id))
             .animation(.easeInOut(duration: 0.18), value: model.showsUndetectedAgents)
+        }
+    }
+
+    private func sectionHeader(_ title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Text("\(count)")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
         }
     }
 
@@ -519,7 +551,7 @@ private struct AgentManagementView: View {
                     )
                     .foregroundStyle(status.isError ? Color.orange : Color.green)
                     Text(status.text)
-                        .font(.caption)
+                        .font(.callout)
                         .lineLimit(2)
                         .textSelection(.enabled)
                 }
@@ -545,6 +577,12 @@ private struct AgentRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 AgentLogoView(agentID: entry.id)
+                    .padding(5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                            .shadow(color: .black.opacity(0.08), radius: 1, y: 0.5)
+                    )
                 VStack(alignment: .leading, spacing: 3) {
                     titleLine(presentation)
                     if entry.integration.state != .unsupported {
@@ -567,25 +605,31 @@ private struct AgentRowView: View {
     }
 
     private func titleLine(_ presentation: AgentRowPresentation) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Text(entry.name)
-                .font(.body)
+                .font(.body.weight(.medium))
             if let cliVersionText = presentation.cliVersionText {
-                Text(cliVersionText)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                versionTag(cliVersionText)
             } else if entry.cli.isMissing && presentation.appVersionText == nil {
-                Text(AppLocalization.string("agentManagement.cliMissing"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                versionTag(AppLocalization.string("agentManagement.cliMissing"))
             }
             if let appVersionText = presentation.appVersionText {
-                Text(appVersionText)
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                versionTag(appVersionText)
             }
         }
         .lineLimit(1)
+    }
+
+    private func versionTag(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.secondary.opacity(0.12))
+            )
     }
 
     private func summaryLine(_ presentation: AgentRowPresentation) -> some View {
@@ -596,7 +640,7 @@ private struct AgentRowView: View {
             Text([presentation.statusText, agentIntegrationModeText(entry.integration.mode)]
                 .compactMap { $0 }.filter { !$0.isEmpty }
                 .joined(separator: AppLocalization.string("agentManagement.detailSeparator")))
-                .font(.callout)
+                .font(.caption)
                 .foregroundStyle(presentation.statusIsError ? Color.orange : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -628,7 +672,7 @@ private struct AgentRowView: View {
 
     private var connectBinding: Binding<Bool> {
         Binding(
-            get: { [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state) },
+            get: { agentIsConnected(entry) },
             set: { isOn in
                 Task { @MainActor in
                     if isOn {
@@ -734,4 +778,9 @@ private func agentLogoImage(_ agentID: String) -> NSImage? {
 /// Agent management as a console page.
 func makeAgentManagementPageController(model: AgentManagementModel) -> NSViewController {
     NSHostingController(rootView: AnyView(AgentManagementView(model: model, embedded: true)))
+}
+
+/// Matches the switch state: pending confirmation still counts as connected.
+private func agentIsConnected(_ entry: AgentEntry) -> Bool {
+    [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state)
 }

@@ -177,6 +177,7 @@ struct ContextSettingsView: View {
     @State private var archiveError: String?
     @State private var archiveLoading = false
     @State private var query = ""
+    @State private var compressedOnly = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -184,12 +185,14 @@ struct ContextSettingsView: View {
             Divider()
             HSplitView {
                 statsPane
-                    .frame(minWidth: 370, idealWidth: 440, maxWidth: 560)
+                    .frame(minWidth: 400, idealWidth: 460, maxWidth: 600)
                 archivePane
                     .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
-            Divider()
-            statusBar
+            if model.statusText != nil || model.isSaving {
+                Divider()
+                statusBar
+            }
         }
         .frame(minWidth: 860, minHeight: 600)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -215,13 +218,32 @@ struct ContextSettingsView: View {
 
     private var settingsPane: some View {
         HStack(spacing: 12) {
-            Label(AppLocalization.string("context.section.settings"), systemImage: "square.stack.3d.up")
-                .font(.headline)
+            Image(systemName: "square.stack.3d.up")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.12))
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AppLocalization.string("context.section.settings"))
+                    .font(.headline)
+                Text(AppLocalization.string("context.restartNote"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
-                Toggle(AppLocalization.string("context.enabled"), isOn: $model.draft.enabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .help(AppLocalization.string("context.restartNote"))
+            if model.isSaving { ProgressView().controlSize(.small) }
+            Toggle(AppLocalization.string("context.enabled"), isOn: $model.draft.enabled)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help(AppLocalization.string("context.restartNote"))
+                .onChange(of: model.draft.enabled) { _ in
+                    // A single switch needs no separate Save step.
+                    guard model.canSave else { return }
+                    Task { await model.save() }
+                }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -248,11 +270,21 @@ struct ContextSettingsView: View {
             }
             if let stats = model.stats {
                 metrics(stats.totals)
-                NativeSearchField(text: $query, placeholder: AppLocalization.string("context.search"))
-                    .accessibilityLabel(AppLocalization.string("context.search"))
+                HStack(spacing: 8) {
+                    NativeSearchField(text: $query, placeholder: AppLocalization.string("context.search"))
+                        .accessibilityLabel(AppLocalization.string("context.search"))
+                    Picker("", selection: $compressedOnly) {
+                        Text(AppLocalization.string("context.filter.compressed")).tag(true)
+                        Text(AppLocalization.string("context.filter.all")).tag(false)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
                 sessionList(stats.sessions.filter {
-                    query.isEmpty || $0.display.localizedCaseInsensitiveContains(query)
-                        || $0.session.localizedCaseInsensitiveContains(query)
+                    (!compressedOnly || $0.compressions > 0)
+                        && (query.isEmpty || $0.display.localizedCaseInsensitiveContains(query)
+                            || $0.session.localizedCaseInsensitiveContains(query))
                 })
             } else if model.loadError == nil {
                 ProgressView()
@@ -266,37 +298,28 @@ struct ContextSettingsView: View {
     }
 
     private func metrics(_ totals: ContextStatsTotals) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-            metric(
-                AppLocalization.string("context.stats.sessions"),
-                String(totals.sessions)
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+            ConsoleMetricCard(
+                title: AppLocalization.string("context.stats.sessions"),
+                value: String(totals.sessions),
+                symbol: "archivebox", tint: .blue
             )
-            metric(
-                AppLocalization.string("context.stats.compressions"),
-                String(totals.compressions)
+            ConsoleMetricCard(
+                title: AppLocalization.string("context.stats.compressions"),
+                value: String(totals.compressions),
+                symbol: "arrow.down.right.and.arrow.up.left", tint: .purple
             )
-            metric(
-                AppLocalization.string("context.stats.savedTokens"),
-                formatTokenCount(totals.savedTokens)
+            ConsoleMetricCard(
+                title: AppLocalization.string("context.stats.savedTokens"),
+                value: formatTokenCount(totals.savedTokens),
+                symbol: "leaf", tint: .green
             )
-            metric(
-                AppLocalization.string("context.stats.cacheHit"),
-                formatContextPercent(totals.cache.hitPercent)
+            ConsoleMetricCard(
+                title: AppLocalization.string("context.stats.cacheHit"),
+                value: formatContextPercent(totals.cache.hitPercent),
+                symbol: "bolt", tint: .orange
             )
         }
-    }
-
-    private func metric(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value)
-                .font(.title3.weight(.semibold).monospacedDigit())
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -306,19 +329,38 @@ struct ContextSettingsView: View {
         } else {
             Table(sessions, selection: $selectedSession) {
                 TableColumn(AppLocalization.string("context.stats.display")) { session in
-                    Text(session.display).font(.callout)
+                    Text(session.display)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(session.display)
                 }
-                .width(min: 110, ideal: 200)
-                TableColumn(AppLocalization.string("context.stats.compressions")) { session in
-                    Text(String(session.compressions)).monospacedDigit()
-                }
-                .width(48)
-                TableColumn(AppLocalization.string("context.stats.savedTokens")) { session in
-                    Text(formatTokenCount(session.savedTokens)).monospacedDigit()
+                .width(min: 120, ideal: 220)
+                TableColumn(AppLocalization.string("context.stats.viewTokens")) { session in
+                    Text(formatTokenCount(session.viewTokens))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 .width(64)
+                TableColumn(AppLocalization.string("context.stats.compressions")) { session in
+                    Text(String(session.compressions))
+                        .monospacedDigit()
+                        .foregroundStyle(session.compressions == 0 ? .tertiary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .width(56)
+                TableColumn(AppLocalization.string("context.stats.savedTokens")) { session in
+                    Text(formatTokenCount(session.savedTokens))
+                        .monospacedDigit()
+                        .foregroundStyle(session.savedTokens == 0 ? Color.secondary : Color.green)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .width(68)
             }
+            .tableStyle(.inset(alternatesRowBackgrounds: true))
             .scrollContentBackground(.hidden)
+            .background(ConsoleCardBackground())
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -493,11 +535,6 @@ struct ContextSettingsView: View {
             }
             Spacer()
             if model.isSaving { ProgressView().controlSize(.small) }
-            Button(AppLocalization.string("context.save")) {
-                Task { await model.save() }
-            }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!model.canSave)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

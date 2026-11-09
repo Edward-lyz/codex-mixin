@@ -126,6 +126,8 @@
 "agentManagement.versionsFailed" = "检查版本失败：%@";
 "agentManagement.emptyTitle" = "没有检测到任何 Agent";
 "agentManagement.emptyHint" = "安装 Codex、Claude Code、Claude Desktop、DSH、OpenCode 或 Pi 后，这里会列出它们。";
+"agentManagement.section.connected" = "已接入";
+"agentManagement.section.available" = "可接入";
 "agentManagement.undetectedFold" = "未检测到的 Agent（%@）";
 "agentManagement.connectHelp" = "接入 %@：写入本地网关配置";
 "agentManagement.disconnectHelp" = "断开 %@：恢复接入前的配置";
@@ -178,7 +180,6 @@
 "settings.agyBusinessCredentials" = "请在 agy 选择 Business 并配置 Cloud 项目和地区，或配置 authorized_user 类型的应用默认凭据。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
-"quota.resetsAt" = "%@ 重置";
 
 "provider.oauthWaiting" = "等待浏览器授权。关闭网页不会取消本次请求；可点击取消，或等待设置的超时自动结束。";
 "provider.oauthTimeout" = "OAuth 授权超时（秒）";
@@ -215,8 +216,8 @@
 "console.usage.provider" = "Provider";
 "console.usage.allProviders" = "全部 Provider";
 "console.usage.grouping" = "图表分组";
-"console.usage.merge" = "聚合";
-"console.usage.split" = "按 Provider 拆分";
+"console.usage.merge" = "合计";
+"console.usage.split" = "按 Provider";
 "console.usage.requests" = "请求次数";
 "console.usage.cacheHit" = "缓存命中";
 "console.usage.mismatch" = "模型不一致";
@@ -231,13 +232,28 @@
 "console.usage.reasoning" = "思考";
 "console.usage.chars" = "%@ 字";
 "console.usage.speed" = "速度";
+"console.usage.metric" = "图表指标";
+"console.usage.perRequest" = "平均每次 %@ tokens";
+"console.usage.outputDetail" = "其中输出 %@";
+"console.usage.cachedDetail" = "命中 %@ tokens";
+"console.usage.repliesDetail" = "共 %@ 条回复";
+"console.usage.noData" = "这段时间没有用量";
+"console.usage.truncated" = "仅统计最近 %@ 条回复";
+"console.usage.clearFilter" = "清除筛选";
+"console.usage.slotHelp" = "点击柱子只看该时段的回复";
+"console.usage.replyCount" = "%@ 条回复";
+"menu.lightweight" = "轻量模式";
+"lightweight.confirmTitle" = "进入轻量模式？";
+"lightweight.confirmMessage" = "菜单栏 App 会退出，本地网关继续在后台运行，并改由 CLI 在登录时自启；之后登录也不再启动菜单栏。需要菜单栏时，从“应用程序”重新打开 Codex Mixin 即可恢复。";
+"lightweight.entering" = "正在切换到轻量模式...";
+"lightweight.failedTitle" = "无法进入轻量模式";
+"lightweight.notRunning" = "本地网关没有运行。轻量模式依赖后台网关，请先开启网关。";
 
 "console.page.context" = "上下文";
 "context.enabled" = "启用上下文引擎";
-"context.restartNote" = "保存更改后自动重启运行中的网关并生效。";
+"context.restartNote" = "切换后立即保存，并自动重启运行中的网关生效。";
 "context.section.settings" = "上下文引擎";
 "context.section.stats" = "上下文统计";
-"context.save" = "保存";
 "context.reload" = "刷新";
 "context.stats.sessions" = "归档会话";
 "context.stats.compressions" = "压缩次数";
@@ -280,6 +296,9 @@
 "provider.reviewModelOverrideDetail" = "独立指定审查模型；关闭时使用默认路由。";
 
 // Context archive inspector
+"context.filter.compressed" = "已压缩";
+"context.filter.all" = "全部";
+"context.stats.viewTokens" = "当前上下文";
 "context.search" = "搜索会话";
 "context.inspect.loading" = "正在读取归档…";
 "context.inspect.tokens" = "当前视图 %@ token · 已节省 %@ token";
@@ -305,3 +324,6 @@
 "context.inspect.hint" = "查看上下文增长，以及消息和工具如何合并成精简摘要。";
 "console.usage.previousPage" = "上一页";
 "console.usage.nextPage" = "下一页";
+"menu.quitCompletely" = "彻底退出 Mixin";
+"quota.resetsIn" = "%@重置";
+"console.usage.noSlotReplies" = "这个时段没有逐条明细。明细保留最近约 10 万条回复，更早的日期只保留按天汇总。";

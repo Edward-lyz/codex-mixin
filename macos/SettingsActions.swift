@@ -37,11 +37,11 @@ extension AppDelegate {
         else { return }
         if consoleContainer == nil, let providerPage = window.contentViewController {
             let agentModel = makeAgentManagementModel()
-            let usageModel = ConsoleUsageModel { [weak self] days in
+            let usageModel = ConsoleUsageModel(loader: { [weak self] days, turnLimit in
                 guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
                 async let daily = self.runGateway(["usage", "--daily", "--json", "--days", "\(days)"])
                 async let turns = self.runGateway([
-                    "usage", "--turns", "--json", "--days", "\(days)", "--limit", "500",
+                    "usage", "--turns", "--json", "--days", "\(days)", "--limit", "\(turnLimit)",
                 ])
                 async let providerList = self.runGateway(["providers", "list", "--json"])
                 let providers = try decodeProviderList(try await providerList).providers
@@ -51,7 +51,15 @@ extension AppDelegate {
                         ? provider.displayName : "\(provider.displayName) (\(provider.id))")
                 })
                 return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns), names)
-            }
+            }, slotLoader: { [weak self] interval in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                let toMilliseconds = { (date: Date) in Int64(date.timeIntervalSince1970 * 1000) }
+                return try parseTurnUsage(try await self.runGateway([
+                    "usage", "--turns", "--json", "--limit", "5000",
+                    "--since-ms", "\(toMilliseconds(interval.start))",
+                    "--until-ms", "\(toMilliseconds(interval.end))",
+                ]))
+            })
             let contextModel = ContextSettingsModel(loader: { [weak self] in
                 guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
                 return try parseContextSettings(
