@@ -454,6 +454,43 @@ fn dsh_session_log_resolves_events_without_a_model() {
 }
 
 #[test]
+fn grok_session_summary_resolves_events_without_a_model() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_reporting_config(root);
+
+    let session_id = "01a1c01d-190e-7993-b236-45a247d47e49";
+    let session_dir = root
+        .join("home/.grok/sessions/%2Ftmp-workspace")
+        .join(session_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(
+        session_dir.join("summary.json"),
+        serde_json::to_vec(&json!({
+            "info": {"id": session_id, "cwd": "/tmp/workspace"},
+            "current_model_id": SLUG,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    run_hook(
+        root,
+        "user-prompt-submit",
+        &json!({
+            "session_id": session_id,
+            "prompt": "hi",
+            "cwd": "/tmp/workspace",
+        }),
+    );
+    assert_eq!(persisted_model(root, session_id).as_deref(), Some(SLUG));
+    assert!(
+        report_log(root).contains("source=\"grok_session\""),
+        "Grok resolution must use the session summary"
+    );
+}
+
+#[test]
 fn model_switch_updates_the_cache_without_reporting() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();

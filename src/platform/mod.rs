@@ -33,8 +33,8 @@ pub use files::{
 };
 pub use package::{PackageTarget, package_target};
 pub use paths::{
-    claude_desktop_config_root, dsh_home, home_dir, home_dir_required, os_name, set_home_env,
-    set_tokio_home_env,
+    claude_desktop_config_root, dsh_home, grok_home, home_dir, home_dir_required, os_name,
+    set_home_env, set_tokio_home_env,
 };
 pub use permissions::{restrict_owner_only_dir, restrict_owner_only_file};
 pub use process::{

@@ -2,16 +2,16 @@
 //!
 //! Only Codex puts the catalog slug in its hook payload. Claude Code omits
 //! `model` on prompt/stop events and uses client-side names (`[1m]` context
-//! suffixes and `claude-sonnet-mixin-<hex>` route ids), and DSH hooks never
-//! carry it, so the hook resolves the model from local state before the
-//! upload path runs.
+//! suffixes and `claude-sonnet-mixin-<hex>` route ids), DSH hooks never carry
+//! it, and Grok Build loads the Claude Code hooks unchanged, so the hook
+//! resolves the model from local state before the upload path runs.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde_json::{Value, json};
 
-use crate::clients::{claude_desktop, dsh};
+use crate::clients::{claude_desktop, dsh, grok};
 use crate::config::load_stored_config_read_only;
 use crate::platform::write_atomic_if_changed;
 use crate::provider::{ProviderDefinition, ProviderModelSource, catalog_model_slug};
@@ -22,7 +22,7 @@ const MODEL_CACHE_DIRECTORY: &str = "ducx-report-models";
 const ROUTE_PREFIX: &str = "claude-sonnet-mixin-";
 const CONTEXT_SUFFIX: &str = "[1m]";
 
-/// Local state directories and the DSH home the resolver may read.
+/// Local state directories and the client homes the resolver may read.
 pub struct ReportPaths<'a> {
     /// Directory writable by the hook (normal state dir or the sandboxed
     /// fallback used for queued reports and the model cache).
@@ -30,6 +30,7 @@ pub struct ReportPaths<'a> {
     /// Gateway state directory that owns `usage.sqlite3`.
     pub gateway_state: &'a Path,
     pub dsh_home: &'a Path,
+    pub grok_home: &'a Path,
 }
 
 /// Resolve the catalog slug and its reporting provider for one hook event.
@@ -57,6 +58,14 @@ pub fn resolve_model(
     }
 
     if !session_id.is_empty() {
+        // Grok keeps the active model in its session summary and has no
+        // PostModelSwitch hook, so its summary is fresher than the cache.
+        if let Some(model) = grok::session_model(paths.grok_home, &session_id)?
+            && let Some(resolved) =
+                resolved_from_local(event, paths, &session_id, "grok_session", &model, body)?
+        {
+            return Ok(Some(resolved));
+        }
         if let Some(model) = cached_model(paths, &session_id)?
             && let Some(resolved) =
                 resolved_from_local(event, paths, &session_id, "session_cache", &model, body)?

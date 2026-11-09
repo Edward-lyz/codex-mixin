@@ -134,6 +134,7 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let report_state = report_state_dir();
     let gateway_state = state_dir();
     let dsh_home = codex_mixin::platform::dsh_home();
+    let grok_home = codex_mixin::platform::grok_home();
     let Some((model, provider)) = reporting::resolve_model(
         event,
         &mut payload,
@@ -141,6 +142,7 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
             report_state: &report_state,
             gateway_state: &gateway_state,
             dsh_home: &dsh_home,
+            grok_home: &grok_home,
         },
     )?
     else {
