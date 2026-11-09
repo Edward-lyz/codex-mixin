@@ -33,7 +33,7 @@
    </ScrollViewer>
    <Border Grid.Row="1" Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="6">
     <StackPanel x:Name="PanelMenu" Spacing="0">
-     <!-- Models, agents, and usage are pages of the console window. -->
+     <!-- Models, agents, usage, context, and routing are pages of the console window. -->
      <Button Style="{StaticResource MenuRow}" Tag="console" Click="OnOpen" AutomationProperties.Name="打开控制台…">
       <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE737;" FontSize="16"/><TextBlock Text="打开控制台…"/></StackPanel>
      </Button>
@@ -41,8 +41,7 @@
      <Button Style="{StaticResource MenuRow}" AutomationProperties.Name="高级">
       <Grid><StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE713;" FontSize="16"/><TextBlock Text="高级"/></StackPanel><FontIcon Glyph="&#xE76C;" FontSize="12" HorizontalAlignment="Right"/></Grid>
       <Button.Flyout><MenuFlyout Placement="RightEdgeAlignedTop">
-       <MenuFlyoutItem Text="Fusion 设置…" Tag="fusion" Click="OnOpen"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
-       <MenuFlyoutItem Text="按时间轮转…" Tag="fusion" Click="OnOpen"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE823;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+       <MenuFlyoutItem Text="模型路由…" Tag="routing" Click="OnOpen"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
        <MenuFlyoutSeparator/>
        <MenuFlyoutItem Text="健康检测和修复…" Click="OnDoctor"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
        <MenuFlyoutItem Text="启用网关开机启动" Click="OnAutostart"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7E8;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>

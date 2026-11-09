@@ -53,7 +53,8 @@ try
     }
     Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
     Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
-    Json.Field(await client.QueryAsync(["fusion", "get", "--json"], CancellationToken.None), "profile");
+    Assert(Json.Rows(Json.Field(await client.QueryAsync(["route", "list", "--json"], CancellationToken.None), "routes")).Length == 0,
+        "A fresh install must have no model routes");
     var contextConfig = ContextContract.ParseConfig(await client.QueryAsync(["context", "config", "get", "--json"], CancellationToken.None));
     Assert(!contextConfig.Settings.Enabled, "A fresh install must keep the context engine disabled");
     var contextStats = ContextContract.ParseStats(await client.QueryAsync(["context", "stats", "--json"], CancellationToken.None));
