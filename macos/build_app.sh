@@ -16,6 +16,9 @@ CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 ADAPTIVE_ICON_NAME="CodexMixin"
 ADAPTIVE_ICON_PACKAGE="$ROOT_DIR/macos/$ADAPTIVE_ICON_NAME.icon"
 REQUIRE_ADAPTIVE_ICON="${CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON:-0}"
+# Command Line Tools ship no actool. A local build can reuse the Assets.car of
+# a CI-built release so the adaptive light/dark icon is kept.
+PREBUILT_ASSETS_CAR="${CODEX_MIXIN_PREBUILT_ASSETS_CAR:-}"
 
 case "$REQUIRE_ADAPTIVE_ICON" in
   0|1) ;;
@@ -145,6 +148,12 @@ if [[ "$ACTOOL_MAJOR_VERSION" =~ ^[0-9]+$ ]] && (( ACTOOL_MAJOR_VERSION >= 26 ))
     exit 1
   fi
   cp "$ADAPTIVE_ICON_OUTPUT/Assets.car" "$RESOURCES_DIR/Assets.car"
+elif [[ -n "$PREBUILT_ASSETS_CAR" ]]; then
+  if [[ ! -f "$PREBUILT_ASSETS_CAR" ]]; then
+    echo "CODEX_MIXIN_PREBUILT_ASSETS_CAR does not exist: $PREBUILT_ASSETS_CAR" >&2
+    exit 1
+  fi
+  cp "$PREBUILT_ASSETS_CAR" "$RESOURCES_DIR/Assets.car"
 else
   if [[ "$REQUIRE_ADAPTIVE_ICON" == "1" ]]; then
     echo "adaptive app icon requires Xcode 26 actool; found ${ACTOOL_VERSION:-none}" >&2
