@@ -15,9 +15,6 @@ use super::types::ProviderDefinition;
 const MAX_CREDENTIAL_BYTES: u64 = 1024 * 1024;
 /// Claude Code's global state file also stores per-project history.
 const MAX_CLAUDE_STATE_BYTES: u64 = 16 * 1024 * 1024;
-/// `claude setup-token` prints a long-lived token that the user exports; the
-/// CLI never writes it to disk.
-pub(crate) const CLAUDE_CODE_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 const IGNORE_FILE: &str = "discovery-ignored";
 pub(crate) const PENDING_REFRESH: &str = "model directory pending refresh";
 const TOKEN_MARGIN_SECONDS: i64 = 180;
@@ -55,9 +52,7 @@ impl Locations {
             kiro_cli: crate::platform::oauth::kiro_cli_auth_path(),
             claude_cli: crate::platform::agent_cli::find_command("claude"),
             claude_login: crate::platform::oauth::claude_code_login_paths(),
-            claude_token: std::env::var(CLAUDE_CODE_TOKEN_ENV)
-                .ok()
-                .filter(|token| !token.trim().is_empty()),
+            claude_token: crate::platform::oauth::claude_code_setup_token(),
             ignore: crate::platform::oauth::oauth_path(IGNORE_FILE),
         }
     }

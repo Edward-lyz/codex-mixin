@@ -282,6 +282,9 @@ fn context_cli_reports_compressed_archive() {
         message("assistant", &long_body("alpha")),
         message("assistant", &long_body("beta")),
         message("user", "continue"),
+        // Host-injected observations are archived without a callable tool id.
+        // Even when protected and outside the selection, they must not poison it.
+        json!({"type":"custom_tool_call_output", "name":"app_context", "output":"No page is selected"}),
     ];
     {
         let engine = ContextEngine::open(settings, &database).unwrap();

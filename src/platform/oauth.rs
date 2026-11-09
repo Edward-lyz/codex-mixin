@@ -273,3 +273,71 @@ pub(crate) fn codex_keyring(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     #[cfg(not(target_os = "macos"))]
     Ok(None)
 }
+
+/// Desktop launchers do not inherit shell exports. Read the user's login
+/// environment through their native shell, with bounded private stdout.
+/// The short cache avoids starting a shell while configuration is committed.
+pub(crate) fn claude_code_setup_token() -> Option<String> {
+    const NAME: &str = "CLAUDE_CODE_OAUTH_TOKEN";
+    if let Ok(token) = std::env::var(NAME)
+        && !token.trim().is_empty()
+    {
+        return Some(token);
+    }
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    type CachedToken = Option<(Instant, Option<String>)>;
+    static CACHE: OnceLock<Mutex<CachedToken>> = OnceLock::new();
+    let mut cache = CACHE.get_or_init(|| Mutex::new(None)).lock().ok()?;
+    if let Some((at, token)) = &*cache
+        && at.elapsed() < Duration::from_secs(30)
+    {
+        return token.clone();
+    }
+    #[cfg(unix)]
+    let found = {
+        let shell = std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .or_else(|| {
+                Some(PathBuf::from(if cfg!(target_os = "macos") {
+                    "/bin/zsh"
+                } else {
+                    "/bin/sh"
+                }))
+            })
+            .filter(|path| path.is_absolute() && path.is_file());
+        shell.and_then(|shell| {
+            let mut command = std::process::Command::new(shell);
+            command.args([
+                "-lic",
+                r#"printf '\036MIXIN_CLAUDE_TOKEN=%s\037' "$CLAUDE_CODE_OAUTH_TOKEN""#,
+            ]);
+            // Private-input mode suppresses stdout/stderr in failure errors.
+            let output = super::agent_cli::run_command_with_input(
+                command,
+                Duration::from_secs(3),
+                "Claude login environment",
+                Some(Vec::new()),
+            )
+            .ok()?;
+            let token = output
+                .stdout
+                .split('\u{001e}')
+                .find_map(|line| line.strip_prefix("MIXIN_CLAUDE_TOKEN="))?
+                .split('\u{001f}')
+                .next()?
+                .trim();
+            (!token.is_empty()).then(|| token.to_owned())
+        })
+    };
+    #[cfg(windows)]
+    let found = windows_registry::CURRENT_USER
+        .open("Environment")
+        .ok()
+        .and_then(|key| key.get_string(NAME).ok())
+        .filter(|token| !token.trim().is_empty());
+    #[cfg(not(any(unix, windows)))]
+    let found = None;
+    *cache = Some((Instant::now(), found.clone()));
+    found
+}

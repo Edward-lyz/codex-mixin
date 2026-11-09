@@ -77,3 +77,36 @@ fn business_and_broken_logins_are_not_adopted() {
     assert!(provider(&listing, "agy").is_none());
     assert!(provider(&listing, "kiro").is_none());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn desktop_discovers_claude_setup_token_from_login_shell() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    write_login(
+        root.path(),
+        ".zshrc",
+        "export CLAUDE_CODE_OAUTH_TOKEN=fixture-setup-token\n",
+    );
+    let bin = root.path().join("home/.local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let cli = bin.join("claude");
+    std::fs::write(&cli, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let output = common::cli(root.path())
+        .env("SHELL", "/bin/zsh")
+        .args(["--no-tui", "providers", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listing: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        provider(&listing, "claude-code").is_some(),
+        "desktop process must discover the shell's setup token"
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-setup-token"));
+}

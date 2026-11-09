@@ -1338,10 +1338,16 @@ fn validate_tool_selection(
         ) {
             continue;
         }
-        let call_id = item
+        // Host observations can use a tool-output shape without representing
+        // an actual call. As in protect_tool_units, only identified calls
+        // form protocol units; an unrelated observation cannot block a range.
+        let Some(call_id) = item
             .get("call_id")
             .and_then(Value::as_str)
-            .context("archived tool item has no call_id")?;
+            .filter(|id| !id.trim().is_empty())
+        else {
+            continue;
+        };
         let (inside, outside) = units.entry(call_id.to_owned()).or_default();
         if selected.contains(segment.reference.as_str()) {
             *inside = true;
