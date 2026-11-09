@@ -113,7 +113,9 @@ final class ModelBenchmarkModel: ObservableObject {
     private(set) var savedModelContextOverrides: [String: [String: UInt64]] = [:]
     private(set) var removedManualModelIDs: [String: Set<String>] = [:]
     private var pollingTask: Task<Void, Never>?
-    private var tableSortOrder = ModelBenchmarkTableRow.defaultSortOrder
+    @Published var tableSortOrder = ModelBenchmarkTableRow.defaultSortOrder {
+        didSet { if tableSortOrder != oldValue { rebuildRows() } }
+    }
     var providerListDidLoad: ((ProviderListResponse, String?) -> Void)?
 
     init(
@@ -524,10 +526,8 @@ final class ModelBenchmarkModel: ObservableObject {
 
     func rebuildRows(
         queryOverride: String? = nil,
-        filterOverride: String? = nil,
-        sortOverride: [KeyPathComparator<ModelBenchmarkTableRow>]? = nil
+        filterOverride: String? = nil
     ) {
-        if let sortOverride { tableSortOrder = sortOverride }
         guard let provider = selectedProvider else {
             visibleRows = []
             return
@@ -736,7 +736,6 @@ struct ModelBenchmarkRootView: View {
     var hasExternalDraft = false
     var isExternallyBusy = false
     @State private var showsManualModelEntry = false
-    @State private var sortOrder = ModelBenchmarkTableRow.defaultSortOrder
 
     var body: some View {
         VStack(spacing: 0) {
@@ -759,16 +758,13 @@ struct ModelBenchmarkRootView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
-            model.rebuildRows(sortOverride: sortOrder)
-        }
-        .onChange(of: sortOrder) { newValue in
-            model.rebuildRows(sortOverride: newValue)
+            model.rebuildRows()
         }
         .onChange(of: model.query) { _ in
-            model.rebuildRows(sortOverride: sortOrder)
+            model.rebuildRows()
         }
         .onChange(of: model.selectionFilter) { _ in
-            model.rebuildRows(sortOverride: sortOrder)
+            model.rebuildRows()
         }
         .animation(.easeInOut(duration: 0.18), value: showsManualModelEntry)
     }
@@ -816,7 +812,7 @@ struct ModelBenchmarkRootView: View {
     @ViewBuilder
     private var modelTable: some View {
         if model.selectedProvider?.presetID == "baidu-oneapi" {
-            Table(model.visibleRows, sortOrder: $sortOrder) {
+            Table(model.visibleRows, sortOrder: $model.tableSortOrder) {
                 selectedColumn
                 orderColumn
                 modelColumn
@@ -828,7 +824,7 @@ struct ModelBenchmarkRootView: View {
             }
             .scrollContentBackground(.hidden)
         } else {
-            Table(model.visibleRows, sortOrder: $sortOrder) {
+            Table(model.visibleRows, sortOrder: $model.tableSortOrder) {
                 selectedColumn
                 orderColumn
                 modelColumn
@@ -1141,8 +1137,8 @@ struct ModelBenchmarkRootView: View {
     }
 
     private func showModelOrder() {
-        sortOrder = ModelBenchmarkTableRow.defaultSortOrder
-        model.rebuildRows(sortOverride: sortOrder)
+        model.tableSortOrder = ModelBenchmarkTableRow.defaultSortOrder
+        model.rebuildRows()
     }
 
     private var modelColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
