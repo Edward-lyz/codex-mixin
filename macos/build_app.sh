@@ -240,7 +240,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/FusionSettingsLogic.swift" \
-  "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
+  "$ROOT_DIR/macos/ModelRoutingView.swift" \
   -framework Cocoa \
   -framework CryptoKit \
   -framework Sparkle \
