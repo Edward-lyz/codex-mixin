@@ -204,7 +204,7 @@ internal sealed class NativeShell : IDisposable
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 4, "设置");
             AppendMenu(menu, 0, 9, "检查更新…");
-            AppendMenu(menu, 0, 7, "Fusion 设置…");
+            AppendMenu(menu, 0, 7, "模型路由…");
             AppendMenu(menu, 0, 8, "上下文设置…");
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 10, "轻量模式");
@@ -228,7 +228,7 @@ internal sealed class NativeShell : IDisposable
                 2 => "start",
                 3 => "stop",
                 4 => "settings",
-                7 => "fusion",
+                7 => "routing",
                 8 => "context",
                 9 => "updates",
                 10 => "lightweight",

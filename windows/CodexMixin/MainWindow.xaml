@@ -12,6 +12,7 @@
       <SelectorBarItem Text="Agent 接入" Tag="agents" AutomationProperties.AutomationId="console-agents-tab"/>
       <SelectorBarItem Text="用量明细" Tag="usage" AutomationProperties.AutomationId="console-usage-tab"/>
       <SelectorBarItem Text="上下文" Tag="context" AutomationProperties.AutomationId="console-context-tab"/>
+      <SelectorBarItem Text="模型路由" Tag="routing" AutomationProperties.AutomationId="console-routing-tab"/>
     </SelectorBar>
     <ContentControl x:Name="PageShell" Grid.Row="2" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid>
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="248"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -53,7 +54,7 @@
               <FontIcon Glyph="&#xE712;" FontSize="15"/>
               <Button.Flyout><MenuFlyout Placement="BottomEdgeAlignedRight">
                 <MenuFlyoutItem Text="托盘主面板" Tag="overview" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE80F;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
-                <MenuFlyoutItem Text="Fusion 设置" Tag="fusion" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+                <MenuFlyoutItem Text="模型路由" Tag="routing" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
                 <MenuFlyoutItem Text="检查更新…" Tag="updates" Click="OnOpenPage"/>
                 <MenuFlyoutItem Text="设置与诊断" Tag="settings" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
               </MenuFlyout></Button.Flyout>

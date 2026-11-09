@@ -46,3 +46,11 @@ codex-mixin route delete --model official:gpt-5.5
 
 旧的 `fusion get|set|delete|models` 子命令保留兼容。`interface --json` 的
 `capabilities.model_routes` 表示可用 `route` 子命令。
+
+## 控制台
+
+macOS 与 Windows 控制台的「模型路由」页统一管理三种路由：左侧列出现有路由
+（入口模型与目标摘要），点「新建」选择融合、定时或故障转移，右侧表单只编辑
+该类型需要的字段。保存调用 `route set`，删除调用 `route delete`，随后自动
+`config apply` 重启网关并刷新 Codex 模型目录。菜单栏与托盘中原来的「Fusion 设置」
+入口改为打开这一页；Windows 的 `--page=fusion` 仍兼容并映射到模型路由页。

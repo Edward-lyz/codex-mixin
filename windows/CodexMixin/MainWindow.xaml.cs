@@ -86,7 +86,7 @@ public sealed partial class MainWindow : Window
         }
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
-        // The console window owns the tray icon; Fusion and settings are side windows.
+        // The console window owns the tray icon; settings is a side window.
         try { if (IsConsolePage(page)) shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
         AppWindow.Closing += async (_, args) =>
@@ -167,7 +167,7 @@ public sealed partial class MainWindow : Window
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
     /// Pages hosted by the single console window, in tab order.
-    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "context" or "usage";
+    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "context" or "usage" or "routing";
 
     private void ApplyPageLayout()
     {
@@ -175,7 +175,7 @@ public sealed partial class MainWindow : Window
         {
             "providers" => "模型与服务",
             "agents" => "Agent 接入管理",
-            "fusion" => "Fusion 设置",
+            "routing" => "模型路由",
             "usage" => "用量明细",
             "context" => "上下文",
             _ => "设置与诊断"
@@ -192,7 +192,7 @@ public sealed partial class MainWindow : Window
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
         ContentLayer.BorderThickness = providers ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
         ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
-        DraftSummary.Visibility = ApplyChanges.Visibility = page is "providers" or "fusion" or "context" ? Visibility.Visible : Visibility.Collapsed;
+        DraftSummary.Visibility = ApplyChanges.Visibility = page is "providers" or "routing" or "context" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
         PageTitle.Visibility = header;
         UpdateRefreshTimer();
@@ -264,7 +264,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "routing" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
     });
 
     private async Task ExitAsync(bool lightweight)
@@ -519,7 +519,7 @@ public sealed partial class MainWindow : Window
             "agents" => "Agent 接入",
             "usage" => "用量明细",
             "context" => "上下文",
-            "fusion" => "Fusion",
+            "routing" => "模型路由",
             "settings" => "设置",
             _ => "概览"
         };
@@ -529,7 +529,7 @@ public sealed partial class MainWindow : Window
             case "agents": await AgentsAsync(token); break;
             case "usage": await UsageAsync(token); break;
             case "context": await ContextAsync(token); break;
-            case "fusion": await FusionAsync(token); break;
+            case "routing": await RoutingAsync(token); break;
             case "settings": await SettingsAsync(token); break;
             default: await OverviewAsync(token); break;
         }
@@ -1445,108 +1445,6 @@ public sealed partial class MainWindow : Window
         grouping.SelectionChanged += (_, _) => RenderCharts();
         PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
-    }
-
-    private async Task FusionAsync(CancellationToken token)
-    {
-        var status = await Client.QueryAsync(["service", "status", "--json"], token);
-        if (!Json.Flag(status, "configured"))
-        {
-            PageBody.Children.Add(Card("暂无可用模型", "先添加供应商并选择模型，再创建 Fusion。")); return;
-        }
-        var profile = Json.Field(await Client.QueryAsync(["fusion", "get", "--json"], token), "profile");
-        var options = Json.Rows(Json.Field(await Client.QueryAsync(["fusion", "models", "--json"], token), "models"));
-        var ids = options.Select(row => Json.Text(row, "id")).Where(id => !id.StartsWith("mixin/fusion/", StringComparison.Ordinal)).ToArray();
-        if (ids.Length == 0) { PageBody.Children.Add(Card("暂无可用模型", "先在服务商中选择模型。")); return; }
-        var saved = profile.ValueKind == JsonValueKind.Object;
-        var profileId = Input("Profile ID", saved ? Json.Text(profile, "id") : "default");
-        var mode = Choice("运行模式", ["多模型编排", "按时间轮转"], saved && Json.Text(profile, "mode") == "time_rotation" ? "按时间轮转" : "多模型编排");
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(mode, "fusion-mode");
-        var selected = (saved ? Json.Strings(Json.Field(profile, "panel_models")) : ids.Take(3).ToArray()).ToHashSet();
-        var panels = new ListView { SelectionMode = ListViewSelectionMode.Multiple, Height = Math.Min(240, 36 + ids.Length * 36), ItemsSource = ids, Header = $"可选 {ids.Length} 个模型" };
-        AutomationProperties.SetAutomationId(panels, "fusion-panels");
-        var filtering = false;
-        void RestoreSelection()
-        {
-            filtering = true;
-            foreach (var item in panels.Items) if (selected.Contains((string)item)) panels.SelectedItems.Add(item);
-            filtering = false;
-        }
-        panels.SelectionChanged += (_, args) =>
-        {
-            if (filtering) return;
-            foreach (string id in args.RemovedItems) selected.Remove(id);
-            foreach (string id in args.AddedItems) selected.Add(id);
-            MarkDirty();
-        };
-        RestoreSelection();
-        var search = Input("搜索 Panel 模型", "");
-        search.TextChanged += (_, _) =>
-        {
-            filtering = true;
-            var matches = ids.Where(id => id.Contains(search.Text, StringComparison.OrdinalIgnoreCase)).ToArray();
-            panels.ItemsSource = matches;
-            panels.Header = search.Text.Length == 0 ? $"可选 {ids.Length} 个模型" : $"匹配 {matches.Length}/{ids.Length} 个模型";
-            RestoreSelection();
-        };
-        var judge = Choice("Judge 模型", ids, saved ? Json.Text(profile, "judge_model") : ids[0]);
-        var final = Choice("Final / 未覆盖时段默认模型", ids, saved ? Json.Text(profile, "final_model") : ids[0]);
-        var minimum = new NumberBox { Header = "最少成功 Panel", Minimum = 1, Maximum = 8, Value = saved ? Json.Field(profile, "min_successful").GetDouble() : 1 };
-        var timeout = new NumberBox { Header = "超时（毫秒）", Minimum = 1, Value = saved ? Json.Field(profile, "timeout_ms").GetDouble() : 300000 };
-        var intermediate = new CheckBox { Content = "显示中间结果", IsChecked = saved && Json.Flag(profile, "show_intermediate_results") };
-        var tools = new CheckBox { Content = "允许 Panel 调用工具", IsChecked = saved && Json.Flag(Json.Field(profile, "panel_tools"), "enabled") };
-        var orchestration = new StackPanel { Spacing = 16 };
-        foreach (var element in new FrameworkElement[] { Text("多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型回答。"), search, panels, judge, minimum, timeout, intermediate, tools }) orchestration.Children.Add(element);
-        var schedule = new StackPanel { Spacing = 12 };
-        var routes = new List<(TimePicker Start, TimePicker End, ComboBox Model)>();
-        void AddRoute(int start, int end, string model)
-        {
-            var begin = new TimePicker { Time = TimeSpan.FromMinutes(start), ClockIdentifier = "24HourClock", Header = "开始" };
-            var finish = new TimePicker { Time = TimeSpan.FromMinutes(end), ClockIdentifier = "24HourClock", Header = "结束" };
-            var picker = Choice("时段模型", ids, model);
-            var row = new StackPanel { Spacing = 8 };
-            var times = Row(); times.Children.Add(begin); times.Children.Add(finish);
-            row.Children.Add(times); row.Children.Add(picker);
-            var route = (begin, finish, picker); routes.Add(route);
-            row.Children.Add(Button("移除此时段", () => { routes.Remove(route); schedule.Children.Remove(row); MarkDirty(); return Task.CompletedTask; }));
-            TrackDraft(begin); TrackDraft(finish); TrackDraft(picker);
-            schedule.Children.Add(row);
-        }
-        if (saved)
-            foreach (var route in Json.Rows(Json.Field(profile, "time_routes"))) AddRoute(Json.Field(route, "start_minute").GetInt32(), Json.Field(route, "end_minute").GetInt32(), Json.Text(route, "model"));
-        if (routes.Count == 0) AddRoute(540, 1080, ids[0]);
-        var scheduleBody = new StackPanel { Spacing = 16 };
-        scheduleBody.Children.Add(Text("按本地时间切换模型；未覆盖的时段使用默认模型。"));
-        scheduleBody.Children.Add(schedule);
-        scheduleBody.Children.Add(Button("添加时段", () => { AddRoute(540, 1080, ids[0]); MarkDirty(); return Task.CompletedTask; }));
-        void SelectMode() { orchestration.Visibility = mode.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed; scheduleBody.Visibility = mode.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed; }
-        mode.SelectionChanged += (_, _) => SelectMode(); SelectMode();
-        var form = new StackPanel { Spacing = 16 };
-        foreach (var element in new FrameworkElement[] { profileId, mode, orchestration, scheduleBody, final }) form.Children.Add(element);
-        pendingApply = async () =>
-        {
-            var chosen = ids.Where(selected.Contains).ToArray();
-            if (mode.SelectedIndex == 0 && (chosen.Length is < 1 or > 8 || !double.IsFinite(minimum.Value) || minimum.Value < 1 || minimum.Value > chosen.Length || minimum.Value != Math.Truncate(minimum.Value) || !double.IsFinite(timeout.Value) || timeout.Value <= 0))
-                throw new InvalidOperationException("请选择 1–8 个 Panel，并填写有效的最少成功数和超时。 ");
-            var payload = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(profile.GetRawText())! : new Dictionary<string, object?>();
-            payload["id"] = profileId.Text.Trim(); payload["mode"] = mode.SelectedIndex == 0 ? "orchestration" : "time_rotation";
-            payload["panel_models"] = chosen; payload["judge_model"] = judge.SelectedItem; payload["final_model"] = final.SelectedItem;
-            payload["min_successful"] = (int)minimum.Value; payload["timeout_ms"] = (long)timeout.Value;
-            payload["show_intermediate_results"] = intermediate.IsChecked == true;
-            payload["time_routes"] = routes.Select(route => new { start_minute = (int)route.Start.Time.TotalMinutes, end_minute = (int)route.End.Time.TotalMinutes, model = (string)route.Model.SelectedItem }).ToArray();
-            var panelTools = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(Json.Field(profile, "panel_tools").GetRawText())!
-                : new Dictionary<string, object?> { ["max_rounds"] = 16, ["max_calls_per_model"] = 64 };
-            panelTools["enabled"] = tools.IsChecked == true;
-            payload["panel_tools"] = panelTools;
-            if (!saved) payload["max_completion_tokens"] = 2048;
-            var arguments = new List<string> { "fusion", "set", "--profile-json", JsonSerializer.Serialize(payload) };
-            if (saved) arguments.AddRange(["--replace-id", Json.Text(profile, "id")]);
-            await ChangeAsync("保存 Fusion", arguments.ToArray(), apply: true);
-        };
-        foreach (var control in new FrameworkElement[] { profileId, mode, judge, final, minimum, timeout, intermediate, tools }) TrackDraft(control);
-        ApplyChanges.Content = "保存并重启网关";
-        if (saved) form.Children.Add(Button("停用 Fusion", async () => { if (await ConfirmAsync("停用 Fusion？", "将移除当前组合模型配置。", "停用")) await ChangeAsync("停用 Fusion", ["fusion", "delete", "--id", Json.Text(profile, "id")], apply: true); }));
-        PageBody.Children.Add(Card("Fusion 模型编排", "", form));
     }
 
     private static Task OpenPathAsync(string path)

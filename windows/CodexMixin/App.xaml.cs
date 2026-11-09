@@ -117,11 +117,13 @@ public partial class App : Application
             if (windows.TryGetValue(ConsoleWindowKey, out var console)) { console.ShowMain(); return; }
             page = "providers";
         }
-        if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage" or "context"))
+        // Fusion became one kind of model route; old "fusion" links open the routing page.
+        if (page == "fusion") page = "routing";
+        if (page is not ("providers" or "agents" or "routing" or "settings" or "usage" or "context"))
             throw new ArgumentException($"Unknown Windows page: {page}");
         tray?.HidePanel();
-        // Models, agents, context, and usage share one console window; Fusion and
-        // settings keep their own windows.
+        // Models, agents, usage, context, and routing share one console window;
+        // settings keeps its own window.
         var key = MainWindow.IsConsolePage(page) ? ConsoleWindowKey : page;
         if (!windows.TryGetValue(key, out var target))
         {
@@ -166,7 +168,7 @@ public partial class App : Application
                 Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch => launch.Arguments,
                 _ => ""
             };
-            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage|context)\b");
+            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|routing|fusion|settings|overview|usage|context)\b");
             OpenPage(match.Success ? match.Groups[1].Value : "providers");
         });
         try { OpenPage("providers", show: !background); }

@@ -243,43 +243,43 @@ try {
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
     $completed.Add($stage)
 
-    $stage = 'Fusion orchestration and time rotation'
-    & $WinApp ui invoke window-menu -a $app.Id
-    $option = & $WinApp ui search 'Fusion 设置' -a $app.Id --type MenuItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id
-    & $WinApp ui wait-for fusion-mode -a $app.Id --timeout 30000
-    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
-    $fusionWindow = @($tree.windows | Where-Object title -eq 'Fusion 设置')[0].hwnd
-    & $WinApp ui wait-for operation-status -w $fusionWindow --value '连接 CLI完成' --contains --timeout 90000
-    $field = & $WinApp ui search 'Profile ID' -w $fusionWindow --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector ui-profile -w $fusionWindow
-    & $WinApp ui invoke 显示中间结果 -w $fusionWindow --action toggle
-    & $WinApp ui invoke apply-changes -w $fusionWindow
-    & $WinApp ui wait-for operation-status -w $fusionWindow --value '保存 Fusion完成' --contains --timeout 90000
-    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
-    if ($fusion.profile.id -ne 'ui-profile' -or $fusion.profile.mode -ne 'orchestration' -or -not $fusion.profile.show_intermediate_results) { throw 'Fusion orchestration was not saved' }
-    & $WinApp ui invoke fusion-mode -w $fusionWindow --action expand
-    $option = & $WinApp ui search 按时间轮转 -w $fusionWindow --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -w $fusionWindow --action select
-    & $WinApp ui invoke 添加时段 -w $fusionWindow
-    $routes = & $WinApp ui search 移除此时段 -w $fusionWindow --type Button --json | ConvertFrom-Json
-    if ($routes.matchCount -ne 2) { throw 'Add time route did not create a second row' }
-    & $WinApp ui invoke $routes.matches[0].selector -w $fusionWindow
-    & $WinApp ui invoke apply-changes -w $fusionWindow
-    & $WinApp ui wait-for operation-status -w $fusionWindow --value '保存 Fusion完成' --contains --timeout 90000
-    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
-    if ($fusion.profile.mode -ne 'time_rotation' -or @($fusion.profile.time_routes).Count -ne 1) { throw 'Fusion time route was not saved' }
-    & $WinApp ui screenshot -w $fusionWindow --output "$evidence\fusion.png"
-    & $WinApp ui invoke '停用 Fusion' -w $fusionWindow
-    & $WinApp ui invoke CloseButton -w $fusionWindow
-    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
-    if ($null -eq $fusion.profile) { throw 'Cancelled Fusion deletion removed the profile' }
-    & $WinApp ui invoke '停用 Fusion' -w $fusionWindow
-    & $WinApp ui invoke PrimaryButton -w $fusionWindow
-    & $WinApp ui wait-for operation-status -w $fusionWindow --value '停用 Fusion完成' --contains --timeout 90000
-    $fusion = & $cli --no-tui --json-errors fusion get --json | ConvertFrom-Json
-    if ($null -ne $fusion.profile) { throw 'Fusion deletion did not remove the profile' }
-    & $WinApp ui send-keys alt+f4 -w $fusionWindow --via send-input --allow-system-keys
+    $stage = 'model routing: fusion, schedule, failover'
+    & $WinApp ui invoke console-routing-tab -a $app.Id --action select
+    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
+    & $WinApp ui invoke route-new-fusion -a $app.Id
+    $field = & $WinApp ui search '名称' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-fusion -a $app.Id
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
+    $fusion = @($routes.routes | Where-Object model -eq 'mixin/fusion/ui-fusion')[0]
+    if ($null -eq $fusion -or $fusion.kind -ne 'fusion' -or $fusion.mode -ne 'orchestration') { throw 'Fusion route was not saved' }
+    & $WinApp ui invoke route-new-schedule -a $app.Id
+    & $WinApp ui invoke 添加时段 -a $app.Id
+    $slots = & $WinApp ui search 移除此时段 -a $app.Id --type Button --json | ConvertFrom-Json
+    if (@($slots.matches).Count -ne 2) { throw 'Adding a time slot did not create a second row' }
+    & $WinApp ui invoke $slots.matches[0].selector -a $app.Id
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
+    $schedule = @($routes.routes | Where-Object kind -eq 'schedule')[0]
+    if ($null -eq $schedule -or $schedule.mode -ne 'time_rotation' -or @($schedule.time_routes).Count -ne 1) { throw 'Schedule route was not saved' }
+    & $WinApp ui invoke route-new-failover -a $app.Id
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
+    $failover = @($routes.routes | Where-Object kind -eq 'failover')[0]
+    if ($null -eq $failover -or @($failover.fallbacks).Count -ne 1 -or $failover.fallbacks[0] -eq $failover.source) { throw 'Failover route was not saved' }
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\routing.png"
+    & $WinApp ui invoke route-delete -a $app.Id
+    & $WinApp ui invoke CloseButton -a $app.Id
+    $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
+    if (@($routes.routes).Count -ne 3) { throw 'Cancelled route deletion removed a route' }
+    & $WinApp ui invoke route-delete -a $app.Id
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '删除模型路由完成' --contains --timeout 90000
+    $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
+    if (@($routes.routes | Where-Object kind -eq 'failover').Count -ne 0 -or @($routes.routes).Count -ne 2) { throw 'Route deletion did not remove the failover route' }
     $completed.Add($stage)
 
     $stage = 'settings themes, diagnostics and backup cancellation'
