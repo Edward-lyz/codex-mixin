@@ -830,6 +830,26 @@ fn buddy(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Re
         .iter()
         .map(|m| {
             let mut entry = json!({"id":m.id,"name":m.id,"vendor":PROVIDER,"apiKey":key,"url":format!("{v1}/chat/completions"),"maxInputTokens":m.context_window,"maxOutputTokens":m.max_tokens,"supportsToolCall":true,"supportsImages":m.supports_image,"supportsReasoning":!m.efforts.is_empty()});
+            let efforts = m
+                .efforts
+                .iter()
+                .map(String::as_str)
+                .filter(|effort| !matches!(*effort, "none" | "ultra"))
+                .collect::<Vec<_>>();
+            if let Some(first_effort) = efforts.first() {
+                let default_effort = crate::protocol::model_reasoning::resolve_model_reasoning(
+                    &m.id,
+                    Some(true),
+                )
+                .map(|capabilities| capabilities.default_effort)
+                .filter(|effort| efforts.contains(effort))
+                .unwrap_or(first_effort);
+                entry["reasoning"] = json!({
+                    "defaultEffort": default_effort,
+                    "supportedEfforts": efforts,
+                    "canDisableThinking": false,
+                });
+            }
             if let Some(ratio) = m.ratio.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
                 entry["credits"] = json!(ratio);
             }

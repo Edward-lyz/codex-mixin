@@ -124,6 +124,13 @@ async fn oneapi_rate_labels_reach_native_client_configs() {
             let model = models.iter().find(|model| model["id"] == id).unwrap();
             let name = if index < 2 {
                 assert_eq!(model["credits"], ratio);
+                assert_eq!(model["supportsReasoning"], true);
+                assert_eq!(model["reasoning"]["defaultEffort"], "medium");
+                assert_eq!(model["reasoning"]["canDisableThinking"], false);
+                assert_eq!(
+                    model["reasoning"]["supportedEfforts"],
+                    json!(["low", "medium", "high", "xhigh", "max"])
+                );
                 id.to_owned()
             } else {
                 format!("{name} ({ratio}) \u{b7} oneapi")
