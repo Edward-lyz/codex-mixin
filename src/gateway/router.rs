@@ -108,6 +108,8 @@ impl<'a> ModelRouter<'a> {
     }
 }
 
+const CODEX_PARENT_THREAD_ID: &str = "x-codex-parent-thread-id";
+
 /// Derive the per-session upstream routing (cache namespace) from the client
 /// headers and body, mirroring how the official client keys its sessions.
 pub(crate) fn stable_oneapi_routing(
@@ -127,7 +129,15 @@ pub(crate) fn stable_oneapi_routing(
     let x_session_id = read_header("x-session-id")?;
     let session_id = read_header("session-id")?;
     let opencode_session = read_header(crate::provider::OPENCODE_SESSION_HEADER)?;
-    let subagent = read_header("x-openai-subagent")?;
+    // WebSocket turns carry the parent only in client_metadata.
+    let parent_thread_id = match read_header(CODEX_PARENT_THREAD_ID)? {
+        Some(parent) => Some(parent),
+        None => body
+            .get("client_metadata")
+            .and_then(|metadata| metadata.get(CODEX_PARENT_THREAD_ID))
+            .and_then(serde_json::Value::as_str)
+            .filter(|parent| !parent.is_empty()),
+    };
     let prompt_cache_key = match body.get("prompt_cache_key") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) if !value.is_empty() => Some(value.as_str()),
@@ -140,7 +150,12 @@ pub(crate) fn stable_oneapi_routing(
     };
 
     if let Some(thread_id) = thread_id {
-        let mut cache_namespace = format!("thread-id\0{thread_id}");
+        // OneAPI picks the backend account from this key, and opaque
+        // reasoning only decrypts on the account that produced it. Forked
+        // subagents, reviews and compactions replay the parent's history, so
+        // they share the root thread's key instead of deriving their own.
+        let affinity_thread = parent_thread_id.unwrap_or(thread_id);
+        let mut cache_namespace = format!("thread-id\0{affinity_thread}");
         if let Some(prompt_cache_key) = prompt_cache_key
             && Some(prompt_cache_key) != session_id
             && Some(prompt_cache_key) != x_session_id
@@ -148,10 +163,6 @@ pub(crate) fn stable_oneapi_routing(
         {
             cache_namespace.push_str("\0prompt-cache-key\0");
             cache_namespace.push_str(prompt_cache_key);
-        }
-        if let Some(subagent) = subagent {
-            cache_namespace.push_str("\0subagent\0");
-            cache_namespace.push_str(subagent);
         }
         return Ok(Some(super::UpstreamRouting {
             session_id: thread_id.to_owned(),

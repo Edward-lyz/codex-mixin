@@ -943,7 +943,25 @@ async fn mock_baidu_routed_responses(
             .any(|tool| tool["name"].as_str() == Some("submit_compaction"))
     });
     let is_claude_compat = body["instructions"].as_str() == Some("You are Claude Code.");
+    let has_foreign_ciphertext = body["input"].as_array().is_some_and(|input| {
+        input
+            .iter()
+            .any(|item| item["encrypted_content"] == "gAAAAA-foreign-account")
+    });
     record_baidu_protocol_request(&state, "/v1/responses", &headers, body);
+    if has_foreign_ciphertext {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": "The encrypted content for item rs_parent could not be verified. Reason: Encrypted content could not be decrypted or parsed.",
+                    "type": "invalid_request_error",
+                    "code": "invalid_encrypted_content"
+                }
+            })),
+        )
+            .into_response();
+    }
     if contains_websocket_envelope {
         return (
             StatusCode::BAD_REQUEST,
@@ -1053,6 +1071,9 @@ fn record_baidu_protocol_request(
         "path": path,
         "anthropic_version": headers
             .get("anthropic-version")
+            .and_then(|value| value.to_str().ok()),
+        "x_hash_key": headers
+            .get("x-hash-key")
             .and_then(|value| value.to_str().ok()),
         "body": body,
     }));
@@ -5924,6 +5945,85 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
         .unwrap();
     assert_eq!(deepseek_request["body"]["thinking"]["type"], "adaptive");
     assert_eq!(deepseek_request["body"]["output_config"]["effort"], "max");
+}
+
+#[tokio::test]
+async fn forked_baidu_subagent_keeps_parent_affinity_and_replays_undecryptable_history() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    configure_model_protocol(
+        &mut config,
+        "gpt-5.6-sol",
+        ProviderProtocol::OpenAiResponses,
+        "/v1/responses",
+    );
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let mut parent = responses_request();
+    parent["model"] = json!("gpt-5.6-sol-custom");
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", "parent-thread")
+        .json(&parent)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    // The forked child replays the parent's reasoning, which this upstream
+    // account cannot decrypt.
+    let mut child = parent.clone();
+    child["input"].as_array_mut().unwrap().extend([
+        json!({"type":"reasoning","id":"rs_parent","summary":[],"encrypted_content":"gAAAAA-foreign-account"}),
+        json!({"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"}),
+        json!({"type":"function_call_output","call_id":"call_1","output":[{"type":"encrypted_content","encrypted_content":"gAAAAA-foreign-account"}]}),
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", "child-thread")
+        .header("x-codex-parent-thread-id", "parent-thread")
+        .header("x-openai-subagent", "collab_spawn")
+        .json(&child)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let requests = requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 3);
+    let parent_key = requests[0]["x_hash_key"].as_str().unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["x_hash_key"] == parent_key)
+    );
+    let retried = requests[2]["body"]["input"].as_array().unwrap();
+    assert!(retried.iter().all(|item| item["type"] != "reasoning"));
+    let output = retried
+        .iter()
+        .find(|item| item["type"] == "function_call_output")
+        .unwrap();
+    assert!(output["output"].is_string());
 }
 
 #[tokio::test]

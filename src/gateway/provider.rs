@@ -487,6 +487,53 @@ async fn stream_openai_responses(
                 "provider responses request failed before receiving a response"
             );
         })?;
+    let upstream = if upstream.status() == reqwest::StatusCode::BAD_REQUEST
+        && provider.definition().preset_id.as_deref() == Some("baidu-oneapi")
+    {
+        let content_type = upstream
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .cloned();
+        let error_text = crate::upstream::body::read_error_text(upstream).await?;
+        // OneAPI may serve a thread from another backend account than the
+        // one that encrypted its history; that account cannot decrypt it.
+        // Replay once without the opaque items rather than fail every turn.
+        let mut retry_body = Value::Null;
+        let dropped = if error_text.contains(INVALID_ENCRYPTED_CONTENT) {
+            retry_body = request_body.clone();
+            drop_opaque_history(&mut retry_body)
+        } else {
+            0
+        };
+        if dropped == 0 {
+            Err(GatewayError::UpstreamStatus {
+                status: reqwest::StatusCode::BAD_REQUEST,
+                body: error_text,
+                content_type,
+                context: format!("provider {} responses endpoint", provider.id()),
+            })
+        } else {
+            tracing::warn!(
+                provider_id = provider.id(),
+                upstream_model_id,
+                dropped_items = dropped,
+                "upstream could not decrypt replayed history; retrying without opaque items"
+            );
+            executor
+                .upstream
+                .send_provider_json(
+                    provider,
+                    ProviderProtocol::OpenAiResponses,
+                    upstream_model_id,
+                    routing.map(|routing| routing.hash_key.as_str()),
+                    baidu_native.as_ref(),
+                    retry_body,
+                )
+                .await
+        }
+    } else {
+        Ok(upstream)
+    };
     restore_reasoning(&mut request_body, saved_reasoning);
     restore_portable_responses_reasoning(&mut request_body, normalized_reasoning);
     restore_optional_field(&mut request_body, "model", original_model);
@@ -496,6 +543,7 @@ async fn stream_openai_responses(
         original_gemini_config,
     );
     *body = request_body;
+    let upstream = upstream?;
     let status = upstream.status();
     if !status.is_success() {
         return Err(crate::upstream::body::response_error(
@@ -509,6 +557,36 @@ async fn stream_openai_responses(
         upstream_model_id.to_owned(),
         downstream_model.to_owned(),
     ))
+}
+
+const INVALID_ENCRYPTED_CONTENT: &str = "invalid_encrypted_content";
+const UNREPLAYABLE_TOOL_OUTPUT: &str =
+    "[Encrypted tool output could not be replayed on this upstream account.]";
+
+/// Removes upstream-encrypted reasoning items and encrypted tool-output parts
+/// from `input`. Returns how many were removed.
+fn drop_opaque_history(body: &mut Value) -> usize {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    let before = input.len();
+    input.retain(|item| {
+        item.get("type").and_then(Value::as_str) != Some("reasoning")
+            || item.get("encrypted_content").is_none()
+    });
+    let mut dropped = before - input.len();
+    for item in input.iter_mut() {
+        let Some(parts) = item.get_mut("output").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let parts_before = parts.len();
+        parts.retain(|part| part.get("type").and_then(Value::as_str) != Some("encrypted_content"));
+        dropped += parts_before - parts.len();
+        if parts.is_empty() && parts_before > 0 {
+            item["output"] = Value::String(UNREPLAYABLE_TOOL_OUTPUT.to_owned());
+        }
+    }
+    dropped
 }
 
 fn is_deepseek_responses_provider(provider: &ProviderRuntime, upstream_model_id: &str) -> bool {
