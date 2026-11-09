@@ -1,5 +1,5 @@
 //! The Claude Code provider drives the local `claude` CLI. A scripted CLI on
-//! PATH speaks the same stream-json protocol and calls the gateway's MCP
+//! PATH runs inside a real PTY, writes captured SSE and calls the gateway's MCP
 //! bridge, so the test covers discovery, the tool round trip and process
 //! reuse through the real binary.
 #![cfg(unix)]
@@ -18,10 +18,15 @@ const MODEL: &str = "claude-sonnet-5-5-claude-code";
 const FAKE_CLAUDE: &str = r#"#!/usr/bin/env node
 const readline = require('readline');
 const args = process.argv.slice(2);
+if (args.includes('-p') || args.includes('--print')) throw Error('headless Claude must not run');
 const url = JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.mixin.url;
 let turns = 0;
 let rpc = 0;
-const out = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+const fs = require('fs');
+if (!process.stdin.isTTY || !process.stdout.isTTY) throw Error('interactive terminal required');
+const out = value => fs.appendFileSync(process.env.CODEX_MIXIN_CLAUDE_TAP, JSON.stringify(value) + '\n');
+process.stdout.write('❯ ');
+process.stdin.setRawMode(true);
 const ev = (event) => out({ type: 'stream_event', event, parent_tool_use_id: null });
 const mcp = async (method, params) => {
   const reply = await fetch(url, {
@@ -46,9 +51,10 @@ function message(blocks, stop) {
   ev({ type: 'message_delta', delta: { stop_reason: stop }, usage: { output_tokens: 5 } });
   ev({ type: 'message_stop' });
 }
+out({ tap: 'on' });
 out({ type: 'system', subtype: 'init' });
-readline.createInterface({ input: process.stdin }).on('line', async (line) => {
-  const text = JSON.parse(line).message.content.map((block) => block.text || '').join('\n');
+const onInput = async text => {
+  text = text.trim();
   turns += 1;
   if (turns === 1) {
     await mcp('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake', version: '1' } });
@@ -59,7 +65,17 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   } else {
     message([{ type: 'text', text: `process turn ${turns}: ${text}` }], 'end_turn');
   }
-  out({ type: 'result', subtype: 'success', is_error: false, result: 'done' });
+};
+let buffer = '';
+process.stdin.on('data', bytes => {
+  process.stdout.write(bytes);
+  buffer += bytes.toString();
+  const end = buffer.indexOf('\x1b[201~\r');
+  if (end < 0) return;
+  const start = buffer.indexOf('\x1b[200~');
+  const text = buffer.slice(start + 6, end);
+  buffer = buffer.slice(end + 7);
+  onInput(text).catch(() => process.exit(1));
 });
 "#;
 

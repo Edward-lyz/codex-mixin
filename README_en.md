@@ -184,6 +184,8 @@ Test the connection and refresh models in the interface. Use the model action me
 
 ---
 
+Claude Code subscriptions reuse the local login through Mixin’s built-in PTY/ConPTY bridge to the official interactive `claude` executable, with streaming, MCP tool round trips, and live session reuse. Magpie is not required and there is no automatic `claude -p` fallback. Claude Code must be installed; streaming capture depends on its Bun runtime and fails explicitly when incompatible.
+
 ## Agent Integrations
 
 All 50 catalog entries have a supported integration or native model manager. The 47 gateway/native-app integrations preserve unrelated settings and restore owned fields on disconnect. Cursor CLI, Copilot CLI, and Devin manage vendor-native models using the vendor account; they do not route arbitrary models through the gateway.

@@ -1,7 +1,8 @@
 //! Claude Code subscription transport.
 //!
-//! Requests run through the signed-in official `claude` CLI in stream-json
-//! mode, so the CLI keeps owning authentication, its system prompt and its
+//! Requests run through the signed-in official `claude` CLI using the built-in
+//! PTY/ConPTY adapter, with no print-mode fallback or external gateway.
+//! The CLI owns authentication, its system prompt and its
 //! request identity. The caller's tools reach the CLI as one loopback MCP
 //! server. Each client thread keeps one CLI process: a tool call ends the
 //! outer response while the CLI waits inside the MCP call, and the next
@@ -11,6 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::platform::claude_interactive::{InteractiveChild, InteractiveInput};
 use anyhow::Context;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -19,8 +21,6 @@ use axum::routing::post;
 use axum::{Json, Router};
 use bytes::Bytes;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin};
 use tokio::sync::{Notify, mpsc, oneshot};
 
 use super::{AnthropicByteStream, UpstreamAccess};
@@ -102,8 +102,8 @@ struct DeskState {
 }
 
 struct Session {
-    _child: Child,
-    stdin: ChildStdin,
+    _child: InteractiveChild,
+    stdin: InteractiveInput,
     events: mpsc::Receiver<Value>,
     desk: Arc<ToolDesk>,
     token: String,
@@ -115,7 +115,12 @@ struct Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // The child is killed on drop; any MCP call it left waiting fails.
+        // Drop result senders too: a disconnected CLI must not leave MCP
+        // requests holding this desk alive indefinitely.
+        if let Ok(mut state) = self.desk.state.lock() {
+            state.waiters.clear();
+            state.results.clear();
+        }
         if let Ok(mut desks) = self.desks.lock() {
             desks.remove(&self.token);
         }
@@ -150,7 +155,7 @@ impl UpstreamAccess {
             provider_id = provider.id(),
             model = %request.model,
             reused = planned.is_some(),
-            "Claude Code request"
+            "interactive Claude Code request"
         );
         let (mut session, step) = match planned {
             Some(planned) => planned,
@@ -453,17 +458,11 @@ async fn spawn_session(
         }
     });
     let workdir = std::env::temp_dir().join("codex-mixin-claude-code");
-    std::fs::create_dir_all(&workdir).context("create the Claude Code working directory")?;
-    let mut command = tokio::process::Command::new(program);
+    crate::platform::ensure_owner_only_dir(&workdir)
+        .context("create the Claude Code working directory")?;
+    let mut command = tokio::process::Command::from(crate::platform::launcher_command(&program));
     command
         .args([
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--include-partial-messages",
-            "--verbose",
             "--model",
             &request.model,
             "--tools",
@@ -476,7 +475,6 @@ async fn spawn_session(
             "--setting-sources",
             "",
             "--disable-slash-commands",
-            "--no-session-persistence",
         ])
         .current_dir(&workdir)
         .env("MCP_TOOL_TIMEOUT", MCP_TOOL_TIMEOUT_MS)
@@ -499,11 +497,24 @@ async fn spawn_session(
         command.env(TOKEN_ENV, api_key);
     }
     crate::platform::prepare_background_tokio_command(&mut command);
-    let mut child = command.spawn().context("start Claude Code")?;
-    let stdin = child.stdin.take().context("Claude Code stdin")?;
-    let stdout = child.stdout.take().context("Claude Code stdout")?;
+    let (child, stdin, mut source) = tokio::task::spawn_blocking(move || {
+        crate::platform::claude_interactive::spawn(command.as_std())
+    })
+    .await
+    .context("start interactive Claude worker")??;
     let (sender, events) = mpsc::channel(EVENT_QUEUE);
-    tokio::spawn(read_events(stdout, sender, desk.clone()));
+    let tool_desk = desk.clone();
+    tokio::spawn(async move {
+        let mut blocks = HashMap::new();
+        while let Some(event) = source.recv().await {
+            if event["type"] == "stream_event" {
+                track_tool_block(&event["event"], &mut blocks, &tool_desk);
+            }
+            if sender.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
     if let Ok(mut desks) = bridge.desks.lock() {
         desks.insert(token.clone(), desk.clone());
     }
@@ -518,30 +529,6 @@ async fn spawn_session(
         seen_messages: 0,
         last_used: Instant::now(),
     })
-}
-
-/// Forward CLI events and record tool_use blocks as soon as they close, so
-/// the MCP calls that follow find their ids.
-async fn read_events(
-    stdout: tokio::process::ChildStdout,
-    sender: mpsc::Sender<Value>,
-    desk: Arc<ToolDesk>,
-) {
-    let mut lines = BufReader::new(stdout).lines();
-    let mut blocks: HashMap<u64, (String, String, String)> = HashMap::new();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let Ok(event) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if event.get("type").and_then(Value::as_str) == Some("stream_event")
-            && event.get("parent_tool_use_id").is_none_or(Value::is_null)
-        {
-            track_tool_block(&event["event"], &mut blocks, &desk);
-        }
-        if sender.send(event).await.is_err() {
-            break;
-        }
-    }
 }
 
 fn track_tool_block(
@@ -641,21 +628,11 @@ async fn mcp_call(
     Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
 }
 
-async fn write_user(stdin: &mut ChildStdin, content: Vec<Value>) -> Result<(), GatewayError> {
-    let mut line = json!({
-        "type": "user",
-        "message": {"role": "user", "content": content},
-    })
-    .to_string();
-    line.push('\n');
+async fn write_user(stdin: &mut InteractiveInput, content: Vec<Value>) -> Result<(), GatewayError> {
     stdin
-        .write_all(line.as_bytes())
+        .send(content)
         .await
-        .context("send the message to Claude Code")?;
-    stdin
-        .flush()
-        .await
-        .context("send the message to Claude Code")?;
+        .context("send the message to interactive Claude")?;
     Ok(())
 }
 

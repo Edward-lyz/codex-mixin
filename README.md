@@ -183,6 +183,8 @@ WinUI 3 控制台管理模型、Agent、用量和上下文，托盘随时查看�
 
 ---
 
+Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／ConPTY 桥接运行官方交互式 `claude`，支持流式输出、MCP 工具往返和进程内会话复用。无需安装 Magpie；不会自动退回 `claude -p`。此路径需要安装 Claude Code，流式采集依赖其 Bun 运行时；运行时不兼容时会明确报错。
+
 ## Agent 接入
 
 50 款 Agent 均提供接入或原生模型管理。47 款支持网关配置或原生应用接入，断开时恢复托管字段并保留无关配置。Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型，不经过自定义模型网关。

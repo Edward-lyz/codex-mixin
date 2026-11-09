@@ -4,6 +4,7 @@
 //! Platform-specific process flags, paths, and permission tools stay here.
 
 mod agent_apps;
+pub(crate) mod claude_interactive;
 mod codex_cli;
 mod desktop;
 mod files;
