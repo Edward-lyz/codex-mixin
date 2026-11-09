@@ -373,7 +373,13 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                     let name = if matches!(id_owned.as_str(), "workbuddy" | "codebuddy") {
                         let mut display_model = model.clone();
                         display_model.ratio = None;
-                        codex_mixin::provider::provider_model_display_name(&display_model, provider)
+                        let name = codex_mixin::provider::provider_model_display_name(
+                            &display_model,
+                            provider,
+                        );
+                        name.rsplit_once(" \u{b7} ")
+                            .map_or(name.as_str(), |(model, _)| model)
+                            .to_owned()
                     } else {
                         codex_mixin::provider::provider_model_display_name(model, provider)
                     };
