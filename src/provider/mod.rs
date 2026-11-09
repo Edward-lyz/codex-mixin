@@ -42,8 +42,8 @@ pub use resolver::{
 };
 pub use spec::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_RUNTIME_SERVICE,
-    OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, aws_bedrock_aksk_provider,
-    aws_bedrock_mantle_base_url, aws_bedrock_runtime_base_url, spec_for,
+    CLAUDE_CODE_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec,
+    aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url, aws_bedrock_runtime_base_url, spec_for,
 };
 pub use types::{
     AwsSigV4AuthConfig, BaiduAuthBridge, CONFIG_VERSION, MANUAL_MODEL_CONTEXT_WINDOW,

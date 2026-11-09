@@ -272,6 +272,21 @@ async fn stream_anthropic_messages(
                 )
             })
             .transpose()?;
+        if provider.definition().preset_id.as_deref()
+            == Some(crate::provider::CLAUDE_CODE_PRESET_ID)
+        {
+            // One CLI process per client thread; the affinity hash may be
+            // shared by a forked subagent and would mix their processes.
+            let upstream = executor
+                .upstream
+                .send_claude_code(
+                    provider,
+                    &converted.request,
+                    routing.map(|routing| routing.session_id.as_str()),
+                )
+                .await?;
+            return Ok::<_, GatewayError>((upstream, shape, converted.tool_names));
+        }
         let upstream = executor
             .upstream
             .anthropic_stream_with_web_search_retry(

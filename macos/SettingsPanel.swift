@@ -233,7 +233,9 @@ private struct AddProviderFormView: View {
                 Section("凭据") {
                     if model.usesLocalSession {
                         Text(AppLocalization.string(model.preset == "kiro"
-                            ? "settings.kiroSessionCredentials" : "settings.agyBusinessCredentials"))
+                            ? "settings.kiroSessionCredentials"
+                            : model.preset == "claude-code"
+                                ? "settings.claudeCodeCredentials" : "settings.agyBusinessCredentials"))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }

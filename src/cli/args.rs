@@ -886,6 +886,8 @@ pub(super) enum CliProviderPreset {
     OpenCodeGo,
     #[value(name = "aws-bedrock", alias = "amazon-bedrock")]
     AwsBedrock,
+    #[value(name = "claude-code")]
+    ClaudeCode,
 }
 
 impl CliProviderPreset {
@@ -901,6 +903,7 @@ impl CliProviderPreset {
             Self::DeepSeek => ProviderPreset::DeepSeek,
             Self::OpenCodeGo => ProviderPreset::OpenCodeGo,
             Self::AwsBedrock => ProviderPreset::AwsBedrock,
+            Self::ClaudeCode => ProviderPreset::ClaudeCode,
         }
     }
 
@@ -922,6 +925,7 @@ impl From<ProviderPreset> for CliProviderPreset {
             ProviderPreset::DeepSeek => Self::DeepSeek,
             ProviderPreset::OpenCodeGo => Self::OpenCodeGo,
             ProviderPreset::AwsBedrock => Self::AwsBedrock,
+            ProviderPreset::ClaudeCode => Self::ClaudeCode,
         }
     }
 }

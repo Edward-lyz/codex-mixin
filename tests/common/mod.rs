@@ -29,6 +29,8 @@ pub fn isolate(command: &mut Command, root: &Path) {
         // would otherwise rewrite the developer's real DSH profile.
         .env("DSH_HOME", root.join("home").join(".dsh"))
         .env("CLAUDE_CONFIG_DIR", root.join("home").join(".claude"))
+        // A developer's exported setup token would add a discovered provider.
+        .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
         .env("CODEX_GATEWAY_CONFIG", root.join("config.json"))
         .env("CODEX_GATEWAY_RUNTIME_FILE", root.join("runtime.json"))
         .env("CODEX_GATEWAY_DAEMON_FILE", root.join("daemon.json"))

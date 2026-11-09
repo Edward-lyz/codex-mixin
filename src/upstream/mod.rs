@@ -23,6 +23,7 @@ use crate::provider::auth::ducx::DucxRuntime;
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
 pub(crate) mod body;
+mod claude_code;
 mod ducx;
 mod http_compression;
 mod kiro;
@@ -54,6 +55,7 @@ pub(crate) struct UpstreamAccess {
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
     gzip_support: Arc<tokio::sync::Mutex<HashMap<reqwest::Url, bool>>>,
+    claude_code: Arc<claude_code::ClaudeCodeSessions>,
 }
 
 impl UpstreamAccess {
@@ -66,6 +68,7 @@ impl UpstreamAccess {
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             gzip_support: Arc::default(),
+            claude_code: Arc::default(),
         }
     }
 

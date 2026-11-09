@@ -57,7 +57,9 @@ fn provider_catalog() -> Value {
                 ProviderPreset::Official | ProviderPreset::Agy | ProviderPreset::AgyBusiness => {
                     ("local_oauth", None)
                 }
-                ProviderPreset::Kiro => ("local_session", spec.website_url),
+                ProviderPreset::Kiro | ProviderPreset::ClaudeCode => {
+                    ("local_session", spec.website_url)
+                }
                 ProviderPreset::AwsBedrock => ("aws_sigv4", spec.website_url),
                 ProviderPreset::BaiduOneApi => {
                     ("api_key", Some("https://oneapi-comate.baidu-int.com/token"))

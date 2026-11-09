@@ -467,7 +467,7 @@ impl ProviderDefinition {
         self.auth.is_configured()
             || matches!(
                 self.preset_id.as_deref(),
-                Some("agy" | "agy-business" | "kiro")
+                Some("agy" | "agy-business" | "kiro" | "claude-code")
             )
     }
 

@@ -40,6 +40,23 @@ pub(crate) fn agy_external_token_paths() -> [PathBuf; 2] {
     ]
 }
 
+/// Files written by an interactive `claude /login`: the credential file
+/// (Linux/Windows; macOS keeps the secret in the Keychain) and the global
+/// state file that records the signed-in account on every OS.
+pub(crate) fn claude_code_login_paths() -> [PathBuf; 2] {
+    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let credentials = config_dir
+        .clone()
+        .unwrap_or_else(|| super::home_dir().join(".claude"))
+        .join(".credentials.json");
+    let state = config_dir
+        .map(|dir| dir.join(".claude.json"))
+        .unwrap_or_else(|| super::home_dir().join(".claude.json"));
+    [credentials, state]
+}
+
 pub(crate) fn kiro_auth_path() -> PathBuf {
     std::env::var_os("CODEX_MIXIN_KIRO_AUTH_FILE")
         .filter(|path| !path.is_empty())

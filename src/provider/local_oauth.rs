@@ -1,4 +1,5 @@
-//! Read-only discovery of supported local AI-coding logins (AGY, Kiro).
+//! Read-only discovery of supported local AI-coding logins (AGY, Kiro,
+//! Claude Code).
 //!
 //! Discovery never touches the network and never writes the external
 //! credential files. A discovered account becomes an ordinary provider built
@@ -12,13 +13,22 @@ use super::spec::ProviderPreset;
 use super::types::ProviderDefinition;
 
 const MAX_CREDENTIAL_BYTES: u64 = 1024 * 1024;
+/// Claude Code's global state file also stores per-project history.
+const MAX_CLAUDE_STATE_BYTES: u64 = 16 * 1024 * 1024;
+/// `claude setup-token` prints a long-lived token that the user exports; the
+/// CLI never writes it to disk.
+pub(crate) const CLAUDE_CODE_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 const IGNORE_FILE: &str = "discovery-ignored";
 pub(crate) const PENDING_REFRESH: &str = "model directory pending refresh";
 const TOKEN_MARGIN_SECONDS: i64 = 180;
 
 /// Presets whose local login Mixin adopts automatically. AGY Business is
 /// excluded: a generic Google ADC file does not prove a Business license.
-const AUTO_PRESETS: [ProviderPreset; 2] = [ProviderPreset::Agy, ProviderPreset::Kiro];
+const AUTO_PRESETS: [ProviderPreset; 3] = [
+    ProviderPreset::Agy,
+    ProviderPreset::Kiro,
+    ProviderPreset::ClaudeCode,
+];
 
 /// Where the supported logins and the ignore list live; injectable for tests.
 #[derive(Clone, Debug)]
@@ -27,6 +37,9 @@ pub(crate) struct Locations {
     business: Vec<PathBuf>,
     kiro: PathBuf,
     kiro_cli: Option<PathBuf>,
+    claude_cli: Option<PathBuf>,
+    claude_login: [PathBuf; 2],
+    claude_token: Option<String>,
     ignore: PathBuf,
 }
 
@@ -40,6 +53,11 @@ impl Locations {
                 .collect(),
             kiro: crate::platform::oauth::kiro_auth_path(),
             kiro_cli: crate::platform::oauth::kiro_cli_auth_path(),
+            claude_cli: crate::platform::agent_cli::find_command("claude"),
+            claude_login: crate::platform::oauth::claude_code_login_paths(),
+            claude_token: std::env::var(CLAUDE_CODE_TOKEN_ENV)
+                .ok()
+                .filter(|token| !token.trim().is_empty()),
             ignore: crate::platform::oauth::oauth_path(IGNORE_FILE),
         }
     }
@@ -92,21 +110,48 @@ pub(crate) fn inspect(preset: ProviderPreset, at: &Locations) -> Option<LocalCre
                 inspect_kiro_document(&document)
             })
             .or_else(|| inspect_kiro(&at.kiro)),
+        ProviderPreset::ClaudeCode => inspect_claude_code(at),
         _ => None,
     }
 }
 
 fn read_json(path: &Path) -> Option<Value> {
+    read_json_capped(path, MAX_CREDENTIAL_BYTES)
+}
+
+fn read_json_capped(path: &Path, limit: u64) -> Option<Value> {
     use std::io::Read;
     let file = std::fs::File::open(path).ok()?;
     let mut raw = Vec::new();
-    file.take(MAX_CREDENTIAL_BYTES + 1)
-        .read_to_end(&mut raw)
-        .ok()?;
-    if raw.len() as u64 > MAX_CREDENTIAL_BYTES {
+    file.take(limit + 1).read_to_end(&mut raw).ok()?;
+    if raw.len() as u64 > limit {
         return None;
     }
     serde_json::from_slice(&raw).ok()
+}
+
+/// Mixin runs the official CLI, which keeps managing its own login; the
+/// login only needs to exist. A setup token lives in the environment, an
+/// interactive login in the credential file or the account state file.
+fn inspect_claude_code(at: &Locations) -> Option<LocalCredential> {
+    at.claude_cli.as_ref()?;
+    if let Some(token) = at.claude_token.as_deref() {
+        return Some(LocalCredential {
+            fingerprint: fingerprint(&["claude-code", token]),
+        });
+    }
+    let [credentials, state] = &at.claude_login;
+    let account = read_json_capped(state, MAX_CLAUDE_STATE_BYTES)
+        .and_then(|document| text(document.get("oauthAccount")?, "accountUuid").map(str::to_owned));
+    let signed_in = account.is_some()
+        || read_json(credentials).is_some_and(|document| {
+            document
+                .get("claudeAiOauth")
+                .is_some_and(|oauth| text(oauth, "refreshToken").is_some())
+        });
+    signed_in.then(|| LocalCredential {
+        fingerprint: fingerprint(&["claude-code", account.as_deref().unwrap_or("default")]),
+    })
 }
 
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -235,7 +280,14 @@ fn discover_at(
             !configured.iter().any(|provider| provider.id == id),
             "cannot add the discovered {preset_id} login: provider id {id} is already used by a different provider"
         );
-        let mut provider = preset.create(id, "");
+        // A setup token exists only in the shell that exported it; keep it so
+        // the background service, which lacks that environment, can pass it
+        // to the CLI.
+        let token = match preset {
+            ProviderPreset::ClaudeCode => at.claude_token.as_deref().unwrap_or_default(),
+            _ => "",
+        };
+        let mut provider = preset.create(id, token);
         provider.discovered_credential = Some(credential.fingerprint);
         provider.models_refresh_error = Some(PENDING_REFRESH.to_owned());
         found.push(provider);
@@ -267,6 +319,11 @@ fn reconcile_at(at: &Locations, providers: &mut Vec<ProviderDefinition>) -> anyh
             continue;
         };
         if current.fingerprint != previous {
+            if preset == ProviderPreset::ClaudeCode
+                && let Some(token) = at.claude_token.as_deref()
+            {
+                provider.auth.api_key = token.to_owned();
+            }
             provider.discovered_credential = Some(current.fingerprint);
             provider.cached_models.clear();
             provider.selected_models.clear();
@@ -298,6 +355,7 @@ fn runtime_providers_at(
         .into_iter()
         .filter(|provider| {
             provider.discovered_credential.is_none()
+                || provider.auth.is_configured()
                 || provider
                     .preset_id
                     .as_deref()

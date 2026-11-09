@@ -11,6 +11,7 @@ use super::types::{
 };
 
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
+pub const CLAUDE_CODE_PRESET_ID: &str = "claude-code";
 pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
 pub const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
@@ -42,10 +43,11 @@ pub enum ProviderPreset {
     DeepSeek,
     OpenCodeGo,
     AwsBedrock,
+    ClaudeCode,
 }
 
 impl ProviderPreset {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Custom,
         Self::Official,
         Self::Agy,
@@ -56,6 +58,7 @@ impl ProviderPreset {
         Self::DeepSeek,
         Self::OpenCodeGo,
         Self::AwsBedrock,
+        Self::ClaudeCode,
     ];
 
     pub fn parse(value: &str) -> anyhow::Result<Self> {
@@ -70,6 +73,7 @@ impl ProviderPreset {
             "deepseek" => Ok(Self::DeepSeek),
             "opencode-go" | "opencode_go" => Ok(Self::OpenCodeGo),
             "aws-bedrock" | "amazon-bedrock" => Ok(Self::AwsBedrock),
+            CLAUDE_CODE_PRESET_ID => Ok(Self::ClaudeCode),
             _ => anyhow::bail!(
                 "unsupported provider preset: {value}; available presets: {}",
                 Self::available_presets_csv()
@@ -221,7 +225,7 @@ impl ProviderSpec {
     }
 }
 
-static SPECS: [ProviderSpec; 10] = [
+static SPECS: [ProviderSpec; 11] = [
     ProviderSpec {
         preset: ProviderPreset::Custom,
         id: "custom",
@@ -443,7 +447,57 @@ static SPECS: [ProviderSpec; 10] = [
         seed_models: bedrock_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
+    ProviderSpec {
+        preset: ProviderPreset::ClaudeCode,
+        id: CLAUDE_CODE_PRESET_ID,
+        display_name: "Claude Code (subscription)",
+        description: "Signed-in local Claude Code CLI; requests run through the official client",
+        icon: "claude",
+        website_url: Some("https://claude.com/claude-code"),
+        // The gateway converts to Messages; the transport hands that request
+        // to the local `claude` process instead of an HTTP endpoint.
+        protocol: ProviderProtocol::AnthropicMessages,
+        base_url: "https://api.anthropic.com",
+        api_path: "/v1/messages",
+        anthropic_version: None,
+        image_generation_path: None,
+        model_source: ModelSourceSpec::Static,
+        models_dev_provider: Some("anthropic"),
+        quota_url: None,
+        quota_currency: None,
+        quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: true,
+        seed_models: claude_code_seed_models,
+        request_policy: ProviderRequestPolicy::default,
+    },
 ];
+
+/// Models the Claude Code CLI accepts through `--model`.
+fn claude_code_seed_models() -> Vec<ProviderModel> {
+    [
+        ("claude-opus-5-5", "Claude Opus 5.5"),
+        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+        ("claude-haiku-5-5", "Claude Haiku 5.5"),
+        ("claude-fable-5-1", "Claude Fable 5.1"),
+    ]
+    .into_iter()
+    .map(|(id, name)| ProviderModel {
+        id: id.to_owned(),
+        display_name: Some(name.to_owned()),
+        context_window: Some(CLAUDE_CODE_CONTEXT_WINDOW),
+        supports_image: Some(true),
+        supports_thinking: Some(true),
+        supports_web_search: Some(false),
+        supports_tool_search: Some(false),
+        supports_function_tools: Some(true),
+        ..ProviderModel::default()
+    })
+    .collect()
+}
+
+/// Claude Code compacts its own session; Codex only needs a window that keeps
+/// a respawned transcript within the subscription models' standard limit.
+const CLAUDE_CODE_CONTEXT_WINDOW: u64 = 200_000;
 
 fn baidu_request_policy() -> ProviderRequestPolicy {
     ProviderRequestPolicy {
