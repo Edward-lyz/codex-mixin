@@ -156,11 +156,7 @@ fn handle_anthropic_event(
                     .unwrap_or_else(|| json!({}));
             }
             if let Some(usage) = data.pointer("/message/usage") {
-                if baidu_oneapi_usage {
-                    update_anthropic_input_usage(state, usage);
-                } else {
-                    state.usage.input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
-                }
+                update_anthropic_input_usage(state, usage);
                 state.usage.output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
             }
             if state.native_messages {
@@ -453,7 +449,7 @@ fn handle_anthropic_event(
                         .to_owned(),
                 );
             }
-            if baidu_oneapi_usage && let Some(usage) = data.get("usage") {
+            if let Some(usage) = data.get("usage") {
                 update_anthropic_input_usage(state, usage);
             }
             if let Some(output_tokens) =
