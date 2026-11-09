@@ -11,6 +11,7 @@ use super::GatewayExecutor;
 use super::plan::RequestPlan;
 use crate::context::ContextEngine;
 use crate::context::TurnSample;
+use crate::context::TurnView;
 use crate::context::checkpoint;
 use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, with_guidance};
 use crate::context::types::{SESSION_SEPARATOR, TOOL_COMPRESS, TOOL_DECOMPRESS, is_context_tool};
@@ -123,7 +124,8 @@ impl ContextRun {
             .acquire_lease(&self.session)
             .await
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
-        let view = context_input(&self.engine, &self.session, &plan.body, self.window_tokens)?;
+        let view =
+            context_input(&self.engine, &self.session, &plan.body, self.window_tokens).await?;
         if !self.enabled {
             return self
                 .stream_read_only(executor, plan, headers, view, lease)
@@ -169,6 +171,9 @@ impl ContextRun {
                 .usage()
                 .cache_metrics_available(provider_id, upstream_model_id),
         };
+        let turn_engine = Arc::clone(&self.engine);
+        let turn_session = self.session.clone();
+        let window_tokens = self.window_tokens;
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
             let _lease = lease;
@@ -314,9 +319,8 @@ impl ContextRun {
                     yield Ok(client.encode(Some("response.completed"), json!({"type":"response.completed", "response":completed})));
                     return;
                 }
-                let view = match self
-                    .engine
-                    .current_view(&self.session, self.window_tokens)
+                let view = match current_view_off_runtime(&turn_engine, &turn_session, window_tokens)
+                    .await
                 {
                     Ok(view) => view,
                     Err(error) => {
@@ -770,12 +774,51 @@ fn tool_output_item(call: &Value, content: String) -> Value {
 
 /// Restores the same client-visible history for ordinary turns and compaction.
 /// A checkpoint must be authenticated and expanded before syncing the archive.
-pub(crate) fn context_input(
+///
+/// Syncing and rendering hold the store lock and walk the whole history. On a
+/// large session that runs for many seconds, so it leaves the tokio worker or
+/// `/healthz` and the log timers stall with it.
+pub(crate) async fn context_input(
+    engine: &Arc<ContextEngine>,
+    session: &str,
+    body: &Value,
+    window_tokens: u64,
+) -> Result<TurnView, GatewayError> {
+    let engine = Arc::clone(engine);
+    let session = session.to_owned();
+    let body = body.clone();
+    tokio::task::spawn_blocking(move || {
+        prepare_context_input(&engine, &session, &body, window_tokens)
+    })
+    .await
+    .map_err(|error| {
+        GatewayError::Other(anyhow::anyhow!("join context view preparation: {error}"))
+    })?
+}
+
+/// Internal rounds only refresh committed segments, which still renders the
+/// whole view under the store lock.
+async fn current_view_off_runtime(
+    engine: &Arc<ContextEngine>,
+    session: &str,
+    window_tokens: u64,
+) -> Result<TurnView, GatewayError> {
+    let engine = Arc::clone(engine);
+    let session = session.to_owned();
+    tokio::task::spawn_blocking(move || engine.current_view(&session, window_tokens))
+        .await
+        .map_err(|error| {
+            GatewayError::Other(anyhow::anyhow!("join context view preparation: {error}"))
+        })?
+        .map_err(GatewayError::Other)
+}
+
+fn prepare_context_input(
     engine: &ContextEngine,
     session: &str,
     body: &Value,
     window_tokens: u64,
-) -> Result<crate::context::TurnView, GatewayError> {
+) -> Result<TurnView, GatewayError> {
     let incoming = match body.get("input") {
         Some(Value::Array(items)) => items
             .iter()

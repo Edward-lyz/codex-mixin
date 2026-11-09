@@ -1,6 +1,13 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+/// One probe is short so a dead listener fails quickly. A live process that
+/// is busy preparing a large context view can miss a single probe, so the
+/// status command retries before reporting the gateway as unavailable.
+const HEALTH_PROBE_ATTEMPTS: usize = 3;
+const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const HEALTH_PROBE_RETRY_DELAY: Duration = Duration::from_millis(400);
+
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
 use codex_mixin::provider::{ProviderDefinition, ProviderReadinessStatus};
 use codex_mixin::server::AppState;
@@ -47,6 +54,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         healthz: url,
         health_error,
         activity,
+        process_alive,
     } = snapshot;
     if let Some(error) = health_error {
         return print_gateway_unavailable(
@@ -56,6 +64,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
             &url,
             &config,
             Some(error),
+            process_alive,
         );
     }
     let gateway_version = running_version.as_deref().unwrap_or("unknown");
@@ -137,6 +146,9 @@ pub(super) struct GatewaySnapshot {
     pub(super) healthz: String,
     /// `None` when `/healthz` answered with success.
     pub(super) health_error: Option<String>,
+    /// The recorded daemon or foreground process still exists. Distinct from
+    /// [`Self::healthy`]: a stalled listener keeps this true.
+    process_alive: bool,
 }
 
 impl GatewaySnapshot {
@@ -146,6 +158,10 @@ impl GatewaySnapshot {
 
     pub(super) fn daemon_running(&self) -> bool {
         self.daemon_status == "running"
+    }
+
+    pub(super) fn process_alive(&self) -> bool {
+        self.process_alive
     }
 }
 
@@ -170,27 +186,8 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         "http://{}/healthz",
         codex_mixin::config::client_address(bind)
     );
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()?
-        .get(&healthz)
-        .send()
-        .await;
-    let mut activity = serde_json::Value::Null;
-    let health_error = match response {
-        Ok(response) if response.status().is_success() => {
-            match response.json::<serde_json::Value>().await {
-                Ok(report) => activity = report["activity"].clone(),
-                Err(error) => tracing::warn!(%error, "invalid gateway health report"),
-            }
-            None
-        }
-        Ok(response) => Some(format!(
-            "gateway unhealthy: {healthz} returned {}",
-            response.status()
-        )),
-        Err(err) => Some(format!("gateway not running at {healthz}: {err}")),
-    };
+    let process_alive = live_runtime.is_some() || daemon_status == "running";
+    let (activity, health_error) = probe_gateway_health(&healthz).await?;
     Ok(GatewaySnapshot {
         activity,
         daemon: metadata,
@@ -199,7 +196,51 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         bind,
         healthz,
         health_error,
+        process_alive,
     })
+}
+
+/// Probe `/healthz`, retrying a transport failure. A busy gateway can miss one
+/// short timeout without having exited.
+async fn probe_gateway_health(
+    healthz: &str,
+) -> anyhow::Result<(serde_json::Value, Option<String>)> {
+    let client = reqwest::Client::builder()
+        .timeout(HEALTH_PROBE_TIMEOUT)
+        .build()?;
+    let mut last_error = None;
+    for attempt in 0..HEALTH_PROBE_ATTEMPTS {
+        match client.get(healthz).send().await {
+            Ok(response) if response.status().is_success() => {
+                let activity = match response.json::<serde_json::Value>().await {
+                    Ok(report) => report["activity"].clone(),
+                    Err(error) => {
+                        tracing::warn!(%error, "invalid gateway health report");
+                        serde_json::Value::Null
+                    }
+                };
+                return Ok((activity, None));
+            }
+            Ok(response) => {
+                return Ok((
+                    serde_json::Value::Null,
+                    Some(format!(
+                        "gateway unhealthy: {healthz} returned {}",
+                        response.status()
+                    )),
+                ));
+            }
+            Err(error) => last_error = Some(error),
+        }
+        if attempt + 1 < HEALTH_PROBE_ATTEMPTS {
+            tokio::time::sleep(HEALTH_PROBE_RETRY_DELAY).await;
+        }
+    }
+    let error = last_error.expect("a failed probe records its error");
+    Ok((
+        serde_json::Value::Null,
+        Some(format!("gateway not running at {healthz}: {error}")),
+    ))
 }
 
 fn print_gateway_unavailable(
@@ -209,6 +250,7 @@ fn print_gateway_unavailable(
     healthz: &str,
     config: &GatewayConfig,
     error: Option<String>,
+    process_alive: bool,
 ) -> anyhow::Result<()> {
     let readiness = provider_readiness_summary(&config.providers);
     let total = config.providers.len();
@@ -220,7 +262,7 @@ fn print_gateway_unavailable(
                 "daemon": daemon_status,
                 "pid": metadata.map(|metadata| metadata.pid),
                 "log": metadata.map(|metadata| metadata.log_file.clone()),
-                "gateway": "stopped",
+                "gateway": if process_alive { "unresponsive" } else { "stopped" },
                 "healthz": healthz,
                 "providers": {
                     "total": total,
@@ -233,7 +275,12 @@ fn print_gateway_unavailable(
             }))?
         );
     } else {
-        println!("{} {}", style("gateway:").dim(), style("stopped").red());
+        let label = if process_alive {
+            style("unresponsive").yellow()
+        } else {
+            style("stopped").red()
+        };
+        println!("{} {label}", style("gateway:").dim());
         println!("{} {healthz}", style("healthz:").dim());
         println!(
             "{} {} total, {} healthy, {} degraded, {} disabled",
