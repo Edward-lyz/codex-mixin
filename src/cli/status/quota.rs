@@ -52,6 +52,22 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
                     }
                     return (index, provider_results);
                 }
+                if provider.definition().preset_id.as_deref() == Some("claude-code") {
+                    match codex_mixin::provider::fetch_claude_code_quota() {
+                        Ok(rows) => for mut row in rows {
+                            row["provider_id"] = serde_json::json!(provider.id());
+                            row["provider_display_name"] = serde_json::json!(provider.display_name());
+                            row["display_name"] = serde_json::json!(format!("{} {}", provider.display_name(), row["label"].as_str().unwrap_or("")));
+                            provider_results.push(row);
+                        },
+                        Err(error) => provider_results.push(serde_json::json!({
+                            "provider_id": provider.id(), "provider_display_name": provider.display_name(),
+                            "display_name": provider.display_name(), "quota_id": "quota", "label": "Quota",
+                            "currency": null, "value": null, "error": format!("{error:#}"), "stale_at": null,
+                        })),
+                    }
+                    return (index, provider_results);
+                }
                 if provider.definition().preset_id.as_deref() == Some("agy")
                     && provider.quota_url().is_none() {
                     match codex_mixin::provider::fetch_agy_quota(provider.definition()).await {

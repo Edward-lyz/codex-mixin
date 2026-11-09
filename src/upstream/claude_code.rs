@@ -507,6 +507,17 @@ async fn spawn_session(
     tokio::spawn(async move {
         let mut blocks = HashMap::new();
         while let Some(event) = source.recv().await {
+            if event["type"] == "rate_limits" {
+                let headers = event["headers"].clone();
+                let saved = tokio::task::spawn_blocking(move || {
+                    crate::provider::claude_code::record_limits(&headers)
+                })
+                .await;
+                if let Err(error) = saved.map_err(anyhow::Error::from).and_then(|result| result) {
+                    tracing::warn!(error = %error, "could not record the Claude Code allowance");
+                }
+                continue;
+            }
             if event["type"] == "stream_event" {
                 track_tool_block(&event["event"], &mut blocks, &tool_desk);
             }

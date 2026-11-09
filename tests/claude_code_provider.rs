@@ -52,10 +52,13 @@ function message(blocks, stop) {
   ev({ type: 'message_stop' });
 }
 out({ tap: 'on' });
+const resetAt = Math.floor(Date.now() / 1000) + 3600;
+const limits = { 'anthropic-ratelimit-unified-5h-utilization': '0.35', 'anthropic-ratelimit-unified-5h-reset': String(resetAt), 'anthropic-ratelimit-unified-7d-utilization': '0.05', 'anthropic-ratelimit-unified-7d-reset': String(resetAt + 86400) };
 out({ type: 'system', subtype: 'init' });
 const onInput = async text => {
   text = text.trim();
   turns += 1;
+  out({ rate: limits });
   if (turns === 1) {
     await mcp('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake', version: '1' } });
     const name = (await mcp('tools/list', {})).tools[0].name;
@@ -200,4 +203,48 @@ async fn claude_code_login_serves_tool_turns_on_one_cli_process() {
     ]);
     let third = turn(address, &input).await;
     assert_eq!(output_text(&third), "process turn 2: again");
+}
+
+#[test]
+fn claude_code_allowance_from_replies_reaches_quota() {
+    // Reuses the gateway test's login layout; the allowance arrives with replies.
+    let root = tempfile::tempdir().unwrap();
+    let snapshot = root.path().join("oauth/claude-code-limits.json");
+    std::fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+    let reset = chrono::Utc::now().timestamp() + 3600;
+    std::fs::write(
+        &snapshot,
+        json!({"captured_at_ms": chrono::Utc::now().timestamp_millis(), "windows": {
+            "five_hour": {"utilization": 0.35, "reset": reset},
+            "seven_day": {"utilization": 0.05, "reset": reset + 86400}}})
+        .to_string(),
+    )
+    .unwrap();
+    let login = root.path().join("home/.claude/.credentials.json");
+    std::fs::create_dir_all(login.parent().unwrap()).unwrap();
+    std::fs::write(&login, r#"{"claudeAiOauth":{"refreshToken":"refresh"}}"#).unwrap();
+    let bin = install_fake_cli(root.path());
+    let output = common::cli(root.path())
+        .env(
+            "PATH",
+            std::env::join_paths(
+                std::iter::once(bin)
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap(),
+        )
+        .args(["--no-tui", "quota", "--provider", "claude-code", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["quota_id"], "five_hour");
+    assert_eq!(rows[0]["used"], 35.0);
+    assert_eq!(rows[0]["remaining"], 65.0);
+    assert_eq!(rows[1]["used"], 5.0);
 }

@@ -5,9 +5,11 @@ pub use auth::official::{
 pub(crate) mod agy;
 pub(crate) mod agy_business;
 pub(crate) mod auth;
+pub(crate) mod claude_code;
 pub(crate) mod kiro;
 pub use agy::{AgyQuotaWindow, fetch_agy_quota};
 pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
+pub use claude_code::fetch_claude_code_quota;
 pub use kiro::fetch_kiro_quota;
 pub mod capabilities;
 mod discovery;

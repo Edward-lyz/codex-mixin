@@ -34,6 +34,12 @@
       const url = String(input?.url || input);
       const headers = new Headers(init?.headers || input?.headers);
       if (/\/v1\/messages(?:\?|$)/.test(url) && headers.get("x-claude-code-request-class") === "main") {
+        // Plan allowance rides on every main reply, including refusals.
+        const limits = {};
+        res.headers.forEach((value, name) => {
+          if (/^anthropic-ratelimit-unified-(?:5h|7d)-(?:utilization|reset|status)$/i.test(name)) limits[name.toLowerCase()] = value;
+        });
+        if (Object.keys(limits).length) put({ rate: limits });
         if (!res.ok) put({ type: "result", is_error: true, result: `Claude interactive request returned HTTP ${res.status}` });
         else if (res.body && /text\/event-stream/.test(res.headers.get("content-type") || "")) {
           const [original, observed] = res.body.tee();

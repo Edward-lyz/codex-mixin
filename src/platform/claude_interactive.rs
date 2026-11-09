@@ -157,6 +157,15 @@ pub(crate) fn spawn(
                         tap_ready = true;
                         continue;
                     }
+                    if let Some(limits) = event.get("rate") {
+                        if sender
+                            .blocking_send(json!({"type":"rate_limits", "headers": limits}))
+                            .is_err()
+                        {
+                            return Ok(());
+                        }
+                        continue;
+                    }
                     if event["event"]["type"] == "message_delta" {
                         turn_stop = event["event"]["delta"]["stop_reason"]
                             .as_str()
