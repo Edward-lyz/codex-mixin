@@ -8,6 +8,7 @@ pub mod claude_desktop;
 pub mod codex;
 pub mod dsh;
 pub mod frameworks;
+pub mod grok;
 pub mod opencode;
 pub mod pi;
 pub(crate) mod session_titles;

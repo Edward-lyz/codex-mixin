@@ -31,6 +31,14 @@ pub fn dsh_home() -> PathBuf {
         .unwrap_or_else(|| home_dir().join(".dsh"))
 }
 
+/// Grok Build configuration root, honoring `GROK_HOME` the same way Grok does.
+pub fn grok_home() -> PathBuf {
+    std::env::var_os("GROK_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".grok"))
+}
+
 /// Environment variables through which programs find the user's home. Set
 /// all of them on a child so tools that read either one agree.
 pub(super) const HOME_VARIABLES: [&str; 2] = ["HOME", "USERPROFILE"];

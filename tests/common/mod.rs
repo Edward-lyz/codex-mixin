@@ -28,6 +28,9 @@ pub fn isolate(command: &mut Command, root: &Path) {
         // DSH_HOME overrides HOME for the DSH client, so a test run inside DSH
         // would otherwise rewrite the developer's real DSH profile.
         .env("DSH_HOME", root.join("home").join(".dsh"))
+        // Grok discovers Claude Code hooks and resolves its model from
+        // `$GROK_HOME/sessions`, so keep it on the isolated home as well.
+        .env("GROK_HOME", root.join("home").join(".grok"))
         .env("CLAUDE_CONFIG_DIR", root.join("home").join(".claude"))
         // A developer's exported setup token would add a discovered provider.
         .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
