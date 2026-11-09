@@ -347,6 +347,15 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
+  pi.on("tool_result", async (event, ctx) => {
+    const model = activeModel(ctx);
+    if (!model || event.isError) return;
+    await report("post-tool-use", {
+      session_id: ctx.sessionManager.getSessionId(), model, cwd: ctx.cwd, client: "pi",
+      tool_name: event.toolName, tool_input: event.input,
+    });
+  });
+
   pi.on("turn_end", async (_event, ctx) => {
     const model = activeModel(ctx);
     if (!model) return;

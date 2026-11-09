@@ -39,6 +39,9 @@ const REPORT_EVENTS: [(&str, &str); 4] = [
 
 pub(super) fn sync_installation() -> anyhow::Result<()> {
     installation::sync_installation()?;
+    if crate::cli::claude::claude_is_installed()? {
+        crate::cli::claude::sync_claude_hooks(None)?;
+    }
     crate::cli::opencode::sync_installed_opencode_reporting()?;
     crate::cli::pi::sync_installed_pi_reporting()
 }
@@ -143,6 +146,43 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     else {
         return Ok(());
     };
+    // Claude and other clients do not supply turn_id. Remember the prompt's
+    // turn so skill deduplication does not suppress later turns in a session.
+    if matches!(event, "user-prompt-submit" | "post-tool-use") {
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .context("DUCX report hook is missing session_id")?;
+        validate_session_id(session_id)?;
+        let turn_path = report_state.join("ducx-report-turns").join(session_id);
+        let supplied_turn = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|turn| !turn.is_empty())
+            .map(str::to_owned);
+        let prompt = event == "user-prompt-submit";
+        let turn_id = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+            if prompt {
+                let turn = supplied_turn.unwrap_or_else(|| Uuid::new_v4().to_string());
+                write_atomic_if_changed(&turn_path, turn.as_bytes())
+                    .context("record DUCX reporting turn")?;
+                return Ok(Some(turn));
+            }
+            if supplied_turn.is_some() {
+                return Ok(supplied_turn);
+            }
+            match std::fs::read_to_string(&turn_path) {
+                Ok(turn) => Ok(Some(turn)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error).context("read DUCX reporting turn"),
+            }
+        })
+        .await
+        .context("join DUCX reporting turn lookup")??;
+        if let Some(turn_id) = turn_id {
+            payload["turn_id"] = json!(turn_id);
+        }
+    }
     hook_body = serde_json::to_vec(&payload).context("serialize DUCX reporting hook body")?;
     let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
     if event == "model-switch" {

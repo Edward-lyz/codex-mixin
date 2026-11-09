@@ -291,20 +291,23 @@ pub(in crate::cli) fn sync_claude_hooks(settings_path: Option<PathBuf>) -> anyho
                 }
             }
         }
-        if enabled && !matches!(event_name, "PreToolUse" | "PostToolUse") {
+        if enabled && event_name != "PreToolUse" {
             let executable = std::env::current_exe()?;
+            let mut hook = json!({
+                "type": "command",
+                "command": format!("'{}' report-hook --event {event_argument}", executable.to_string_lossy().replace('\'', "'\\''")),
+                "timeout": 30,
+            });
+            if event_name != "PostToolUse" {
+                hook["statusMessage"] = json!("Reporting Baidu AI code usage");
+            }
             hooks
                 .entry(event_name.to_owned())
                 .or_insert_with(|| json!([]))
                 .as_array_mut()
                 .ok_or_else(|| anyhow::anyhow!("Claude Code hook event must be an array"))?
                 .push(json!({
-                    "hooks": [{
-                        "type": "command",
-                        "command": format!("'{}' report-hook --event {event_argument}", executable.to_string_lossy().replace('\'', "'\\''")),
-                        "timeout": 30,
-                        "statusMessage": "Reporting Baidu AI code usage"
-                    }]
+                    "hooks": [hook]
                 }));
         }
     }

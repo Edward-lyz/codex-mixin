@@ -336,6 +336,51 @@ fn session_start_seeds_the_model_for_later_events() {
         persisted_model(root, "session-three").as_deref(),
         Some(SLUG)
     );
+
+    let skill = root.join("codex/skills/archify");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "# Archify\n").unwrap();
+    let tool = json!({
+        "session_id": "session-three",
+        "tool_name": "Read",
+        "tool_input": {"file_path": skill.join("SKILL.md")},
+        "cwd": root,
+    });
+    run_hook(root, "post-tool-use", &tool);
+    run_hook(root, "post-tool-use", &tool);
+    run_hook(
+        root,
+        "user-prompt-submit",
+        &json!({"session_id": "session-three", "prompt": "next turn", "cwd": root}),
+    );
+    run_hook(root, "post-tool-use", &tool);
+    let log = report_log(root);
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("DUCX report event persisted")
+                && line.contains("event=\"post-tool-use\""))
+            .count(),
+        2,
+        "a skill must be queued once in each prompt turn: {log}"
+    );
+    let skill_reports = std::fs::read_dir(root.join("ducx-report-queue"))
+        .unwrap()
+        .map(|entry| {
+            serde_json::from_slice::<Value>(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap()
+        })
+        .filter(|report| report["event"] == "post-tool-use")
+        .collect::<Vec<_>>();
+    assert_eq!(skill_reports.len(), 2);
+    for report in &skill_reports {
+        assert_eq!(report["hook_body"]["skill_name"], "archify");
+        assert_eq!(report["hook_body"]["execution_mode"], "auto");
+        assert_eq!(report["hook_body"]["trigger_kind"], "skillmd");
+        assert!(report["hook_body"]["turn_id"].as_str().is_some());
+    }
+    assert_ne!(
+        skill_reports[0]["hook_body"]["turn_id"],
+        skill_reports[1]["hook_body"]["turn_id"]
+    );
 }
 
 #[test]

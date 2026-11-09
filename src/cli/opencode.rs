@@ -315,13 +315,24 @@ async function report(event, body) {
 
 export const CodexMixinReport = async ({ client, directory }) => ({
   "chat.message": async (input, output) => {
-    if (input.model?.providerID !== "codex-mixin") return;
+    if (input.model?.providerID !== "codex-mixin") {
+      routes.delete(input.sessionID);
+      return;
+    }
     const model = input.model.modelID;
     routes.set(input.sessionID, model);
     const prompt = output.parts.filter((part) => part.type === "text")
       .map((part) => part.text).join("\n");
     await report("user-prompt-submit", {
       session_id: input.sessionID, model, cwd: directory, prompt, client: "opencode",
+    });
+  },
+  "tool.execute.after": async (input) => {
+    const model = routes.get(input.sessionID);
+    if (!model) return;
+    await report("post-tool-use", {
+      session_id: input.sessionID, model, cwd: directory, client: "opencode",
+      tool_name: input.tool, tool_input: input.args,
     });
   },
   event: async ({ event }) => {

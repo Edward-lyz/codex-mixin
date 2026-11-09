@@ -25,6 +25,10 @@ The same connect/disconnect commands accept the IDs below. Restart the Agent aft
 
 Desktop registration currently covers Codex/ChatGPT, Claude, DSH, OpenCode, OpenChamber, Goose, Cursor editor, Zed, VS Code/Insiders, VSCodium, Air, Reasonix, Qoder/CN, ZCode, WorkBuddy, CodeBuddy, Pencil, T3 Code, Hanako, Alma and Cindy. Vendor names/identifiers remain an explicit catalog, not substring matching against every installed product. A plugin without a separately registered desktop application is not inferred from its host editor. Unregistered portable programs may need OS registration before they can be discovered as desktop applications.
 
+WorkBuddy and CodeBuddy display model names without the provider suffix and put the provider rate in their native `credits` column. Existing connections retain their captured configuration; disconnect and reconnect to regenerate their model list.
+
+When Baidu reporting is enabled, Codex, Claude Code and DSH use `PostToolUse`, OpenCode uses `tool.execute.after`, and Pi uses `tool_result` to forward skill paths to the shared `report-hook --event post-tool-use` handler. It queues `upload/skill` once per session, prompt turn and skill. Clients without `turn_id` reuse the turn recorded by `user-prompt-submit`. The gateway synchronizes installed reporting hooks at startup. [OpenCode hook contract](https://github.com/anomalyco/opencode/blob/v1.1.65/packages/plugin/src/index.ts), [Pi extension events](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md#tool_result).
+
 CLI lookup preserves absolute PATH entry precedence, then checks standard native user/system CLI directories for desktop sessions with a reduced PATH. Relative/current-directory PATH entries and non-executable Unix files are not eligible for background version probes. Desktop paths are never used as CLI launchers or automatic CLI upgrade targets.
 
 Older pending Cindy connections used an import ID longer than Cindy accepts. Connect again to regenerate the private handoff with a valid ID, then confirm the import in Cindy. Installation detection alone does not mark that connection as managed.
