@@ -8,6 +8,7 @@ integration-b|official_client_contexts.rs
 integration-b|provider_probe_cache.rs
 integration-b|report_hook.rs
 integration-c|agy_dynamic.rs
+integration-c|agy_model_switch.rs
 integration-c|context_cli.rs
 integration-c|cors.rs
 integration-c|cors_cli.rs

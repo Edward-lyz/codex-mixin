@@ -101,6 +101,11 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
         .join(format!("{id}.json")))
 }
 
+/// agy rewrites `model` on `/model`; launches pass the model from the launch journal.
+fn free_fields(id: &str) -> &'static [&'static str] {
+    if id == "agy" { &["model"] } else { &[] }
+}
+
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     name(id)?;
     let native_status = match id {
@@ -130,7 +135,7 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     }
     let launch_required = matches!(id, "agy" | "cursor-local" | "muse" | "commandcode")
         || (cfg!(feature = "client-auth") && matches!(id, "fx" | "empryo" | "ante"));
-    let managed = engine::is_managed(manifest).and_then(|managed| {
+    let managed = engine::is_managed_except(manifest, free_fields(id)).and_then(|managed| {
         if managed && launch_required {
             let journal = engine::read_record(manifest)?.context("missing integration journal")?;
             anyhow::ensure!(
@@ -410,8 +415,12 @@ pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
         "alma" => alma::remove(manifest),
         "hanako" => hanako::remove(manifest),
         _ => {
+            // Report a managed-field conflict before startup entries are removed,
+            // so a refused disconnect leaves the integration fully connected.
+            let free = free_fields(id);
+            engine::verify_removable(manifest, free)?;
             startup::remove(manifest)?;
-            engine::remove(manifest)
+            engine::remove_except(manifest, free)
         }
     }
 }

@@ -381,7 +381,25 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// A field the agent rewrites during normal use, such as agy `/model`.
+/// It is excluded from drift detection; disconnect restores it only while it
+/// still names a Mixin model, so a user's own choice survives.
+fn is_free(field: &Field, free: &[&str]) -> bool {
+    field.path.len() == 1 && free.contains(&field.path[0].as_str())
+}
+
+fn names_mixin_model(value: &Value) -> bool {
+    value
+        .as_str()
+        .and_then(|model| model.strip_prefix(super::PROVIDER))
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 pub(super) fn is_managed(manifest: &Path) -> anyhow::Result<bool> {
+    is_managed_except(manifest, &[])
+}
+
+pub(super) fn is_managed_except(manifest: &Path, free: &[&str]) -> anyhow::Result<bool> {
     let Some(text) = read(manifest)? else {
         return Ok(false);
     };
@@ -395,7 +413,7 @@ pub(super) fn is_managed(manifest: &Path) -> anyhow::Result<bool> {
             entry
                 .fields
                 .iter()
-                .all(|f| get(&value, &f.path) == Some(&f.after)),
+                .all(|f| is_free(f, free) || get(&value, &f.path) == Some(&f.after)),
             "managed fields changed or installation was interrupted at {}; disconnect to inspect recovery",
             entry.path.display()
         );
@@ -404,10 +422,23 @@ pub(super) fn is_managed(manifest: &Path) -> anyhow::Result<bool> {
 }
 
 pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
+    remove_except(manifest, &[])
+}
+
+/// Read-only dry run of [`remove_except`], so callers can order other
+/// cleanup after the point where a conflict would be reported.
+pub(super) fn verify_removable(manifest: &Path, free: &[&str]) -> anyhow::Result<()> {
     let Some(text) = read(manifest)? else {
         return Ok(());
     };
     let journal: Journal = serde_json::from_str(&text).context("parse framework undo journal")?;
+    plan_removal(&journal, free).map(drop)
+}
+
+fn plan_removal<'a>(
+    journal: &'a Journal,
+    free: &[&str],
+) -> anyhow::Result<Vec<(&'a Path, Option<String>)>> {
     let mut restores = Vec::new();
     for entry in &journal.entries {
         let current = read(&entry.path)?;
@@ -417,7 +448,7 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
             entry.original.clone()
         } else {
             let mut value = parse(current.as_deref(), entry.format)?;
-            for field in &entry.fields {
+            for field in entry.fields.iter().filter(|f| !is_free(f, free)) {
                 let actual = get(&value, &field.path);
                 anyhow::ensure!(
                     actual == Some(&field.after) || actual == field.before.as_ref(),
@@ -426,12 +457,25 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
                 );
             }
             for field in &entry.fields {
+                if is_free(field, free) && !get(&value, &field.path).is_some_and(names_mixin_model)
+                {
+                    continue;
+                }
                 set(&mut value, &field.path, field.before.clone())?;
             }
             Some(encode(&value, entry.format)?)
         };
-        restores.push((&entry.path, restored));
+        restores.push((entry.path.as_path(), restored));
     }
+    Ok(restores)
+}
+
+pub(super) fn remove_except(manifest: &Path, free: &[&str]) -> anyhow::Result<()> {
+    let Some(text) = read(manifest)? else {
+        return Ok(());
+    };
+    let journal: Journal = serde_json::from_str(&text).context("parse framework undo journal")?;
+    let restores = plan_removal(&journal, free)?;
     for (path, contents) in restores {
         match contents {
             Some(text) => write_owner_only(path, text.as_bytes())?,
