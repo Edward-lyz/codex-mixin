@@ -57,8 +57,11 @@
       </MenuFlyout></Button.Flyout>
      </Button>
      <Border Height="1" Margin="10,4" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
-     <Button Style="{StaticResource MenuRow}" Tag="quit" Click="OnQuit" AutomationProperties.Name="退出 Codex Mixin">
-      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE7E8;" FontSize="16"/><TextBlock Text="退出 Codex Mixin"/></StackPanel>
+     <Button Style="{StaticResource MenuRow}" Tag="lightweight" Click="OnLightweight" AutomationProperties.Name="轻量模式">
+      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE708;" FontSize="16"/><TextBlock Text="轻量模式"/></StackPanel>
+     </Button>
+     <Button Style="{StaticResource MenuRow}" Tag="quit" Click="OnQuit" AutomationProperties.Name="彻底退出 Mixin">
+      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE7E8;" FontSize="16"/><TextBlock Text="彻底退出 Mixin"/></StackPanel>
      </Button>
     </StackPanel>
    </Border>

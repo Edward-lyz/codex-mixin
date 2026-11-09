@@ -255,7 +255,8 @@ public sealed partial class MainWindow : Window
             ShowNotice("系统托盘不可用", "Explorer 重启后无法恢复托盘，请重新启动应用。", InfoBarSeverity.Warning);
             return;
         }
-        if (command == "exit") { await ExitAsync(); return; }
+        if (command == "exit") { await ExitAsync(lightweight: false); return; }
+        if (command == "lightweight") { await ExitAsync(lightweight: true); return; }
         if (command is "start" or "stop")
         {
             if (busy) { ShowMain(); return; }
@@ -266,7 +267,7 @@ public sealed partial class MainWindow : Window
         ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
     });
 
-    private async Task ExitAsync()
+    private async Task ExitAsync(bool lightweight)
     {
         if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges)
         {
@@ -276,11 +277,22 @@ public sealed partial class MainWindow : Window
         }
         // A never-shown tray-only window has no XamlRoot for a ContentDialog.
         if (!await ((App)Microsoft.UI.Xaml.Application.Current).ConfirmDraftsAsync()) return;
-        if (!initialized) { await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync(); return; }
-        if (await ConfirmAsync("退出 Codex Mixin？", "退出界面后，本地网关会继续按 CLI 的服务设置运行。", "退出"))
+        var app = (App)Microsoft.UI.Xaml.Application.Current;
+        Func<Task> exit = lightweight ? app.EnterLightweightModeAsync : app.QuitCompletelyAsync;
+        var confirmed = !initialized || (lightweight
+            ? await ConfirmAsync("进入轻量模式？", "关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。", "进入轻量模式")
+            : await ConfirmAsync("彻底退出 Mixin？", "会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。", "彻底退出"));
+        if (!confirmed) return;
+        try
         {
             exiting = true;
-            await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync();
+            await exit();
+        }
+        catch (Exception error)
+        {
+            exiting = false;
+            ShowMain();
+            ShowNotice(lightweight ? "进入轻量模式失败" : "退出失败", error.Message, InfoBarSeverity.Error);
         }
     }
 

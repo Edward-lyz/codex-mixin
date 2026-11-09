@@ -204,9 +204,11 @@ internal sealed class NativeShell : IDisposable
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 4, "设置");
             AppendMenu(menu, 0, 9, "检查更新…");
-            AppendMenu(menu, 0, 5, "退出应用");
             AppendMenu(menu, 0, 7, "Fusion 设置…");
             AppendMenu(menu, 0, 8, "上下文设置…");
+            AppendMenu(menu, 0x800, 0, "");
+            AppendMenu(menu, 0, 10, "轻量模式");
+            AppendMenu(menu, 0, 5, "彻底退出 Mixin");
             var position = new Point
             {
                 X = unchecked((short)(coordinates & 0xffff)),
@@ -229,6 +231,7 @@ internal sealed class NativeShell : IDisposable
                 7 => "fusion",
                 8 => "context",
                 9 => "updates",
+                10 => "lightweight",
                 _ => "exit"
             });
         }
