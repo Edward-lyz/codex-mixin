@@ -132,6 +132,8 @@ pub(crate) async fn usage_turns(
     days: Option<u64>,
     provider: Option<&str>,
     limit: Option<usize>,
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
 ) -> anyhow::Result<()> {
     let mut query = reqwest::Url::parse("http://query.invalid/")?;
     {
@@ -144,6 +146,12 @@ pub(crate) async fn usage_turns(
         }
         if let Some(limit) = limit {
             pairs.append_pair("limit", &limit.to_string());
+        }
+        if let Some(since_ms) = since_ms {
+            pairs.append_pair("since_ms", &since_ms.to_string());
+        }
+        if let Some(until_ms) = until_ms {
+            pairs.append_pair("until_ms", &until_ms.to_string());
         }
     }
     let body = gateway_get("/v1/usage/turns", query.query().unwrap_or("")).await?;
