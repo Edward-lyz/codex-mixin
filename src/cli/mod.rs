@@ -47,6 +47,7 @@ mod opencode;
 mod pi;
 mod providers;
 mod report_hook;
+mod route_config;
 mod runtime;
 mod service;
 mod setup;
@@ -713,6 +714,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 replace_id,
             } => set_fusion_profile(&profile_json, replace_id.as_deref()),
             FusionCommand::Delete { id } => delete_fusion_profile(id.as_deref()),
+        },
+        Command::Route { command } => match command {
+            RouteCommand::List { json } => route_config::list_routes(json),
+            RouteCommand::Models { json } => fusion_config::model_options(json),
+            RouteCommand::Get { model, json } => route_config::get_route(&model, json),
+            RouteCommand::Set {
+                route_json,
+                replace_model,
+            } => route_config::set_route(&route_json, replace_model.as_deref()),
+            RouteCommand::Delete { model } => route_config::delete_route(&model),
         },
         Command::Benchmark { command } => match command {
             BenchmarkCommand::Status => benchmark_status().await,

@@ -10,6 +10,7 @@ pub mod error;
 pub mod fusion;
 pub mod lifecycle;
 pub mod provider;
+pub mod routing;
 
 pub mod reporting;
 

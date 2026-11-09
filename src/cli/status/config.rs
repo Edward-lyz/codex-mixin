@@ -20,7 +20,8 @@ pub(crate) fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Resu
                 "gateway_bind": stored.gateway_bind,
                 "gateway_api_key": stored.gateway_api_key.as_ref().map(|_| "<redacted>"),
                 "providers": providers,
-                "fusion_profiles": stored.fusion_profiles
+                "fusion_profiles": stored.fusion_profiles,
+                "failover_routes": stored.failover_routes
             });
             print_config_value(json_output, &value)
         }

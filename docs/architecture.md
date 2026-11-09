@@ -10,7 +10,7 @@
 | `cli`（二进制） | clap 参数、交互输入、输出渲染、进度、退出码 | `application` 及公开类型 |
 | `application` | provider 管理、刷新、客户端接入等用例；`OperationError` 错误语义 | `provider`/`config`/`catalog`/`clients` |
 | `server` | HTTP/WS 解析、连接状态、请求分发、响应封装 | `gateway`/`fusion`/`catalog`/`benchmark`/`upstream`/`provider` |
-| `gateway` | 路由、请求计划、单次执行、缓存观测 | `upstream`/`provider`/`protocol`/`images`/`web_search` |
+| `gateway` | 路由、请求计划、单次执行（含显式故障转移）、缓存观测 | `upstream`/`provider`/`protocol`/`images`/`web_search` |
 | `fusion` | 多模型编排、工具执行协调、结果整合 | `gateway`（普通执行能力） |
 | `upstream` | 请求准备、上游传输、认证运行时、协议相关重试 | `provider`/`protocol`/`config` |
 | `catalog` | 目录生成、来源加载、目录缓存 | `provider`/`web_search`/`protocol` |
@@ -59,7 +59,8 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
 | `service start\|stop\|restart --managed --json` | 启停；自启已开启时经系统服务管理器，否则为后台 daemon |
 | `service autostart enable\|disable\|status --json` | 网关登录自启（launchd / systemd --user / 计划任务） |
 | `config apply` | 保存后的整体生效：无 provider 时停网关，否则重启并同步 Codex 与各客户端目录 |
-| `fusion models --json` | Fusion 可选模型（含 `official:<slug>`） |
+| `route list\|get\|set\|delete --json` | 模型路由（融合、定时、故障转移），见 [model-routing.md](model-routing.md) |
+| `route models --json` | 路由可选模型（含 `official:<slug>`）；`fusion models --json` 为兼容别名 |
 | `context config get\|set --json` | 长上下文引擎开关与阈值；只写配置，不启动网关 |
 | `context status\|sessions\|export --json` | 会话 revision、分层计数、可压缩范围与原始归档导出 |
 | `context stats --json` | 每会话与总计的压缩节省量、视图 token、上游缓存命中 |

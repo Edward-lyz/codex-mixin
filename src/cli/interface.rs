@@ -26,6 +26,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "model_ordering": true,
             "agent_versions": true,
             "fusion_model_options": true,
+            "model_routes": true,
             "service_lifecycle": true,
             "codex_lifecycle": true,
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
