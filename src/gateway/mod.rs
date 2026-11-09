@@ -4,6 +4,7 @@ mod cache_shape;
 mod cache_usage;
 mod context_loop;
 mod executor;
+mod failover;
 mod output_limit;
 mod plan;
 mod provider;

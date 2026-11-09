@@ -97,6 +97,13 @@ impl GatewayExecutor {
             .is_some_and(|engine| engine.is_enabled())
     }
 
+    /// True when the request must go through a `RequestPlan` instead of the
+    /// official passthrough: context management or a configured failover.
+    pub(crate) fn plan_required(&self, body: &serde_json::Value) -> bool {
+        self.context_required(body)
+            || super::failover::official_route_configured(&self.config.failover_routes, body)
+    }
+
     pub(crate) fn context_required(&self, body: &serde_json::Value) -> bool {
         self.context_enabled()
             || self.context.is_some()
@@ -306,8 +313,58 @@ impl GatewayExecutor {
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         let body = std::mem::take(&mut plan.body);
-        let body = prepare_body(body, &plan.target).await?;
-        self.dispatch_round(plan, body, headers).await
+        let Some(route) = super::failover::route_for(&self.config.failover_routes, plan) else {
+            let body = prepare_body(body, &plan.target).await?;
+            return self.dispatch_round(plan, body, headers).await;
+        };
+        let original = body.clone();
+        let primary = match prepare_body(body, &plan.target).await {
+            Ok(body) => self.dispatch_round(plan, body, headers).await,
+            Err(error) => Err(error),
+        };
+        let mut error = match primary {
+            Err(error) if super::failover::is_transient(&error) => error,
+            other => return other,
+        };
+        let mut failed = route.source.as_str();
+        for fallback in &route.fallbacks {
+            tracing::warn!(
+                source = route.source,
+                failed,
+                fallback,
+                error = %error,
+                "model failover"
+            );
+            let attempt = match super::failover::fallback_plan(
+                self,
+                fallback,
+                original.clone(),
+                plan,
+                headers,
+            ) {
+                Ok(mut fallback_plan) => {
+                    let body = std::mem::take(&mut fallback_plan.body);
+                    match prepare_body(body, &fallback_plan.target).await {
+                        Ok(body) => self.dispatch_round(&fallback_plan, body, headers).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            match attempt {
+                Ok((stream, body)) => {
+                    let stream =
+                        super::failover::announce(stream, &route.source, fallback, &error)?;
+                    return Ok((stream, body));
+                }
+                Err(next) if super::failover::is_transient(&next) => {
+                    error = next;
+                    failed = fallback.as_str();
+                }
+                Err(next) => return Err(next),
+            }
+        }
+        Err(error)
     }
 
     async fn dispatch_round(

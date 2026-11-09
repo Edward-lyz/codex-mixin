@@ -93,7 +93,7 @@ async fn route_responses_ws(
                 .resolve_responses_route(&model, &headers, &body)
                 .await,
             Ok(ResolvedModelRoute::Official)
-        ) && !state.gateway.context_required(&body)
+        ) && !state.gateway.plan_required(&body)
         {
             handle_official_ws_request(&mut context, body, &model).await?;
             continue;

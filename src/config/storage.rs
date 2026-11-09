@@ -1,6 +1,9 @@
 use super::StoredGatewayConfig;
 use super::migration::parse_stored_config;
-use super::{validate_fusion_model_references, validate_fusion_profiles};
+use super::{
+    validate_failover_model_references, validate_failover_routes, validate_fusion_model_references,
+    validate_fusion_profiles,
+};
 use crate::config::ensure_config_version;
 use crate::provider::ProviderRegistry;
 use anyhow::{Context, anyhow};
@@ -193,6 +196,8 @@ fn save_stored_config_to_path_unlocked(
     let providers = ProviderRegistry::new(config.providers.clone())?;
     validate_fusion_profiles(&config.fusion_profiles)?;
     validate_fusion_model_references(&config.fusion_profiles, &providers)?;
+    validate_failover_routes(&config.failover_routes)?;
+    validate_failover_model_references(&config.failover_routes, &providers)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         set_private_dir_permissions(parent)?;

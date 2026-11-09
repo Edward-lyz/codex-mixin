@@ -351,6 +351,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             official_model_contexts: Default::default(),
             official_model_order: Default::default(),
             fusion_profiles: Vec::new(),
+            failover_routes: Vec::new(),
             providers: vec![provider],
         },
     )
@@ -470,6 +471,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
             official_model_contexts: Default::default(),
             official_model_order: Default::default(),
             fusion_profiles: Vec::new(),
+            failover_routes: Vec::new(),
             providers: vec![provider],
         },
     )
@@ -550,6 +552,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         official_model_contexts: Default::default(),
         official_model_order: Default::default(),
         fusion_profiles: Vec::new(),
+        failover_routes: Vec::new(),
         context: Default::default(),
         providers: vec![provider.clone()],
     };
