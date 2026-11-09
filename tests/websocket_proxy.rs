@@ -228,6 +228,7 @@ fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> Gate
         web_search_tool_type: "web_search_20250305".to_owned(),
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
+        failover_routes: Vec::new(),
     }
 }
 

@@ -13,7 +13,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use codex_mixin::anthropic::ModelInfo;
-use codex_mixin::config::{FusionMode, FusionProfile, FusionTimeRoute, PanelToolsConfig};
+use codex_mixin::config::{
+    FailoverRoute, FusionMode, FusionProfile, FusionTimeRoute, PanelToolsConfig,
+};
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
@@ -228,6 +230,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         web_search_tool_type: "web_search_20250305".to_owned(),
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
+        failover_routes: Vec::new(),
     }
 }
 
@@ -3104,6 +3107,87 @@ async fn retries_one_provider_413_with_the_payload_fallback_profile() {
         .unwrap();
     let image = image::load_from_memory(&decoded).unwrap();
     assert_eq!((image.width(), image.height()), (768, 384));
+}
+
+async fn spawn_failover_upstream(primary_status: StatusCode) -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let requests_for_route = requests.clone();
+    let upstream = Router::new().route(
+        "/v1/messages",
+        post(move |body: Body| {
+            let requests = requests_for_route.clone();
+            async move {
+                let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+                let body = serde_json::from_slice::<Value>(&body).unwrap();
+                let primary = body["model"] == "DeepSeek-V4-Flash";
+                requests.lock().unwrap().push(body);
+                if primary {
+                    return Response::builder()
+                        .status(primary_status)
+                        .body(Body::from("primary unavailable"))
+                        .unwrap();
+                }
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }
+        }),
+    );
+    (spawn_router(upstream).await, requests)
+}
+
+fn failover_config(upstream_url: String) -> GatewayConfig {
+    let mut config = test_config(upstream_url);
+    config.failover_routes = vec![FailoverRoute {
+        source: "DeepSeek-V4-Flash-custom".to_owned(),
+        fallbacks: vec!["panel-a-custom".to_owned()],
+    }];
+    config
+}
+
+#[tokio::test]
+async fn fails_over_to_the_next_model_after_an_upstream_server_error() {
+    let (upstream_url, requests) = spawn_failover_upstream(StatusCode::SERVICE_UNAVAILABLE).await;
+    let gateway_url = spawn_gateway_with_config(failover_config(upstream_url)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("failover_status"));
+    assert!(body.contains("answering with panel-a-custom"));
+    assert!(body.contains("response.completed"));
+    let recorded = requests.lock().unwrap();
+    let models: Vec<_> = recorded
+        .iter()
+        .map(|request| request["model"].clone())
+        .collect();
+    assert_eq!(models, vec![json!("DeepSeek-V4-Flash"), json!("panel-a")]);
+}
+
+#[tokio::test]
+async fn does_not_fail_over_on_a_client_error() {
+    let (upstream_url, requests) = spawn_failover_upstream(StatusCode::BAD_REQUEST).await;
+    let gateway_url = spawn_gateway_with_config(failover_config(upstream_url)).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

@@ -528,6 +528,13 @@ fn compact_generated_provider_ids(
             }
         }
     }
+    for route in &mut config.failover_routes {
+        for reference in std::iter::once(&mut route.source).chain(route.fallbacks.iter_mut()) {
+            if let Some(new_reference) = model_renames.get(reference) {
+                reference.clone_from(new_reference);
+            }
+        }
+    }
     Ok(renames
         .into_iter()
         .map(|(_, old_id, new_id)| (old_id, new_id))

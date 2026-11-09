@@ -10,9 +10,14 @@ use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 
 mod context;
 mod cors;
+mod failover;
 mod fusion;
 pub use context::ContextSettings;
 pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
+pub use failover::{
+    FailoverRoute, MAX_FAILOVER_FALLBACKS, validate_failover_model_references,
+    validate_failover_routes,
+};
 pub use fusion::{
     FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
     PanelToolsConfig, validate_fusion_model_references, validate_fusion_profiles,
@@ -75,6 +80,7 @@ pub struct GatewayConfig {
     pub web_search_tool_type: String,
     pub web_search_max_uses: Option<u64>,
     pub fusion_profiles: Vec<FusionProfile>,
+    pub failover_routes: Vec<FailoverRoute>,
     pub context: ContextSettings,
 }
 
@@ -155,9 +161,11 @@ impl GatewayConfig {
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
             fusion_profiles,
+            failover_routes: stored_config.failover_routes,
             context: stored_config.context,
         };
         validate_fusion_profiles(&config.fusion_profiles)?;
+        validate_failover_routes(&config.failover_routes)?;
         Ok(config)
     }
 
@@ -221,6 +229,8 @@ pub struct StoredGatewayConfig {
     pub official_model_contexts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failover_routes: Vec<FailoverRoute>,
     #[serde(default, skip_serializing_if = "ContextSettings::is_default")]
     pub context: ContextSettings,
     pub providers: Vec<ProviderDefinition>,
@@ -252,6 +262,7 @@ impl Default for StoredGatewayConfig {
             official_model_order: Default::default(),
             official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
+            failover_routes: Vec::new(),
             context: ContextSettings::default(),
             providers: Vec::new(),
         }

@@ -62,6 +62,7 @@ impl AppState {
         let usage = crate::gateway::TokenUsageAggregator::try_from_default_path()?;
         crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
+        crate::config::validate_failover_routes(&config.failover_routes)?;
         let websocket_proxy_env = ProxySelection::from_lookup(&env_lookup);
         // An archived session stays readable after the feature is switched off,
         // so the engine also opens when the database already exists.
@@ -73,6 +74,7 @@ impl AppState {
             env_lookup,
         )?);
         crate::config::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
+        crate::config::validate_failover_model_references(&config.failover_routes, &providers)?;
         let client = websocket_proxy_env
             .clone()
             .apply(Client::builder())
