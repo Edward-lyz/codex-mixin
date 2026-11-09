@@ -128,6 +128,11 @@ pub(super) enum Command {
         #[command(subcommand)]
         command: FusionCommand,
     },
+    /// Configure model routes: fusion, schedule, and failover.
+    Route {
+        #[command(subcommand)]
+        command: RouteCommand,
+    },
     #[command(hide = true)]
     Benchmark {
         #[command(subcommand)]
@@ -562,6 +567,40 @@ pub(super) enum FusionCommand {
     Delete {
         #[arg(long)]
         id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum RouteCommand {
+    /// List configured model routes.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// List model references that routes may target.
+    Models {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the route entered by a model.
+    Get {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create or replace a route from JSON (`kind`: fusion, schedule, failover).
+    Set {
+        #[arg(long)]
+        route_json: String,
+        /// Entry model of the route being edited.
+        #[arg(long)]
+        replace_model: Option<String>,
+    },
+    /// Delete the route entered by a model.
+    Delete {
+        #[arg(long)]
+        model: String,
     },
 }
 
