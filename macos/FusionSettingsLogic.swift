@@ -57,7 +57,7 @@ func fusionTimeRouteValidationError(_ routes: [FusionTimeRoute]) -> String? {
     return nil
 }
 
-private func fusionTimeRoute(_ route: FusionTimeRoute, contains minute: Int) -> Bool {
+func fusionTimeRoute(_ route: FusionTimeRoute, contains minute: Int) -> Bool {
     if route.startMinute < route.endMinute {
         return (route.startMinute..<route.endMinute).contains(minute)
     }
@@ -76,7 +76,7 @@ struct FusionModelOption: Hashable {
     }
 }
 
-struct FusionSettingsProfile {
+struct FusionSettingsProfile: Equatable {
     var id = "default"
     var mode = FusionSettingsMode.orchestration
     var timeRoutes: [FusionTimeRoute] = []
@@ -91,16 +91,8 @@ struct FusionSettingsProfile {
     var panelMaxRounds = 16
     var panelMaxCallsPerModel = 64
 
-    static func fromCLIJSON(_ rawJSON: String) throws -> FusionSettingsProfile {
-        let data = Data(rawJSON.utf8)
-        guard
-            let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw FusionSettingsError.message("Fusion CLI 返回了无效 JSON")
-        }
-        guard let profile = envelope["profile"] as? [String: Any] else {
-            return FusionSettingsProfile()
-        }
+    /// Reads a profile from the snake_case fields of a `route list --json` entry.
+    init(dictionary profile: [String: Any]) {
         var value = FusionSettingsProfile()
         value.id = profile["id"] as? String ?? value.id
         value.mode = (profile["mode"] as? String)
@@ -133,7 +125,19 @@ struct FusionSettingsProfile {
             value.panelMaxRounds = storedRounds == 4 ? 16 : (storedRounds ?? value.panelMaxRounds)
             value.panelMaxCallsPerModel = storedCalls == 8 ? 64 : (storedCalls ?? value.panelMaxCallsPerModel)
         }
-        return value
+        self = value
+    }
+
+    init() {}
+
+    /// Models this profile routes to, in the order they appear in the form.
+    var referencedModels: [String] {
+        panelModels + [judgeModel, finalModel] + timeRoutes.map(\.model)
+    }
+
+    /// The model a time-rotation profile answers with at `minute` past midnight.
+    func activeModel(atMinute minute: Int) -> String {
+        timeRoutes.first { fusionTimeRoute($0, contains: minute) }?.model ?? finalModel
     }
 
     var dictionary: [String: Any] {

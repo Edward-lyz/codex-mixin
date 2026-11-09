@@ -142,7 +142,7 @@ func localizedPrompt(_ text: String) -> String {
         "连接测试失败": ("連線測試失敗", "Connection Test Failed"),
         "连接测试通过": ("連線測試通過", "Connection Test Passed"),
         "启动测速失败": ("啟動測速失敗", "Unable to Start Benchmark"),
-        "保存 Fusion 设置失败": ("儲存 Fusion 設定失敗", "Unable to Save Fusion Settings"),
+        "保存模型路由失败": ("儲存模型路由失敗", "Unable to Save Model Route"),
         "缺少 API 密钥": ("缺少 API 金鑰", "API Key Required"),
         "缺少额度用户名": ("缺少額度使用者名稱", "Quota Username Required"),
         "缺少 OpenCode Go 额度凭据": (

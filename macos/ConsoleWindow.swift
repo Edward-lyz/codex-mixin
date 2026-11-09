@@ -7,6 +7,7 @@ enum ConsolePage: Int, CaseIterable {
     case agents
     case usage
     case context
+    case routing
 
     var title: String {
         switch self {
@@ -14,6 +15,7 @@ enum ConsolePage: Int, CaseIterable {
         case .agents: return AppLocalization.string("console.page.agents")
         case .usage: return AppLocalization.string("console.page.usage")
         case .context: return AppLocalization.string("console.page.context")
+        case .routing: return AppLocalization.string("console.page.routing")
         }
     }
 }

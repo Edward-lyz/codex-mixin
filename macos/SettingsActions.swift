@@ -81,6 +81,7 @@ extension AppDelegate {
                 guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
                 return try ContextArchive(try await self.runGateway(["context", "export", "--compact", "--session=\(session)"]))
             })
+            let routingModel = makeModelRoutingModel()
             let container = ConsoleContainerController(
                 pages: [
                     .providers: { providerPage },
@@ -89,12 +90,14 @@ extension AppDelegate {
                     .context: { NSHostingController(
                         rootView: AnyView(ContextSettingsView(model: contextModel))
                     ) },
+                    .routing: { NSHostingController(rootView: AnyView(ModelRoutingView(model: routingModel))) },
                 ],
                 onShow: { page in
                     switch page {
                     case .agents: await agentModel.refresh()
                     case .usage: await usageModel.refresh()
                     case .context: await contextModel.reloadOnShow()
+                    case .routing: await routingModel.reloadOnShow()
                     case .providers: break
                     }
                 }
@@ -262,49 +265,37 @@ extension AppDelegate {
         }
     }
 
-    @objc func showFusionSettings() {
-        if fusionSettingsWindowController == nil {
-            fusionSettingsWindowController = FusionSettingsWindowController(
-                loadHandler: { [weak self] in
-                    guard let self else {
-                        throw FusionSettingsError.message("Codex Mixin 已退出")
-                    }
-                    return try FusionSettingsProfile.fromCLIJSON(
-                        try await self.runGateway(["fusion", "get", "--json"])
-                    )
-                },
-                fetchModelsHandler: { [weak self] in
-                    guard let self else {
-                        throw FusionSettingsError.message("Codex Mixin 已退出")
-                    }
-                    return try await self.fetchFusionModelOptions()
-                },
-                saveHandler: { [weak self] profile, replacedProfileID, progress in
-                    guard let self else {
-                        throw FusionSettingsError.message("Codex Mixin 已退出")
-                    }
-                    progress.advance(to: 0)
-                    var arguments = [
-                        "fusion",
-                        "set",
-                        "--profile-json",
-                        try profile.jsonString(),
-                    ]
-                    arguments.append(contentsOf: ["--replace-id", replacedProfileID])
-                    _ = try await self.runGateway(arguments)
-                    try await self.applyFusionCatalogChange(progress: progress)
-                },
-                deleteHandler: { [weak self] profileID, progress in
-                    guard let self else {
-                        throw FusionSettingsError.message("Codex Mixin 已退出")
-                    }
-                    progress.advance(to: 0)
-                    _ = try await self.runGateway(["fusion", "delete", "--id", profileID])
-                    try await self.applyFusionCatalogChange(progress: progress)
+    @objc func showModelRouting() {
+        showConsole(.routing)
+    }
+
+    func makeModelRoutingModel() -> ModelRoutingModel {
+        ModelRoutingModel(
+            listHandler: { [weak self] in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                return try parseModelRoutes(try await self.runGateway(["route", "list", "--json"]))
+            },
+            modelsHandler: { [weak self] in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                return try await self.fetchRouteModelOptions()
+            },
+            saveHandler: { [weak self] json, replacedModel, progress in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                progress.advance(to: 0)
+                var arguments = ["route", "set", "--route-json", json]
+                if let replacedModel {
+                    arguments.append(contentsOf: ["--replace-model", replacedModel])
                 }
-            )
-        }
-        fusionSettingsWindowController?.present()
+                _ = try await self.runGateway(arguments)
+                try await self.applyModelRouteChange(progress: progress)
+            },
+            deleteHandler: { [weak self] model, progress in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                progress.advance(to: 0)
+                _ = try await self.runGateway(["route", "delete", "--model", model])
+                try await self.applyModelRouteChange(progress: progress)
+            }
+        )
     }
 
     @objc func manuallyReportSessions() {
@@ -372,9 +363,9 @@ extension AppDelegate {
         }
     }
 
-    func applyFusionCatalogChange(progress: OperationProgress) async throws {
+    func applyModelRouteChange(progress: OperationProgress) async throws {
         serviceBusy = true
-        serviceStatus = "正在应用 Fusion 配置..."
+        serviceStatus = "正在应用模型路由..."
         serviceEndpoint = nil
         defer { serviceBusy = false }
         progress.advance(to: 1)
@@ -384,8 +375,8 @@ extension AppDelegate {
         progress.advance(to: 3)
     }
 
-    func fetchFusionModelOptions() async throws -> [FusionModelOption] {
-        let data = Data(try await runGateway(["fusion", "models", "--json"]).utf8)
+    func fetchRouteModelOptions() async throws -> [FusionModelOption] {
+        let data = Data(try await runGateway(["route", "models", "--json"]).utf8)
         guard
             let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             let models = response["models"] as? [[String: Any]]
