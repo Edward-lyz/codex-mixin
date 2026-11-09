@@ -47,18 +47,20 @@ pub enum ProviderPreset {
 }
 
 impl ProviderPreset {
+    /// Display order everywhere presets are listed: accounts signed in on
+    /// this machine, then API-key services, then the free-form Custom last.
     pub const ALL: [Self; 11] = [
-        Self::Custom,
         Self::Official,
+        Self::ClaudeCode,
         Self::Agy,
         Self::AgyBusiness,
         Self::Kiro,
+        Self::OpenCodeGo,
         Self::BaiduOneApi,
         Self::OpenRouter,
         Self::DeepSeek,
-        Self::OpenCodeGo,
         Self::AwsBedrock,
-        Self::ClaudeCode,
+        Self::Custom,
     ];
 
     pub fn parse(value: &str) -> anyhow::Result<Self> {
