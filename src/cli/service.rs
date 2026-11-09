@@ -102,6 +102,7 @@ pub(crate) async fn ensure_ready() -> anyhow::Result<()> {
     let snapshot = gateway_snapshot(&config).await?;
     let action = gateway_lifecycle_action(GatewayObservation {
         gateway_healthy: snapshot.healthy(),
+        process_alive: snapshot.process_alive(),
         gateway_version: snapshot.running_version.as_deref(),
         daemon_running: snapshot.daemon_running(),
         service_installed: service.installed,
