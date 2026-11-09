@@ -370,19 +370,7 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                         .with_context(|| {
                             format!("missing cached model {selected} for {}", provider.id)
                         })?;
-                    let name = if matches!(id_owned.as_str(), "workbuddy" | "codebuddy") {
-                        let mut display_model = model.clone();
-                        display_model.ratio = None;
-                        let name = codex_mixin::provider::provider_model_display_name(
-                            &display_model,
-                            provider,
-                        );
-                        name.rsplit_once(" \u{b7} ")
-                            .map_or(name.as_str(), |(model, _)| model)
-                            .to_owned()
-                    } else {
-                        codex_mixin::provider::provider_model_display_name(model, provider)
-                    };
+                    let name = codex_mixin::provider::provider_model_display_name(model, provider);
                     models.push(framework_model(
                         codex_mixin::provider::catalog_model_slug(selected, &provider.id),
                         name,

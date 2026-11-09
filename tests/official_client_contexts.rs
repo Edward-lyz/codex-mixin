@@ -124,7 +124,7 @@ async fn oneapi_rate_labels_reach_native_client_configs() {
             let model = models.iter().find(|model| model["id"] == id).unwrap();
             let name = if index < 2 {
                 assert_eq!(model["credits"], ratio);
-                name.to_owned()
+                id.to_owned()
             } else {
                 format!("{name} ({ratio}) \u{b7} oneapi")
             };
