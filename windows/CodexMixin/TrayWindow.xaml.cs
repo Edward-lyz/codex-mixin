@@ -421,6 +421,20 @@ public sealed partial class TrayWindow : Window
     }
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
+        => await ConfirmExitAsync(
+            "彻底退出 Mixin？",
+            "会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。",
+            "彻底退出",
+            app => app.QuitCompletelyAsync());
+
+    private async void OnLightweight(object sender, RoutedEventArgs args)
+        => await ConfirmExitAsync(
+            "进入轻量模式？",
+            "关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。",
+            "进入轻量模式",
+            app => app.EnterLightweightModeAsync());
+
+    private async Task ConfirmExitAsync(string title, string content, string primary, Func<App, Task> exit)
     {
         if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
         dialogOpen = true;
@@ -432,9 +446,9 @@ public sealed partial class TrayWindow : Window
         ShowPanel();
         var dialog = new ContentDialog
         {
-            Title = "退出 Codex Mixin？",
-            Content = "退出界面后，本地网关会继续按 CLI 的服务设置运行。",
-            PrimaryButtonText = "退出",
+            Title = title,
+            Content = content,
+            PrimaryButtonText = primary,
             CloseButtonText = "取消",
             XamlRoot = Panel.XamlRoot,
             RequestedTheme = Panel.ActualTheme
@@ -443,8 +457,9 @@ public sealed partial class TrayWindow : Window
         try
         {
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync();
+            await exit((App)Microsoft.UI.Xaml.Application.Current);
         }
+        catch (Exception error) when (!exiting) { PanelStatus.Text = error.Message; FitToContent(); }
         finally { dialogOpen = false; }
     }
     private async Task ChangeAsync(string[] args)

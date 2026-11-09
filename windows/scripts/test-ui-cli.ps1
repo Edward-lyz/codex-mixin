@@ -431,11 +431,11 @@ try {
     $completed.Add('provider delete cancellation and confirmation')
     $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
     & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 15000
-    & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
+    & $WinApp ui invoke '彻底退出 Mixin' -w $trayWindow
     & $WinApp ui wait-for CloseButton -w $trayWindow --timeout 5000
     & $WinApp ui invoke CloseButton -w $trayWindow
     if ($app.HasExited) { throw 'Cancel on the quit confirmation exited the application' }
-    & $WinApp ui invoke '退出 Codex Mixin' -w $trayWindow
+    & $WinApp ui invoke '彻底退出 Mixin' -w $trayWindow
     & $WinApp ui wait-for PrimaryButton -w $trayWindow --timeout 5000
     & $WinApp ui invoke PrimaryButton -w $trayWindow
     if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }

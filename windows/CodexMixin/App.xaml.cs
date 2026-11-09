@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using System.Runtime.InteropServices;
@@ -60,6 +61,40 @@ public partial class App : Application
         Exit();
     }
 
+    // Lightweight mode: only the CLI gateway stays resident. The login launch
+    // of this UI exits at once until the user opens the app by hand.
+    private const string ShellSettingsKey = @"Software\CodexMixin";
+    private const string LightweightValue = "LightweightMode";
+
+    private static bool LightweightModeSet()
+    {
+        using var settings = Registry.CurrentUser.OpenSubKey(ShellSettingsKey);
+        return settings?.GetValue(LightweightValue) is int enabled && enabled != 0;
+    }
+
+    private static void SetLightweightMode(bool enabled)
+    {
+        using var settings = Registry.CurrentUser.CreateSubKey(ShellSettingsKey, true);
+        if (enabled) settings.SetValue(LightweightValue, 1);
+        else settings.DeleteValue(LightweightValue, false);
+    }
+
+    /// Keeps the gateway running at login, then closes every window and the tray.
+    internal async Task EnterLightweightModeAsync()
+    {
+        await Operations.ChangeAsync(["service", "autostart", "enable", "--json"], CancellationToken.None);
+        SetLightweightMode(true);
+        await ExitAllAsync();
+    }
+
+    /// Stops the gateway as well as the UI.
+    internal async Task QuitCompletelyAsync()
+    {
+        await Operations.ChangeAsync(
+            ["service", "stop", "--managed", "--allow-codex-disconnect", "--json"], CancellationToken.None);
+        await ExitAllAsync();
+    }
+
     internal void OpenPage(string page, bool show = true)
     {
         if (exiting || IsUpdating) return;
@@ -112,6 +147,9 @@ public partial class App : Application
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var background = Environment.GetCommandLineArgs().Contains("--background");
+        if (background && LightweightModeSet()) { Exit(); return; }
+        SetLightweightMode(false);
         var instance = await FindMainInstanceAsync();
         if (!instance.IsCurrent)
         {
@@ -131,7 +169,7 @@ public partial class App : Application
             var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage|context)\b");
             OpenPage(match.Success ? match.Groups[1].Value : "providers");
         });
-        try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
+        try { OpenPage("providers", show: !background); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
         // Prime only the compact panel; do not load the hidden console/model editor.
         tray = new TrayWindow();
