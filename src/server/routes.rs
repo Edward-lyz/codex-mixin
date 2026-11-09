@@ -351,6 +351,8 @@ const DEFAULT_TURN_LIMIT: usize = 200;
 #[derive(Deserialize)]
 struct TurnUsageQuery {
     days: Option<u64>,
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
     provider: Option<String>,
     limit: Option<usize>,
 }
@@ -362,13 +364,15 @@ async fn token_usage_turns(
 ) -> Result<Json<Vec<crate::usage::TurnUsage>>, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     let limit = query.limit.unwrap_or(DEFAULT_TURN_LIMIT);
-    if limit == 0 || limit > crate::usage::MAX_TRACKED_TURNS {
+    if limit == 0 || limit > crate::usage::MAX_TURN_PAGE {
         return Err(GatewayError::BadRequest(format!(
             "usage turn limit must be between 1 and {}",
-            crate::usage::MAX_TRACKED_TURNS
+            crate::usage::MAX_TURN_PAGE
         )));
     }
     let since_ms = match query.days {
+        // An explicit window, such as one chart bar, wins over the day range.
+        _ if query.since_ms.is_some() => query.since_ms,
         // Start at the first UTC day the daily series includes, so the reply
         // table and the daily totals on one page cover the same interval.
         Some(days) if (1..=3_650).contains(&days) => Some(crate::usage::first_day_start_ms(days)),
@@ -382,6 +386,7 @@ async fn token_usage_turns(
     let turns = tokio::task::spawn_blocking(move || {
         state.cache_shapes.usage_turns(&crate::usage::TurnQuery {
             since_ms,
+            until_ms: query.until_ms,
             provider_id: query.provider,
             limit,
         })

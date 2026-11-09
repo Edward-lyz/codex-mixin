@@ -739,9 +739,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             daily,
             provider,
             limit,
+            since_ms,
+            until_ms,
         } => {
             if turns {
-                usage_turns(json, days, provider.as_deref(), limit).await
+                usage_turns(json, days, provider.as_deref(), limit, since_ms, until_ms).await
             } else if daily {
                 usage_daily(json, days).await
             } else {

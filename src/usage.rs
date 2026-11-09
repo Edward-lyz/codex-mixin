@@ -15,8 +15,12 @@ use anyhow::Context;
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 
-/// Rows kept on disk. Older turns stay in the daily aggregates.
-pub(crate) const MAX_TRACKED_TURNS: usize = 5_000;
+/// Rows kept on disk, about a month of busy use. Older turns stay in the
+/// daily aggregates. Queries read the rows on demand, so the cap costs disk only.
+pub(crate) const MAX_TRACKED_TURNS: usize = 100_000;
+
+/// Largest page one turn query may return.
+pub(crate) const MAX_TURN_PAGE: usize = 5_000;
 
 const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -42,7 +46,8 @@ const TURNS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS token_usage_turns (
     reasoning_chars INTEGER NOT NULL,
     ttft_ms REAL,
     output_tps REAL
-)";
+);
+CREATE INDEX IF NOT EXISTS token_usage_turns_at ON token_usage_turns (at_ms);";
 
 /// One upstream reply. Optional counters stay `None` when the provider did not
 /// report them, so unknown values are never shown as zero.
@@ -202,6 +207,8 @@ fn strip_date_suffix(name: &str) -> &str {
 #[derive(Debug, Default)]
 pub(crate) struct TurnQuery {
     pub(crate) since_ms: Option<u64>,
+    /// Exclusive upper bound on the reply time.
+    pub(crate) until_ms: Option<u64>,
     pub(crate) provider_id: Option<String>,
     pub(crate) limit: usize,
 }
@@ -272,12 +279,16 @@ fn query_turns(
                 output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
          FROM token_usage_turns
          WHERE (?1 IS NULL OR at_ms >= ?1) AND (?2 IS NULL OR provider_id = ?2)
+               AND (?3 IS NULL OR at_ms < ?3)
          ORDER BY at_ms DESC, id DESC",
     )?;
     let since = query
         .since_ms
         .map(|since| since.min(i64::MAX as u64) as i64);
-    let mut rows = statement.query(params![since, query.provider_id])?;
+    let until = query
+        .until_ms
+        .map(|until| until.min(i64::MAX as u64) as i64);
+    let mut rows = statement.query(params![since, query.provider_id, until])?;
     let mut turns = Vec::new();
     while turns.len() < query.limit {
         let Some(row) = rows.next()? else {

@@ -190,6 +190,12 @@ pub(super) enum Command {
         /// Maximum turns to return, newest first (requires --turns).
         #[arg(long, requires = "turns")]
         limit: Option<usize>,
+        /// Only include turns at or after this Unix time in milliseconds (requires --turns).
+        #[arg(long, requires = "turns")]
+        since_ms: Option<u64>,
+        /// Only include turns before this Unix time in milliseconds (requires --turns).
+        #[arg(long, requires = "turns")]
+        until_ms: Option<u64>,
     },
     /// Back up, restore, or inspect the Codex Mixin configuration.
     Config {
