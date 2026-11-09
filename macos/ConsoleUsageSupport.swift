@@ -109,49 +109,103 @@ struct UsageTotals: Equatable {
     var cacheHitPercent: Double? { prompt > 0 ? Double(cached) / Double(prompt) * 100 : nil }
 }
 
-/// One stacked chart segment: a day and a series (provider id, or nil when
-/// all providers are aggregated).
-struct UsageChartPoint: Identifiable, Equatable {
-    let day: Int
-    let series: String
-    let tokens: UInt64
-    let requests: UInt64
-    var id: String { "\(day)-\(series)" }
+/// Chart granularity: local hours from reply rows for the one-day range, and
+/// the CLI's UTC days for longer ranges.
+enum UsageChartBucket {
+    case hour
+    case day
 
-    /// Month/day label; days are UTC like the CLI's daily buckets.
-    var dayLabel: String {
-        let date = Date(timeIntervalSince1970: Double(day) * 86_400)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        let parts = calendar.dateComponents([.month, .day], from: date)
-        return "\(parts.month ?? 0)/\(parts.day ?? 0)"
+    var component: Calendar.Component {
+        switch self {
+        case .hour: return .hour
+        case .day: return .day
+        }
     }
 }
 
-/// One point per day in the range and per series, so days without traffic
-/// still appear as empty slots on the chart axis.
+/// One stacked chart segment: a time slot and a series (provider id, or the
+/// aggregate label when providers are merged). `start` places the bar on the
+/// local-time axis; `interval` is the slot the counts were taken from, which
+/// for daily rows is the CLI's UTC day.
+struct UsageChartPoint: Identifiable, Equatable {
+    let start: Date
+    let interval: DateInterval
+    let series: String
+    let tokens: UInt64
+    let requests: UInt64
+    var id: String { "\(start.timeIntervalSince1970)-\(series)" }
+}
+
+/// One point per slot in the range and per series, so slots without traffic
+/// still appear on the chart axis. Daily rows come from the CLI's UTC-day
+/// totals; the hourly view sums reply rows into local hours.
 func usageChartPoints(
-    _ rows: [DailyUsageRecord],
+    daily rows: [DailyUsageRecord],
+    turns: [TurnUsageRecord],
+    bucket: UsageChartBucket,
     split: Bool,
     aggregateLabel: String,
     lastDay: Int,
     days: Int
 ) -> [UsageChartPoint] {
-    var totals: [String: (UInt64, UInt64)] = [:]
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC") ?? .current
+    let local = Calendar.current
+    let firstDay = lastDay - max(days, 1) + 1
+    let rangeStart = Date(timeIntervalSince1970: Double(firstDay) * 86_400)
+
+    // Slot interval -> axis position. A UTC day is drawn on the local date
+    // with the same calendar day, so its label never shifts by the offset.
+    var slots: [(interval: DateInterval, start: Date)] = []
+    switch bucket {
+    case .hour:
+        var cursor = local.dateInterval(of: .hour, for: rangeStart)?.start ?? rangeStart
+        while cursor <= Date() {
+            let next = local.date(byAdding: .hour, value: 1, to: cursor) ?? cursor.addingTimeInterval(3_600)
+            slots.append((DateInterval(start: cursor, end: next), cursor))
+            cursor = next
+        }
+    case .day:
+        for day in firstDay...lastDay {
+            let start = Date(timeIntervalSince1970: Double(day) * 86_400)
+            let parts = utc.dateComponents([.year, .month, .day], from: start)
+            slots.append((DateInterval(start: start, duration: 86_400), local.date(from: parts) ?? start))
+        }
+    }
+
+    var totals: [String: (tokens: UInt64, requests: UInt64)] = [:]
     var series = Set<String>()
-    for row in rows {
-        let name = split ? row.providerID : aggregateLabel
+    func add(_ name: String, at date: Date, tokens: UInt64, requests: UInt64) {
+        guard let slot = slots.first(where: { $0.interval.start <= date && date < $0.interval.end }) else { return }
         series.insert(name)
-        let key = "\(row.day)|\(name)"
+        let key = "\(slot.interval.start.timeIntervalSince1970)|\(name)"
         let current = totals[key] ?? (0, 0)
-        totals[key] = (current.0 + row.totalTokens, current.1 + row.requestCount)
+        totals[key] = (current.tokens + tokens, current.requests + requests)
+    }
+    switch bucket {
+    case .hour:
+        for turn in turns {
+            let tokens = (turn.inputTokens ?? 0) + (turn.cacheReadTokens ?? 0)
+                + (turn.cacheCreationTokens ?? 0) + (turn.outputTokens ?? 0)
+            add(split ? turn.providerID : aggregateLabel, at: turn.date, tokens: tokens, requests: 1)
+        }
+    case .day:
+        for row in rows {
+            let date = Date(timeIntervalSince1970: Double(row.day) * 86_400)
+            add(split ? row.providerID : aggregateLabel, at: date, tokens: row.totalTokens, requests: row.requestCount)
+        }
     }
     if series.isEmpty { series.insert(aggregateLabel) }
-    let firstDay = lastDay - max(days, 1) + 1
-    return (firstDay...lastDay).flatMap { day in
+    return slots.flatMap { slot in
         series.sorted().map { name in
-            let total = totals["\(day)|\(name)"] ?? (0, 0)
-            return UsageChartPoint(day: day, series: name, tokens: total.0, requests: total.1)
+            let total = totals["\(slot.interval.start.timeIntervalSince1970)|\(name)"] ?? (0, 0)
+            return UsageChartPoint(
+                start: slot.start,
+                interval: slot.interval,
+                series: name,
+                tokens: total.tokens,
+                requests: total.requests
+            )
         }
     }
 }

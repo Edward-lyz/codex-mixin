@@ -874,8 +874,7 @@ struct ModelBenchmarkRootView: View {
                 text: searchBinding,
                 placeholder: "搜索当前服务商的模型"
             )
-            .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
-            .layoutPriority(1)
+            .frame(minWidth: 180, idealWidth: 280, maxWidth: 360)
             .accessibilityLabel("搜索当前服务商的模型")
 
             Menu {
@@ -913,6 +912,8 @@ struct ModelBenchmarkRootView: View {
             Spacer()
 
             primaryAction
+                .fixedSize()
+                .layoutPriority(2)
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)
@@ -1177,6 +1178,7 @@ struct ModelBenchmarkRootView: View {
                 TextField("", value: contextBinding(row), format: .number)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
                 Text("K")
                     .foregroundStyle(.secondary)
                 if model.canRestoreModelContext(row) {
@@ -1229,23 +1231,31 @@ struct ModelBenchmarkRootView: View {
 
     private func modelCell(_ row: ModelBenchmarkTableRow) -> some View {
         let displayName = row.model.displayName.flatMap { $0 == row.model.id ? nil : $0 }
-        var suffixes: [String] = []
-        if row.model.isNew { suffixes.append("新增") }
-        if !row.model.isAvailable { suffixes.append("不可用") }
+        var tags: [(String, Color)] = []
+        if row.model.isNew { tags.append(("新增", .blue)) }
+        if !row.model.isAvailable { tags.append(("不可用", .secondary)) }
         let isSaved = model.savedModelKeys.contains(row.id)
         let isSelected = model.selectedModelKeys.contains(row.id)
         if isSaved != isSelected {
-            suffixes.append(isSelected ? "待加入" : "待移除")
+            tags.append(isSelected ? ("待加入", .green) : ("待移除", .orange))
         }
-        let suffix = suffixes.isEmpty ? "" : " · \(suffixes.joined(separator: " / "))"
         return HStack(spacing: 6) {
-            Text(row.model.id + suffix)
-                .font(.callout.monospaced())
+            Text(row.model.id)
+                .font(.body)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.model.isAvailable ? .primary : .secondary)
                 .help(([row.model.id, displayName, row.model.description].compactMap { $0 }).joined(separator: "\n"))
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+            ForEach(tags, id: \.0) { tag in
+                Text(tag.0)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(tag.1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(tag.1.opacity(0.14)))
+                    .fixedSize()
+            }
             Spacer(minLength: 4)
             if row.model.manuallyAdded {
                 Button {
@@ -1268,9 +1278,10 @@ struct ModelBenchmarkRootView: View {
                     .foregroundStyle(resultStatusColor(result.status))
             } else if let ttft = row.result?.ttftMs {
                 Text(formatMilliseconds(ttft))
+                    .monospacedDigit()
                     .foregroundStyle(latencyColor(ttft))
             } else {
-                Text("-").foregroundStyle(.secondary)
+                Text("—").foregroundStyle(.tertiary)
             }
         }
         .help(row.result?.error ?? "")
@@ -1278,9 +1289,10 @@ struct ModelBenchmarkRootView: View {
 
     private func throughputCell(_ row: ModelBenchmarkTableRow) -> some View {
         let tps = row.result?.tps
-        let title = tps.map { String(format: "%.1f tok/s", $0) } ?? "-"
+        let title = tps.map { String(format: "%.1f tok/s", $0) } ?? "—"
         return Text(title)
-            .foregroundStyle(tps == nil ? Color.secondary : Color.primary)
+            .monospacedDigit()
+            .foregroundStyle(tps == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
     }
 
     private func ratioCell(_ row: ModelBenchmarkTableRow) -> some View {

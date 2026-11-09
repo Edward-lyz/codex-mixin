@@ -98,8 +98,8 @@ private struct ServiceMenuContent: View {
         HStack(spacing: 9) {
             Circle()
                 .fill(statusColor)
-                .frame(width: 12, height: 12)
-                .overlay(Circle().stroke(statusColor.opacity(0.28), lineWidth: 2))
+                .frame(width: 9, height: 9)
+                .overlay(Circle().stroke(statusColor.opacity(0.25), lineWidth: 3))
                 .shadow(
                     color: statusColor.opacity(shouldPulse ? (pulse ? 0.55 : 0.25) : 0),
                     radius: 3
@@ -113,10 +113,10 @@ private struct ServiceMenuContent: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(model.title)
-                    .font(.callout.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
                 Text(model.detail)
-                    .font(.caption.monospaced())
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -139,6 +139,7 @@ private struct ServiceMenuContent: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .controlSize(.small)
                 .disabled(model.isBusy)
                 .opacity(model.isBusy ? 0.58 : 1)
                 if model.isBusy {
@@ -148,7 +149,6 @@ private struct ServiceMenuContent: View {
         }
         .padding(.horizontal, 14)
         .frame(width: menuContentWidth, height: serviceMenuHeight)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var statusColor: Color {

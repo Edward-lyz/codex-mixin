@@ -256,7 +256,6 @@ private struct ProviderUsageDashboardContent: View {
         }
         .padding(10)
         .frame(width: menuContentWidth, height: model.contentHeight, alignment: .topLeading)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // The tab strip already names the provider, so the quota style toggle
@@ -372,7 +371,8 @@ private struct ProviderQuotaRow: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(providerQuotaText(usage)).fontDesign(.monospaced)
+                Text(providerQuotaRatio(usage).map(quotaPercentText) ?? providerQuotaText(usage))
+                    .monospacedDigit()
                     .fixedSize(horizontal: true, vertical: false)
             }
             .font(.caption2)
@@ -380,8 +380,8 @@ private struct ProviderQuotaRow: View {
                 ProgressView(value: min(ratio, 1))
                     .tint(ratio >= quotaWarningRatio ? .red : nil)
             }
-            if let resetAt = usage.resetAt, let date = ISO8601DateFormatter().date(from: resetAt) {
-                Text(AppLocalization.string("quota.resetsAt", date.formatted(date: .abbreviated, time: .shortened)))
+            if let detail = quotaDetailText(usage) {
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -443,7 +443,7 @@ private struct ProviderQuotaRings: View {
         // The center shows the tightest window, the one that runs out first.
         if let ratio = usages.compactMap(providerQuotaRatio).max() {
             Text(quotaPercentText(ratio))
-                .font(.system(size: 15, weight: .bold).monospacedDigit())
+                .font(.system(size: 17, weight: .semibold, design: .rounded).monospacedDigit())
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(ratio >= quotaWarningRatio ? Color.red : Color.primary)
         }
@@ -469,10 +469,7 @@ private struct ProviderQuotaRings: View {
     private func legendRow(index: Int, usage: ProviderQuotaUsage) -> some View {
         let ratio = providerQuotaRatio(usage)
         let warning = (ratio ?? 0) >= quotaWarningRatio
-        let resetText = usage.resetAt
-            .flatMap { ISO8601DateFormatter().date(from: $0) }
-            .map { AppLocalization.string("quota.resetsAt", $0.formatted(date: .abbreviated, time: .shortened)) }
-        let detail = [providerQuotaText(usage), resetText].compactMap { $0 }.joined(separator: " · ")
+        let detail = quotaDetailText(usage) ?? ""
         return VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
                 Circle()
@@ -489,7 +486,7 @@ private struct ProviderQuotaRings: View {
                     .foregroundStyle(warning ? Color.red : Color.primary)
             }
             Text(detail)
-                .fontDesign(.monospaced)
+                .monospacedDigit()
                 .foregroundStyle(usage.error == nil ? Color.secondary : Color.red)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -500,6 +497,22 @@ private struct ProviderQuotaRings: View {
         .accessibilityLabel("\(providerQuotaLabel(usage, multiple: multiple)) \(detail)")
         .accessibilityValue(ratio.map(quotaPercentText) ?? "")
     }
+}
+
+/// Amount and reset time under a quota. A 100-point window repeats its
+/// percentage, so only real amounts are spelled out.
+private func quotaDetailText(_ usage: ProviderQuotaUsage) -> String? {
+    if usage.error != nil { return providerQuotaText(usage) }
+    let amount = (usage.limit == 100 && usage.currency == nil) ? nil : providerQuotaText(usage)
+    let reset = usage.resetAt
+        .flatMap { ISO8601DateFormatter().date(from: $0) }
+        .map { date in
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            return AppLocalization.string("quota.resetsIn", formatter.localizedString(for: date, relativeTo: Date()))
+        }
+    let parts = [amount, reset].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
 }
 
 private func quotaPercentText(_ ratio: Double) -> String {

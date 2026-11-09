@@ -333,9 +333,12 @@ struct ProviderSettingsRootView: View {
     let onClearKey: () -> Void
     let onClearQuotaCredentials: () -> Void
     let onMove: (IndexSet, Int) -> Void
+    /// The console hosts this page without a window toolbar, so a collapsed
+    /// sidebar would have no button to bring it back; it stays visible.
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
                     Text("服务商")
@@ -446,6 +449,9 @@ struct ProviderSettingsRootView: View {
             .fixedHeaderScrollEdge()
         }
         .navigationTitle("模型与服务")
+        .onChange(of: columnVisibility) { visibility in
+            if visibility != .all { columnVisibility = .all }
+        }
     }
 
 }
