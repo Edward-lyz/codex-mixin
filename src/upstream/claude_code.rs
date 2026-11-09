@@ -395,6 +395,12 @@ impl ToolDesk {
     }
 }
 
+fn is_context_note(block: &Value) -> bool {
+    block["text"]
+        .as_str()
+        .is_some_and(|text| text.trim_start().starts_with("<context_state>"))
+}
+
 /// Decide how a live process continues with this request, or `None` when
 /// the client history no longer matches it and a fresh process is needed.
 fn plan_step(session: &Session, request: &MessageRequest, fingerprint: u64) -> Option<Step> {
@@ -424,6 +430,12 @@ fn plan_step(session: &Session, request: &MessageRequest, fingerprint: u64) -> O
                 _ => {}
             }
         }
+    }
+    // The gateway appends its own `<context_state>` note after tool results. It
+    // is bookkeeping for the gateway, not user input: pasting it alone would
+    // start a turn that answers the note and shifts every later reply.
+    if extra.iter().all(is_context_note) {
+        extra.clear();
     }
     let pending = session.desk.pending();
     if pending.is_empty() {
@@ -650,17 +662,23 @@ async fn write_user(stdin: &mut InteractiveInput, content: Vec<Value>) -> Result
 /// First message of a fresh process: earlier history as a transcript, then
 /// the latest user input as real content blocks.
 fn opening_message(messages: &[Message]) -> Vec<Value> {
-    let last_is_plain_user = messages.last().is_some_and(|message| {
+    // The host may append a note (the context state) after the user's own
+    // message, so the latest input is every trailing plain user message, not
+    // just the last one; otherwise the real request would be buried in history.
+    let is_plain_user = |message: &Message| {
         message.role == "user"
             && !message
                 .content
                 .iter()
                 .any(|block| matches!(block, ContentBlock::ToolResult { .. }))
-    });
-    let (history, latest) = match messages.split_last() {
-        Some((last, history)) if last_is_plain_user => (history, Some(last)),
-        _ => (messages, None),
     };
+    let split = messages.len()
+        - messages
+            .iter()
+            .rev()
+            .take_while(|message| is_plain_user(message))
+            .count();
+    let (history, latest) = messages.split_at(split);
     let mut content = Vec::new();
     if !history.is_empty() {
         let mut transcript = format!("{HISTORY_INTRO}\n<history>\n");
@@ -670,20 +688,21 @@ fn opening_message(messages: &[Message]) -> Vec<Value> {
         transcript.push_str("</history>");
         content.push(json!({"type": "text", "text": transcript}));
     }
-    match latest {
-        Some(latest) => content.extend(
-            latest
-                .content
-                .iter()
-                .filter(|block| {
-                    matches!(
-                        block,
-                        ContentBlock::Text { .. } | ContentBlock::Image { .. }
-                    )
-                })
-                .filter_map(|block| serde_json::to_value(block).ok()),
-        ),
-        None => content.push(json!({"type": "text", "text": CONTINUE_PROMPT})),
+    let before = content.len();
+    content.extend(
+        latest
+            .iter()
+            .flat_map(|message| &message.content)
+            .filter(|block| {
+                matches!(
+                    block,
+                    ContentBlock::Text { .. } | ContentBlock::Image { .. }
+                )
+            })
+            .filter_map(|block| serde_json::to_value(block).ok()),
+    );
+    if content.len() == before {
+        content.push(json!({"type": "text", "text": CONTINUE_PROMPT}));
     }
     content
 }

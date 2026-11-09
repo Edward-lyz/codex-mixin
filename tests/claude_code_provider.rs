@@ -64,7 +64,7 @@ const onInput = async text => {
     const name = (await mcp('tools/list', {})).tools[0].name;
     message([{ type: 'tool_use', id: 'toolu_fake_1', name: `mcp__mixin__${name}`, input: { cmd: 'echo hi' } }], 'tool_use');
     const result = await mcp('tools/call', { name, arguments: { cmd: 'echo hi' } });
-    message([{ type: 'text', text: `tool said: ${result.content[0].text}` }], 'end_turn');
+    message([{ type: 'text', text: `tool said: ${result.content[0].text} ${text.includes('<history>') ? 'buried' : 'direct'}` }], 'end_turn');
   } else {
     message([{ type: 'text', text: `process turn ${turns}: ${text}` }], 'end_turn');
   }
@@ -178,7 +178,15 @@ async fn claude_code_login_serves_tool_turns_on_one_cli_process() {
         "role": "user",
         "content": [{"type": "input_text", "text": "run echo hi"}],
     })];
-    let first = turn(address, &input).await;
+    // The gateway appends its context note after the user's own message; the
+    // request must still reach Claude as the latest input, not as history.
+    let mut opening = input.clone();
+    opening.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "<context_state>ok</context_state>"}],
+    }));
+    let first = turn(address, &opening).await;
     let call = first
         .iter()
         .find(|item| item["type"] == "function_call")
@@ -194,8 +202,15 @@ async fn claude_code_login_serves_tool_turns_on_one_cli_process() {
         json!({"type": "function_call", "call_id": "toolu_fake_1", "name": "exec_command", "arguments": "{\"cmd\":\"echo hi\"}"}),
         json!({"type": "function_call_output", "call_id": "toolu_fake_1", "output": "hello-output"}),
     ]);
-    let second = turn(address, &input).await;
-    assert_eq!(output_text(&second), "tool said: hello-output");
+    // The gateway's own note follows the tool result; it must not become a turn.
+    let mut resumed = input.clone();
+    resumed.push(json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "<context_state>ok</context_state>"}],
+    }));
+    let second = turn(address, &resumed).await;
+    assert_eq!(output_text(&second), "tool said: hello-output direct");
 
     input.extend([
         json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "tool said: hello-output"}]}),
