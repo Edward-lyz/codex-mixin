@@ -123,6 +123,7 @@ pub(crate) fn spawn(
             let mut ready = false;
             let mut tap_ready = false;
             let mut trust_answered = false;
+            let mut last_dismiss: Option<Instant> = None;
             let mut turn_stop = String::new();
             let start = Instant::now();
             loop {
@@ -187,7 +188,8 @@ pub(crate) fn spawn(
                     .map(|parser| parser.screen().contents())
                     .unwrap_or_default();
                 // Only the gateway-owned working folder is trusted here.
-                if !trust_answered && display.contains("Yes, I trust this folder") {
+                let trust_prompt = display.contains("Yes, I trust this folder");
+                if !trust_answered && trust_prompt {
                     std::thread::sleep(Duration::from_millis(350));
                     let mut output = writer
                         .lock()
@@ -196,7 +198,29 @@ pub(crate) fn spawn(
                     output.flush()?;
                     trust_answered = true;
                 }
-                if display.contains('\u{276f}') {
+                // Option menus such as the fullscreen renderer offer also draw
+                // the prompt glyph, and pasted input would land in the menu.
+                // Pasted text always starts on a new line, so a user message
+                // never puts a digit right after the glyph.
+                let menu = display.lines().any(|line| {
+                    line.trim_start()
+                        .strip_prefix('\u{276f}')
+                        .is_some_and(|rest| {
+                            rest.trim_start().starts_with(|c: char| c.is_ascii_digit())
+                        })
+                });
+                if menu
+                    && !trust_prompt
+                    && last_dismiss.is_none_or(|at| at.elapsed() > Duration::from_secs(1))
+                {
+                    let mut output = writer
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("terminal writer poisoned"))?;
+                    output.write_all(b"\x1b")?;
+                    output.flush()?;
+                    last_dismiss = Some(Instant::now());
+                }
+                if !menu && display.contains('\u{276f}') {
                     ready = true;
                 }
                 anyhow::ensure!(
@@ -205,6 +229,7 @@ pub(crate) fn spawn(
                 );
                 if ready
                     && tap_ready
+                    && !menu
                     && let Ok(content) = incoming.try_recv()
                 {
                     for (index, part) in content.iter().enumerate() {
@@ -350,7 +375,17 @@ fn paste(
         );
         anyhow::ensure!(
             started.elapsed() < timeout,
-            "interactive Claude did not acknowledge the pasted content"
+            "interactive Claude did not acknowledge the pasted content; screen: {}",
+            now.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join(" | ")
         );
         std::thread::sleep(Duration::from_millis(30));
     }
