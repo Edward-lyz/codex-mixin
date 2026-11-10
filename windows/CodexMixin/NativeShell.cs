@@ -100,7 +100,12 @@ internal sealed class NativeShell : IDisposable
         Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, borderColorAttribute, ref color, sizeof(uint)));
     }
 
-    internal static Windows.Graphics.RectInt32 ConsoleBounds()
+    internal static Windows.Graphics.RectInt32 ConsoleBounds() => CenteredBounds(1440, 960, 0.92);
+
+    // Side windows fill at most the work area so their lower controls stay on screen.
+    internal static Windows.Graphics.RectInt32 SideWindowBounds() => CenteredBounds(1120, 800, 1);
+
+    private static Windows.Graphics.RectInt32 CenteredBounds(int preferredWidth, int preferredHeight, double fill)
     {
         GetCursorPos(out var position);
         var monitor = MonitorFromPoint(position, 2);
@@ -108,8 +113,8 @@ internal sealed class NativeShell : IDisposable
         if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
         Marshal.ThrowExceptionForHR(GetDpiForMonitor(monitor, 0, out var dpi, out _));
         var scale = dpi / 96.0;
-        var width = Math.Min((int)(1440 * scale), (int)((info.Work.Right - info.Work.Left) * 0.92));
-        var height = Math.Min((int)(960 * scale), (int)((info.Work.Bottom - info.Work.Top) * 0.92));
+        var width = Math.Min((int)(preferredWidth * scale), (int)((info.Work.Right - info.Work.Left) * fill));
+        var height = Math.Min((int)(preferredHeight * scale), (int)((info.Work.Bottom - info.Work.Top) * fill));
         return new Windows.Graphics.RectInt32(info.Work.Left + (info.Work.Right - info.Work.Left - width) / 2,
             info.Work.Top + (info.Work.Bottom - info.Work.Top - height) / 2, width, height);
     }
