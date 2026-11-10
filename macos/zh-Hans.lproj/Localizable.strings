@@ -240,7 +240,7 @@
 "lightweight.failedTitle" = "无法进入轻量模式";
 "lightweight.notRunning" = "本地网关没有运行。轻量模式依赖后台网关，请先开启网关。";
 
-"console.page.context" = "上下文";
+"console.page.context" = "上下文压缩";
 "context.enabled" = "启用上下文引擎";
 "context.restartNote" = "切换后立即保存，并自动重启运行中的网关生效。";
 "context.section.settings" = "上下文引擎";
@@ -446,5 +446,17 @@
 
 "routing.activity.reason" = "原因：%@";
 
+"console.page.overview" = "概览";
+"console.overview.title" = "概览";
+"agentManagement.state.drift" = "配置已偏离";
+"agentManagement.repair" = "修复";
+"agentManagement.repairHelp" = "重新写入 %@ 的受管配置";
+"agentManagement.connect" = "接入";
+"provider.codeReportDetail" = "使用该服务商时，向百度上报 AI 代码使用数据。";
+"provider.capability.vision" = "视觉";
+"provider.capability.tools" = "工具";
+"provider.capability.reasoning" = "推理";
+"quota.usedPercent" = "已用 %@";
+"routing.more" = "更多";
 "routing.enabled" = "启用";
 "routing.enabledFor" = "启用 %@";

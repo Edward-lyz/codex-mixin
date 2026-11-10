@@ -652,13 +652,14 @@ struct ModelRoutingView: View {
     @ObservedObject var model: ModelRoutingModel
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             sidebar
-                .frame(minWidth: 250, idealWidth: 280, maxWidth: 360)
+                .frame(width: 240)
+            Divider()
             detail
-                .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 860, minHeight: 600)
+        .frame(minWidth: 730, minHeight: 600)
         .background(Color(nsColor: .windowBackgroundColor))
         .task {
             while !Task.isCancelled {
@@ -689,7 +690,7 @@ struct ModelRoutingView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             Divider()
-            if model.routes.isEmpty && model.draft == nil && model.suggestions.isEmpty {
+            if model.routes.isEmpty && model.draft == nil {
                 emptySidebar
             } else {
                 List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
@@ -714,33 +715,6 @@ struct ModelRoutingView: View {
                     if model.editingModel == nil, model.selection == nil, let draft = model.draft {
                         ModelRouteRow(route: draft, isNew: true)
                     }
-                    let suggestions = model.suggestions
-                    if !suggestions.isEmpty {
-                        Section(AppLocalization.string("routing.suggestions")) {
-                            ForEach(suggestions, id: \.model) { route in
-                                HStack(spacing: 8) {
-                                    ModelRouteRow(route: route)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { model.adopt(route) }
-                                    Toggle(AppLocalization.string("routing.enabled"), isOn: Binding(
-                                        get: { false },
-                                        set: { _ in model.adopt(route); model.save() }
-                                    ))
-                                    .toggleStyle(.switch)
-                                    .controlSize(.mini)
-                                    .labelsHidden()
-                                    .accessibilityLabel(AppLocalization.string("routing.enabledFor", route.displayName))
-                                    Image(systemName: "line.3.horizontal")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .tag(route.model)
-                                .help(AppLocalization.string("routing.suggestions.help"))
-                            }
-                            .onMove { model.moveSuggestions(from: $0, to: $1) }
-                        }
-                    }
                 }
                 .disabled(model.isBusy)
                 .listStyle(.sidebar)
@@ -755,6 +729,20 @@ struct ModelRoutingView: View {
                     model.newRoute(kind)
                 } label: {
                     Label(kind.title, systemImage: kind.symbol)
+                }
+            }
+            // Templates only open an unsaved draft; saving stays explicit.
+            let suggestions = model.suggestions
+            if !suggestions.isEmpty {
+                Divider()
+                Menu(AppLocalization.string("routing.suggestions")) {
+                    ForEach(suggestions, id: \.model) { route in
+                        Button {
+                            model.adopt(route)
+                        } label: {
+                            Label(route.displayName, systemImage: route.kind.symbol)
+                        }
+                    }
                 }
             }
         } label: {
@@ -791,8 +779,10 @@ struct ModelRoutingView: View {
         if let draft = model.draft {
             VStack(spacing: 0) {
                 ModelRouteEditor(model: model, kind: draft.kind)
-                Divider()
-                bottomBar
+                if model.isDirty || model.isBusy || model.validationError != nil || !model.status.isEmpty {
+                    Divider()
+                    bottomBar
+                }
             }
         } else {
             ModelRouteGallery(model: model)
@@ -813,14 +803,6 @@ struct ModelRoutingView: View {
             }
             if model.isBusy { ProgressView().controlSize(.small) }
             Spacer()
-            if model.editingModel != nil {
-                Button(role: .destructive) {
-                    model.deleteSelected()
-                } label: {
-                    Text(AppLocalization.string("routing.delete"))
-                }
-                .disabled(model.isBusy)
-            }
             Button(AppLocalization.string("routing.discard")) { model.discardChanges() }
                 .disabled(model.isBusy || !model.isDirty)
             Button(AppLocalization.string("routing.save")) { model.save() }
@@ -1050,15 +1032,19 @@ private struct ModelRouteEditor: View {
     @ObservedObject var model: ModelRoutingModel
     let kind: ModelRouteKind
     @State private var panelQuery = ""
+    @State private var showPanelPicker = false
 
     var body: some View {
         Form {
             Section {
                 header
-                TimelineView(.periodic(from: .now, by: 30)) { _ in
-                    ModelRouteFlow(route: draft, options: model.options, activity: activity)
+                // Fusion edits its Panel, Judge and Final stages inline below.
+                if kind != .fusion {
+                    TimelineView(.periodic(from: .now, by: 30)) { _ in
+                        ModelRouteFlow(route: draft, options: model.options, activity: activity)
+                    }
+                    .padding(.vertical, 8)
                 }
-                .padding(.vertical, 8)
                 if kind == .failover {
                     activitySummary
                 }
@@ -1123,6 +1109,23 @@ private struct ModelRouteEditor: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(kind.title).font(.headline)
                 Text(kind.help).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if model.editingModel != nil {
+                Menu {
+                    Button(role: .destructive) {
+                        model.deleteSelected()
+                    } label: {
+                        Text(AppLocalization.string("routing.delete"))
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(model.isBusy)
+                .help(AppLocalization.string("routing.more"))
+                .accessibilityLabel(AppLocalization.string("routing.more"))
             }
         }
         .padding(.vertical, 2)
@@ -1196,18 +1199,59 @@ private extension ModelRouteEditor {
     var fusionSections: some View {
         nameSection
         Section {
-            TextField(AppLocalization.string("routing.fusion.searchPanels"), text: $panelQuery)
-            panelList
-        } header: {
-            Text(AppLocalization.string("routing.fusion.panels"))
-        } footer: {
-            Text(AppLocalization.string("routing.fusion.panelCount", "\(draft.profile.panelModels.count)"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        Section(AppLocalization.string("routing.fusion.answer")) {
-            modelPicker(AppLocalization.string("routing.fusion.judge"), selection: binding(\.profile.judgeModel, ""))
-            modelPicker(AppLocalization.string("routing.fusion.final"), selection: binding(\.profile.finalModel, ""))
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AppLocalization.string("routing.fusion.panels")).font(.caption.weight(.semibold))
+                    Button {
+                        showPanelPicker = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(draft.profile.panelModels, id: \.self) { id in
+                                Text(model.options.first { $0.id == id }?.displayName ?? id)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            if draft.profile.panelModels.isEmpty {
+                                Text(AppLocalization.string("routing.chooseModel")).foregroundStyle(.secondary)
+                            }
+                            Text(AppLocalization.string("routing.fusion.panelCount", "\(draft.profile.panelModels.count)"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showPanelPicker, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField(AppLocalization.string("routing.fusion.searchPanels"), text: $panelQuery)
+                                .textFieldStyle(.roundedBorder)
+                            panelList
+                            Text(AppLocalization.string("routing.fusion.panelCount", "\(draft.profile.panelModels.count)"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .frame(width: 380)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary).padding(.top, 28)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AppLocalization.string("routing.fusion.judge")).font(.caption.weight(.semibold))
+                    modelPicker(AppLocalization.string("routing.fusion.judge"), selection: binding(\.profile.judgeModel, ""), labelsHidden: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary).padding(.top, 28)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AppLocalization.string("routing.fusion.final")).font(.caption.weight(.semibold))
+                    modelPicker(AppLocalization.string("routing.fusion.final"), selection: binding(\.profile.finalModel, ""), labelsHidden: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .padding(.vertical, 4)
         }
         Section {
             DisclosureGroup(AppLocalization.string("routing.fusion.advanced")) {
@@ -1271,12 +1315,8 @@ private extension ModelRouteEditor {
     }
 
     func panelRow(_ option: FusionModelOption, isOn: Bool, isFull: Bool) -> some View {
-        Button {
-            model.togglePanel(option.id)
-        } label: {
+        Toggle(isOn: Binding(get: { isOn }, set: { _ in model.togglePanel(option.id) })) {
             HStack(spacing: 9) {
-                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
                 Group {
                     if let image = routeProviderLogo(option) {
                         Image(nsImage: image)
@@ -1296,15 +1336,14 @@ private extension ModelRouteEditor {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isOn ? Color.primary.opacity(0.05) : Color.clear)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .toggleStyle(.checkbox)
+        .padding(.vertical, 5)
+        .padding(.horizontal, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isOn ? Color.primary.opacity(0.05) : Color.clear)
+        )
         .disabled(!isOn && isFull)
         .help(option.id)
     }

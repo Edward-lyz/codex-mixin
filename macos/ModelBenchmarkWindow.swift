@@ -806,11 +806,21 @@ struct ModelBenchmarkRootView: View {
     private var minimumModelTableWidth: CGFloat {
         modelTableMinimumWidth(
             includesRatio: model.selectedProvider?.presetID == "baidu-oneapi"
-        ) + 60
+        ) - 70
+    }
+
+    // Zebra stripes can only be turned off from macOS 14; macOS 13 keeps them.
+    @ViewBuilder
+    private var modelTable: some View {
+        if #available(macOS 14.0, *) {
+            modelTableContent.alternatingRowBackgrounds(.disabled)
+        } else {
+            modelTableContent
+        }
     }
 
     @ViewBuilder
-    private var modelTable: some View {
+    private var modelTableContent: some View {
         if model.selectedProvider?.presetID == "baidu-oneapi" {
             Table(model.visibleRows, sortOrder: $model.tableSortOrder) {
                 selectedColumn
@@ -1063,18 +1073,18 @@ struct ModelBenchmarkRootView: View {
                         || model.isBusy || isExternallyBusy
                 )
         }
-        .width(76)
+        .width(40)
     }
 
     private var orderColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn(AppLocalization.string("provider.modelOrder.position"),
                     sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.orderPosition)) { row in
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 if let position = model.modelPosition(row) {
                     Text("\(position + 1)")
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                        .frame(minWidth: 18, alignment: .trailing)
+                        .frame(minWidth: 14, alignment: .trailing)
                     Image(systemName: "line.3.horizontal")
                         .foregroundStyle(.secondary)
                         .help(AppLocalization.string("provider.modelOrder.drag"))
@@ -1134,7 +1144,7 @@ struct ModelBenchmarkRootView: View {
                 return true
             }
         }
-        .width(60)
+        .width(44)
     }
 
     private func showModelOrder() {
@@ -1175,26 +1185,32 @@ struct ModelBenchmarkRootView: View {
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("上下文", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.contextSortValue)) { row in
             HStack(spacing: 2) {
+                // Fixed slot so the number stays aligned whether or not a restore button shows.
+                Group {
+                    if model.canRestoreModelContext(row) {
+                        Button {
+                            model.restoreModelContext(row)
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("还原为自动发现的上下文；保存后生效")
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(width: 16)
                 TextField("", value: contextBinding(row), format: .number)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
                     .monospacedDigit()
                 Text("K")
                     .foregroundStyle(.secondary)
-                if model.canRestoreModelContext(row) {
-                    Button {
-                        model.restoreModelContext(row)
-                    } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("还原为自动发现的上下文；保存后生效")
-                }
             }
             .disabled(model.isBusy || isExternallyBusy || !row.model.isAvailable)
             .help("模型上下文，单位 K；修改后保存")
         }
-        .width(96)
+        .width(110)
     }
 
     private var ratioColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1212,7 +1228,7 @@ struct ModelBenchmarkRootView: View {
         ) { row in
             capabilityCell(row)
         }
-        .width(130)
+        .width(min: 110, ideal: 120, max: 160)
     }
 
     private func selectionBinding(_ row: ModelBenchmarkTableRow) -> Binding<Bool> {
@@ -1301,53 +1317,35 @@ struct ModelBenchmarkRootView: View {
     }
 
     private func capabilityCell(_ row: ModelBenchmarkTableRow) -> some View {
-        HStack(spacing: 8) {
-            capabilityIcon(
-                title: "图片输入",
-                systemImage: "photo",
-                supported: row.model.supportsImage,
-                error: row.model.capabilityProbeError
-            )
-            capabilityIcon(
-                title: "Thinking",
-                systemImage: "brain.head.profile",
-                supported: row.model.supportsThinking,
-                error: row.model.capabilityProbeError
-            )
-            capabilityIcon(
-                title: "Function Tools",
-                systemImage: "hammer",
-                supported: row.model.supportsFunctionTools,
-                error: row.model.capabilityProbeError
-            )
-            capabilityIcon(
-                title: "Tool Search",
-                systemImage: "magnifyingglass",
-                supported: row.model.supportsToolSearch,
-                error: row.model.capabilityProbeError
-            )
-            capabilityIcon(
-                title: "Web Search",
-                systemImage: "globe",
-                supported: row.model.supportsWebSearch,
-                error: row.model.capabilityProbeError
-            )
+        // Only capabilities the model really supports get a label; the tooltip
+        // keeps the full five-way status including unknown and probe errors.
+        let labels: [(String, Bool?)] = [
+            (AppLocalization.string("provider.capability.vision"), row.model.supportsImage),
+            (AppLocalization.string("provider.capability.tools"), row.model.supportsFunctionTools),
+            (AppLocalization.string("provider.capability.reasoning"), row.model.supportsThinking),
+        ]
+        let details = [
+            ("图片输入", row.model.supportsImage),
+            ("Thinking", row.model.supportsThinking),
+            ("Function Tools", row.model.supportsFunctionTools),
+            ("Tool Search", row.model.supportsToolSearch),
+            ("Web Search", row.model.supportsWebSearch),
+        ].map { capabilityDescription(title: $0.0, supported: $0.1, error: row.model.capabilityProbeError) }
+        return HStack(spacing: 4) {
+            ForEach(labels.filter { $0.1 == true }, id: \.0) { label in
+                Text(label.0)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Color.secondary.opacity(0.14)))
+                    .fixedSize()
+            }
         }
-    }
-
-    private func capabilityIcon(
-        title: String,
-        systemImage: String,
-        supported: Bool?,
-        error: String?
-    ) -> some View {
-        let description = capabilityDescription(title: title, supported: supported, error: error)
-        return Image(systemName: systemImage)
-            .frame(width: 18)
-            .foregroundStyle(capabilityColor(supported))
-            .opacity(supported == false ? 0.55 : 1)
-            .help(description)
-            .accessibilityLabel(description)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(details.joined(separator: "\n"))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(details.joined(separator: "；"))
     }
 
     private var statusBar: some View {
@@ -1377,14 +1375,6 @@ private func capabilityDescription(title: String, supported: Bool?, error: Strin
     }
     guard let error, !error.isEmpty else { return "\(title)：\(status)" }
     return "\(title)：\(status)。能力探测：\(error)"
-}
-
-private func capabilityColor(_ supported: Bool?) -> Color {
-    switch supported {
-    case true: return .accentColor
-    case false: return Color(nsColor: .tertiaryLabelColor)
-    case nil: return .orange
-    }
 }
 
 private func formatMilliseconds(_ milliseconds: UInt64) -> String {
