@@ -13,7 +13,7 @@ const PAGES = [
   { id: "usage", title: "用量" },
   { id: "context", title: "上下文" },
   { id: "speed", title: "测速" },
-  { id: "fusion", title: "Fusion" },
+  { id: "routing", title: "模型路由" },
   { id: "apps", title: "Agent" },
   { id: "advanced", title: "高级" },
   { id: "system", title: "系统" },
@@ -584,6 +584,7 @@ function placeIndicator(immediate = false) {
 
 function navigate(pageId, options = {}) {
   if (pageId === "models") pageId = "providers"; // merged into 模型与服务
+  if (pageId === "fusion") pageId = "routing"; // fusion became one kind of model route
   const page = PAGES.find((candidate) => candidate.id === pageId) || PAGES[0];
   const changed = state.page !== page.id;
   if (changed && state.page === "context") {
@@ -591,6 +592,11 @@ function navigate(pageId, options = {}) {
     contextArchive.request += 1;
     contextArchive.data = null;
     contextArchive.loading = false;
+  }
+  // Re-read routes on entry unless an unsaved draft would be lost.
+  if (changed && page.id === "routing" && !routing.draft?.dirty) {
+    routing.data = null;
+    routing.draft = null;
   }
   state.page = page.id;
   const url = `#${page.id}`;
@@ -938,22 +944,34 @@ function usageCard() {
 }
 
 // ---------- Usage ----------
-// DeepSeek-style usage console: range and provider filters, totals, daily
-// charts that aggregate or split by provider, and the per-turn ledger the CLI
-// records for each upstream reply.
+// Four comparable cards (all counted per request attempt), a stacked chart
+// whose columns filter the reply table, and the per-reply ledger the CLI
+// records. The page only aggregates CLI rows for display.
 
-const usagePage = { days: "7", provider: "", split: false, session: "", data: null, loading: false, error: null };
+const usagePage = {
+  days: "7", provider: "", chart: "tokens", split: false,
+  status: "all", model: "", substitutions: false, grouped: false, expanded: new Set(),
+  session: "", slot: null, slotTurns: null, slotLoading: false, shown: 100,
+  data: null, loading: false, error: null,
+};
 const USAGE_DAYS = [["1", "1 天"], ["7", "7 天"], ["30", "30 天"]];
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 // Prompts smaller than this are too short for provider caches to act on, so
 // a miss there is not worth flagging (matches the gateway's own threshold).
 const CACHE_VERDICT_MIN_PROMPT = 8_192;
 const CACHE_LOW_PERCENT = 50;
 const SERIES_COLORS = 4;
+// Rows rendered per step; the rest wait behind "show more" so a 500-row
+// ledger never builds thousands of cells at once.
+const TURN_PAGE = 100;
+const TOKEN_PARTS = [["cached", "缓存输入", "ring-1"], ["uncached", "未缓存输入", "ring-2"], ["output", "输出", "ring-3"]];
+const REQUEST_PARTS = [["requests", "成功", "ring-1"], ["errors", "失败", "is-alert"]];
 
 // Each load gets a sequence number; a response for a superseded range is
 // dropped, so a fast range switch never renders old data on the new axis.
 let usageRequest = 0;
+let slotRequest = 0;
 
 async function loadUsageDetails() {
   const request = ++usageRequest;
@@ -973,39 +991,93 @@ async function loadUsageDetails() {
   }
 }
 
+// A chart column narrows the table to the replies of that period.
+async function selectUsageSlot(slot) {
+  const same = usagePage.slot && usagePage.slot.start === slot?.start;
+  usagePage.slot = same ? null : slot;
+  usagePage.shown = TURN_PAGE;
+  usagePage.slotTurns = null;
+  const request = ++slotRequest;
+  if (!usagePage.slot) { render({ animate: false }); return; }
+  usagePage.slotLoading = true;
+  render({ animate: false });
+  try {
+    const data = await api(`/api/usage?days=${usagePage.days}&since_ms=${slot.start}&until_ms=${slot.end}`);
+    if (request === slotRequest) usagePage.slotTurns = data.turns || [];
+  } catch (error) {
+    if (request === slotRequest) toast("bad", "读取所选时段失败", error.message);
+  } finally {
+    if (request === slotRequest) {
+      usagePage.slotLoading = false;
+      if (state.page === "usage") render({ animate: false });
+    }
+  }
+}
+
 function tokenTotal(row) {
   return (row.input_tokens || 0) + (row.cache_read_tokens || 0) + (row.cache_creation_tokens || 0) + (row.output_tokens || 0);
 }
+
+function emptyStats() {
+  return { requests: 0, errors: 0, cached: 0, uncached: 0, output: 0, hitRead: 0, hitPrompt: 0 };
+}
+
+function addStats(total, part) {
+  for (const key of Object.keys(total)) total[key] += part[key];
+  return total;
+}
+
+// `requests` are replies that reported usage, `errors` failed attempts; every
+// rate below shares their sum so the four cards stay comparable.
+function rowStats(row, failed = false, single = false) {
+  const cached = row.cache_read_tokens || 0;
+  const uncached = (row.input_tokens || 0) + (row.cache_creation_tokens || 0);
+  const reports = typeof row.cache_hit_percent === "number";
+  return {
+    requests: single ? (failed ? 0 : 1) : row.request_count || 0,
+    errors: single ? (failed ? 1 : 0) : row.error_count || 0,
+    cached, uncached, output: row.output_tokens || 0,
+    hitRead: reports ? cached : 0, hitPrompt: reports ? cached + uncached : 0,
+  };
+}
+
+const turnFailed = (turn) => turn.status === "failed";
+// Vendor aliases already compare equal in the CLI, so this is a real swap.
+const turnSubstituted = (turn) => turn.model_matches === false && Boolean(turn.returned_model);
+const attempts = (stats) => stats.requests + stats.errors;
+const tokensOf = (stats) => stats.cached + stats.uncached + stats.output;
+const hitPercent = (stats) => (stats.hitPrompt ? (stats.hitRead / stats.hitPrompt) * 100 : null);
+const errorPercent = (stats) => (attempts(stats) ? (stats.errors / attempts(stats)) * 100 : null);
 
 function dayLabel(day) {
   const date = new Date(day * DAY_MS);
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-// Daily rows -> one bucket per day in range (missing days stay at zero),
-// each holding totals per series key (provider id, or "all" when aggregated).
-function dailyBuckets(rows) {
-  const today = Math.floor(Date.now() / DAY_MS);
-  const days = Number(usagePage.days);
-  const buckets = [];
-  for (let day = today - days + 1; day <= today; day += 1) buckets.push({ day, series: new Map() });
-  const index = new Map(buckets.map((bucket) => [bucket.day, bucket]));
-  for (const row of rows) {
-    const bucket = index.get(row.day);
-    if (!bucket) continue;
-    const key = usagePage.split ? row.provider_id : "all";
-    const total = bucket.series.get(key) || { tokens: 0, requests: 0 };
-    total.tokens += tokenTotal(row);
-    total.requests += row.request_count || 0;
-    bucket.series.set(key, total);
+// One slot per period so quiet periods stay on the axis: local hours from
+// replies for the one-day range, otherwise the CLI's UTC-day totals.
+function usageSlots(daily, turns, days) {
+  const firstDay = Math.floor(Date.now() / DAY_MS) - days + 1;
+  const slots = [];
+  const add = (slot, stats, provider) => {
+    if (!slot) return;
+    addStats(slot.total, stats);
+    slot.byProvider.set(provider, addStats(slot.byProvider.get(provider) || emptyStats(), stats));
+  };
+  if (days === 1) {
+    const start = new Date(firstDay * DAY_MS);
+    start.setMinutes(0, 0, 0);
+    for (let at = start.getTime(); at <= Date.now(); at += HOUR_MS) {
+      slots.push({ start: at, end: at + HOUR_MS, label: `${new Date(at).getHours()}:00`, total: emptyStats(), byProvider: new Map() });
+    }
+    for (const turn of turns) add(slots.find((slot) => slot.start <= turn.at_ms && turn.at_ms < slot.end), rowStats(turn, turnFailed(turn), true), turn.provider_id);
+  } else {
+    for (let day = firstDay; day < firstDay + days; day += 1) {
+      slots.push({ start: day * DAY_MS, end: (day + 1) * DAY_MS, label: dayLabel(day), total: emptyStats(), byProvider: new Map() });
+    }
+    for (const row of daily) add(slots[row.day - firstDay], rowStats(row), row.provider_id);
   }
-  return buckets;
-}
-
-function seriesKeys(buckets) {
-  const sums = new Map();
-  for (const bucket of buckets) for (const [key, total] of bucket.series) sums.set(key, (sums.get(key) || 0) + total.tokens);
-  return [...sums.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+  return slots;
 }
 
 function seriesClass(keys, key) {
@@ -1013,33 +1085,85 @@ function seriesClass(keys, key) {
   return index >= 0 && index < SERIES_COLORS ? `ring-${index + 1}` : "is-extra";
 }
 
-function barChart(title, buckets, keys, metric, format) {
-  const max = Math.max(1, ...buckets.map((bucket) => [...bucket.series.values()].reduce((sum, total) => sum + total[metric], 0)));
-  const sum = buckets.reduce((all, bucket) => all + [...bucket.series.values()].reduce((part, total) => part + total[metric], 0), 0);
-  const labelEvery = Math.ceil(buckets.length / 8);
-  const columns = buckets.map((bucket, index) => {
-    const total = [...bucket.series.values()].reduce((part, value) => part + value[metric], 0);
-    const stack = h("div", { class: "uchart-stack" }, keys.filter((key) => bucket.series.has(key)).map((key) =>
-      h("span", { class: `uchart-seg ${seriesClass(keys, key)}`, style: { height: `${(bucket.series.get(key)[metric] / max) * 100}%` } })));
-    return h("div", { class: "uchart-col", title: `${dayLabel(bucket.day)} · ${format(total)}` },
-      stack,
-      h("span", { class: "uchart-x", text: index % labelEvery === 0 || index === buckets.length - 1 ? dayLabel(bucket.day) : "" }));
+function sparkline(values) {
+  const points = values.map((value) => (typeof value === "number" ? value : 0));
+  if (points.length < 2 || points.every((value) => value === 0)) return null;
+  const max = Math.max(...points) || 1;
+  const step = 100 / (points.length - 1);
+  const svg = svgNode("svg", { class: "spark", viewBox: "0 0 100 24", preserveAspectRatio: "none", "aria-hidden": "true" });
+  svg.append(svgNode("polyline", { points: points.map((value, index) => `${(index * step).toFixed(2)},${(22 - (value / max) * 20).toFixed(2)}`).join(" ") }));
+  return svg;
+}
+
+// Ratio cards compare in percentage points; count cards in relative change.
+function deltaText(current, previous, points) {
+  if (typeof current !== "number" || typeof previous !== "number") return null;
+  if (points) {
+    const change = current - previous;
+    return `环比 ${change >= 0 ? "+" : ""}${change.toFixed(1)} pt`;
+  }
+  if (!previous) return current ? "上一周期无数据" : null;
+  const change = ((current - previous) / previous) * 100;
+  return `环比 ${change >= 0 ? "+" : ""}${change.toFixed(0)}%`;
+}
+
+function kpiCard(label, value, sub, delta, spark, extra) {
+  return h("div", { class: "card card-tight metric kpi" },
+    h("span", { class: "metric-label", text: label }),
+    h("span", { class: "metric-value", text: value }),
+    extra,
+    h("div", { class: "kpi-foot" }, h("span", { class: "metric-sub", text: [sub, delta].filter(Boolean).join(" · ") }), spark));
+}
+
+function tokenShare(stats) {
+  const total = tokensOf(stats);
+  if (!total) return null;
+  return h("div", { class: "share", role: "img", "aria-label": TOKEN_PARTS.map(([key, text]) => `${text} ${Math.round((stats[key] / total) * 100)}%`).join("，") },
+    TOKEN_PARTS.map(([key, text, color]) => h("span", { class: `share-seg ${color}`, title: `${text} ${compact(stats[key])}`, style: { flexGrow: String(stats[key]) } })));
+}
+
+function usageCards(current, previous, slots) {
+  const total = tokensOf(current);
+  return h("div", { class: "grid grid-4" },
+    kpiCard("请求次数", compact(attempts(current)), current.errors ? `失败 ${compact(current.errors)}` : "含失败请求",
+      deltaText(attempts(current), attempts(previous)), sparkline(slots.map((slot) => attempts(slot.total)))),
+    kpiCard("Tokens", compact(total), `输出 ${compact(current.output)}`,
+      deltaText(total, tokensOf(previous)), sparkline(slots.map((slot) => tokensOf(slot.total))), tokenShare(current)),
+    kpiCard("缓存命中率", fixed(hitPercent(current), 1, "%"), `命中 ${compact(current.hitRead)}`,
+      deltaText(hitPercent(current), hitPercent(previous), true), sparkline(slots.map((slot) => hitPercent(slot.total)))),
+    kpiCard("错误率", fixed(errorPercent(current), 1, "%"), `${compact(current.errors)} / ${compact(attempts(current))} 次`,
+      deltaText(errorPercent(current), errorPercent(previous), true), sparkline(slots.map((slot) => errorPercent(slot.total)))));
+}
+
+// Stacked columns. Each column is a button: hover shows the period detail,
+// click narrows the reply table to it.
+function usageChart(slots, keys) {
+  const requests = usagePage.chart === "requests";
+  const parts = usagePage.split
+    ? keys.map((key) => [key, providerName(key), seriesClass(keys, key)])
+    : requests ? REQUEST_PARTS : TOKEN_PARTS;
+  const valueOf = (stats) => (requests ? attempts(stats) : tokensOf(stats));
+  const partValue = (slot, key) => (usagePage.split ? valueOf(slot.byProvider.get(key) || emptyStats()) : slot.total[key]);
+  const max = Math.max(1, ...slots.map((slot) => valueOf(slot.total)));
+  const labelEvery = Math.ceil(slots.length / 8);
+  const columns = slots.map((slot, index) => {
+    const detail = parts.map(([key, text]) => `${text} ${compact(partValue(slot, key))}`).join("\n");
+    const selected = usagePage.slot?.start === slot.start;
+    return h("button", {
+      class: `uchart-col ${selected ? "is-selected" : ""}`.trim(), type: "button",
+      title: `${slot.label} · 合计 ${compact(valueOf(slot.total))}\n${detail}`,
+      "aria-label": `${slot.label}，合计 ${compact(valueOf(slot.total))}`, "aria-pressed": String(selected),
+      onclick: () => selectUsageSlot(slot),
+    },
+    h("span", { class: "uchart-stack" }, parts.map(([key, , color]) => {
+      const value = partValue(slot, key);
+      return value ? h("span", { class: `uchart-seg ${color}`, style: { height: `${(value / max) * 100}%` } }) : null;
+    })),
+    h("span", { class: "uchart-x", text: index % labelEvery === 0 || index === slots.length - 1 ? slot.label : "" }));
   });
-  return h("section", { class: "uchart", "aria-label": `${title}：合计 ${format(sum)}` },
-    h("div", { class: "uchart-head" }, h("span", { class: "metric-label", text: title }), h("strong", { class: "num", text: format(sum) })),
-    h("div", { class: "uchart-plot", "aria-hidden": "true" }, columns));
-}
-
-function usageLegend(keys) {
-  if (!usagePage.split || !keys.length) return null;
-  return h("ul", { class: "uchart-legend" }, keys.map((key) =>
-    h("li", null, h("span", { class: `quota-swatch ${seriesClass(keys, key)}`, "aria-hidden": "true" }), h("span", { text: providerName(key) }))));
-}
-
-function reasoningText(turn) {
-  if (typeof turn.reasoning_tokens === "number") return compact(turn.reasoning_tokens);
-  // Anthropic-style upstreams stream thinking without a token counter.
-  return turn.reasoning_chars ? `${compact(turn.reasoning_chars)} 字` : "\u2014";
+  const legend = h("ul", { class: "uchart-legend" }, parts.map(([, text, color]) =>
+    h("li", null, h("span", { class: `quota-swatch ${color}`, "aria-hidden": "true" }), h("span", { text }))));
+  return h("div", { class: "uchart" }, h("div", { class: "uchart-plot" }, columns), legend);
 }
 
 function cacheIsLow(turn) {
@@ -1051,84 +1175,140 @@ function turnTime(ms) {
   return new Date(ms).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
+function turnRow(turn) {
+  const failed = turnFailed(turn);
+  const substituted = turnSubstituted(turn);
+  // Reasoning stays in tokens like every other column; some upstreams only
+  // stream thinking text, whose length is kept as a hover hint.
+  const reasoning = typeof turn.reasoning_tokens === "number" ? compact(turn.reasoning_tokens) : "\u2014";
+  return h("tr", { class: failed ? "is-failed" : null },
+    h("td", { class: "mono nowrap", text: turnTime(turn.at_ms) }),
+    h("td", null, failed
+      ? h("span", { class: "badge badge-bad", title: turn.error || "请求失败", text: "失败" })
+      : h("span", { class: "status-ok", text: "成功" })),
+    h("td", null, h("button", {
+      class: "chip-btn mono", type: "button", text: turn.session_display || turn.session,
+      title: usagePage.session ? "显示全部会话" : "只看这个会话",
+      onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
+    })),
+    h("td", { class: "turn-model" },
+      h("span", { text: turn.upstream_model_id }),
+      h("span", { class: "row-sub", text: ` · ${providerName(turn.provider_id)}` }),
+      substituted ? h("span", { class: "substituted", title: "上游实际返回的模型与请求不同", text: ` → ${turn.returned_model}` }) : null),
+    h("td", { class: "r", text: compact(turn.input_tokens) }),
+    h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? "长提示的缓存命中低于 50%" : null },
+      compact(turn.cache_read_tokens), h("span", { class: "row-sub", text: ` ${fixed(turn.cache_hit_percent, 0, "%")}` })),
+    h("td", { class: "r", text: compact(turn.output_tokens) }),
+    h("td", { class: "r", text: reasoning, title: turn.reasoning_chars ? `思考文本 ${compact(turn.reasoning_chars)} 字` : null }),
+    h("td", { class: "r", text: fixed(turn.ttft_ms, 0, " ms") }),
+    h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }));
+}
+
+const TURN_COLUMNS = ["时间", "状态", "会话", "模型", "未缓存输入", "命中缓存", "输出", "思考 Token", "首字", "速度"];
+
 function turnsTable(turns) {
-  if (!turns.length) return emptyState("暂无回复记录", "所选范围内还没有经过网关的模型回复。");
-  const sessionButton = (turn) => h("button", {
-    class: "chip-btn mono",
-    type: "button",
-    text: turn.session_display || turn.session,
-    title: usagePage.session ? "显示全部会话" : "只看这个会话",
-    onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
-  });
-  const modelCell = (turn) => {
-    const mismatch = turn.model_matches === false;
-    return h("td", null,
-      h("div", { text: turn.upstream_model_id }),
-      h("div", { class: "row-sub" }, providerName(turn.provider_id),
-        mismatch ? h("span", { class: "badge badge-bad", title: "上游返回的模型与请求的模型不一致", text: `返回 ${turn.returned_model}` }) : null));
-  };
-  return h("div", { class: "table-wrap" }, h("table", { class: "table turns" },
-    h("thead", null, h("tr", null, ...["时间", "会话", "模型", "未缓存输入", "命中缓存", "输出", "思考", "首字", "速度"].map((text, index) => h("th", { class: index > 2 ? "r" : null, scope: "col", text })))),
-    h("tbody", null, ...turns.map((turn) => h("tr", { class: turn.model_matches === false ? "is-flagged" : null },
-      h("td", { class: "mono nowrap", text: turnTime(turn.at_ms) }),
-      h("td", null, sessionButton(turn)),
-      modelCell(turn),
-      h("td", { class: "r", text: compact(turn.input_tokens) }),
-      h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? "长提示的缓存命中低于 50%" : null },
-        h("div", { text: compact(turn.cache_read_tokens) }), h("div", { class: "row-sub", text: fixed(turn.cache_hit_percent, 1, "%") })),
-      h("td", { class: "r", text: compact(turn.output_tokens) }),
-      h("td", { class: "r", text: reasoningText(turn) }),
-      h("td", { class: "r", text: fixed(turn.ttft_ms, 0, " ms") }),
-      h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }),
-    )))));
+  if (!turns.length) return emptyState("没有匹配的回复", "调整上方筛选，或选择其他时间范围。");
+  const body = h("tbody");
+  if (usagePage.grouped) {
+    const groups = new Map();
+    for (const turn of turns) {
+      if (!groups.has(turn.session)) groups.set(turn.session, []);
+      groups.get(turn.session).push(turn);
+    }
+    for (const [session, rows] of groups) {
+      const open = usagePage.expanded.has(session);
+      const stats = rows.reduce((total, turn) => addStats(total, rowStats(turn, turnFailed(turn), true)), emptyStats());
+      body.append(h("tr", { class: "group-row" }, h("td", { colspan: String(TURN_COLUMNS.length) },
+        h("button", {
+          class: "group-toggle", type: "button", "aria-expanded": String(open),
+          onclick: () => { open ? usagePage.expanded.delete(session) : usagePage.expanded.add(session); render({ animate: false }); },
+        },
+        h("span", { class: "group-caret", "aria-hidden": "true", text: open ? "\u25be" : "\u25b8" }),
+        h("span", { class: "mono", text: rows[0].session_display || session }),
+        h("span", { class: "row-sub", text: `${rows.length} 次 · ${compact(tokensOf(stats))} tokens${stats.errors ? ` · 失败 ${stats.errors}` : ""}` })))));
+      if (open) for (const turn of rows) body.append(turnRow(turn));
+    }
+  } else {
+    for (const turn of turns.slice(0, usagePage.shown)) body.append(turnRow(turn));
+  }
+  const rest = usagePage.grouped ? 0 : turns.length - usagePage.shown;
+  return h("div", null,
+    h("div", { class: "table-wrap" }, h("table", { class: "table turns" },
+      h("thead", null, h("tr", null, ...TURN_COLUMNS.map((text, index) => h("th", { class: index > 3 ? "r" : null, scope: "col", text })))),
+      body)),
+    rest > 0 ? h("div", { class: "turns-more" }, h("button", {
+      class: "btn btn-ghost btn-sm", type: "button", text: `显示更多（还有 ${rest} 条）`,
+      onclick: () => { usagePage.shown += TURN_PAGE; render({ animate: false }); },
+    })) : null);
+}
+
+function usageFilters(turns, substitutions) {
+  const models = [...new Set(turns.map((turn) => turn.upstream_model_id).filter(Boolean))].sort();
+  if (usagePage.model && !models.includes(usagePage.model)) usagePage.model = "";
+  if (!substitutions) usagePage.substitutions = false;
+  const rerender = (patch) => { Object.assign(usagePage, patch, { shown: TURN_PAGE }); render({ animate: false }); };
+  const toggle = (label, key) => h("label", { class: "chip" },
+    h("input", { type: "checkbox", checked: usagePage[key], onchange: (event) => rerender({ [key]: event.target.checked }) }), label);
+  const chip = (text, clear) => h("button", { class: "chip-btn", type: "button", "aria-label": `清除筛选：${text}`, text: `${text} \u00d7`, onclick: clear });
+  return h("div", { class: "usage-toolbar usage-filters" },
+    segmented([["all", "全部"], ["ok", "成功"], ["failed", "失败"]], usagePage.status, (status) => rerender({ status }), "状态"),
+    h("select", { class: "select select-sm", "aria-label": "模型", onchange: (event) => rerender({ model: event.target.value }) },
+      h("option", { value: "", text: "全部模型", selected: !usagePage.model }),
+      models.map((id) => h("option", { value: id, text: id, selected: usagePage.model === id }))),
+    substitutions ? toggle(`仅看模型替换（${substitutions}）`, "substitutions") : null,
+    toggle("按会话分组", "grouped"),
+    usagePage.slot ? chip(usagePage.slot.label, () => selectUsageSlot(usagePage.slot)) : null,
+    usagePage.session ? chip(`会话 ${turns.find((turn) => turn.session === usagePage.session)?.session_display || usagePage.session}`, () => rerender({ session: "" })) : null);
 }
 
 RENDERERS.usage = () => {
   if (!gatewayRunning()) return card(null, null, emptyState("网关未运行", "启动网关后即可查看用量明细。"));
   if (!usagePage.data && !usagePage.loading && !usagePage.error) queueMicrotask(loadUsageDetails);
-  const reload = (patch) => { Object.assign(usagePage, patch); loadUsageDetails(); };
+  const reload = (patch) => { Object.assign(usagePage, patch, { slot: null, slotTurns: null, shown: TURN_PAGE }); loadUsageDetails(); };
   const daily = usagePage.data?.daily || [];
   const allTurns = usagePage.data?.turns || [];
   const providers = [...new Set([...daily.map((row) => row.provider_id), ...allTurns.map((turn) => turn.provider_id)])].sort();
-  if (usagePage.provider && !providers.includes(usagePage.provider)) {
-    usagePage.provider = "";
-    usagePage.session = "";
-  }
+  if (usagePage.provider && !providers.includes(usagePage.provider)) Object.assign(usagePage, { provider: "", session: "" });
   const byProvider = (row) => !usagePage.provider || row.provider_id === usagePage.provider;
-  const rows = daily.filter(byProvider);
-  const turns = allTurns.filter(byProvider).filter((turn) => !usagePage.session || turn.session === usagePage.session);
 
-  const providerSelect = h("select", { class: "select select-sm", "aria-label": "Provider", onchange: (event) => { usagePage.provider = event.target.value; usagePage.session = ""; render({ animate: false }); } },
-    h("option", { value: "", text: "全部 Provider", selected: !usagePage.provider }),
-    providers.map((id) => h("option", { value: id, text: providerName(id), selected: usagePage.provider === id })));
   const toolbar = h("div", { class: "usage-toolbar" },
-    segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), "时间范围"),
-    providerSelect,
-    segmented([["merge", "聚合"], ["split", "按 Provider 拆分"]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, "图表分组"),
-    h("button", { class: `btn btn-ghost btn-sm ${usagePage.loading ? "is-busy" : ""}`.trim(), type: "button", text: "刷新", disabled: usagePage.loading, onclick: () => loadUsageDetails() }));
+    segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), "统计范围"),
+    h("select", { class: "select select-sm", "aria-label": "Provider", onchange: (event) => { Object.assign(usagePage, { provider: event.target.value, session: "" }); render({ animate: false }); } },
+      h("option", { value: "", text: "全部 Provider", selected: !usagePage.provider }),
+      providers.map((id) => h("option", { value: id, text: providerName(id), selected: usagePage.provider === id }))),
+    h("button", { class: `btn btn-ghost btn-sm ${usagePage.loading ? "is-busy" : ""}`.trim(), type: "button", text: "刷新", disabled: usagePage.loading, onclick: () => reload({}) }));
 
   if (usagePage.error) return [toolbar, card(null, null, h("p", { class: "issue", text: usagePage.error }))];
   if (!usagePage.data) return [toolbar, h("div", { class: "skeleton" })];
 
-  const sum = (key) => rows.reduce((total, row) => total + (row[key] || 0), 0);
-  const cacheRows = rows.filter((row) => typeof row.cache_hit_percent === "number");
-  const cached = cacheRows.reduce((total, row) => total + (row.cache_read_tokens || 0), 0);
-  const prompt = cached + cacheRows.reduce((total, row) => total + (row.input_tokens || 0) + (row.cache_creation_tokens || 0), 0);
-  const mismatches = turns.filter((turn) => turn.model_matches === false).length;
-  const buckets = dailyBuckets(rows);
-  const keys = seriesKeys(buckets);
+  const days = Number(usagePage.days);
+  const firstDay = Math.floor(Date.now() / DAY_MS) - days + 1;
+  const rows = daily.filter(byProvider);
+  const sum = (list) => list.reduce((total, row) => addStats(total, rowStats(row)), emptyStats());
+  const current = sum(rows.filter((row) => row.day >= firstDay));
+  const previous = sum(rows.filter((row) => row.day < firstDay));
+  const slots = usageSlots(rows.filter((row) => row.day >= firstDay), allTurns.filter(byProvider), days);
+  const providerTotals = new Map();
+  for (const slot of slots) for (const [key, stats] of slot.byProvider) providerTotals.set(key, (providerTotals.get(key) || 0) + tokensOf(stats));
+  const keys = [...providerTotals.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+
+  const source = (usagePage.slot ? usagePage.slotTurns || [] : allTurns).filter(byProvider);
+  const substitutions = source.filter(turnSubstituted).length;
+  const turns = source
+    .filter((turn) => !usagePage.session || turn.session === usagePage.session)
+    .filter((turn) => usagePage.status === "all" || (usagePage.status === "failed") === turnFailed(turn))
+    .filter((turn) => !usagePage.model || turn.upstream_model_id === usagePage.model)
+    .filter((turn) => !usagePage.substitutions || turnSubstituted(turn));
+  const chartControls = h("div", { class: "usage-toolbar" },
+    segmented([["tokens", "Tokens"], ["requests", "请求"]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, "图表指标"),
+    segmented([["merge", "构成"], ["split", "按 Provider"]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, "图表分组"));
+  const tableNote = usagePage.slotLoading ? "正在读取所选时段…"
+    : `${turns.length} 条${usagePage.slot ? `（${usagePage.slot.label}）` : `，最近 ${allTurns.length} 条以内`}；点击柱子只看该时段`;
   return [
     toolbar,
-    stagger(h("div", { class: "grid grid-4" },
-      metricCard("请求次数", sum("request_count"), `${providers.length} 个 Provider`),
-      metricCard("Tokens", rows.reduce((total, row) => total + tokenTotal(row), 0), `输出 ${compact(sum("output_tokens"))}`),
-      metricCard("缓存命中", prompt ? `${((cached / prompt) * 100).toFixed(1)}%` : "\u2014", `命中 ${compact(cached)} tokens`),
-      metricCard("模型不一致", mismatches, mismatches ? "上游返回了其他模型" : "所有回复与请求一致"))),
-    card("每日用量", usagePage.split ? "按 Provider 拆分" : "全部 Provider 聚合", h("div", { class: "uchart-grid" },
-      barChart("Tokens", buckets, keys, "tokens", compact),
-      barChart("请求次数", buckets, keys, "requests", compact),
-      usageLegend(keys))),
-    card("回复明细", usagePage.session ? `会话 ${turns[0]?.session_display || usagePage.session} · ${turns.length} 条` : `最近 ${turns.length} 条回复；点击会话标签只看该会话`, turnsTable(turns), null, "card-flush"),
+    stagger(usageCards(current, previous, slots)),
+    card(days === 1 ? "每小时用量" : "每日用量", "悬停查看明细，点击柱子筛选下方回复", usageChart(slots, keys), chartControls),
+    card("回复明细", tableNote, h("div", null, usageFilters(source, substitutions), turnsTable(turns)), null, "card-flush"),
   ];
 };
 
@@ -2200,61 +2380,464 @@ function benchmarkResults(snapshot) {
   return card("结果", note, h("div", null, h("div", { style: { padding: "0 20px 14px" } }, progress), results.length ? table : null, snapshot.error ? h("p", { class: "issue", style: { padding: "0 20px 16px" }, text: snapshot.error }) : null), null, "card-flush");
 }
 
-// ---------- Fusion ----------
+// ---------- Model routing ----------
+// Fusion, schedule and failover routes, each edited inside its own diagram.
+// The page keeps one draft; saving runs `route set` then `config apply`.
 
-RENDERERS.fusion = () => {
-  const models = state.snapshot.models || [];
-  const profile = state.snapshot.fusion_profile;
-  if (models.length < 2) return card(null, null, emptyState("可选模型不足", "Fusion 至少需要两个可用模型，请先在「模型」页选择。"));
-  const options = models.map((model) => [model.id, model.display_name ? `${model.display_name}` : model.id]);
-  const current = profile || { id: "fusion", mode: "orchestration", panel_models: [], judge_model: options[0][0], final_model: options[0][0], min_successful: 2, max_completion_tokens: 4096, timeout_ms: 120000, show_intermediate_results: true };
-  const panel = new Set(current.panel_models || []);
-  const form = h(
-    "form",
-    { class: "form", autocomplete: "off" },
-    h("div", { class: "form-row" }, field("Profile ID", textInput("id", current.id)), field("模式", selectControl("mode", [["orchestration", "协同编排"], ["time_rotation", "分时路由"]], current.mode || "orchestration"))),
-    field("参与模型", h("div", { class: "chips" }, ...options.map(([id, label]) => h("label", { class: "chip", title: id }, h("input", { type: "checkbox", name: "panel_models", value: id, "data-list": "1", checked: panel.has(id) }), label))), "编排模式下并行作答的模型"),
-    h("div", { class: "form-row" }, field("评审模型", selectControl("judge_model", options, current.judge_model)), field("终稿模型", selectControl("final_model", options, current.final_model))),
-    h("div", { class: "form-row" }, field("最少成功数", textInput("min_successful", String(current.min_successful ?? 2), { type: "number", min: "1" })), field("超时（毫秒）", textInput("timeout_ms", String(current.timeout_ms ?? 120000), { type: "number", min: "1000", step: "1000" }))),
-    h("div", { class: "form-row" }, field("最大输出 Token", textInput("max_completion_tokens", String(current.max_completion_tokens ?? 4096), { type: "number", min: "1" })), field("中间结果", h("label", { class: "chip" }, h("input", { type: "checkbox", name: "show_intermediate_results", checked: current.show_intermediate_results !== false }), "在回答中展示各模型结果"))),
-    h(
-      "div",
-      { class: "form-actions" },
-      profile ? actionButton("删除 Profile", "fusion_delete", { id: profile.id }, { ok: "Fusion Profile 已删除", confirm: ["删除 Fusion Profile？", "客户端将不再看到对应的 Fusion 模型。", "删除"] }, "btn-danger") : null,
-      submitButton("保存"),
-    ),
-  );
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const values = formValues(form);
-    // Keep fields this form does not edit (time routes, panel tools).
-    const next = {
-      ...current,
-      id: values.id,
-      mode: values.mode,
-      panel_models: values.panel_models || [],
-      judge_model: values.judge_model,
-      final_model: values.final_model,
-      min_successful: Number(values.min_successful),
-      timeout_ms: Number(values.timeout_ms),
-      max_completion_tokens: Number(values.max_completion_tokens),
-      show_intermediate_results: values.show_intermediate_results,
-    };
-    const params = { profile: next };
-    if (profile) params.replace_id = profile.id;
-    runAction(event.submitter, "fusion_set", params, { ok: "Fusion Profile 已保存" });
-  });
-  const routes = (current.time_routes || []).map((route) => h("div", { class: "row" }, h("span", { class: "mono", text: `${minutes(route.start_minute)} – ${minutes(route.end_minute)}` }), h("span", { class: "row-main", text: route.model })));
-  return [
-    card(profile ? `fusion/${profile.id}` : "新建 Fusion Profile", null, form),
-    routes.length ? card("分时路由", "在 CLI 中编辑；保存本页时保留", h("div", { class: "rows" }, routes), null, "card-flush") : null,
-  ];
+const ROUTE_PREFIX = "auto/";
+const MAX_PANELS = 8;
+const MAX_FALLBACKS = 4;
+const MAX_SLOTS = 24;
+const ROUTE_KINDS = {
+  fusion: { title: "融合", badge: "\u2a01", description: "每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。" },
+  schedule: { title: "定时", badge: "\u25f7", description: "按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。" },
+  failover: { title: "故障转移", badge: "\u21a9", description: "原模型返回 429、5xx、连接失败或超时且尚未输出内容时，按顺序改用备用模型；备用模型失败时不会再触发它自己的故障转移。" },
 };
+const routing = { data: null, loading: false, error: null, selected: null, draft: null };
+let routingRequest = 0;
 
-function minutes(value) {
-  const hours = String(Math.floor(value / 60)).padStart(2, "0");
-  return `${hours}:${String(value % 60).padStart(2, "0")}`;
+async function loadRoutes() {
+  const request = ++routingRequest;
+  routing.loading = true;
+  routing.error = null;
+  try {
+    const data = await api("/api/routes");
+    if (request === routingRequest) routing.data = data;
+  } catch (error) {
+    if (request === routingRequest) routing.error = error.message;
+  } finally {
+    if (request === routingRequest) {
+      routing.loading = false;
+      if (state.page === "routing") render({ animate: false });
+    }
+  }
 }
+
+function routeModelOptions() {
+  const seen = new Set();
+  return (routing.data?.models || []).filter((model) => !model.id.startsWith(ROUTE_PREFIX) && !seen.has(model.id) && seen.add(model.id));
+}
+
+const routeModel = (id) => routeModelOptions().find((model) => model.id === id);
+const routeModelName = (id) => routeModel(id)?.display_name || id;
+const routeModelProvider = (id) => routeModel(id)?.provider_id || "";
+const minuteNow = () => new Date().getHours() * 60 + new Date().getMinutes();
+const covers = (start, end, minute) => (start < end ? minute >= start && minute < end : minute >= start || minute < end);
+
+function activeScheduleModel(route) {
+  const minute = minuteNow();
+  return (route.time_routes || []).find((slot) => covers(slot.start_minute, slot.end_minute, minute))?.model || route.final_model;
+}
+
+// Models in the order the route reaches them: the answering model first.
+function routePrecedence(route) {
+  if (route.kind === "fusion") return [route.final_model, route.judge_model, ...(route.panel_models || [])];
+  if (route.kind === "schedule") return [activeScheduleModel(route), ...(route.time_routes || []).map((slot) => slot.model), route.final_model];
+  return [route.source, ...(route.fallbacks || [])];
+}
+
+function routeSummary(route) {
+  if (route.kind === "fusion") return `${(route.panel_models || []).length} 个 Panel → Judge ${routeModelName(route.judge_model)} → Final ${routeModelName(route.final_model)}`;
+  if (route.kind === "schedule") return `当前 ${routeModelName(activeScheduleModel(route))} · ${(route.time_routes || []).length} 个时段`;
+  return [route.source, ...(route.fallbacks || [])].map(routeModelName).join(" → ");
+}
+
+const routeTitle = (route) => (route.kind === "failover" && !route.id ? routeModelName(route.source) : route.model);
+
+function providerById(id) {
+  return (state.snapshot?.providers || []).find((provider) => provider.id === id);
+}
+
+function providerLogo(id, size) {
+  const provider = providerById(id);
+  return provider ? providerIcon(provider, size) : h("span", { class: "svc-icon svc-icon-fallback route-logo-missing", "aria-hidden": "true", text: "?" });
+}
+
+// Overlapping provider logos (at most three) with the route kind as a badge.
+function routeIcon(kind, models) {
+  const providers = [...new Set(models.filter(Boolean).map(routeModelProvider).filter(Boolean))];
+  const shown = providers.slice(0, 3);
+  return h("span", { class: "route-icon", title: providers.length > shown.length ? providers.map(providerName).join("、") : null, "aria-hidden": "true" },
+    shown.length ? shown.map((id, index) => h("span", { class: `route-logo route-logo-${index}` }, providerLogo(id, 18))).reverse()
+      : h("span", { class: "route-logo route-logo-0 route-logo-kind", text: ROUTE_KINDS[kind].badge }),
+    h("span", { class: "route-badge", text: ROUTE_KINDS[kind].badge }));
+}
+
+// Built-in route groups: a fusion panel, a never-stuck chain across
+// providers, and one failover per model served by several providers.
+function routeSuggestions(ids, routes) {
+  if (ids.length < 2) return [];
+  const panels = ids.slice(0, 3);
+  const drafts = [{ kind: "fusion", id: "fusion", panel_models: panels, judge_model: panels[0], final_model: panels[1] || panels[0] }];
+  const firsts = [];
+  const seenProviders = new Set();
+  for (const id of ids) if (!seenProviders.has(routeModelProvider(id))) { seenProviders.add(routeModelProvider(id)); firsts.push(id); }
+  if (firsts.length > 1) drafts.push({ kind: "failover", id: "never-stuck", source: firsts[0], fallbacks: firsts.slice(1, 1 + MAX_FALLBACKS) });
+  const byName = new Map();
+  for (const id of ids) {
+    const key = routeModelName(id).toLowerCase();
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(id);
+  }
+  for (const [key, same] of [...byName.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (new Set(same.map(routeModelProvider)).size < 2) continue;
+    drafts.push({ kind: "failover", id: key.replace(/[/ ]/g, "-"), source: same[0], fallbacks: same.slice(1, 1 + MAX_FALLBACKS) });
+  }
+  const taken = new Set(routes.map((route) => route.model));
+  return drafts.filter((draft) => !taken.has(ROUTE_PREFIX + draft.id));
+}
+
+function uniqueRouteName(stem, models) {
+  for (let index = 1; ; index += 1) {
+    const name = index === 1 ? stem : `${stem}-${index}`;
+    if (!models.includes(ROUTE_PREFIX + name)) return name;
+  }
+}
+
+// A draft is a working copy of the route plus the entry model it replaces.
+function newDraft(kind, template, ids, models) {
+  const route = template ? structuredClone(template) : { kind };
+  if (kind === "fusion") {
+    route.panel_models ||= ids.slice(0, 3);
+    route.judge_model ||= ids[0];
+    route.final_model ||= ids[1] || ids[0];
+    route.id = models.includes(ROUTE_PREFIX + (route.id || "fusion")) ? uniqueRouteName(route.id || "fusion", models) : route.id || "fusion";
+  } else if (kind === "schedule") {
+    route.final_model ||= ids[0];
+    route.time_routes ||= [{ start_minute: 540, end_minute: 1080, model: ids[1] || ids[0] }];
+    route.id = uniqueRouteName(route.id || "schedule", models);
+  } else {
+    route.source ||= ids.find((id) => !models.includes(id));
+    if (!route.source) throw new Error("所有模型都已配置故障转移。");
+    route.fallbacks ||= [ids.find((id) => id !== route.source) || ids[0]];
+    if (route.id && models.includes(ROUTE_PREFIX + route.id)) route.id = uniqueRouteName(route.id, models);
+  }
+  return { kind, route, oldModel: null, dirty: true };
+}
+
+async function confirmDiscard() {
+  return !routing.draft?.dirty || confirmAction("放弃未保存的修改？", "当前路由的修改尚未保存。", "放弃");
+}
+
+async function openRoute(model) {
+  if (routing.selected === model && routing.draft && !routing.draft.dirty) return;
+  if (!(await confirmDiscard())) return;
+  const route = (routing.data?.routes || []).find((row) => row.model === model);
+  routing.selected = model;
+  routing.draft = route ? { kind: route.kind, route: structuredClone(route), oldModel: route.model, dirty: false } : null;
+  render({ animate: false });
+}
+
+async function startDraft(kind, template) {
+  if (!(await confirmDiscard())) return;
+  const ids = routeModelOptions().map((model) => model.id);
+  const models = (routing.data?.routes || []).map((route) => route.model);
+  try {
+    routing.draft = newDraft(kind, template, ids, models);
+    routing.selected = null;
+    render({ animate: false });
+  } catch (error) {
+    toast("bad", "新建路由失败", error.message);
+  }
+}
+
+function changeDraft(mutate) {
+  mutate(routing.draft.route);
+  routing.draft.dirty = true;
+  render({ animate: false });
+}
+
+// One model picker for every node: grouped by provider, searchable;
+// `multiple` keeps the sheet open and uses checkboxes.
+function pickModels(title, current, multiple, onDone) {
+  const options = routeModelOptions();
+  const picked = new Set(current);
+  const search = h("input", { class: "input", type: "search", placeholder: "搜索模型", "aria-label": "搜索模型", spellcheck: "false", autocomplete: "off" });
+  const list = h("div", { class: "picker-list", role: multiple ? "group" : "listbox", "aria-label": title });
+  const count = h("span", { class: "field-hint" });
+  const done = h("button", { class: "btn btn-primary", type: "button", text: "完成", onclick: () => { closeSheet(); onDone([...picked]); } });
+  const draw = () => {
+    const query = search.value.trim().toLowerCase();
+    const groups = new Map();
+    for (const model of options) {
+      if (query && !`${model.display_name || ""} ${model.id} ${providerName(model.provider_id)}`.toLowerCase().includes(query)) continue;
+      if (!groups.has(model.provider_id)) groups.set(model.provider_id, []);
+      groups.get(model.provider_id).push(model);
+    }
+    list.replaceChildren(...[...groups].map(([provider, models]) => h("div", { class: "picker-group" },
+      h("div", { class: "picker-head" }, providerLogo(provider, 16), h("span", { text: providerName(provider) || "其他" })),
+      models.map((model) => multiple
+        ? h("label", { class: "picker-item" },
+          h("input", {
+            class: "check", type: "checkbox", checked: picked.has(model.id), disabled: !picked.has(model.id) && picked.size >= MAX_PANELS,
+            onchange: (event) => { event.target.checked ? picked.add(model.id) : picked.delete(model.id); draw(); },
+          }),
+          h("span", { class: "picker-name", text: model.display_name || model.id }), h("span", { class: "row-sub", text: model.id }))
+        : h("button", {
+          class: `picker-item ${picked.has(model.id) ? "is-current" : ""}`.trim(), type: "button", role: "option", "aria-selected": String(picked.has(model.id)),
+          onclick: () => { closeSheet(); onDone([model.id]); },
+        }, h("span", { class: "picker-name", text: model.display_name || model.id }), h("span", { class: "row-sub", text: model.id }))))));
+    if (!groups.size) list.append(emptyState("没有匹配的模型", null));
+    count.textContent = multiple ? `已选 ${picked.size} / ${MAX_PANELS}` : "";
+    done.disabled = multiple && picked.size === 0;
+  };
+  search.addEventListener("input", draw);
+  draw();
+  openSheet(title, h("div", { class: "picker" }, search, list, multiple ? h("div", { class: "form-actions" }, count, done) : null));
+}
+
+function modelNode(id, title, onPick, label) {
+  const available = Boolean(routeModel(id));
+  return h("button", {
+    class: `route-node ${available ? "" : "is-missing"}`.trim(), type: "button", title: `${id}\n点击更换模型`,
+    "aria-label": `${label || title}：${routeModelName(id)}，点击更换`, onclick: () => pickModels(title, [id], false, ([next]) => onPick(next)),
+  },
+  providerLogo(routeModelProvider(id), 20),
+  h("span", { class: "route-node-text" },
+    h("span", { class: "route-node-name", text: routeModelName(id) }),
+    h("span", { class: "row-sub", text: available ? providerName(routeModelProvider(id)) : "模型不可用" })));
+}
+
+const addNode = (label, onclick, disabled = false) => h("button", { class: "route-add", type: "button", text: `+ ${label}`, onclick, disabled });
+const stageHead = (text) => h("div", { class: "route-stage", text });
+const flowArrow = (glyph, active = false) => h("span", { class: `route-arrow ${active ? "is-active" : ""}`.trim(), title: active ? "当前时段" : null, "aria-hidden": "true", text: glyph });
+const iconButton = (text, label, onclick, disabled = false) => h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", text, "aria-label": label, title: label, onclick, disabled });
+
+function fusionFlow(route) {
+  const panels = route.panel_models || [];
+  const editPanels = () => pickModels("Panel 模型", panels, true, (next) => changeDraft((draft) => { draft.panel_models = next; }));
+  return h("div", { class: "route-flow route-flow-fusion" },
+    h("div", { class: "route-column" }, stageHead(`Panel · 并行（${panels.length}）`),
+      panels.map((id, index) => modelNode(id, `Panel 模型 ${index + 1}`, (next) => changeDraft((draft) => {
+        draft.panel_models = draft.panel_models.map((model, position) => (position === index ? next : model)).filter((model, position, all) => all.indexOf(model) === position);
+      }))),
+      addNode(panels.length ? "编辑 Panel 模型" : "选择 Panel 模型", editPanels)),
+    flowArrow("\u2192"),
+    h("div", { class: "route-column" }, stageHead("Judge · 评审"), modelNode(route.judge_model, "Judge 模型", (next) => changeDraft((draft) => { draft.judge_model = next; }))),
+    flowArrow("\u2192"),
+    h("div", { class: "route-column" }, stageHead("Final · 作答"), modelNode(route.final_model, "Final 模型", (next) => changeDraft((draft) => { draft.final_model = next; }))));
+}
+
+const timeText = (minute) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+const parseTime = (value) => { const [hours, mins] = value.split(":").map(Number); return hours * 60 + mins; };
+
+function scheduleFlow(route) {
+  const slots = route.time_routes || [];
+  const minute = minuteNow();
+  const anyActive = slots.some((slot) => slot.start_minute !== slot.end_minute && covers(slot.start_minute, slot.end_minute, minute));
+  const timeInput = (slot, key, label) => h("input", {
+    class: "input route-time", type: "time", value: timeText(slot[key]), "aria-label": label,
+    onchange: (event) => { if (event.target.value) changeDraft(() => { slot[key] = parseTime(event.target.value); }); },
+  });
+  return h("div", { class: "route-flow route-flow-schedule" },
+    stageHead("时段（本机时间）"), h("span"), stageHead("模型"), h("span"),
+    slots.map((slot, index) => [
+      h("div", { class: "route-times" }, timeInput(slot, "start_minute", `时段 ${index + 1} 开始`), "–", timeInput(slot, "end_minute", `时段 ${index + 1} 结束`)),
+      flowArrow("\u2192", slot.start_minute !== slot.end_minute && covers(slot.start_minute, slot.end_minute, minute)),
+      modelNode(slot.model, `时段 ${index + 1} 模型`, (next) => changeDraft(() => { slot.model = next; })),
+      iconButton("\u00d7", "移除此时段", () => changeDraft((draft) => { draft.time_routes.splice(index, 1); })),
+    ]),
+    h("div", { class: "route-span" }, addNode("添加时段", () => changeDraft((draft) => {
+      const start = slots.length ? slots[slots.length - 1].end_minute : 540;
+      draft.time_routes = [...slots, { start_minute: start, end_minute: (start + 240) % 1440, model: routeModelOptions()[0].id }];
+    }), slots.length >= MAX_SLOTS)),
+    h("span", { class: "route-other", text: "其余时间" }),
+    flowArrow("\u2192", !anyActive),
+    modelNode(route.final_model, "默认模型", (next) => changeDraft((draft) => { draft.final_model = next; })),
+    h("span"));
+}
+
+function failoverFlow(route) {
+  const fallbacks = route.fallbacks || [];
+  const move = (index, delta) => changeDraft((draft) => {
+    [draft.fallbacks[index], draft.fallbacks[index + delta]] = [draft.fallbacks[index + delta], draft.fallbacks[index]];
+  });
+  return h("div", { class: "route-flow route-flow-failover" },
+    stageHead("原模型"),
+    modelNode(route.source, "原模型", (next) => changeDraft((draft) => { draft.source = next; })),
+    h("div", { class: "route-condition" }, flowArrow("\u2193"), h("span", { class: "row-sub", text: "429 · 5xx · 连接失败 · 超时，且尚未输出" })),
+    stageHead("备用模型（按顺序）"),
+    fallbacks.map((id, index) => h("div", { class: "route-fallback" },
+      h("span", { class: "route-index", text: String(index + 1) }),
+      modelNode(id, `备用模型 ${index + 1}`, (next) => changeDraft((draft) => { draft.fallbacks[index] = next; })),
+      iconButton("\u2191", `上移备用模型 ${index + 1}`, () => move(index, -1), index === 0),
+      iconButton("\u2193", `下移备用模型 ${index + 1}`, () => move(index, 1), index === fallbacks.length - 1),
+      iconButton("\u00d7", `移除备用模型 ${index + 1}`, () => changeDraft((draft) => { draft.fallbacks.splice(index, 1); })))),
+    fallbacks.length < MAX_FALLBACKS ? addNode("添加备用模型", () => changeDraft((draft) => {
+      const used = new Set([...fallbacks, route.source]);
+      const ids = routeModelOptions().map((model) => model.id);
+      draft.fallbacks = [...fallbacks, ids.find((id) => !used.has(id)) || ids[0]];
+    })) : null);
+}
+
+// Name and entry: the only form fields. Typing never re-renders, so focus stays.
+function routeNameField(route, optional) {
+  const entry = h("span", { class: "field-hint" });
+  const show = () => {
+    const name = (route.id || "").trim();
+    entry.textContent = `Codex 中选择的模型：${!name && optional ? route.source : ROUTE_PREFIX + name}`;
+  };
+  show();
+  const input = textInput("route_name", route.id || "", { placeholder: optional ? "可选；留空则直接接管原模型" : "" });
+  input.addEventListener("input", () => { route.id = input.value; routing.draft.dirty = true; show(); });
+  return h("label", { class: "field" }, h("span", { class: "field-label", text: "名称" }), input, entry);
+}
+
+function fusionAdvanced(route) {
+  const number = (key, label, value, props, apply) => field(label, textInput(key, String(value), { type: "number", ...props, oninput: (event) => { apply(event.target.value); routing.draft.dirty = true; } }));
+  const check = (label, checked, apply) => h("label", { class: "route-check" },
+    h("input", { class: "check", type: "checkbox", checked, onchange: (event) => { apply(event.target.checked); routing.draft.dirty = true; } }), label);
+  return h("details", { class: "route-advanced" }, h("summary", { text: "高级选项" }),
+    h("div", { class: "form-row" },
+      number("min_successful", "最少成功 Panel", route.min_successful ?? 1, { min: "1", max: String(MAX_PANELS), step: "1" }, (value) => { route.min_successful = Number(value); }),
+      number("timeout", "单模型超时（秒）", (route.timeout_ms ?? 300000) / 1000, { min: "1", step: "1" }, (value) => { route.timeout_ms = Math.round(Number(value) * 1000); })),
+    check("在回答中显示 Panel / Judge 中间结果", route.show_intermediate_results !== false, (value) => { route.show_intermediate_results = value; }),
+    check("允许 Panel 使用进程内只读工具", route.panel_tools?.enabled !== false, (value) => { route.panel_tools = { max_rounds: 16, max_calls_per_model: 64, ...route.panel_tools, enabled: value }; }));
+}
+
+// Same checks as the native shells; the CLI validates again on save.
+function routePayload(draft, models) {
+  const route = structuredClone(draft.route);
+  delete route.model;
+  delete route.activity;
+  route.kind = draft.kind;
+  const name = String(route.id || "").trim();
+  if (name.includes("/")) throw new Error("名称不能包含 /。");
+  if (draft.kind !== "failover" && !name) throw new Error("名称不能为空。");
+  if (name) route.id = name; else delete route.id;
+  if (draft.kind === "fusion") {
+    const panels = route.panel_models || [];
+    if (panels.length < 1 || panels.length > MAX_PANELS) throw new Error("请选择 1–8 个 Panel 模型。");
+    const minimum = route.min_successful ?? 1;
+    if (!Number.isInteger(minimum) || minimum < 1 || minimum > panels.length) throw new Error("最少成功 Panel 必须是 1 到 Panel 数量之间的整数。");
+    if (!(route.timeout_ms > 0)) route.timeout_ms = 300000;
+    route.mode = "orchestration";
+    route.min_successful = minimum;
+    route.show_intermediate_results = route.show_intermediate_results !== false;
+    route.panel_tools = { max_rounds: 16, max_calls_per_model: 64, enabled: true, ...route.panel_tools };
+  } else if (draft.kind === "schedule") {
+    const slots = route.time_routes || [];
+    if (slots.length < 1 || slots.length > MAX_SLOTS) throw new Error("请配置 1–24 个时段。");
+    if (slots.some((slot) => slot.start_minute === slot.end_minute)) throw new Error("时段的开始和结束时间不能相同。");
+    for (let minute = 0; minute < 1440; minute += 1) {
+      if (slots.filter((slot) => covers(slot.start_minute, slot.end_minute, minute)).length > 1) throw new Error("时段不能重叠。");
+    }
+    route.mode = "time_rotation";
+    route.panel_models ||= [];
+    route.judge_model ||= route.final_model;
+  } else {
+    const fallbacks = route.fallbacks || [];
+    if (fallbacks.length < 1 || fallbacks.length > MAX_FALLBACKS) throw new Error("请配置 1–4 个备用模型。");
+    if (fallbacks.includes(route.source) || new Set(fallbacks).size !== fallbacks.length) throw new Error("备用模型不能重复，也不能与原模型相同。");
+    if (!name && route.source !== draft.oldModel && models.includes(route.source)) throw new Error(`${routeModelName(route.source)} 已配置故障转移。`);
+  }
+  return route;
+}
+
+async function saveRoute(button) {
+  const draft = routing.draft;
+  let route;
+  try {
+    route = routePayload(draft, (routing.data?.routes || []).map((row) => row.model));
+  } catch (error) {
+    toast("bad", "无法保存", error.message);
+    return;
+  }
+  const params = { route };
+  if (draft.oldModel) params.replace_model = draft.oldModel;
+  const result = await runAction(button, "route_set", params, { ok: "模型路由已保存并应用" });
+  if (!result) return;
+  routing.selected = route.id ? ROUTE_PREFIX + route.id : route.source;
+  routing.draft = null;
+  await loadRoutes();
+  const saved = (routing.data?.routes || []).find((row) => row.model === routing.selected);
+  if (saved) routing.draft = { kind: saved.kind, route: structuredClone(saved), oldModel: saved.model, dirty: false };
+  render({ animate: false });
+}
+
+async function routeAction(action, model, messages) {
+  const result = await runAction(null, action, { model }, messages);
+  if (!result) return;
+  if (action === "route_delete") { routing.selected = null; routing.draft = null; }
+  await loadRoutes();
+  if (routing.draft?.oldModel) {
+    const saved = (routing.data?.routes || []).find((row) => row.model === routing.draft.oldModel);
+    if (saved) routing.draft = { kind: saved.kind, route: structuredClone(saved), oldModel: saved.model, dirty: false };
+  }
+  render({ animate: false });
+}
+
+function routeEditor(draft) {
+  const kind = ROUTE_KINDS[draft.kind];
+  const route = draft.route;
+  const saved = (routing.data?.routes || []).find((row) => row.model === draft.oldModel);
+  const more = saved ? popoverMenu("更多", [
+    { label: saved.enabled === false ? "启用路由" : "停用路由", run: () => routeAction(saved.enabled === false ? "route_enable" : "route_disable", saved.model, { ok: saved.enabled === false ? "路由已启用" : "路由已停用" }) },
+    "-",
+    { label: "删除路由…", run: () => routeAction("route_delete", saved.model, { ok: "模型路由已删除", confirm: ["删除模型路由？", `将删除 ${saved.model}，并立即应用到网关。此操作不可撤销。`, "删除"] }) },
+  ]) : null;
+  const flow = draft.kind === "fusion" ? fusionFlow(route) : draft.kind === "schedule" ? scheduleFlow(route) : failoverFlow(route);
+  const save = h("button", { class: "btn btn-primary", type: "button", "data-action": "", text: "保存并应用", disabled: state.busy || !draft.dirty });
+  save.addEventListener("click", () => saveRoute(save));
+  // Typing marks the draft dirty without re-rendering, so enable Save here.
+  const editor = h("section", { class: "route-detail", "aria-label": saved ? routeTitle(saved) : `新建${kind.title}` },
+    h("header", { class: "route-head" },
+      routeIcon(draft.kind, routePrecedence(route)),
+      h("div", { class: "route-head-main" },
+        h("h2", { class: "card-title", text: saved ? routeTitle(saved) : `新建${kind.title}` }),
+        h("span", { class: "row-sub", title: kind.description, text: `${kind.title}${saved?.enabled === false ? " · 已停用" : ""}` })),
+      more),
+    flow,
+    h("div", { class: "form route-form" },
+      routeNameField(route, draft.kind === "failover"),
+      draft.kind === "fusion" ? fusionAdvanced(route) : null,
+      h("div", { class: "form-actions" }, draft.oldModel ? null : h("button", { class: "btn btn-ghost", type: "button", text: "放弃", onclick: () => { routing.draft = null; render({ animate: false }); } }), save)));
+  editor.addEventListener("input", () => { save.disabled = state.busy; });
+  editor.addEventListener("change", () => { save.disabled = state.busy; });
+  return editor;
+}
+
+RENDERERS.routing = () => {
+  if (!routing.data && !routing.loading && !routing.error) queueMicrotask(loadRoutes);
+  if (routing.error) return card(null, null, h("p", { class: "issue", text: routing.error }));
+  if (!routing.data) return h("div", { class: "skeleton" });
+  const options = routeModelOptions();
+  const ids = options.map((model) => model.id);
+  if (!ids.length) return card(null, null, emptyState("暂无可用模型", "先在「模型与服务」中添加供应商并选择模型，再配置模型路由。"));
+  const routes = routing.data.routes || [];
+  if (!routing.draft && routes.length) {
+    const initial = routes.find((route) => route.model === routing.selected) || routes[0];
+    routing.selected = initial.model;
+    routing.draft = { kind: initial.kind, route: structuredClone(initial), oldModel: initial.model, dirty: false };
+  }
+  const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": "模型路由" }, routes.map((route) => {
+    const selected = routing.draft?.oldModel === route.model;
+    const row = h("div", {
+      class: `svc-row ${selected ? "is-selected" : ""} ${route.enabled === false ? "is-disabled" : ""}`.replace(/\s+/g, " ").trim(),
+      role: "option", tabindex: "0", "aria-selected": String(selected), title: `${ROUTE_KINDS[route.kind].title} · ${routeSummary(route)}`,
+      onclick: () => openRoute(route.model),
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRoute(route.model); } },
+    },
+    routeIcon(route.kind, routePrecedence(route)),
+    h("div", { class: "svc-row-main" }, h("div", { class: "svc-row-name", text: routeTitle(route) })));
+    return row;
+  }));
+  const suggestions = routeSuggestions(ids, routes);
+  const create = popoverMenu("新建路由", Object.entries(ROUTE_KINDS).map(([kind, meta]) => ({ label: `新建${meta.title}`, run: () => startDraft(kind, null) })), "btn btn-ghost btn-icon btn-sm");
+  create.querySelector("button").textContent = "+";
+  const side = h("aside", { class: "svc-list" },
+    h("header", { class: "svc-list-head" }, h("span", { text: "路由" }), create),
+    routes.length ? list : h("p", { class: "route-empty", text: "还没有模型路由。" }),
+    suggestions.length ? h("div", { class: "route-suggestions" },
+      h("div", { class: "svc-list-head", text: "推荐路由" }),
+      suggestions.map((suggestion) => h("div", { class: "route-suggestion", title: `${ROUTE_KINDS[suggestion.kind].title} · ${routeSummary(suggestion)}` },
+        routeIcon(suggestion.kind, routePrecedence(suggestion)),
+        h("span", { class: "route-suggestion-name", text: ROUTE_PREFIX + suggestion.id }),
+        h("button", { class: "btn btn-sm", type: "button", text: "启用", "aria-label": `启用 ${ROUTE_PREFIX}${suggestion.id}`, onclick: () => startDraft(suggestion.kind, suggestion) })))) : null);
+  const detail = routing.draft ? routeEditor(routing.draft)
+    : h("section", { class: "route-detail" }, emptyState("新建模型路由", "融合、定时与故障转移都在这里配置，保存后立即应用到网关。"));
+  return h("div", { class: "svc card card-flush" }, side, detail);
+};
 
 // ---------- Agents ----------
 

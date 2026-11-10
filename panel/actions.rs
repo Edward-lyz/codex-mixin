@@ -77,14 +77,20 @@ pub(super) enum PanelAction {
         #[serde(default)]
         models: Vec<String>,
     },
-    FusionSet {
-        profile: Value,
+    /// Create or replace a model route (fusion, schedule or failover).
+    RouteSet {
+        route: Value,
         #[serde(default)]
-        replace_id: Option<String>,
+        replace_model: Option<String>,
     },
-    FusionDelete {
-        #[serde(default)]
-        id: Option<String>,
+    RouteDelete {
+        model: String,
+    },
+    RouteEnable {
+        model: String,
+    },
+    RouteDisable {
+        model: String,
     },
     /// Global context engine settings; the gateway reads them at startup.
     ContextConfigure {
@@ -308,6 +314,13 @@ fn validate_value(label: &str, value: &str) -> Result<(), String> {
 }
 
 /// Positional values (provider ids, model names) must not look like flags.
+fn route_model_command(command: &'static str, model: &str) -> Result<CliInvocation, String> {
+    validate_positional("route model", model)?;
+    let mut invocation = CliInvocation::fixed(&["route", command]);
+    invocation.push_value("model", model)?;
+    Ok(invocation)
+}
+
 fn validate_positional(label: &str, value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err(format!("{label} is empty"));
@@ -358,7 +371,18 @@ impl PanelAction {
                 CliInvocation::fixed(&["report-replay", "--all-sessions", "--json"]),
             ]);
         }
-        Ok(vec![self.invocation()?])
+        let invocation = self.invocation()?;
+        if matches!(
+            self,
+            Self::RouteSet { .. }
+                | Self::RouteDelete { .. }
+                | Self::RouteEnable { .. }
+                | Self::RouteDisable { .. }
+        ) {
+            // Route changes reach clients and the gateway only after apply.
+            return Ok(vec![invocation, CliInvocation::fixed(&["config", "apply"])]);
+        }
+        Ok(vec![invocation])
     }
 
     pub(super) fn invocation(&self) -> Result<CliInvocation, String> {
@@ -459,18 +483,18 @@ impl PanelAction {
                 }
                 Ok(invocation)
             }
-            Self::FusionSet {
-                profile,
-                replace_id,
+            Self::RouteSet {
+                route,
+                replace_model,
             } => {
-                if !profile.is_object() {
-                    return Err("fusion profile must be a JSON object".to_owned());
+                if !route.is_object() {
+                    return Err("model route must be a JSON object".to_owned());
                 }
-                let mut invocation = CliInvocation::fixed(&["fusion", "set"]);
-                invocation.push_value("profile-json", &profile.to_string())?;
-                if let Some(id) = replace_id {
-                    validate_positional("fusion profile id", id)?;
-                    invocation.push_value("replace-id", id)?;
+                let mut invocation = CliInvocation::fixed(&["route", "set"]);
+                invocation.push_value("route-json", &route.to_string())?;
+                if let Some(model) = replace_model {
+                    validate_positional("route model", model)?;
+                    invocation.push_value("replace-model", model)?;
                 }
                 Ok(invocation)
             }
@@ -510,14 +534,9 @@ impl PanelAction {
                 invocation.push("--json");
                 Ok(invocation)
             }
-            Self::FusionDelete { id } => {
-                let mut invocation = CliInvocation::fixed(&["fusion", "delete"]);
-                if let Some(id) = id {
-                    validate_positional("fusion profile id", id)?;
-                    invocation.push_value("id", id)?;
-                }
-                Ok(invocation)
-            }
+            Self::RouteDelete { model } => route_model_command("delete", model),
+            Self::RouteEnable { model } => route_model_command("enable", model),
+            Self::RouteDisable { model } => route_model_command("disable", model),
             Self::AgentConnect { id, mode } => {
                 let mut invocation = agent_command("connect", id)?;
                 match mode {
