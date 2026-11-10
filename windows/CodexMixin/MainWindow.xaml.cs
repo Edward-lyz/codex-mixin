@@ -1379,49 +1379,139 @@ public sealed partial class MainWindow : Window
     private async Task UsageAsync(CancellationToken token)
     {
         var range = Choice("统计范围", ["今天", "7 天", "30 天"], "7 天");
-        var grouping = Choice("图表分组", ["聚合", "按 Provider 拆分"], "聚合");
+        var metric = Choice("图表指标", ["Tokens", "请求次数"], "Tokens");
+        var grouping = Choice("图表分组", ["构成", "按 Provider 拆分"], "构成");
+        foreach (var picker in new[] { range, metric, grouping }) picker.MinWidth = 150;
         var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        filters.Children.Add(range); filters.Children.Add(grouping);
+        filters.Children.Add(range); filters.Children.Add(metric); filters.Children.Add(grouping);
         var usageBody = new StackPanel { Spacing = 12 };
-        JsonElement[] daily = [], turns = [];
+        JsonElement[] daily = [], previous = [], turns = [];
+        JsonElement[]? slotTurns = null;
+        UsageSlot[] slots = [];
+        UsageSlot? slot = null;
         Dictionary<string, string> providerNames = [];
         string? session = null;
+        var expanded = new HashSet<string>();
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
+
+        var status = Choice("状态", ["全部", "成功", "失败"], "全部");
+        var model = Choice("模型", ["全部模型"], "全部模型");
+        status.MinWidth = 120; model.MinWidth = 200; status.HorizontalAlignment = model.HorizontalAlignment = HorizontalAlignment.Left;
+        var substituted = new CheckBox { Content = "仅看模型替换", VerticalAlignment = VerticalAlignment.Bottom };
+        var grouped = new CheckBox { Content = "按会话分组", VerticalAlignment = VerticalAlignment.Bottom };
+        AutomationProperties.SetAutomationId(status, "usage-status"); AutomationProperties.SetAutomationId(model, "usage-model");
+        AutomationProperties.SetAutomationId(grouped, "usage-group-session");
+        var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Bottom };
+        var tableBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        foreach (var element in new FrameworkElement[] { status, model, substituted, grouped, chips }) tableBar.Children.Add(element);
+        var updatingFilters = false;
+
         var summaryHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var chartsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var turnsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        usageBody.Children.Add(summaryHost); usageBody.Children.Add(chartsHost); usageBody.Children.Add(turnsHost);
+        var tableNote = new TextBlock { Style = Themed("SecondaryText") };
+        var tableBody = new StackPanel { Spacing = 12 };
+        tableBody.Children.Add(tableBar); tableBody.Children.Add(turnsHost);
+        var tableCard = Card("回复明细", "", tableBody);
+        ((StackPanel)tableCard.Child).Children.Insert(1, tableNote);
+        void Attach()
+        {
+            usageBody.Children.Clear();
+            usageBody.Children.Add(summaryHost); usageBody.Children.Add(chartsHost); usageBody.Children.Add(tableCard);
+        }
+        Attach();
+
+        Button Chip(string text, Action clear)
+        {
+            var chip = new Button { Content = IconLabel("\uE711", text), Padding = new Thickness(8, 3, 8, 3), FontSize = 12 };
+            AutomationProperties.SetName(chip, $"清除筛选：{text}");
+            chip.Click += (_, _) => clear();
+            return chip;
+        }
         void RenderTurns()
         {
-            var shown = session == null ? turns : turns.Where(turn => Json.Text(turn, "session") == session).ToArray();
-            summaryHost.Content = UsageView.Summary(daily, shown, Card);
-            var sessionTitle = shown.Length == 0 ? session : Json.OptionalText(shown[0], "session_display") ?? session;
-            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {sessionTitle} · {shown.Length} 条";
-            turnsHost.Content = Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
-                : new Border { Child = UsageView.Turns(shown, providerNames, tag => { session = session == tag ? null : tag; RenderTurns(); }), Style = Themed("ListCard") });
+            var scoped = (slot == null ? turns : slotTurns ?? [])
+                .Where(turn => session == null || Json.Text(turn, "session") == session).ToArray();
+            var substitutions = scoped.Count(UsageStats.IsSubstituted);
+            substituted.Visibility = substitutions > 0 ? Visibility.Visible : Visibility.Collapsed;
+            substituted.Content = $"仅看模型替换（{substitutions}）";
+            if (substitutions == 0) substituted.IsChecked = false;
+            var failures = scoped.Count(UsageStats.IsFailed);
+            updatingFilters = true;
+            var statusIndex = Math.Max(0, status.SelectedIndex);
+            status.Items.Clear();
+            foreach (var label in new[] { $"全部（{scoped.Length}）", $"成功（{scoped.Length - failures}）", $"失败（{failures}）" }) status.Items.Add(label);
+            status.SelectedIndex = statusIndex;
+            updatingFilters = false;
+            var modelId = model.SelectedIndex > 0 ? (string)model.SelectedItem : null;
+            var shown = scoped.Where(turn => status.SelectedIndex switch
+                {
+                    1 => !UsageStats.IsFailed(turn),
+                    2 => UsageStats.IsFailed(turn),
+                    _ => true
+                })
+                .Where(turn => modelId == null || Json.Text(turn, "upstream_model_id") == modelId)
+                .Where(turn => substituted.IsChecked != true || UsageStats.IsSubstituted(turn)).ToArray();
+            chips.Children.Clear();
+            if (slot != null) chips.Children.Add(Chip(UsageView.SlotTitle(slot), () => { slot = null; slotTurns = null; RenderCharts(); RenderTurns(); }));
+            if (session != null)
+            {
+                var title = scoped.Select(turn => Json.OptionalText(turn, "session_display")).FirstOrDefault(name => name != null) ?? session;
+                chips.Children.Add(Chip($"会话 {title}", () => { session = null; RenderTurns(); }));
+            }
+            tableNote.Text = slot != null && slotTurns == null ? "正在读取这段时间的回复…"
+                : $"显示 {shown.Length} 条回复" + (slot == null && session == null && turns.Length >= 500 ? "（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）" : "");
+            if (shown.Length == 0) { turnsHost.Content = Text(slot != null && slotTurns == null ? "" : "没有符合条件的回复。"); return; }
+            var rows = UsageView.Rows(shown, grouped.IsChecked == true, expanded);
+            var table = new StackPanel();
+            table.Children.Add(UsageView.TableHeader());
+            table.Children.Add(UsageView.Turns(rows, providerNames,
+                tag => { session = session == tag ? null : tag; RenderTurns(); },
+                tag => { if (!expanded.Remove(tag)) expanded.Add(tag); RenderTurns(); }));
+            turnsHost.Content = new Border { Child = table, Style = Themed("ListCard") };
+        }
+        async Task SelectSlot(UsageSlot? selected)
+        {
+            slot = selected; slotTurns = null;
+            RenderCharts(); RenderTurns();
+            if (selected == null) return;
+            try
+            {
+                var loaded = Json.Rows(await Client.QueryAsync(["usage", "--turns", "--json", "--limit", "5000",
+                    "--since-ms", selected.Start.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "--until-ms", selected.End.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture)], lifetime.Token));
+                if (!ReferenceEquals(slot, selected)) return;
+                slotTurns = loaded;
+                RenderTurns();
+            }
+            catch (CliFailure error) when (ReferenceEquals(slot, selected))
+            {
+                slot = null; RenderCharts(); RenderTurns();
+                ShowNotice("读取回复失败", error.Message, InfoBarSeverity.Error);
+            }
         }
         void RenderCharts()
         {
-            var split = grouping.SelectedIndex == 1;
-            var charts = new Grid { ColumnSpacing = 24 };
-            charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            charts.Children.Add(UsageView.Chart(daily, providerNames, Days(), split, UsageView.DailyTokens, "Tokens"));
-            var requests = UsageView.Chart(daily, providerNames, Days(), split, UsageView.DailyRequests, "请求次数");
-            Grid.SetColumn((FrameworkElement)requests, 1); charts.Children.Add(requests);
-            chartsHost.Content = Card("每日用量", split ? "按 Provider 拆分" : "全部 Provider 聚合", charts);
+            var chart = UsageView.Chart(slots, providerNames, metric.SelectedIndex == 1, grouping.SelectedIndex == 1, slot, selected => _ = SelectSlot(selected));
+            var card = Card(Days() == 1 ? "用量趋势 · 按小时" : "用量趋势 · 按天（UTC）", "", chart);
+            chartsHost.Content = card;
         }
         async Task ReadUsage(CancellationToken cancellation)
         {
             pageLoaded = false;
-            var days = Days().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var days = Days();
+            string Arg(int value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
             try
             {
                 var snapshots = await Task.WhenAll(
-                    Client.QueryAsync(["usage", "--daily", "--json", "--days", days], cancellation),
-                    Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation),
+                    Client.QueryAsync(["usage", "--daily", "--json", "--days", Arg(days * 2)], cancellation),
+                    Client.QueryAsync(["usage", "--turns", "--json", "--days", Arg(days), "--limit", "500"], cancellation),
                     Client.QueryAsync(["providers", "list", "--json"], cancellation));
-                daily = Json.Rows(snapshots[0]); turns = Json.Rows(snapshots[1]);
+                var now = DateTimeOffset.Now;
+                (daily, previous) = UsageBuckets.SplitPeriods(Json.Rows(snapshots[0]), days, now);
+                var firstMs = (UsageBuckets.Today(now) - days + 1) * UsageBuckets.DayMs;
+                turns = Json.Rows(snapshots[1]).Where(turn => turn.TryGetProperty("at_ms", out var at) && at.GetInt64() >= firstMs).ToArray();
+                slots = UsageBuckets.Slots(daily, turns, days, now);
                 var listedProviders = Json.Rows(Json.Field(snapshots[2], "providers"));
                 var byName = listedProviders.GroupBy(provider => Json.Text(provider, "display_name"))
                     .ToDictionary(group => group.Key, group => group.Count());
@@ -1430,11 +1520,16 @@ public sealed partial class MainWindow : Window
                     var name = Json.Text(provider, "display_name");
                     return byName[name] == 1 ? name : $"{name} ({Json.Text(provider, "id")})";
                 });
-                session = null;
-                if (usageBody.Children.Count == 0)
-                {
-                    usageBody.Children.Add(summaryHost); usageBody.Children.Add(chartsHost); usageBody.Children.Add(turnsHost);
-                }
+                session = null; slot = null; slotTurns = null;
+                updatingFilters = true;
+                var models = turns.Select(turn => Json.Text(turn, "upstream_model_id")).Distinct().Order(StringComparer.Ordinal).ToArray();
+                var keep = model.SelectedIndex > 0 && models.Contains((string)model.SelectedItem) ? (string)model.SelectedItem : null;
+                model.Items.Clear(); model.Items.Add("全部模型");
+                foreach (var id in models) model.Items.Add(id);
+                model.SelectedItem = keep ?? "全部模型";
+                updatingFilters = false;
+                if (usageBody.Children.Count != 3) Attach();
+                summaryHost.Content = UsageView.Summary(UsageStats.Sum(daily.Select(UsageStats.Daily)), UsageStats.Sum(previous.Select(UsageStats.Daily)), slots);
                 RenderCharts(); RenderTurns();
                 pageLoaded = true;
             }
@@ -1442,7 +1537,12 @@ public sealed partial class MainWindow : Window
             catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card("用量不可用", error.Message)); }
         }
         range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage, readOnly: true);
+        metric.SelectionChanged += (_, _) => RenderCharts();
         grouping.SelectionChanged += (_, _) => RenderCharts();
+        status.SelectionChanged += (_, _) => { if (!updatingFilters) RenderTurns(); };
+        model.SelectionChanged += (_, _) => { if (!updatingFilters) RenderTurns(); };
+        substituted.Click += (_, _) => RenderTurns();
+        grouped.Click += (_, _) => RenderTurns();
         PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
     }

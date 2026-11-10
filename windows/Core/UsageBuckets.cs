@@ -2,33 +2,118 @@ using System.Text.Json;
 
 namespace CodexMixin;
 
-// Presentation-only aggregation: each CLI row is visited once, not once per day/series.
+/// Counters for one period. `Requests` are replies that reported usage and
+/// `Errors` are failed replies, so every rate shares the attempt total.
+internal readonly record struct UsageStats(long Requests, long Errors, long Cached, long Uncached, long Output, long HitRead, long HitPrompt)
+{
+    internal long Attempts => Requests + Errors;
+    internal long Tokens => Cached + Uncached + Output;
+    internal double? CacheHitPercent => HitPrompt > 0 ? HitRead * 100.0 / HitPrompt : null;
+    internal double? ErrorPercent => Attempts > 0 ? Errors * 100.0 / Attempts : null;
+
+    public static UsageStats operator +(UsageStats left, UsageStats right) => new(
+        checked(left.Requests + right.Requests), checked(left.Errors + right.Errors),
+        checked(left.Cached + right.Cached), checked(left.Uncached + right.Uncached), checked(left.Output + right.Output),
+        checked(left.HitRead + right.HitRead), checked(left.HitPrompt + right.HitPrompt));
+
+    internal static UsageStats Sum(IEnumerable<UsageStats> items) => items.Aggregate(default(UsageStats), (sum, item) => sum + item);
+
+    private static long Count(JsonElement row, string key) =>
+        row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : 0;
+
+    private static bool Reports(JsonElement row, string key) =>
+        row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number;
+
+    /// One provider/model total for a UTC day from `usage --daily --json`.
+    internal static UsageStats Daily(JsonElement row)
+    {
+        var cached = Count(row, "cache_read_tokens");
+        var uncached = Count(row, "input_tokens") + Count(row, "cache_creation_tokens");
+        var reports = Reports(row, "cache_hit_percent");
+        return new(Count(row, "request_count"), Count(row, "error_count"), cached, uncached, Count(row, "output_tokens"),
+            reports ? cached : 0, reports ? cached + uncached : 0);
+    }
+
+    /// One reply from `usage --turns --json`.
+    internal static UsageStats Turn(JsonElement turn)
+    {
+        var failed = IsFailed(turn);
+        var cached = Count(turn, "cache_read_tokens");
+        var uncached = Count(turn, "input_tokens") + Count(turn, "cache_creation_tokens");
+        var reports = Reports(turn, "cache_hit_percent");
+        return new(failed ? 0 : 1, failed ? 1 : 0, cached, uncached, Count(turn, "output_tokens"),
+            reports ? cached : 0, reports ? cached + uncached : 0);
+    }
+
+    internal static bool IsFailed(JsonElement turn) => Json.OptionalText(turn, "status") == "failed";
+
+    /// The upstream answered with a different model; vendor aliases already match in the CLI.
+    internal static bool IsSubstituted(JsonElement turn) =>
+        turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False
+        && Json.OptionalText(turn, "returned_model") != null;
+}
+
+/// One chart slot. `Start`/`End` is the period the counts were taken from: a
+/// local hour for the one-day range, otherwise the CLI's UTC day.
+internal sealed class UsageSlot(DateTimeOffset start, DateTimeOffset end)
+{
+    internal DateTimeOffset Start { get; } = start;
+    internal DateTimeOffset End { get; } = end;
+    internal UsageStats Total { get; set; }
+    internal Dictionary<string, UsageStats> ByProvider { get; } = [];
+    internal bool Hourly => End - Start <= TimeSpan.FromHours(1);
+}
+
+// Presentation-only aggregation: each CLI row is visited once.
 internal static class UsageBuckets
 {
-    internal static (string[] Series, long[] Days, long[][] Values, long Total, long Maximum) Build(
-        JsonElement[] rows, int days, bool split, long today,
-        Func<JsonElement, long> metric, Func<JsonElement, long> tokens)
+    internal const long DayMs = 86_400_000;
+
+    internal static long Today(DateTimeOffset now) => now.ToUnixTimeMilliseconds() / DayMs;
+
+    /// One slot per period in the range, so periods without traffic still
+    /// appear on the axis. Longer ranges use the CLI's UTC-day totals; the
+    /// one-day range sums reply rows into local hours.
+    internal static UsageSlot[] Slots(JsonElement[] daily, JsonElement[] turns, int days, DateTimeOffset now)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(days);
-        var order = new List<string>();
-        var totals = new Dictionary<string, long>();
-        var cells = new Dictionary<(long Day, string Series), long>();
-        var total = 0L;
-        foreach (var row in rows)
+        var firstDay = Today(now) - days + 1;
+        var slots = new List<UsageSlot>();
+        if (days == 1)
         {
-            var key = split ? Json.Text(row, "provider_id") : "全部";
-            if (!totals.ContainsKey(key)) { order.Add(key); totals[key] = 0; }
-            totals[key] = checked(totals[key] + tokens(row));
-            var value = metric(row);
-            total = checked(total + value);
-            var day = row.TryGetProperty("day", out var stamp) && stamp.ValueKind == JsonValueKind.Number ? stamp.GetInt64() : 0;
-            var cell = (day, key);
-            cells[cell] = checked(cells.GetValueOrDefault(cell) + value);
+            var start = DateTimeOffset.FromUnixTimeMilliseconds(firstDay * DayMs).ToLocalTime();
+            var cursor = new DateTimeOffset(start.Year, start.Month, start.Day, start.Hour, 0, 0, start.Offset);
+            while (cursor <= now) { slots.Add(new UsageSlot(cursor, cursor.AddHours(1))); cursor = cursor.AddHours(1); }
+            foreach (var turn in turns)
+                Add(slots, UsageStats.Turn(turn), Json.Text(turn, "provider_id"),
+                    DateTimeOffset.FromUnixTimeMilliseconds(Number(turn, "at_ms")));
         }
-        var series = order.OrderByDescending(key => totals[key]).ToArray();
-        var buckets = Enumerable.Range(0, days).Select(offset => today - days + 1 + offset).ToArray();
-        var values = buckets.Select(day => series.Select(key => cells.GetValueOrDefault((day, key))).ToArray()).ToArray();
-        var maximum = Math.Max(1, values.Max(row => row.Sum()));
-        return (series, buckets, values, total, maximum);
+        else
+        {
+            for (var day = firstDay; day < firstDay + days; day++)
+                slots.Add(new UsageSlot(DateTimeOffset.FromUnixTimeMilliseconds(day * DayMs), DateTimeOffset.FromUnixTimeMilliseconds((day + 1) * DayMs)));
+            foreach (var row in daily)
+                Add(slots, UsageStats.Daily(row), Json.Text(row, "provider_id"),
+                    DateTimeOffset.FromUnixTimeMilliseconds(Number(row, "day") * DayMs));
+        }
+        return slots.ToArray();
+    }
+
+    private static long Number(JsonElement row, string key) =>
+        row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : 0;
+
+    private static void Add(List<UsageSlot> slots, UsageStats stats, string provider, DateTimeOffset at)
+    {
+        var slot = slots.FirstOrDefault(slot => slot.Start <= at && at < slot.End);
+        if (slot == null) return;
+        slot.Total += stats;
+        slot.ByProvider[provider] = slot.ByProvider.GetValueOrDefault(provider) + stats;
+    }
+
+    /// Daily rows of the range and of the equal-length period before it.
+    internal static (JsonElement[] Current, JsonElement[] Previous) SplitPeriods(JsonElement[] rows, int days, DateTimeOffset now)
+    {
+        var firstDay = Today(now) - days + 1;
+        return (rows.Where(row => Number(row, "day") >= firstDay).ToArray(), rows.Where(row => Number(row, "day") < firstDay).ToArray());
     }
 }
