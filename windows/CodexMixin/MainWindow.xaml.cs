@@ -74,7 +74,7 @@ public sealed partial class MainWindow : Window
         ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         if (IsConsolePage(page)) AppWindow.MoveAndResize(NativeShell.ConsoleBounds());
-        else AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
+        else AppWindow.MoveAndResize(NativeShell.SideWindowBounds());
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
             ExtendsContentIntoTitleBar = true;
