@@ -18,7 +18,7 @@ enum ConsoleUsageRange: Int, CaseIterable, Identifiable {
 @MainActor
 final class ConsoleUsageModel: ObservableObject {
     typealias Loader = (_ days: Int, _ turnLimit: Int) async throws -> (
-        [DailyUsageRecord], [TurnUsageRecord], [String: String]
+        [DailyUsageRecord], [TurnUsageRecord], [String: String], [String: String]
     )
     /// Replies inside one chart slot, read straight from the gateway ledger.
     typealias SlotLoader = (_ interval: DateInterval) async throws -> [TurnUsageRecord]
@@ -40,6 +40,8 @@ final class ConsoleUsageModel: ObservableObject {
     @Published private(set) var daily: [DailyUsageRecord] = []
     @Published private(set) var turns: [TurnUsageRecord] = []
     @Published private(set) var providerNames: [String: String] = [:]
+    /// Provider website by provider id, used to find each provider's logo.
+    @Published private(set) var providerWebsites: [String: String] = [:]
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var turnsTruncated = false
@@ -106,7 +108,7 @@ final class ConsoleUsageModel: ObservableObject {
         do {
             let result = try await loader(range.rawValue, range.turnLimit)
             guard generation == loadGeneration else { return }
-            (daily, turns, providerNames) = result
+            (daily, turns, providerNames, providerWebsites) = result
             turnsTruncated = turns.count >= range.turnLimit
             if slotFilter != nil { loadSlotTurns() }
             if let providerFilter, !providers.contains(providerFilter) {
@@ -582,6 +584,19 @@ struct ConsoleUsageView: View {
             }
             .width(min: 120, ideal: 190)
             TableColumn(AppLocalization.string("console.usage.model")) { turn in
+                HStack(spacing: 7) {
+                    if let logo = providerLogoImage(turn.providerID, websiteURL: model.providerWebsites[turn.providerID]) {
+                        Image(nsImage: logo)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 18, height: 18)
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    } else {
+                        Image(systemName: "cpu")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                    }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(turn.upstreamModelID).lineLimit(1)
                     HStack(spacing: 4) {
@@ -594,8 +609,9 @@ struct ConsoleUsageView: View {
                     .font(.caption)
                     .lineLimit(1)
                 }
+                }
             }
-            .width(min: 160, ideal: 220)
+            .width(min: 180, ideal: 240)
             TableColumn(AppLocalization.string("console.usage.uncached")) { turn in
                 Text(turn.inputTokens.map(formatTokenCount) ?? "—").monospacedDigit()
             }

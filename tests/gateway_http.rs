@@ -2230,7 +2230,7 @@ fn fusion_profile() -> FusionProfile {
 
 fn fusion_request() -> Value {
     let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    request["model"] = json!("auto/default");
     request["instructions"] = json!(
         "You are Codex.\n<collaboration_mode># Collaboration Mode: Plan\nPlan the requested work.</collaboration_mode>"
     );
@@ -3143,6 +3143,7 @@ fn failover_config(upstream_url: String) -> GatewayConfig {
     config.failover_routes = vec![FailoverRoute {
         source: "DeepSeek-V4-Flash-custom".to_owned(),
         fallbacks: vec!["panel-a-custom".to_owned()],
+        ..FailoverRoute::default()
     }];
     config
 }
@@ -4883,12 +4884,9 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|model| model["id"] == "mixin/fusion/default")
+        .find(|model| model["id"] == "auto/default")
         .unwrap();
-    assert_eq!(
-        fusion_model["display_name"],
-        "Fusion (default): panel-a-custom+panel-b-custom → judge judge-custom"
-    );
+    assert_eq!(fusion_model["display_name"], "auto/default");
 
     let mut request = fusion_request();
     let response = client
@@ -4958,7 +4956,7 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
         .find(|event| event.event.as_deref() == Some("response.completed"))
         .unwrap();
     let completed: Value = serde_json::from_str(&completed.data).unwrap();
-    assert_eq!(completed["response"]["model"], "mixin/fusion/default");
+    assert_eq!(completed["response"]["model"], "auto/default");
     assert_eq!(completed["response"]["output"][0]["type"], "message");
     assert_eq!(completed["response"]["output"][1]["type"], "message");
     assert_eq!(completed["response"]["output"][2]["type"], "message");
@@ -5340,7 +5338,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
     }];
     let gateway_url = spawn_gateway_with_config(config).await;
     let mut request = fusion_request();
-    request["model"] = json!("mixin/fusion/mixed");
+    request["model"] = json!("auto/mixed");
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
@@ -5389,13 +5387,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         .await
         .unwrap();
     assert_eq!(continuation.status(), StatusCode::OK);
-    assert!(
-        continuation
-            .text()
-            .await
-            .unwrap()
-            .contains("mixin/fusion/mixed")
-    );
+    assert!(continuation.text().await.unwrap().contains("auto/mixed"));
     assert_eq!(official_requests.lock().unwrap().len(), 3);
     assert_eq!(upstream_requests.lock().unwrap().len(), 2);
 }
@@ -7747,11 +7739,11 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
         .filter_map(|frame| serde_json::from_str(frame).ok())
         .find(|event: &Value| event["type"] == "response.completed")
         .unwrap();
-    assert_eq!(completed["response"]["model"], "mixin/fusion/default");
+    assert_eq!(completed["response"]["model"], "auto/default");
 
     let follow_up = json!({
         "type":"response.create",
-        "model":"mixin/fusion/default",
+        "model":"auto/default",
         "previous_response_id":completed["response"]["id"],
         "instructions":"You are Codex.\n<collaboration_mode># Collaboration Mode: Default\nExecute the requested work.</collaboration_mode>",
         "input":[{
@@ -7780,7 +7772,7 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
 
     let tool_continuation = json!({
         "type":"response.create",
-        "model":"mixin/fusion/default",
+        "model":"auto/default",
         "previous_response_id":follow_up_completed["response"]["id"],
         "input":[
             {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},

@@ -131,9 +131,13 @@ impl GatewayExecutor {
         &self,
         model: &str,
     ) -> Result<super::ResolvedModelRoute, GatewayError> {
-        let custom_result =
-            super::ModelRouter::new(&self.config.fusion_profiles, &self.providers, false)
-                .resolve(model);
+        let custom_result = super::ModelRouter::new(
+            &self.config.fusion_profiles,
+            &self.config.failover_routes,
+            &self.providers,
+            false,
+        )
+        .resolve(model);
         if custom_result.is_ok() || !super::is_official_model_slug(model) {
             return custom_result;
         }
@@ -186,8 +190,13 @@ impl GatewayExecutor {
             let slug = crate::provider::catalog_model_slug(selected, &provider.id);
             // Explicit title mappings fail if unavailable; spending official
             // quota would violate the user's selected routing policy.
-            return super::ModelRouter::new(&self.config.fusion_profiles, &self.providers, false)
-                .resolve(&slug);
+            return super::ModelRouter::new(
+                &self.config.fusion_profiles,
+                &self.config.failover_routes,
+                &self.providers,
+                false,
+            )
+            .resolve(&slug);
         }
         self.resolve_model_route(model).await
     }

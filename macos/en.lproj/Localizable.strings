@@ -363,6 +363,16 @@
 "routing.summary.failover" = "Backups: %@";
 "routing.chooseModel" = "Choose a model";
 "routing.noMatches" = "No matching models";
+"routing.failover.nameHelp" = "Optional. Left empty, the route only covers the source model. With a name, the Codex model picker also gets an auto/<name> entry that fails over the same way.";
+"routing.suggestions" = "Suggested routes";
+"routing.suggestions.help" = "Opens a prefilled route. Check the models, then Save & Apply to turn it on.";
+"routing.diagram.client" = "Codex";
+"routing.diagram.panel" = "Panel";
+"routing.diagram.judge" = "Judge";
+"routing.diagram.final" = "Final";
+"routing.diagram.otherTimes" = "Other times";
+"routing.diagram.primary" = "First";
+"routing.diagram.backup" = "Backup %@";
 "routing.field.name" = "Name";
 "routing.field.entry" = "Model entry";
 "routing.field.entryHelp" = "Pick this entry in the Codex model picker to use the route.";

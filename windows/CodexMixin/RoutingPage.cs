@@ -10,7 +10,7 @@ namespace CodexMixin;
 // validation, storage, and applying the change; this page only edits drafts.
 public sealed partial class MainWindow
 {
-    private const string VirtualRoutePrefix = "mixin/fusion/";
+    private const string VirtualRoutePrefix = "auto/";
     private string? routeSelection;
 
     private static (string Title, string Glyph, string Description) RouteKind(string kind) => kind switch

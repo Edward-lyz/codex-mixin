@@ -29,7 +29,7 @@ impl ModelRoute {
     pub fn model(&self) -> String {
         match self {
             Self::Fusion(profile) | Self::Schedule(profile) => profile.model_slug(),
-            Self::Failover(route) => route.source.clone(),
+            Self::Failover(route) => route.entry_model(),
         }
     }
 
@@ -143,7 +143,9 @@ fn remove_route(config: &mut StoredGatewayConfig, model: &str) -> bool {
     config
         .fusion_profiles
         .retain(|profile| profile.model_slug() != model);
-    config.failover_routes.retain(|route| route.source != model);
+    config
+        .failover_routes
+        .retain(|route| route.entry_model() != model);
     before != config.fusion_profiles.len() + config.failover_routes.len()
 }
 
@@ -157,7 +159,7 @@ fn upsert_route(config: &mut StoredGatewayConfig, route: ModelRoute, replace_mod
         ModelRoute::Fusion(profile) | ModelRoute::Schedule(profile) => {
             config
                 .failover_routes
-                .retain(|route| route.source != previous);
+                .retain(|route| route.entry_model() != previous);
             let profiles = &mut config.fusion_profiles;
             let index = profiles
                 .iter()
@@ -175,7 +177,7 @@ fn upsert_route(config: &mut StoredGatewayConfig, route: ModelRoute, replace_mod
             let routes = &mut config.failover_routes;
             let index = routes
                 .iter()
-                .position(|current| current.source == previous)
+                .position(|current| current.entry_model() == previous)
                 .or_else(|| {
                     routes
                         .iter()

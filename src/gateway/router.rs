@@ -1,4 +1,6 @@
-use crate::config::{FUSION_MODEL_PREFIX, FusionProfile};
+use crate::config::{
+    FUSION_MODEL_PREFIX, FailoverRoute, FusionProfile, LEGACY_FUSION_MODEL_PREFIX,
+};
 use crate::error::GatewayError;
 use crate::provider::{AUTO_REVIEW_MODEL_ID, ProviderRegistry};
 
@@ -27,6 +29,7 @@ pub(crate) enum ResolvedModelRoute {
 #[derive(Clone, Copy)]
 pub(crate) struct ModelRouter<'a> {
     fusion_profiles: &'a [FusionProfile],
+    failover_routes: &'a [FailoverRoute],
     providers: &'a ProviderRegistry,
     official_routes_enabled: bool,
 }
@@ -34,18 +37,32 @@ pub(crate) struct ModelRouter<'a> {
 impl<'a> ModelRouter<'a> {
     pub(crate) fn new(
         fusion_profiles: &'a [FusionProfile],
+        failover_routes: &'a [FailoverRoute],
         providers: &'a ProviderRegistry,
         official_routes_enabled: bool,
     ) -> Self {
         Self {
             fusion_profiles,
+            failover_routes,
             providers,
             official_routes_enabled,
         }
     }
 
     pub(crate) fn resolve(self, model: &str) -> Result<ResolvedModelRoute, GatewayError> {
-        if let Some(profile_id) = model.strip_prefix(FUSION_MODEL_PREFIX) {
+        if let Some(profile_id) = model
+            .strip_prefix(FUSION_MODEL_PREFIX)
+            .or_else(|| model.strip_prefix(LEGACY_FUSION_MODEL_PREFIX))
+        {
+            // A named failover route enters at its source; the configured
+            // failover then applies because plans match routes by source.
+            if let Some(route) = self
+                .failover_routes
+                .iter()
+                .find(|route| route.id.as_deref() == Some(profile_id))
+            {
+                return self.resolve(&route.source);
+            }
             if self
                 .fusion_profiles
                 .iter()
@@ -56,7 +73,7 @@ impl<'a> ModelRouter<'a> {
                 });
             }
             return Err(GatewayError::BadRequest(format!(
-                "unknown fusion profile: {profile_id}"
+                "unknown model route: {model}"
             )));
         }
         if let Some(resolved) = self.providers.resolve(model) {

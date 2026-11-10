@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::ProviderRegistry;
 
-pub const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
+pub const FUSION_MODEL_PREFIX: &str = "auto/";
+/// Entry prefix used before routes moved to `auto/`; still resolved.
+pub const LEGACY_FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
 pub const OFFICIAL_MODEL_PREFIX: &str = "official:";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -168,7 +170,9 @@ fn validate_model_reference(profile_id: &str, model: &str) -> anyhow::Result<()>
         anyhow::bail!("fusion profile {profile_id} contains an empty model name");
     }
     let canonical = model.strip_prefix(OFFICIAL_MODEL_PREFIX).unwrap_or(model);
-    if canonical.starts_with(FUSION_MODEL_PREFIX) {
+    if canonical.starts_with(FUSION_MODEL_PREFIX)
+        || canonical.starts_with(LEGACY_FUSION_MODEL_PREFIX)
+    {
         anyhow::bail!(
             "fusion profile {profile_id} cannot recursively reference fusion model {model}"
         );
@@ -215,7 +219,8 @@ pub fn validate_fusion_model_references(
                 continue;
             }
             anyhow::ensure!(
-                !reference.starts_with(FUSION_MODEL_PREFIX),
+                !reference.starts_with(FUSION_MODEL_PREFIX)
+                    && !reference.starts_with(LEGACY_FUSION_MODEL_PREFIX),
                 "fusion profile {} cannot recursively reference fusion model {}",
                 profile.id,
                 reference
