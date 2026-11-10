@@ -240,7 +240,7 @@
 "lightweight.failedTitle" = "Couldn't enter lightweight mode";
 "lightweight.notRunning" = "The local gateway is not running. Lightweight mode keeps only the gateway, so start it first.";
 
-"console.page.context" = "Context Compression";
+"console.page.context" = "Context";
 "context.enabled" = "Enable context engine";
 "context.restartNote" = "Changes are saved right away and restart the running gateway.";
 "context.section.settings" = "Context engine";
@@ -446,17 +446,5 @@
 
 "routing.activity.reason" = "Cause: %@";
 
-"console.page.overview" = "Overview";
-"console.overview.title" = "Overview";
-"agentManagement.state.drift" = "Configuration drift";
-"agentManagement.repair" = "Repair";
-"agentManagement.repairHelp" = "Re-apply %@'s managed configuration";
-"agentManagement.connect" = "Connect";
-"provider.codeReportDetail" = "Report AI-generated code usage to Baidu when this provider is used.";
-"provider.capability.vision" = "Vision";
-"provider.capability.tools" = "Tools";
-"provider.capability.reasoning" = "Reasoning";
-"quota.usedPercent" = "%@ used";
-"routing.more" = "More";
 "routing.enabled" = "Enabled";
 "routing.enabledFor" = "Enable %@";

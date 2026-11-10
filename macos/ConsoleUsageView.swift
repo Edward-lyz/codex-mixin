@@ -137,21 +137,13 @@ private let usageSeriesColors: [Color] = [.blue, .orange, .teal, .purple, .pink,
 
 struct ConsoleUsageView: View {
     @ObservedObject var model: ConsoleUsageModel
-    /// Overview page: headline metrics and the compact chart only, without
-    /// the filter toolbar and the full reply table.
-    var overview = false
     @State private var pageIndex = 0
     @State private var chartShowsRequests = false
     @State private var hoveredSlot: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if overview {
-                Text(AppLocalization.string("console.overview.title"))
-                    .font(.title2.weight(.semibold))
-            } else {
-                toolbar
-            }
+            toolbar
             if let message = model.errorMessage {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
@@ -162,9 +154,7 @@ struct ConsoleUsageView: View {
             }
             summary
             chartCard
-            if !overview {
-                turnsCard
-            }
+            turnsCard
         }
         .padding(20)
         .frame(minWidth: 860, minHeight: 620, alignment: .topLeading)
@@ -280,7 +270,8 @@ struct ConsoleUsageView: View {
                 "\(mismatches)",
                 detail: AppLocalization.string("console.usage.repliesDetail", replies.count),
                 symbol: "exclamationmark.triangle",
-                tint: .secondary
+                tint: .orange,
+                warning: mismatches > 0
             )
         }
     }
@@ -378,7 +369,7 @@ struct ConsoleUsageView: View {
             }
         }
         .padding(14)
-        .frame(height: 130)
+        .frame(height: 260)
         .background(cardBackground)
     }
 
@@ -612,7 +603,7 @@ struct ConsoleUsageView: View {
                         Text(model.providerNames[turn.providerID] ?? turn.providerID).foregroundStyle(.secondary)
                         if turn.modelMatches == false, let returned = turn.returnedModel {
                             Text(AppLocalization.string("console.usage.returned", returned))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.orange)
                         }
                     }
                     .font(.caption)
