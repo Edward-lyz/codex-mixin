@@ -156,6 +156,7 @@ async fn handle_official_ws_request(
     body: Value,
     model: &str,
 ) -> anyhow::Result<()> {
+    let body = crate::gateway::prepare_compaction_replay(body, true).await?;
     let body = crate::upstream::normalize_official_responses_body(body)?;
     let (mut body, _) = crate::images::normalize_provider_images_blocking(body).await?;
     *context.custom_state = None;

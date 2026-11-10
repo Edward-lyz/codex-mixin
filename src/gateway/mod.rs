@@ -2,6 +2,7 @@ use crate::protocol::ResponseStream;
 
 mod cache_shape;
 mod cache_usage;
+mod compaction;
 mod context_loop;
 mod executor;
 mod output_limit;
@@ -15,6 +16,7 @@ pub(crate) use cache_shape::{
     observe_upstream_cache_usage, record_provider_prefix,
 };
 pub(crate) use cache_usage::{DailyTokenUsage, ProviderTokenUsage, TokenUsageAggregator};
+pub(crate) use compaction::prepare_compaction_replay;
 pub(crate) use context_loop::{context_input, context_session};
 pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};

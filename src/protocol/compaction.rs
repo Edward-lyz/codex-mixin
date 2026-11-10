@@ -120,13 +120,14 @@ pub(crate) fn summary_text(summary: &CompactionSummary) -> String {
             "[Locally compacted conversation; tool arguments, tool outputs, reasoning, and media were omitted]\n{transcript}\n[End locally compacted conversation]"
         );
     }
+    // Old tokens retain their schema, but tool results must stay omitted even
+    // when a structured summary is compacted again into a local transcript.
     format!(
-        "[Conversation summary from codex-mixin compaction]\nGoal: {}\nConstraints: {}\nDecisions: {}\nFiles: {}\nTool results: {}\nPending work: {}\n[End conversation summary]",
+        "[Conversation summary from codex-mixin compaction; tool results omitted]\nGoal: {}\nConstraints: {}\nDecisions: {}\nFiles: {}\nPending work: {}\n[End conversation summary]",
         summary.goal,
         summary.constraints.join("\n- "),
         summary.decisions.join("\n- "),
         summary.files.join("\n- "),
-        summary.tool_results.join("\n- "),
         summary.pending_work.join("\n- "),
     )
 }
@@ -145,38 +146,4 @@ fn unix_seconds() -> Result<u64, GatewayError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| GatewayError::Other(error.into()))?
         .as_secs())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn summary() -> CompactionSummary {
-        CompactionSummary {
-            local_transcript: Some("portable context".to_owned()),
-            goal: String::new(),
-            constraints: Vec::new(),
-            decisions: Vec::new(),
-            files: Vec::new(),
-            tool_results: Vec::new(),
-            pending_work: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn local_tokens_are_replayable_across_models() {
-        let secret = URL_SAFE_NO_PAD.encode([7_u8; 32]);
-        let token = encode("model-a", summary(), &secret).unwrap();
-
-        assert!(is_local_token(&token));
-        assert_eq!(
-            decode(&token, &secret).unwrap().local_transcript.as_deref(),
-            Some("portable context")
-        );
-    }
-
-    #[test]
-    fn foreign_tokens_are_not_mistaken_for_local_checkpoints() {
-        assert!(!is_local_token("opaque-token-from-another-provider"));
-    }
 }

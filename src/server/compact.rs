@@ -445,6 +445,7 @@ async fn forward_official_compact(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
+    let body = crate::gateway::prepare_compaction_replay(body, true).await?;
     let (authorization, account_id) = state
         .upstream
         .official_auth()
