@@ -3,29 +3,36 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 
 namespace CodexMixin;
 
+/// One line of the reply table: a session header while grouping, or a reply.
+internal sealed record UsageTableRow(JsonElement? Turn, string Session, string Title, UsageStats Stats, int Count, bool Expanded);
+
 // Renders `usage --daily` and `usage --turns` JSON for the console usage page:
-// totals, a daily stacked bar chart, and the per-reply ledger.
+// comparable headline cards, the stacked usage chart, and the reply ledger.
 internal static class UsageView
 {
     private const double PlotHeight = 120;
-    private const long DayMs = 86_400_000;
+    private const double RowHeight = 34;
     // Prompts below the gateway's 8192-token verdict size are too small for
     // provider caches, so their misses are not flagged.
     private const long CacheVerdictMinPrompt = 8_192;
     private const double CacheLowPercent = 50;
     private const int SeriesColors = 4;
+    internal const string SucceededSeries = "成功";
+    internal const string FailedSeries = "失败";
+
+    private static readonly Brush CachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x2B, 0xA8, 0x9C));
+    private static readonly Brush UncachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x23, 0x83, 0xE2));
+    private static readonly Brush OutputBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x90, 0x65, 0xB0));
 
     private static long Count(JsonElement row, string key) =>
         row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : 0;
 
     private static double? Number(JsonElement row, string key) =>
         row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetDouble() : null;
-
-    private static long Tokens(JsonElement row) =>
-        Count(row, "input_tokens") + Count(row, "cache_read_tokens") + Count(row, "cache_creation_tokens") + Count(row, "output_tokens");
 
     internal static string Compact(double value)
     {
@@ -34,109 +41,282 @@ internal static class UsageView
         return $"{value:0}";
     }
 
-    internal static UIElement Summary(JsonElement[] daily, JsonElement[] turns, Func<string, string, UIElement?, Border> card)
+    private static string Percent(double? value) => value is { } percent ? $"{percent:0.0}%" : "—";
+
+    private enum Tone { Neutral, HigherIsBetter, LowerIsBetter }
+
+    private static (string Text, int Sign)? RelativeDelta(long current, long previous)
     {
-        var cacheRows = daily.Where(row => Number(row, "cache_hit_percent") != null).ToArray();
-        var cached = cacheRows.Sum(row => Count(row, "cache_read_tokens"));
-        var prompt = cached + cacheRows.Sum(row => Count(row, "input_tokens") + Count(row, "cache_creation_tokens"));
-        var mismatches = turns.Count(turn => turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False);
-        var grid = new Grid { ColumnSpacing = 12 };
-        var metrics = new (string Title, string Value, string Note)[]
+        if (previous <= 0) return null;
+        var change = (current - (double)previous) / previous * 100;
+        return ($"{change:+0;-0;0}%", change > 0.5 ? 1 : change < -0.5 ? -1 : 0);
+    }
+
+    private static (string Text, int Sign)? PointDelta(double? current, double? previous)
+    {
+        if (current is not { } now || previous is not { } before) return null;
+        var change = now - before;
+        return ($"{change:+0.0;-0.0;0.0} pp", change > 0.05 ? 1 : change < -0.05 ? -1 : 0);
+    }
+
+    /// Four cards over the same population: every reply attempt in the range
+    /// from the CLI's daily totals, each compared with the previous period.
+    internal static UIElement Summary(UsageStats current, UsageStats previous, UsageSlot[] slots)
+    {
+        var hasPrevious = previous.Attempts > 0;
+        var cards = new UIElement[]
         {
-            ("请求次数", Compact(daily.Sum(row => Count(row, "request_count"))), $"{daily.Select(row => Json.Text(row, "provider_id")).Distinct().Count()} 个 Provider"),
-            ("Tokens", Compact(daily.Sum(Tokens)), $"输出 {Compact(daily.Sum(row => Count(row, "output_tokens")))}"),
-            ("缓存命中", prompt > 0 ? $"{cached * 100.0 / prompt:0.0}%" : "—", $"命中 {Compact(cached)} tokens"),
-            ("模型不一致", mismatches.ToString(), mismatches > 0 ? "上游返回了其他模型" : "所有回复与请求一致"),
+            Kpi("请求次数", Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
+                slots.Select(slot => (double)slot.Total.Attempts).ToArray(), Detail(current.Errors > 0 ? $"其中失败 {Compact(current.Errors)}" : " ")),
+            Kpi("Tokens", Compact(current.Tokens), hasPrevious ? RelativeDelta(current.Tokens, previous.Tokens) : null, Tone.Neutral,
+                slots.Select(slot => (double)slot.Total.Tokens).ToArray(), ShareBar(current)),
+            Kpi("缓存命中率", Percent(current.CacheHitPercent), hasPrevious ? PointDelta(current.CacheHitPercent, previous.CacheHitPercent) : null, Tone.HigherIsBetter,
+                slots.Where(slot => slot.Total.CacheHitPercent != null).Select(slot => slot.Total.CacheHitPercent!.Value).ToArray(),
+                Detail(current.CacheHitPercent == null ? " " : $"命中 {Compact(current.HitRead)} tokens")),
+            Kpi("错误率", Percent(current.ErrorPercent), hasPrevious ? PointDelta(current.ErrorPercent, previous.ErrorPercent) : null, Tone.LowerIsBetter,
+                slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail($"{Compact(current.Errors)} / {Compact(current.Attempts)} 次失败"),
+                warning: (current.ErrorPercent ?? 0) >= 5),
         };
-        for (var index = 0; index < metrics.Length; index++)
+        var grid = new Grid { ColumnSpacing = 12 };
+        for (var index = 0; index < cards.Length; index++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var (title, value, note) = metrics[index];
-            var body = new StackPanel { Spacing = 2 };
-            body.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            body.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
-            var tile = card(title, "", body);
-            Grid.SetColumn(tile, index);
-            grid.Children.Add(tile);
+            Grid.SetColumn((FrameworkElement)cards[index], index);
+            grid.Children.Add(cards[index]);
         }
         return grid;
     }
 
-    /// Stacked daily bars; `split` stacks one segment per provider.
-    internal static UIElement Chart(JsonElement[] daily, IReadOnlyDictionary<string, string> providerNames, int days, bool split, Func<JsonElement, long> metric, string title)
+    private static TextBlock Detail(string text) => new() { Text = text, Style = Themed("Caption") };
+
+    private static Border Kpi(string title, string value, (string Text, int Sign)? delta, Tone tone, double[] trend, UIElement detail, bool warning = false)
     {
-        var today = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / DayMs;
-        var (series, buckets, values, totalValue, max) = UsageBuckets.Build(daily, days, split, today, metric, Tokens);
-        var plot = new Grid { Height = PlotHeight + 18, ColumnSpacing = 3 };
-        for (var index = 0; index < buckets.Length; index++)
+        var body = new Grid { RowSpacing = 4 };
+        for (var row = 0; row < 3; row++) body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
+        body.Children.Add(new TextBlock { Text = title, Style = Themed("Caption") });
+        var number = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var figure = new TextBlock { Text = value, FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        if (warning) figure.Style = Themed("QuotaPercentCritical");
+        number.Children.Add(figure);
+        if (delta is { } change)
         {
+            var style = (tone, change.Sign) switch
+            {
+                (Tone.HigherIsBetter, > 0) or (Tone.LowerIsBetter, < 0) => "SuccessCaption",
+                (Tone.HigherIsBetter, < 0) or (Tone.LowerIsBetter, > 0) => "CriticalCaption",
+                _ => "Caption"
+            };
+            var text = new TextBlock { Text = $"环比 {change.Text}", Style = Themed(style), VerticalAlignment = VerticalAlignment.Center };
+            ToolTipService.SetToolTip(text, "与上一个等长时段相比");
+            number.Children.Add(text);
+        }
+        Grid.SetRow(number, 1);
+        body.Children.Add(number);
+        Grid.SetRow((FrameworkElement)detail, 2);
+        body.Children.Add(detail);
+        var spark = Sparkline(trend);
+        Grid.SetColumn(spark, 1); Grid.SetRowSpan(spark, 3);
+        body.Children.Add(spark);
+        return new Border { Style = Themed("Card"), Padding = new Thickness(16, 12, 16, 12), Child = body };
+    }
+
+    /// A trend line drawn to the space the card gives it.
+    private static FrameworkElement Sparkline(double[] values)
+    {
+        var host = new Grid { Height = 32, VerticalAlignment = VerticalAlignment.Center };
+        if (values.Length < 2 || values.All(value => value == 0)) return host;
+        var line = new Polyline { Style = Themed("Sparkline") };
+        host.Children.Add(line);
+        host.SizeChanged += (_, args) =>
+        {
+            var max = Math.Max(values.Max(), 1e-9);
+            var width = args.NewSize.Width;
+            var points = new PointCollection();
+            for (var index = 0; index < values.Length; index++)
+                points.Add(new Windows.Foundation.Point(index * width / (values.Length - 1), 30 - values[index] / max * 28));
+            line.Points = points;
+        };
+        return host;
+    }
+
+    /// Cached, uncached and output shares of the token total.
+    private static UIElement ShareBar(UsageStats stats)
+    {
+        var bar = new Grid { Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 5, 0, 5) };
+        var parts = new (long Value, Brush Brush, string Name)[] { (stats.Cached, CachedBrush, "缓存输入"), (stats.Uncached, UncachedBrush, "未缓存输入"), (stats.Output, OutputBrush, "输出") };
+        if (stats.Tokens == 0) { bar.Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongFillColorDisabledBrush"]; return bar; }
+        foreach (var (value, brush, _) in parts.Where(part => part.Value > 0))
+        {
+            bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(value, GridUnitType.Star) });
+            var segment = new Border { Background = brush };
+            Grid.SetColumn(segment, bar.ColumnDefinitions.Count - 1);
+            bar.Children.Add(segment);
+        }
+        ToolTipService.SetToolTip(bar, string.Join("\n", parts.Select(part => $"{part.Name} {Compact(part.Value)} · {part.Value * 100.0 / stats.Tokens:0}%")));
+        return bar;
+    }
+
+    /// Stacked bars per slot: token composition or succeeded/failed requests,
+    /// or one segment per provider. Clicking a bar selects its slot.
+    internal static UIElement Chart(UsageSlot[] slots, IReadOnlyDictionary<string, string> providerNames, bool requests, bool split,
+        UsageSlot? selected, Action<UsageSlot?> onSelect)
+    {
+        long Metric(UsageStats stats) => requests ? stats.Attempts : stats.Tokens;
+        string[] series;
+        Brush[] brushes;
+        Func<UsageSlot, long[]> values;
+        if (split)
+        {
+            var totals = new Dictionary<string, long>();
+            foreach (var slot in slots)
+                foreach (var (provider, stats) in slot.ByProvider) totals[provider] = totals.GetValueOrDefault(provider) + Metric(stats);
+            series = totals.Where(pair => pair.Value > 0).OrderByDescending(pair => pair.Value).Select(pair => pair.Key).ToArray();
+            brushes = series.Select((_, index) => SeriesBrush(index)).ToArray();
+            values = slot => series.Select(provider => Metric(slot.ByProvider.GetValueOrDefault(provider))).ToArray();
+        }
+        else if (requests)
+        {
+            series = [SucceededSeries, FailedSeries];
+            brushes = [(Brush)Microsoft.UI.Xaml.Application.Current.Resources["AccentFillColorDefaultBrush"], (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SystemFillColorCriticalBrush"]];
+            values = slot => [slot.Total.Requests, slot.Total.Errors];
+        }
+        else
+        {
+            series = ["缓存输入", "未缓存输入", "输出"];
+            brushes = [CachedBrush, UncachedBrush, OutputBrush];
+            values = slot => [slot.Total.Cached, slot.Total.Uncached, slot.Total.Output];
+        }
+        var cells = slots.Select(values).ToArray();
+        var max = Math.Max(1, cells.Length == 0 ? 1 : cells.Max(row => row.Sum()));
+        var plot = new Grid { Height = PlotHeight + 20, ColumnSpacing = slots.Length > 24 ? 2 : 4 };
+        var labelEvery = (int)Math.Ceiling(slots.Length / 8.0);
+        for (var index = 0; index < slots.Length; index++)
+        {
+            var slot = slots[index];
             plot.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var day = buckets[index];
-            var column = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
-            var total = 0L;
-            // Bottom-up stacking: the largest series sits at the base.
+            var bars = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
+            // The first series sits at the base of the stack.
             for (var seriesIndex = series.Length - 1; seriesIndex >= 0; seriesIndex--)
             {
-                var value = values[index][seriesIndex];
-                total += value;
-                if (value == 0) continue;
-                column.Children.Add(new Border { Height = value * PlotHeight / max, Background = SeriesBrush(seriesIndex) });
+                var value = cells[index][seriesIndex];
+                if (value > 0) bars.Children.Add(new Border { Height = Math.Max(1, value * PlotHeight / max), Background = brushes[seriesIndex] });
             }
-            var date = DateTimeOffset.FromUnixTimeMilliseconds(day * DayMs);
-            column.Children.Add(new TextBlock
+            if (bars.Children.Count > 0) ((Border)bars.Children[0]).CornerRadius = new CornerRadius(2, 2, 0, 0);
+            var column = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+            column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(PlotHeight) });
+            column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(20) });
+            column.Children.Add(bars);
+            var label = new TextBlock
             {
-                Text = buckets.Length <= 8 || index % (int)Math.Ceiling(buckets.Length / 8.0) == 0 ? $"{date.Month}/{date.Day}" : "",
-                Style = Themed("Caption"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0)
-            });
-            ToolTipService.SetToolTip(column, $"{date.Month}/{date.Day} · {Compact(total)}");
+                Text = index % labelEvery == 0 ? SlotLabel(slot) : "", Style = Themed("Caption"), FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, TextTrimming = TextTrimming.None
+            };
+            Grid.SetRow(label, 1);
+            column.Children.Add(label);
+            if (selected != null && selected.Start != slot.Start) column.Opacity = 0.35;
+            var lines = new List<string> { SlotTitle(slot) };
+            for (var seriesIndex = 0; seriesIndex < series.Length; seriesIndex++)
+                if (cells[index][seriesIndex] > 0) lines.Add($"{SeriesName(series[seriesIndex], providerNames)}  {Compact(cells[index][seriesIndex])}");
+            lines.Add($"请求 {Compact(slot.Total.Attempts)} · 失败 {Compact(slot.Total.Errors)} · 缓存命中 {Percent(slot.Total.CacheHitPercent)}");
+            lines.Add(selected?.Start == slot.Start ? "再次点击显示全部回复" : "点击只看这段时间的回复");
+            ToolTipService.SetToolTip(column, string.Join("\n", lines));
+            column.Tapped += (_, _) => onSelect(selected?.Start == slot.Start ? null : slot);
             Grid.SetColumn(column, index);
             plot.Children.Add(column);
         }
-        var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Text = $"{title} · 合计 {Compact(totalValue)}", Style = Themed("Caption") });
-        body.Children.Add(plot);
-        if (split && series.Length > 0)
+        var total = cells.Sum(row => row.Sum());
+        var header = new Grid();
+        header.Children.Add(new TextBlock { Text = $"{(requests ? "请求次数" : "Tokens")} · 合计 {Compact(total)}", Style = Themed("Caption") });
+        var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, HorizontalAlignment = HorizontalAlignment.Right };
+        for (var index = 0; index < series.Length; index++)
         {
-            var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
-            for (var index = 0; index < series.Length; index++)
-            {
-                var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                item.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = SeriesBrush(index), VerticalAlignment = VerticalAlignment.Center });
-                item.Children.Add(new TextBlock { Text = providerNames.GetValueOrDefault(series[index], series[index]), Style = Themed("Caption") });
-                legend.Children.Add(item);
-            }
-            body.Children.Add(legend);
+            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            item.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(2), Background = brushes[index], VerticalAlignment = VerticalAlignment.Center });
+            item.Children.Add(new TextBlock { Text = SeriesName(series[index], providerNames), Style = Themed("Caption") });
+            legend.Children.Add(item);
         }
+        header.Children.Add(legend);
+        var body = new StackPanel { Spacing = 8 };
+        body.Children.Add(header);
+        body.Children.Add(plot);
         return body;
     }
 
-    internal static long DailyTokens(JsonElement row) => Tokens(row);
-    internal static long DailyRequests(JsonElement row) => Count(row, "request_count");
+    private static string SeriesName(string series, IReadOnlyDictionary<string, string> providerNames) => providerNames.GetValueOrDefault(series, series);
+
+    private static string SlotLabel(UsageSlot slot) => slot.Hourly ? $"{slot.Start.ToLocalTime():HH}" : $"{slot.Start.UtcDateTime:M/d}";
+
+    internal static string SlotTitle(UsageSlot slot) => slot.Hourly
+        ? $"{slot.Start.ToLocalTime():M/d HH:00}–{slot.End.ToLocalTime():HH:00}"
+        : $"{slot.Start.UtcDateTime:M/d}（UTC 日）";
 
     private static Brush SeriesBrush(int index) => index < SeriesColors
         ? QuotaView.RingBrush(index)
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
-    /// One row per reply, newest first; `onSession` filters to one session.
-    internal static ListView Turns(JsonElement[] turns, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession)
+    /// Table lines for the shown replies, grouped by session when asked.
+    /// Sessions keep the order of their newest reply.
+    internal static UsageTableRow[] Rows(JsonElement[] turns, bool group, ISet<string> expanded)
     {
-        var headers = new[] { "时间", "会话", "模型", "未缓存", "命中缓存", "输出", "思考", "首字", "速度" };
+        if (!group) return turns.Select(turn => new UsageTableRow(turn, Json.Text(turn, "session"), "", default, 1, true)).ToArray();
+        var rows = new List<UsageTableRow>();
+        foreach (var session in turns.GroupBy(turn => Json.Text(turn, "session")))
+        {
+            var items = session.ToArray();
+            var open = expanded.Contains(session.Key);
+            rows.Add(new UsageTableRow(null, session.Key, Json.OptionalText(items[0], "session_display") ?? session.Key,
+                UsageStats.Sum(items.Select(UsageStats.Turn)), items.Length, open));
+            if (open) rows.AddRange(items.Select(turn => new UsageTableRow(turn, session.Key, "", default, 1, true)));
+        }
+        return rows.ToArray();
+    }
+
+    private static readonly string[] Headers = ["时间", "状态", "会话", "模型", "未缓存", "命中缓存", "输出", "思考", "首字", "速度"];
+    private static readonly double[] ColumnWeights = [1.2, 0.7, 1.1, 2.2, 0.8, 1.1, 0.7, 0.7, 0.7, 0.8];
+
+    internal static UIElement TableHeader() =>
+        Line(Headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("ColumnHeader") }).ToArray(), false);
+
+    /// Virtualized rows; containers are recycled, so only visible rows are built.
+    internal static ListView Turns(UsageTableRow[] rows, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession, Action<string> onToggle)
+    {
         var list = new ListView
         {
-            SelectionMode = ListViewSelectionMode.None, Height = Math.Min(360, 44 + turns.Length * 64),
-            Header = Row(headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("Caption") }).ToArray(), false),
+            SelectionMode = ListViewSelectionMode.None, Height = Math.Min(14, Math.Max(rows.Length, 1)) * (RowHeight + 1) + 4,
             ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"],
             ItemContainerStyle = Themed("ModelRowContainer"),
-            ItemsSource = Enumerable.Range(0, turns.Length).ToArray()
+            ItemsSource = Enumerable.Range(0, rows.Length).ToArray()
         };
         AutomationProperties.SetAutomationId(list, "usage-turns");
         list.ContainerContentChanging += (_, args) =>
         {
             if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
-            content.Content = args.InRecycleQueue ? null : Turn(turns[(int)args.Item], providerNames, onSession);
+            if (args.InRecycleQueue) { content.Content = null; args.Handled = true; return; }
+            var row = rows[(int)args.Item];
+            content.Content = row.Turn is { } turn ? Turn(turn, providerNames, onSession) : Group(row, onToggle);
             args.Handled = true;
         };
         return list;
+    }
+
+    private static UIElement Group(UsageTableRow row, Action<string> onToggle)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        content.Children.Add(new FontIcon { Glyph = row.Expanded ? "\uE70D" : "\uE76C", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = row.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, MaxWidth = 360, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        var summary = $"{row.Count} 条 · {Compact(row.Stats.Tokens)} tokens · 缓存命中 {Percent(row.Stats.CacheHitPercent)}";
+        content.Children.Add(new TextBlock { Text = summary, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
+        if (row.Stats.Errors > 0)
+            content.Children.Add(new TextBlock { Text = $"{row.Stats.Errors} 失败", Style = Themed("CriticalCaption"), VerticalAlignment = VerticalAlignment.Center });
+        var button = new Button
+        {
+            Style = Themed("MenuRow"), Content = content, Height = RowHeight, Padding = new Thickness(16, 0, 16, 0), CornerRadius = new CornerRadius(0)
+        };
+        AutomationProperties.SetName(button, $"{row.Title} {summary}");
+        button.Click += (_, _) => onToggle(row.Session);
+        return new Border { Child = button, Style = Themed("RowDivider") };
     }
 
     private static Border Turn(JsonElement turn, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession)
@@ -146,56 +326,71 @@ internal static class UsageView
         var sessionButton = new HyperlinkButton
         {
             Content = new TextBlock { Text = sessionTitle, TextTrimming = TextTrimming.CharacterEllipsis },
-            Padding = new Thickness(0), FontFamily = new FontFamily("Consolas"),
+            Padding = new Thickness(0), FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetName(sessionButton, sessionTitle);
         ToolTipService.SetToolTip(sessionButton, $"{sessionTitle}\n只看这个会话，再次点击显示全部");
         sessionButton.Click += (_, _) => onSession(session);
-        var model = new StackPanel();
-        model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });
-        var mismatch = turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False;
+
+        var failed = UsageStats.IsFailed(turn);
+        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        status.Children.Add(new Ellipse { Style = Themed(failed ? "DotCritical" : "DotOn"), VerticalAlignment = VerticalAlignment.Center });
+        status.Children.Add(new TextBlock { Text = failed ? "失败" : "成功", Style = Themed(failed ? "CriticalCaption" : "Caption") });
+        if (failed) ToolTipService.SetToolTip(status, Json.OptionalText(turn, "error") ?? "上游请求失败");
+
         var providerId = Json.Text(turn, "provider_id");
         var providerName = providerNames.GetValueOrDefault(providerId, providerId);
-        model.Children.Add(new TextBlock
+        var modelId = Json.Text(turn, "upstream_model_id");
+        var model = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        model.Children.Add(new TextBlock { Text = modelId, TextTrimming = TextTrimming.CharacterEllipsis });
+        var tip = $"{providerName} · {modelId}";
+        if (UsageStats.IsSubstituted(turn))
         {
-            Text = mismatch ? $"{providerName} · 返回 {Json.OptionalText(turn, "returned_model")}" : providerName,
-            Style = Themed(mismatch ? "CautionCaption" : "Caption")
-        });
+            var returned = Json.OptionalText(turn, "returned_model");
+            model.Children.Add(new TextBlock { Text = $"→ {returned}", Style = Themed("CautionCaption"), VerticalAlignment = VerticalAlignment.Center });
+            tip += $"\n上游实际返回 {returned}";
+        }
+        ToolTipService.SetToolTip(model, tip);
+
         var promptTokens = Count(turn, "input_tokens") + Count(turn, "cache_read_tokens") + Count(turn, "cache_creation_tokens");
         var hit = Number(turn, "cache_hit_percent");
         var lowCache = hit is < CacheLowPercent && promptTokens >= CacheVerdictMinPrompt;
-        var reasoning = Number(turn, "reasoning_tokens") is { } reasoningTokens ? Compact(reasoningTokens)
-            : Count(turn, "reasoning_chars") is > 0 and var chars ? $"{Compact(chars)} 字" : "—";
+        var reasoning = new TextBlock { Text = Number(turn, "reasoning_tokens") is { } reasoningTokens ? Compact(reasoningTokens) : "—" };
+        if (Count(turn, "reasoning_chars") is > 0 and var chars) ToolTipService.SetToolTip(reasoning, $"思考内容约 {Compact(chars)} 字");
         string Optional(string key) => Number(turn, key) is { } value ? Compact(value) : "—";
         var cells = new UIElement[]
         {
             new TextBlock { Text = DateTimeOffset.FromUnixTimeMilliseconds(Count(turn, "at_ms")).ToLocalTime().ToString("MM-dd HH:mm:ss"), Style = Themed("Mono") },
+            status,
             sessionButton,
             model,
             new TextBlock { Text = Optional("input_tokens") },
             new TextBlock { Text = hit is { } percent ? $"{Optional("cache_read_tokens")} · {percent:0}%" : Optional("cache_read_tokens"), Style = lowCache ? Themed("CautionCaption") : null },
             new TextBlock { Text = Optional("output_tokens") },
-            new TextBlock { Text = reasoning },
+            reasoning,
             new TextBlock { Text = Number(turn, "ttft_ms") is { } ttft ? $"{ttft:0} ms" : "—" },
             new TextBlock { Text = Number(turn, "output_tps") is { } tps ? $"{tps:0.0} t/s" : "—" },
         };
-        return Row(cells, true);
+        return Line(cells, true);
     }
 
-    private static readonly double[] ColumnWeights = [1.3, 0.8, 2.2, 0.9, 1.2, 0.8, 0.8, 0.8, 0.9];
-
-    private static Border Row(UIElement[] cells, bool divider)
+    private static Border Line(UIElement[] cells, bool divider)
     {
         var grid = new Grid { ColumnSpacing = 10 };
         for (var index = 0; index < cells.Length; index++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ColumnWeights[index], GridUnitType.Star) });
             if (cells[index] is FrameworkElement element) element.VerticalAlignment = VerticalAlignment.Center;
+            if (cells[index] is TextBlock text) { text.TextTrimming = TextTrimming.CharacterEllipsis; text.FontSize = 12; }
             Grid.SetColumn((FrameworkElement)cells[index], index);
             grid.Children.Add(cells[index]);
         }
-        return new Border { Child = grid, Padding = new Thickness(16, 8, 16, 8), Style = Themed(divider ? "RowDivider" : "RowPlain"), BorderThickness = divider ? new Thickness(0, 1, 0, 0) : new Thickness(0) };
+        return new Border
+        {
+            Child = grid, Height = RowHeight, Padding = new Thickness(16, 0, 16, 0),
+            Style = Themed(divider ? "RowDivider" : "RowPlain"), BorderThickness = divider ? new Thickness(0, 0, 0, 1) : new Thickness(0)
+        };
     }
 
     private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];

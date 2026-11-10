@@ -238,7 +238,7 @@ try {
     & $WinApp ui invoke 图表分组 -a $app.Id --action expand
     $option = & $WinApp ui search '按 Provider 拆分' -a $app.Id --type ListItem --json | ConvertFrom-Json
     & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
-    & $WinApp ui wait-for 每日用量 -a $app.Id --timeout 10000
+    & $WinApp ui wait-for usage-status -a $app.Id --timeout 10000
     $null = & $cli --no-tui --json-errors usage --daily --json --days 1 | ConvertFrom-Json
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
     $completed.Add($stage)

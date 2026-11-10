@@ -91,6 +91,13 @@
       <Style x:Key="CautionCaption" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
         <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionBrush}" />
       </Style>
+      <Style x:Key="CriticalCaption" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+      </Style>
+      <Style x:Key="Sparkline" TargetType="Polyline">
+        <Setter Property="Stroke" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+        <Setter Property="StrokeThickness" Value="1.5" /><Setter Property="StrokeLineJoin" Value="Round" />
+      </Style>
       <Style x:Key="GlyphOn" TargetType="FontIcon">
         <Setter Property="FontSize" Value="15" />
         <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
@@ -120,6 +127,9 @@
       </Style>
       <Style x:Key="DotWarn" TargetType="Ellipse" BasedOn="{StaticResource DotOn}">
         <Setter Property="Fill" Value="{ThemeResource SystemFillColorCautionBrush}" />
+      </Style>
+      <Style x:Key="DotCritical" TargetType="Ellipse" BasedOn="{StaticResource DotOn}">
+        <Setter Property="Fill" Value="{ThemeResource SystemFillColorCriticalBrush}" />
       </Style>
       <!-- Flat rows and icon buttons keep the default hover and pressed visuals. -->
       <Style x:Key="FlatButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
