@@ -337,13 +337,10 @@
 "console.page.routing" = "Model Routing";
 "routing.menuTitle" = "Model Routing…";
 "routing.title" = "Model Routing";
-"routing.subtitle" = "Decide which model actually answers a request.";
 "routing.new" = "New Route";
-"routing.newBadge" = "New";
 "routing.untitled" = "Untitled";
 "routing.empty" = "No routes yet";
 "routing.selectHint" = "Select a route on the left to edit it, or create another one below.";
-"routing.emptyHint" = "Pick a route type on the right to start.";
 "routing.gallery.title" = "Put several models behind one model name";
 "routing.gallery.subtitle" = "Routes run in the local gateway, so connected Agents need no changes. Pick a type to start; saving restarts the gateway and refreshes the model catalog.";
 "routing.gallery.create" = "Create";
@@ -378,19 +375,14 @@
 "routing.summary.failover" = "Backups: %@";
 "routing.chooseModel" = "Choose a model";
 "routing.noMatches" = "No matching models";
-"routing.failover.nameHelp" = "Optional. Left empty, the route only covers the source model. With a name, the Agent model picker also gets an auto/<name> entry that fails over the same way.";
 "routing.suggestions" = "Suggested routes";
-"routing.suggestions.help" = "Opens a prefilled route. Check the models, then Save & Apply to turn it on.";
 "routing.diagram.client" = "Agents";
 "routing.diagram.panel" = "Panel";
-"routing.diagram.judge" = "Judge";
-"routing.diagram.final" = "Final";
 "routing.diagram.otherTimes" = "Other times";
 "routing.diagram.primary" = "First";
 "routing.diagram.backup" = "Backup %@";
 "routing.field.name" = "Name";
 "routing.field.entry" = "Model entry";
-"routing.field.entryHelp" = "Pick this entry in the Agent model picker to use the route.";
 "routing.fusion.searchPanels" = "Search panel models";
 "routing.fusion.panels" = "Panel models";
 "routing.fusion.panelCount" = "%@ / 8 selected";
@@ -401,9 +393,7 @@
 "routing.fusion.timeout" = "Per-model timeout: %@ s";
 "routing.fusion.showIntermediate" = "Show panel and judge results in the answer";
 "routing.fusion.panelTools" = "Allow panels to use in-process read-only tools";
-"routing.fusion.footer" = "Every new user turn runs the panel in parallel, then the judge, then the final model, which edits and replies. Tool calls within the turn go straight to the final model.";
 "routing.stage.panels" = "Panel answers in parallel";
-"routing.stage.panelsCount" = "%@ models";
 "routing.stage.judge" = "Judge reviews";
 "routing.stage.final" = "Final edits and replies";
 "routing.stage.editPanels" = "Choose panel models";
@@ -413,21 +403,14 @@
 "routing.more" = "More";
 "routing.deleteEllipsis" = "Delete Route…";
 "routing.suggestions.enable" = "Enable";
-"routing.schedule.slots" = "Time slots";
 "routing.schedule.default" = "Default model";
 "routing.schedule.add" = "Add Time Slot";
-"routing.schedule.to" = "to";
 "routing.schedule.remove" = "Remove time slot";
-"routing.schedule.now" = "Right now this route answers with %@.";
-"routing.schedule.footer" = "Start is inclusive and end is exclusive; an end earlier than the start crosses midnight. Slots cannot overlap, and uncovered time uses the default model.";
 "routing.failover.source" = "Original model";
-"routing.failover.sourceHelp" = "Requests keep using this model. Backups take over only when it fails.";
-"routing.failover.fallbacks" = "Backup models (in order)";
 "routing.failover.add" = "Add Backup";
 "routing.failover.moveUp" = "Move up";
 "routing.failover.moveDown" = "Move down";
 "routing.failover.remove" = "Remove backup";
-"routing.failover.footer" = "Switches on rate limits (429), server errors (5xx), connection failures and timeouts, only before any output is sent. Client errors such as 400 are returned as is. Each backup is tried once, and the answer starts with a note naming the model used.";
 "routing.discard" = "Discard Changes";
 "routing.save" = "Save and Apply";
 "routing.deleteConfirmTitle" = "Delete this route?";
@@ -460,7 +443,6 @@
 "routing.error.encode" = "The route cannot be encoded as JSON.";
 "routing.error.invalidJSON" = "The route command returned invalid JSON.";
 
-"routing.activity.waiting" = "No requests yet · the first request starts with the primary model";
 
 "routing.activity.failed" = "All attempts failed";
 

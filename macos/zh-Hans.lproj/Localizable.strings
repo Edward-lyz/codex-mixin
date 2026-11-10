@@ -337,13 +337,10 @@
 "console.page.routing" = "模型路由";
 "routing.menuTitle" = "模型路由…";
 "routing.title" = "模型路由";
-"routing.subtitle" = "决定请求最终由哪个模型回答。";
 "routing.new" = "新建路由";
-"routing.newBadge" = "新建";
 "routing.untitled" = "未命名";
 "routing.empty" = "还没有路由";
 "routing.selectHint" = "在左侧选择一条路由进行编辑，或在下方新建。";
-"routing.emptyHint" = "在右侧选择一种路由类型开始。";
 "routing.gallery.title" = "让一个模型名背后有多个模型";
 "routing.gallery.subtitle" = "路由由本地网关执行，已接入的 Agent 无需改动。选择一种类型开始，保存后网关会自动重启并刷新模型目录。";
 "routing.gallery.create" = "创建";
@@ -378,19 +375,14 @@
 "routing.summary.failover" = "备用：%@";
 "routing.chooseModel" = "选择模型";
 "routing.noMatches" = "没有匹配的模型";
-"routing.failover.nameHelp" = "可选。留空时只作用于原模型；填写名称后，Agent 模型选择器里会多出入口 auto/名称，选它即可获得故障转移。";
 "routing.suggestions" = "推荐路由";
-"routing.suggestions.help" = "打开预填好的路由，检查模型后点击「保存并应用」即可启用。";
 "routing.diagram.client" = "Agents";
 "routing.diagram.panel" = "并行作答";
-"routing.diagram.judge" = "评审";
-"routing.diagram.final" = "最终作答";
 "routing.diagram.otherTimes" = "其他时间";
 "routing.diagram.primary" = "首选";
 "routing.diagram.backup" = "备用 %@";
 "routing.field.name" = "名称";
 "routing.field.entry" = "模型入口";
-"routing.field.entryHelp" = "在 Agent 模型选择器中选择这个入口即可使用该路由。";
 "routing.fusion.searchPanels" = "搜索 Panel 模型";
 "routing.fusion.panels" = "Panel 模型";
 "routing.fusion.panelCount" = "已选择 %@ / 8 个";
@@ -401,9 +393,7 @@
 "routing.fusion.timeout" = "单模型超时：%@ 秒";
 "routing.fusion.showIntermediate" = "在回答中显示 Panel / Judge 中间结果";
 "routing.fusion.panelTools" = "允许 Panel 使用进程内只读工具";
-"routing.fusion.footer" = "每个新用户轮次都先由 Panel 并行给出意见、Judge 汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。";
 "routing.stage.panels" = "Panel 并行作答";
-"routing.stage.panelsCount" = "%@ 个模型";
 "routing.stage.judge" = "Judge 评审";
 "routing.stage.final" = "Final 修改与回复";
 "routing.stage.editPanels" = "选择 Panel 模型";
@@ -413,21 +403,14 @@
 "routing.more" = "更多";
 "routing.deleteEllipsis" = "删除路由…";
 "routing.suggestions.enable" = "启用";
-"routing.schedule.slots" = "时段";
 "routing.schedule.default" = "默认模型";
 "routing.schedule.add" = "添加时段";
-"routing.schedule.to" = "至";
 "routing.schedule.remove" = "删除时段";
-"routing.schedule.now" = "当前时间由 %@ 回答。";
-"routing.schedule.footer" = "开始时间包含、结束时间不包含；结束早于开始表示跨午夜。时段不能重叠，未覆盖的时间使用默认模型。";
 "routing.failover.source" = "原模型";
-"routing.failover.sourceHelp" = "请求仍然使用这个模型，只有它出错时才切换到备用模型。";
-"routing.failover.fallbacks" = "备用模型（按顺序）";
 "routing.failover.add" = "添加备用模型";
 "routing.failover.moveUp" = "上移";
 "routing.failover.moveDown" = "下移";
 "routing.failover.remove" = "删除备用模型";
-"routing.failover.footer" = "遇到限流（429）、服务端错误（5xx）、连接失败或超时，且尚未输出任何内容时切换。400 等客户端错误原样返回。每个备用模型只尝试一次，回答开头会注明实际使用的模型。";
 "routing.discard" = "放弃修改";
 "routing.save" = "保存并应用";
 "routing.deleteConfirmTitle" = "删除这条路由？";
@@ -460,7 +443,6 @@
 "routing.error.encode" = "路由无法编码为 JSON。";
 "routing.error.invalidJSON" = "路由命令返回了无效 JSON。";
 
-"routing.activity.waiting" = "暂无请求记录 · 首次请求从首选模型开始";
 
 "routing.activity.failed" = "所有尝试均失败";
 
