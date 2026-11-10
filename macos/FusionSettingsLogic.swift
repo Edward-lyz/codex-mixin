@@ -68,11 +68,24 @@ struct FusionModelOption: Hashable {
     let id: String
     let displayName: String
     let isAvailable: Bool
+    let providerID: String
+    let providerName: String
+    let providerWebsiteURL: String?
 
-    init(id: String, displayName: String, isAvailable: Bool = true) {
+    init(
+        id: String,
+        displayName: String,
+        isAvailable: Bool = true,
+        providerID: String = "",
+        providerName: String = "",
+        providerWebsiteURL: String? = nil
+    ) {
         self.id = id
         self.displayName = displayName
         self.isAvailable = isAvailable
+        self.providerID = providerID
+        self.providerName = providerName
+        self.providerWebsiteURL = providerWebsiteURL
     }
 }
 

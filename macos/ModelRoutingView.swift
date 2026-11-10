@@ -71,14 +71,6 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
             ]
         }
     }
-
-    var tint: Color {
-        switch self {
-        case .fusion: .purple
-        case .schedule: .orange
-        case .failover: .teal
-        }
-    }
 }
 
 /// One editable route. Fusion and schedule routes wrap a Fusion profile and expose
@@ -270,6 +262,19 @@ final class ModelRoutingModel: ObservableObject {
         return options + missing.sorted().map {
             FusionModelOption(id: $0, displayName: AppLocalization.string("fusion.unavailableModel"), isAvailable: false)
         }
+    }
+
+    /// Picker choices grouped by provider, in provider-list order; missing references come last.
+    func pickerGroups(including references: [String]) -> [(name: String, options: [FusionModelOption])] {
+        var groups: [(name: String, options: [FusionModelOption])] = []
+        for option in pickerOptions(including: references) {
+            if groups.last?.name == option.providerName {
+                groups[groups.count - 1].options.append(option)
+            } else {
+                groups.append((option.providerName, [option]))
+            }
+        }
+        return groups
     }
 
     func reloadOnShow() async {
@@ -491,9 +496,9 @@ struct ModelRoutingView: View {
             HStack(spacing: 10) {
                 Image(systemName: "point.3.filled.connected.trianglepath.dotted")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.primary)
                     .frame(width: 30, height: 30)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.opacity(0.12)))
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.quaternary.opacity(0.5)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(AppLocalization.string("routing.title")).font(.headline)
                     Text(AppLocalization.string("routing.subtitle"))
@@ -580,7 +585,7 @@ struct ModelRoutingView: View {
             if !message.isEmpty {
                 let isError = model.validationError != nil || model.statusIsError
                 Image(systemName: isError ? "exclamationmark.triangle" : "checkmark.circle")
-                    .foregroundStyle(isError ? Color.red : Color.green)
+                    .foregroundStyle(isError ? Color.red : Color.secondary)
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(isError ? Color.red : Color.secondary)
@@ -653,7 +658,7 @@ private struct ModelRouteGallery: View {
     private var statusBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: model.statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(model.statusIsError ? Color.red : Color.green)
+                .foregroundStyle(model.statusIsError ? Color.red : Color.secondary)
             Text(model.status)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
@@ -663,7 +668,7 @@ private struct ModelRouteGallery: View {
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill((model.statusIsError ? Color.red : Color.green).opacity(0.1))
+                .fill(model.statusIsError ? Color.red.opacity(0.08) : Color.primary.opacity(0.04))
         )
     }
 
@@ -684,9 +689,9 @@ private struct ModelRouteGallery: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text("\(index + 1)")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.secondary)
                             .frame(width: 20, height: 20)
-                            .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                            .background(Circle().strokeBorder(Color(nsColor: .separatorColor)))
                         Text(text)
                             .font(.callout)
                             .foregroundStyle(.secondary)
@@ -719,9 +724,9 @@ private struct ModelRouteKindCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: kind.symbol)
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(kind.tint)
+                    .foregroundStyle(.primary)
                     .frame(width: 40, height: 40)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(kind.tint.opacity(0.14)))
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.quaternary.opacity(0.5)))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.title).font(.headline)
                     Text(kind.pitch)
@@ -740,7 +745,7 @@ private struct ModelRouteKindCard: View {
                     Image(systemName: "arrow.right")
                 }
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(isEnabled ? kind.tint : Color.secondary)
+                .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             }
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
@@ -750,8 +755,7 @@ private struct ModelRouteKindCard: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isHovered && isEnabled ? kind.tint.opacity(0.7) : Color(nsColor: .separatorColor),
-                                  lineWidth: isHovered && isEnabled ? 1.5 : 1)
+                    .strokeBorder(isHovered && isEnabled ? Color.primary.opacity(0.45) : Color(nsColor: .separatorColor))
             )
             .shadow(color: .black.opacity(isHovered && isEnabled ? 0.08 : 0), radius: 8, y: 2)
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -779,8 +783,8 @@ private struct ModelRouteKindCard: View {
                     .lineLimit(1)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(kind.tint.opacity(0.12)))
-                    .foregroundStyle(kind.tint)
+                    .background(Capsule().fill(.quaternary.opacity(0.5)))
+                    .foregroundStyle(.secondary)
             }
         }
         .accessibilityElement(children: .combine)
@@ -795,9 +799,9 @@ private struct ModelRouteRow: View {
         HStack(spacing: 10) {
             Image(systemName: route.kind.symbol)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(route.kind.tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 26, height: 26)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(route.kind.tint.opacity(0.14)))
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.quaternary.opacity(0.5)))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
@@ -806,7 +810,7 @@ private struct ModelRouteRow: View {
                     if isNew {
                         Text(AppLocalization.string("routing.newBadge"))
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Text(route.summary(atMinute: currentLocalMinute()))
@@ -845,9 +849,9 @@ private struct ModelRouteEditor: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: kind.symbol)
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(kind.tint)
+                .foregroundStyle(.primary)
                 .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(kind.tint.opacity(0.14)))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.quaternary.opacity(0.5)))
             VStack(alignment: .leading, spacing: 3) {
                 Text(kind.title).font(.headline)
                 Text(kind.help).font(.caption).foregroundStyle(.secondary)
@@ -866,16 +870,34 @@ private struct ModelRouteEditor: View {
     private var draft: ModelRouteDraft { model.draft ?? ModelRouteDraft(kind: kind) }
 
     private func modelPicker(_ title: String, selection: Binding<String>, labelsHidden: Bool = false) -> some View {
-        Picker(title, selection: selection) {
+        let groups = model.pickerGroups(including: [selection.wrappedValue])
+        return Picker(title, selection: selection) {
             if selection.wrappedValue.isEmpty {
                 Text(AppLocalization.string("routing.chooseModel")).tag("")
             }
-            ForEach(model.pickerOptions(including: [selection.wrappedValue]), id: \.id) { option in
-                Text(option.isAvailable ? option.id : "\(option.id) \(AppLocalization.string("fusion.unavailable"))")
-                    .tag(option.id)
+            ForEach(groups.indices, id: \.self) { index in
+                Section {
+                    ForEach(groups[index].options, id: \.id) { option in
+                        Label {
+                            Text(option.isAvailable
+                                ? option.displayName
+                                : "\(option.id) \(AppLocalization.string("fusion.unavailable"))")
+                        } icon: {
+                            if let image = routeProviderLogo(option) {
+                                Image(nsImage: image)
+                            } else {
+                                Image(systemName: "cube")
+                            }
+                        }
+                        .tag(option.id)
+                    }
+                } header: {
+                    if !groups[index].name.isEmpty { Text(groups[index].name) }
+                }
             }
         }
         .labelsHidden(labelsHidden)
+        .help(selection.wrappedValue)
     }
 
     private var nameSection: some View {
@@ -943,46 +965,78 @@ private extension ModelRouteEditor {
 
     var panelList: some View {
         let selected = draft.profile.panelModels
-        let options = model.pickerOptions(including: selected).filter {
-            panelQuery.isEmpty
-                || $0.id.localizedCaseInsensitiveContains(panelQuery)
-                || $0.displayName.localizedCaseInsensitiveContains(panelQuery)
-        }
+        let groups = model.pickerGroups(including: selected).map { group in
+            (name: group.name, options: group.options.filter {
+                panelQuery.isEmpty
+                    || $0.id.localizedCaseInsensitiveContains(panelQuery)
+                    || $0.displayName.localizedCaseInsensitiveContains(panelQuery)
+                    || $0.providerName.localizedCaseInsensitiveContains(panelQuery)
+            })
+        }.filter { !$0.options.isEmpty }
         return ScrollView {
-            LazyVStack(spacing: 0) {
-                if options.isEmpty {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if groups.isEmpty {
                     Text(AppLocalization.string(model.options.isEmpty ? "fusion.noModels" : "routing.noMatches"))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity)
                 }
-                ForEach(options, id: \.id) { option in
-                    let isOn = selected.contains(option.id)
-                    Button {
-                        model.togglePanel(option.id)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(option.id).lineLimit(1).truncationMode(.middle)
-                                Text(option.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(option.isAvailable ? Color.secondary : Color.red)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 5)
-                        .contentShape(Rectangle())
+                ForEach(groups.indices, id: \.self) { index in
+                    Text(groups[index].name.isEmpty
+                        ? AppLocalization.string("fusion.unavailableModel")
+                        : groups[index].name)
+                        .font(.caption2.weight(.semibold))
+                        .textCase(.uppercase)
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, index == 0 ? 2 : 12)
+                        .padding(.bottom, 4)
+                    ForEach(groups[index].options, id: \.id) { option in
+                        panelRow(option, isOn: selected.contains(option.id), isFull: selected.count >= 8)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!isOn && selected.count >= 8)
-                    Divider().padding(.leading, 26)
                 }
             }
         }
         .frame(minHeight: 140, idealHeight: 220, maxHeight: 260)
+    }
+
+    func panelRow(_ option: FusionModelOption, isOn: Bool, isFull: Bool) -> some View {
+        Button {
+            model.togglePanel(option.id)
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                Group {
+                    if let image = routeProviderLogo(option) {
+                        Image(nsImage: image)
+                    } else {
+                        Image(systemName: "cube").foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                Text(option.isAvailable ? option.displayName : option.id)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(option.isAvailable ? Color.primary : Color.red)
+                Spacer(minLength: 8)
+                Text(option.id)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isOn ? Color.primary.opacity(0.05) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isOn && isFull)
+        .help(option.id)
     }
 
     @ViewBuilder
@@ -1131,6 +1185,16 @@ private extension ModelRouteEditor {
             .help(AppLocalization.string("routing.failover.remove"))
         }
     }
+}
+
+/// The model's provider logo at 16 pt; menus draw images at their own size.
+private func routeProviderLogo(_ option: FusionModelOption) -> NSImage? {
+    guard
+        !option.providerID.isEmpty,
+        let image = providerLogoImage(option.providerID, websiteURL: option.providerWebsiteURL)?.copy() as? NSImage
+    else { return nil }
+    image.size = NSSize(width: 16, height: 16)
+    return image
 }
 
 /// Parses `route list --json` into editable drafts.
