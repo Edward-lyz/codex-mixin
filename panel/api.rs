@@ -8,6 +8,11 @@
 //!   `usage` and `fusion models` JSON.
 //! - `GET /api/usage?days=1|7|30` -> `{daily, turns}` from
 //!   `usage --daily --json` and `usage --turns --json` (newest 500 turns).
+//!   `daily` covers twice the range so the page can compare against the
+//!   previous period of equal length. Optional `since_ms`/`until_ms` (both
+//!   or neither) narrow `turns` to one chart bucket.
+//! - `GET /api/routes` -> `{routes, models}` from `route list --json` and
+//!   `route models --json`.
 //! - `GET /api/quota` -> `quota --json`; `GET /api/doctor` ->
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
@@ -108,6 +113,7 @@ pub(super) fn router(state: Shared) -> Router {
     let api = Router::new()
         .route("/api/snapshot", get(snapshot))
         .route("/api/usage", get(usage_details))
+        .route("/api/routes", get(routes))
         .route("/api/quota", get(quota))
         .route("/api/doctor", get(doctor))
         .route("/api/logs", get(logs))
@@ -346,12 +352,24 @@ impl UsageDays {
             Self::Month => "30",
         }
     }
+
+    /// Current range plus the previous period of the same length.
+    fn comparison_arg(self) -> &'static str {
+        match self {
+            Self::Day => "2",
+            Self::Week => "14",
+            Self::Month => "60",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
 struct UsageDetailsQuery {
     #[serde(default)]
     days: UsageDays,
+    /// Optional chart bucket `[since_ms, until_ms)`; narrows `turns` only.
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
 }
 
 // The turn ledger keeps 5000 rows; the page lists the newest 500 so one
@@ -393,18 +411,42 @@ async fn context_stats(Query(query): Query<ContextQuery>) -> Result<Json<Value>,
 
 async fn usage_details(Query(query): Query<UsageDetailsQuery>) -> Result<Json<Value>, ApiError> {
     let days = query.days.arg();
-    let daily_args = ["usage", "--daily", "--json", "--days", days];
-    let turn_args = [
+    let daily_args = [
         "usage",
-        "--turns",
+        "--daily",
         "--json",
         "--days",
-        days,
-        "--limit",
-        PANEL_TURN_LIMIT,
+        query.days.comparison_arg(),
     ];
+    let mut turn_args = vec![
+        "usage".to_owned(),
+        "--turns".to_owned(),
+        "--json".to_owned(),
+        "--limit".to_owned(),
+        PANEL_TURN_LIMIT.to_owned(),
+    ];
+    match (query.since_ms, query.until_ms) {
+        (Some(since), Some(until)) if since < until => {
+            turn_args.push(format!("--since-ms={since}"));
+            turn_args.push(format!("--until-ms={until}"));
+        }
+        (None, None) => turn_args.extend(["--days".to_owned(), days.to_owned()]),
+        _ => return Err(ApiError::invalid("invalid usage time window".to_owned())),
+    }
+    let turn_args: Vec<&str> = turn_args.iter().map(String::as_str).collect();
     let (daily, turns) = tokio::try_join!(run_json(&daily_args), run_json(&turn_args))?;
     Ok(Json(json!({ "daily": daily, "turns": turns })))
+}
+
+async fn routes() -> Result<Json<Value>, ApiError> {
+    let (routes, models) = tokio::try_join!(
+        run_json(&["route", "list", "--json"]),
+        run_json(&["route", "models", "--json"])
+    )?;
+    Ok(Json(json!({
+        "routes": routes.get("routes").cloned().unwrap_or(json!([])),
+        "models": models.get("models").cloned().unwrap_or(json!([])),
+    })))
 }
 
 async fn quota() -> Result<Json<Value>, ApiError> {
