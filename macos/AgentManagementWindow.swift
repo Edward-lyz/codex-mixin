@@ -585,42 +585,19 @@ private struct AgentRowView: View {
                     )
                 VStack(alignment: .leading, spacing: 3) {
                     titleLine(presentation)
-                    if entry.integration.state != .unsupported,
-                       entry.integration.state != .managed || agentIntegrationModeText(entry.integration.mode) != nil {
+                    if entry.integration.state != .unsupported {
                         summaryLine(presentation)
                     }
                 }
                 Spacer(minLength: 12)
                 updateControl(presentation)
-                if entry.integration.state == .drift {
-                    // Re-running the existing connect command re-applies this
-                    // agent's managed configuration.
-                    Button(AppLocalization.string("agentManagement.repair")) {
-                        Task { await model.connect(agentID: entry.id) }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(model.isBusy)
-                    .help(AppLocalization.string("agentManagement.repairHelp", entry.name))
-                }
-                if presentation.isConnected {
-                    Toggle("", isOn: connectBinding)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .disabled(model.isBusy)
-                        .help(connectHelp(presentation))
-                        .accessibilityLabel(connectHelp(presentation))
-                } else {
-                    Button(AppLocalization.string("agentManagement.connect")) {
-                        Task { await model.connect(agentID: entry.id) }
-                    }
-                    .buttonStyle(.bordered)
+                Toggle("", isOn: connectBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
                     .controlSize(.small)
                     .disabled(model.isBusy || entry.integration.state == .unsupported)
                     .help(connectHelp(presentation))
                     .accessibilityLabel(connectHelp(presentation))
-                }
             }
             .padding(.vertical, 4)
         }
@@ -631,31 +608,40 @@ private struct AgentRowView: View {
         HStack(alignment: .center, spacing: 6) {
             Text(entry.name)
                 .font(.body.weight(.medium))
-            Text([
-                presentation.cliVersionText,
-                presentation.appVersionText,
-                entry.cli.isMissing && presentation.appVersionText == nil
-                    ? AppLocalization.string("agentManagement.cliMissing") : nil,
-            ].compactMap { $0 }.joined(separator: " "))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+            if let cliVersionText = presentation.cliVersionText {
+                versionTag(cliVersionText)
+            } else if entry.cli.isMissing && presentation.appVersionText == nil {
+                versionTag(AppLocalization.string("agentManagement.cliMissing"))
+            }
+            if let appVersionText = presentation.appVersionText {
+                versionTag(appVersionText)
+            }
         }
         .lineLimit(1)
     }
 
+    private func versionTag(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.secondary.opacity(0.12))
+            )
+    }
+
     private func summaryLine(_ presentation: AgentRowPresentation) -> some View {
-        let isAbnormal = presentation.statusIsError || presentation.statusIsWarning
-        return HStack(spacing: 6) {
-            if isAbnormal {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(statusColor(presentation))
-            }
-            Text([entry.integration.state != .managed ? presentation.statusText : nil, agentIntegrationModeText(entry.integration.mode)]
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor(presentation))
+                .frame(width: 6, height: 6)
+            Text([presentation.statusText, agentIntegrationModeText(entry.integration.mode)]
                 .compactMap { $0 }.filter { !$0.isEmpty }
                 .joined(separator: AppLocalization.string("agentManagement.detailSeparator")))
                 .font(.caption)
-                .foregroundStyle(isAbnormal ? statusColor(presentation) : Color.secondary)
+                .foregroundStyle(presentation.statusIsError ? Color.orange : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -713,7 +699,8 @@ private struct AgentRowView: View {
     }
 
     private func statusColor(_ presentation: AgentRowPresentation) -> Color {
-        presentation.statusIsError ? .red : .yellow
+        if presentation.statusIsError { return .orange }
+        return presentation.isConnected ? .green : Color(nsColor: .tertiaryLabelColor)
     }
 
     private func connectHelp(_ presentation: AgentRowPresentation) -> String {
