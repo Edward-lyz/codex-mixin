@@ -31,7 +31,9 @@ pub(crate) fn profiles(
     if cfg!(windows) {
         let mut query = std::process::Command::new("powershell.exe");
         query.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Environment]::GetFolderPath('MyDocuments')"]);
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Environment]::GetFolderPath('MyDocuments', 'DoNotVerify')"]);
+        // DoNotVerify: a missing Documents folder still has a path; the
+        // profile writer creates it instead of failing the connection.
         super::prepare_background_command(&mut query);
         let result = super::agent_cli::run_command(
             query,
