@@ -49,7 +49,7 @@ extension AppDelegate {
                     if !CommandLine.arguments.contains("--show-settings")
                         && !CommandLine.arguments.contains("--check-updates")
                     {
-                        DispatchQueue.main.async { [weak self] in
+                        DispatchQueue.main.async { [weak self = self] in
                             self?.configureLogin()
                         }
                     }

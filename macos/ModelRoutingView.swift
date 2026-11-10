@@ -32,6 +32,46 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
         }
     }
 
+    var pitch: String {
+        switch self {
+        case .fusion: AppLocalization.string("routing.kind.fusionPitch")
+        case .schedule: AppLocalization.string("routing.kind.schedulePitch")
+        case .failover: AppLocalization.string("routing.kind.failoverPitch")
+        }
+    }
+
+    var bestFor: String {
+        switch self {
+        case .fusion: AppLocalization.string("routing.kind.fusionBestFor")
+        case .schedule: AppLocalization.string("routing.kind.scheduleBestFor")
+        case .failover: AppLocalization.string("routing.kind.failoverBestFor")
+        }
+    }
+
+    /// Stages a request passes through, shown as a miniature on the start page.
+    var flow: [String] {
+        switch self {
+        case .fusion:
+            [
+                AppLocalization.string("routing.flow.panels"),
+                AppLocalization.string("routing.flow.judge"),
+                AppLocalization.string("routing.flow.final"),
+            ]
+        case .schedule:
+            [
+                AppLocalization.string("routing.flow.clock"),
+                AppLocalization.string("routing.flow.slotModel"),
+                AppLocalization.string("routing.flow.defaultModel"),
+            ]
+        case .failover:
+            [
+                AppLocalization.string("routing.flow.source"),
+                AppLocalization.string("routing.flow.backup1"),
+                AppLocalization.string("routing.flow.backup2"),
+            ]
+        }
+    }
+
     var tint: Color {
         switch self {
         case .fusion: .purple
@@ -503,20 +543,18 @@ struct ModelRoutingView: View {
     }
 
     private var emptySidebar: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Spacer()
             Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 28))
+                .font(.system(size: 26))
                 .foregroundStyle(.tertiary)
-            Text(AppLocalization.string("routing.empty")).font(.callout).foregroundStyle(.secondary)
-            ForEach(ModelRouteKind.allCases) { kind in
-                Button {
-                    model.newRoute(kind)
-                } label: {
-                    Label(kind.title, systemImage: kind.symbol).frame(width: 140)
-                }
-                .disabled(model.isBusy || !model.hasLoaded)
-            }
+            Text(AppLocalization.string("routing.empty"))
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(AppLocalization.string("routing.emptyHint"))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -532,15 +570,7 @@ struct ModelRoutingView: View {
                 bottomBar
             }
         } else {
-            VStack(spacing: 12) {
-                if model.isBusy {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Text(model.status.isEmpty ? AppLocalization.string("routing.selectHint") : model.status)
-                        .foregroundStyle(model.statusIsError ? Color.red : Color.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ModelRouteGallery(model: model)
         }
     }
 
@@ -576,6 +606,184 @@ struct ModelRoutingView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+}
+
+/// Start page shown when no route is open: explains what each route type does
+/// and creates one in a single click.
+private struct ModelRouteGallery: View {
+    @ObservedObject var model: ModelRoutingModel
+
+    private let columns = [GridItem(.adaptive(minimum: 210), spacing: 14, alignment: .top)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if !model.status.isEmpty {
+                    statusBanner
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AppLocalization.string("routing.gallery.title"))
+                        .font(.title2.weight(.semibold))
+                    Text(model.routes.isEmpty
+                        ? AppLocalization.string("routing.gallery.subtitle")
+                        : AppLocalization.string("routing.selectHint"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
+                    ForEach(ModelRouteKind.allCases) { kind in
+                        ModelRouteKindCard(kind: kind, isEnabled: !model.isBusy && model.hasLoaded) {
+                            model.newRoute(kind)
+                        }
+                    }
+                }
+                steps
+                if model.isBusy {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: 860, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var statusBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(model.statusIsError ? Color.red : Color.green)
+            Text(model.status)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill((model.statusIsError ? Color.red : Color.green).opacity(0.1))
+        )
+    }
+
+    private var stepTexts: [String] {
+        [
+            AppLocalization.string("routing.steps.pick"),
+            AppLocalization.string("routing.steps.save"),
+            AppLocalization.string("routing.steps.use"),
+        ]
+    }
+
+    private var steps: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(AppLocalization.string("routing.steps.title"))
+                .font(.headline)
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(Array(stepTexts.enumerated()), id: \.offset) { index, text in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(index + 1)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                        Text(text)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor))
+        )
+    }
+}
+
+private struct ModelRouteKindCard: View {
+    let kind: ModelRouteKind
+    let isEnabled: Bool
+    let create: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: create) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: kind.symbol)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(kind.tint)
+                    .frame(width: 40, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(kind.tint.opacity(0.14)))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(kind.title).font(.headline)
+                    Text(kind.pitch)
+                        .font(.callout)
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                flow
+                Text(kind.bestFor)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    Text(AppLocalization.string("routing.gallery.create"))
+                    Image(systemName: "arrow.right")
+                }
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(isEnabled ? kind.tint : Color.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isHovered && isEnabled ? kind.tint.opacity(0.7) : Color(nsColor: .separatorColor),
+                                  lineWidth: isHovered && isEnabled ? 1.5 : 1)
+            )
+            .shadow(color: .black.opacity(isHovered && isEnabled ? 0.08 : 0), radius: 8, y: 2)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .help(kind.help)
+        .accessibilityLabel(AppLocalization.string("routing.gallery.createAccessibility", kind.title))
+        .accessibilityHint(kind.help)
+    }
+
+    /// A miniature of how the route sends a request, e.g. Panel x N -> Judge -> Final.
+    private var flow: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(kind.flow.enumerated()), id: \.offset) { index, step in
+                if index > 0 {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                }
+                Text(step)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(kind.tint.opacity(0.12)))
+                    .foregroundStyle(kind.tint)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

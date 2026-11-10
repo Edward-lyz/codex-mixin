@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 isBusy: busy,
                 target: self,
                 action: #selector(AppDelegate.toggleGateway(_:)),
-                openSettings: { [weak self] in
+                openSettings: { [weak self = self] in
                     self?.configureLogin()
                 }
             )
