@@ -557,6 +557,8 @@ async fn running_gateway_serves_a_rotated_client_key() {
         official_model_order: Default::default(),
         fusion_profiles: Vec::new(),
         failover_routes: Vec::new(),
+        disabled_routes: Vec::new(),
+        route_order: Vec::new(),
         context: Default::default(),
         providers: vec![provider.clone()],
     };
