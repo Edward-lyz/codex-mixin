@@ -340,6 +340,22 @@ fn paste(
         .chars()
         .rev()
         .collect::<String>();
+    // Folded paste markers can wrap anywhere, including before '#' or within
+    // their number. Compare both screens without terminal whitespace.
+    let before: String = before
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let marker = if image { "[Image#" } else { "[Pastedtext#" };
+    let previous = before
+        .split(marker)
+        .skip(1)
+        .filter_map(|part| {
+            let number: String = part.chars().take_while(char::is_ascii_digit).collect();
+            number.parse::<u64>().ok()
+        })
+        .max()
+        .unwrap_or_default();
     let started = Instant::now();
     let timeout = Duration::from_secs(5 + (text.len() / 65536).min(55) as u64);
     loop {
@@ -348,8 +364,11 @@ fn paste(
             .map_err(|_| anyhow::anyhow!("terminal screen poisoned"))?
             .screen()
             .contents();
-        let marker = if image { "[Image #" } else { "[Pasted text #" };
-        let taken = now
+        let compact: String = now
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        let taken = compact
             .split(marker)
             .skip(1)
             .filter_map(|part| {
@@ -358,24 +377,7 @@ fn paste(
             })
             .max()
             .unwrap_or_default();
-        let previous = before
-            .split(marker)
-            .skip(1)
-            .filter_map(|part| {
-                let number: String = part.chars().take_while(char::is_ascii_digit).collect();
-                number.parse::<u64>().ok()
-            })
-            .max()
-            .unwrap_or_default();
-        if taken > previous
-            || (!image
-                && now != before
-                && now
-                    .chars()
-                    .filter(|character| !character.is_whitespace())
-                    .collect::<String>()
-                    .contains(&tail))
-        {
+        if taken > previous || (!image && compact != before && compact.contains(&tail)) {
             std::thread::sleep(Duration::from_millis(100));
             return Ok(());
         }
