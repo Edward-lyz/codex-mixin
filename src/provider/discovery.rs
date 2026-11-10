@@ -92,6 +92,9 @@ pub async fn discover_provider_models(
     if definition.preset_id.as_deref() == Some("kiro") {
         return super::kiro::discover_models(client, &provider).await;
     }
+    if definition.preset_id.as_deref() == Some(super::CLAUDE_CODE_PRESET_ID) {
+        return super::claude_code::discover_models(&provider).await;
+    }
     match &definition.model_source {
         ProviderModelSource::Static => {
             let mut models = definition.cached_models.clone();

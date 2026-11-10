@@ -27,8 +27,8 @@ use super::{AnthropicByteStream, UpstreamAccess};
 use crate::anthropic::{ContentBlock, Message, MessageRequest};
 use crate::error::GatewayError;
 use crate::provider::ProviderRuntime;
+use crate::provider::claude_code::{CLI_NAME, INHERITED_ENV, TOKEN_ENV};
 
-const CLI_NAME: &str = "claude";
 const MCP_SERVER: &str = "mixin";
 const MCP_PREFIX: &str = "mcp__mixin__";
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -46,21 +46,6 @@ const MCP_TOOL_TIMEOUT_MS: &str = "86400000";
 /// Codex already truncates tool output; keep Claude Code from truncating it
 /// again at its lower default.
 const MAX_MCP_OUTPUT_TOKENS: &str = "100000";
-/// Variables an enclosing Claude Code session sets for its children; the
-/// CLI would otherwise treat itself as nested or reuse the parent's channel.
-/// API-key variables would switch it from the subscription to API billing.
-const INHERITED_ENV: [&str; 9] = [
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-];
-const TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 const HISTORY_INTRO: &str = "The conversation so far, recorded by the client application. Continue it; the tools named there are available to you.";
 const CONTINUE_PROMPT: &str = "Continue from where the conversation above left off.";

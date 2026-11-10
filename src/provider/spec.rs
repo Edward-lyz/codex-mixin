@@ -474,16 +474,23 @@ static SPECS: [ProviderSpec; 11] = [
     },
 ];
 
-/// Models the Claude Code CLI accepts through `--model`.
+/// Models a new Claude Code provider starts with; the first refresh replaces
+/// them with what the signed-in CLI reports.
 fn claude_code_seed_models() -> Vec<ProviderModel> {
     [
+        ("claude-fable-5-2", "Claude Fable 5.2"),
         ("claude-opus-5-5", "Claude Opus 5.5"),
         ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
         ("claude-haiku-5-5", "Claude Haiku 5.5"),
-        ("claude-fable-5-1", "Claude Fable 5.1"),
     ]
     .into_iter()
-    .map(|(id, name)| ProviderModel {
+    .map(|(id, name)| claude_code_model(id, name))
+    .collect()
+}
+
+/// A model the Claude Code CLI accepts through `--model`.
+pub(super) fn claude_code_model(id: &str, name: &str) -> ProviderModel {
+    ProviderModel {
         id: id.to_owned(),
         display_name: Some(name.to_owned()),
         context_window: Some(CLAUDE_CODE_CONTEXT_WINDOW),
@@ -493,8 +500,7 @@ fn claude_code_seed_models() -> Vec<ProviderModel> {
         supports_tool_search: Some(false),
         supports_function_tools: Some(true),
         ..ProviderModel::default()
-    })
-    .collect()
+    }
 }
 
 /// Claude Code compacts its own session; Codex only needs a window that keeps
