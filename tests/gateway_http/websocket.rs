@@ -187,7 +187,10 @@ async fn locally_handles_v2_compaction_trigger_on_custom_websocket() {
 
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
-    let compacted = requests[0]["system"][0]["text"].as_str().unwrap();
+    assert_eq!(requests[0]["messages"][0]["role"], "user");
+    let compacted = requests[0]["messages"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     assert!(compacted.contains("fix the parser"));
     assert!(compacted.contains("The parser fix is complete."));
 }
