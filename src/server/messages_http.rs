@@ -48,6 +48,26 @@ pub(super) async fn messages_body(
         )
         .await;
     }
+    if matches!(route, ResolvedModelRoute::Fusion { .. })
+        || requested_model.starts_with(crate::config::FUSION_MODEL_PREFIX)
+    {
+        // Routes speak OpenAI Responses; translate Claude requests into them.
+        let request = normalize_message_request(&body, requested_model, false)?;
+        let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
+            &request,
+            requested_model,
+        )?;
+        let upstream =
+            super::responses_http::stream_custom_responses(&state, &headers, responses_body, route)
+                .await?;
+        return anthropic_message_response(
+            upstream,
+            requested_model,
+            body_stream_requested(&body),
+            false,
+        )
+        .await;
+    }
     let resolved = state
         .gateway
         .resolve_native_provider_model(requested_model)?;
@@ -253,6 +273,15 @@ async fn responses_compatible_message(
 ) -> Result<Response, GatewayError> {
     let native = plan.native_messages.is_some();
     let upstream = state.gateway.stream(plan, headers).await?;
+    anthropic_message_response(upstream, requested_model, stream_requested, native).await
+}
+
+async fn anthropic_message_response(
+    upstream: crate::protocol::ResponseStream,
+    requested_model: &str,
+    stream_requested: bool,
+    native: bool,
+) -> Result<Response, GatewayError> {
     if stream_requested {
         let stream = crate::protocol::anthropic_compat::responses_to_anthropic_stream(
             upstream,

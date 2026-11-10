@@ -144,6 +144,16 @@ pub(super) fn claude_model_picker(
             "description": claude_picker_description_text("OpenAI official", model.context_window),
         }));
     }
+    for route in config.route_models() {
+        if !picker_models.insert(route.id.clone()) {
+            continue;
+        }
+        options.push(json!({
+            "model": route.id,
+            "label": route.id,
+            "description": route.description.unwrap_or_default(),
+        }));
+    }
     options.sort_by(|left, right| {
         left.get("label")
             .and_then(Value::as_str)

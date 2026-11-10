@@ -392,6 +392,15 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                     codex_mixin::provider::ProviderProtocol::OpenAiResponses,
                 ));
             }
+            for route in config.route_models() {
+                models.push(framework_model(
+                    route.id.clone(),
+                    route.id.clone(),
+                    &route,
+                    &config,
+                    codex_mixin::provider::ProviderProtocol::OpenAiResponses,
+                ));
+            }
             frameworks::install(
                 &id_owned,
                 &manifest,

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde_yaml::{Mapping, Value};
@@ -72,7 +71,6 @@ fn collect_dsh_models(
     official_models: &[codex_mixin::provider::ProviderModel],
 ) -> Vec<Value> {
     let catalog = selected_catalog_models(config, official_models);
-    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
     let mut models = Vec::new();
     for (id, name, model) in catalog {
         let mut entry = Mapping::new();
@@ -99,19 +97,6 @@ fn collect_dsh_models(
                 ]),
             );
         }
-        models.push(Value::Mapping(entry));
-    }
-    for profile in &config.fusion_profiles {
-        let id = profile.model_slug();
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        let mut entry = Mapping::new();
-        entry.insert(Value::String("id".to_owned()), Value::String(id));
-        entry.insert(
-            Value::String("name".to_owned()),
-            Value::String(profile.display_name()),
-        );
         models.push(Value::Mapping(entry));
     }
     models

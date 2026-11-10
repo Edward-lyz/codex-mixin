@@ -4886,7 +4886,7 @@ async fn fusion_runs_on_every_user_turn_then_routes_tool_continuations_to_final(
         .iter()
         .find(|model| model["id"] == "auto/default")
         .unwrap();
-    assert_eq!(fusion_model["display_name"], "Fusion: default");
+    assert_eq!(fusion_model["display_name"], "auto/default");
 
     let mut request = fusion_request();
     let response = client

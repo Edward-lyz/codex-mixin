@@ -288,6 +288,11 @@ try {
     & $WinApp ui wait-for operation-status -a $app.Id --value '删除模型路由完成' --contains --timeout 90000
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     if (@($routes.routes | Where-Object kind -eq 'failover').Count -ne 0 -or @($routes.routes).Count -ne 2) { throw 'Route deletion did not remove the failover route' }
+    # Later stages delete the provider, which routes still reference.
+    foreach ($route in @($routes.routes)) {
+        $null = & $cli --no-tui --json-errors route delete --model $route.model
+        if ($LASTEXITCODE -ne 0) { throw "Removing route $($route.model) failed" }
+    }
     $completed.Add($stage)
 
     $stage = 'settings themes, diagnostics and backup cancellation'

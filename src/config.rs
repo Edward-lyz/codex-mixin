@@ -179,6 +179,41 @@ impl GatewayConfig {
         Ok(config)
     }
 
+    /// Enabled routes as client-visible models. Every client export and the
+    /// gateway catalog list routes from here, so names and capabilities stay
+    /// identical across clients. Routes always speak OpenAI Responses.
+    pub fn route_models(&self) -> Vec<crate::provider::ProviderModel> {
+        let fusion = self.fusion_profiles.iter().map(|profile| {
+            let description = match profile.mode {
+                FusionMode::Orchestration => format!(
+                    "Fusion pipeline: {} panel models in parallel, judged by {}, finalized by {}",
+                    profile.panel_models.len(),
+                    profile.judge_model,
+                    profile.final_model
+                ),
+                FusionMode::TimeRotation => format!(
+                    "Fusion time rotation: {} scheduled ranges, defaulting to {}",
+                    profile.time_routes.len(),
+                    profile.final_model
+                ),
+            };
+            route_model(profile.model_slug(), description, true)
+        });
+        let failover = self
+            .failover_routes
+            .iter()
+            .filter(|route| route.id.is_some())
+            .map(|route| {
+                let description = format!(
+                    "Never stuck: {} first, then {} when it fails",
+                    route.source,
+                    route.fallbacks.join(", ")
+                );
+                route_model(route.entry_model(), description, false)
+            });
+        fusion.chain(failover).collect()
+    }
+
     pub fn official_image_generation_url(&self) -> anyhow::Result<String> {
         self.official_codex_url("images/generations")
     }
@@ -198,6 +233,25 @@ impl GatewayConfig {
                 )
             })?;
         Ok(format!("{base}/{path}"))
+    }
+}
+
+fn route_model(
+    id: String,
+    description: String,
+    orchestrated: bool,
+) -> crate::provider::ProviderModel {
+    // Fusion pipelines run text-only panels; failover inherits its members.
+    let unsupported = orchestrated.then_some(false);
+    crate::provider::ProviderModel {
+        display_name: Some(id.clone()),
+        id,
+        description: Some(description),
+        protocol: Some(crate::provider::ProviderProtocol::OpenAiResponses),
+        supports_image: unsupported,
+        supports_thinking: Some(true),
+        supports_web_search: unsupported,
+        ..Default::default()
     }
 }
 
