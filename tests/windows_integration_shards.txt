@@ -4,6 +4,7 @@
 integration-a|gateway_http.rs
 integration-b|codex_minimal_install.rs
 integration-b|disabled_provider_costs.rs
+integration-b|grok_reasoning_effort.rs
 integration-b|official_client_contexts.rs
 integration-b|provider_probe_cache.rs
 integration-b|report_hook.rs

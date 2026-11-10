@@ -765,7 +765,37 @@ fn toml_agent(
         }
         "grok" => {
             for m in models {
-                fields.push(field(&["model",&format!("{PROVIDER}/{}",m.id)],json!({"model":m.id,"name":m.name,"base_url":v1,"api_key":key,"api_backend":"chat_completions","context_window":m.context_window})));
+                let mut entry = json!({"model":m.id,"name":m.name,"base_url":v1,"api_key":key,"api_backend":"chat_completions","context_window":m.context_window});
+                // Grok Build only enables `/effort` for custom models whose
+                // config admits a non-empty menu. `none` and the delegated
+                // `ultra` mode have no portable upstream mapping, so keep them
+                // out as the Buddy adapter does.
+                let efforts = m
+                    .efforts
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|effort| !matches!(*effort, "none" | "ultra"))
+                    .collect::<Vec<_>>();
+                let default = m
+                    .default_effort
+                    .as_deref()
+                    .filter(|default| efforts.contains(default))
+                    .or_else(|| efforts.first().copied());
+                if let Some(default) = default {
+                    entry["reasoning_efforts"] = json!(
+                        efforts
+                            .iter()
+                            .map(|effort| {
+                                if *effort == default {
+                                    json!({"value": effort, "default": true})
+                                } else {
+                                    json!({"value": effort})
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                }
+                fields.push(field(&["model", &format!("{PROVIDER}/{}", m.id)], entry));
             }
             fields.push(field(&["models", "default"], json!(model_key)));
             fields.push(field(&["features", "campaigns"], json!(false)));

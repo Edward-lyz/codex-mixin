@@ -30,6 +30,9 @@ pub struct FrameworkModel {
     pub supports_image: bool,
     pub protocol: crate::provider::ProviderProtocol,
     pub efforts: Vec<String>,
+    /// Preferred level from the resolved capabilities; adapters fall back to
+    /// their first advertised menu entry when this level is not offered.
+    pub default_effort: Option<String>,
 }
 
 pub fn name(id: &str) -> anyhow::Result<&'static str> {
