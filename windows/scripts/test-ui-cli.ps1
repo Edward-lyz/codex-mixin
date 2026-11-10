@@ -417,14 +417,12 @@ try {
     $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
     $trayWindow = @($tree.windows | Where-Object title -eq 'Codex Mixin · 主面板')[0].hwnd
     & $WinApp ui invoke tray-refresh -w $trayWindow
-    $deadline = [DateTime]::UtcNow.AddSeconds(90)
-    do {
-        $switch = & $WinApp ui search 本地网关 -w $trayWindow --json | ConvertFrom-Json
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Gateway switch did not become ready' }
-        if (-not $switch.matches[0].isEnabled) { Start-Sleep -Milliseconds 100 }
-    } until ($switch.matches[0].isEnabled)
     $before = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
-    & $WinApp ui invoke 本地网关 -w $trayWindow --action toggle
+    & $WinApp ui wait-for GatewaySwitch -w $trayWindow --property IsEnabled --value True --timeout 90000
+    # OnGatewayToggled disables the switch while starting the real CLI action.
+    # Use a mouse gesture rather than a synchronous TogglePattern call whose
+    # automation peer becomes disabled before the call returns.
+    & $WinApp ui click GatewaySwitch -w $trayWindow
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     do {
         $after = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
