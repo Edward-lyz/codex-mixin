@@ -363,6 +363,16 @@
 "routing.summary.failover" = "备用：%@";
 "routing.chooseModel" = "选择模型";
 "routing.noMatches" = "没有匹配的模型";
+"routing.failover.nameHelp" = "可选。留空时只作用于原模型；填写名称后，Codex 模型选择器里会多出入口 auto/名称，选它即可获得故障转移。";
+"routing.suggestions" = "推荐路由";
+"routing.suggestions.help" = "打开预填好的路由，检查模型后点击「保存并应用」即可启用。";
+"routing.diagram.client" = "Codex";
+"routing.diagram.panel" = "并行作答";
+"routing.diagram.judge" = "评审";
+"routing.diagram.final" = "最终作答";
+"routing.diagram.otherTimes" = "其他时间";
+"routing.diagram.primary" = "首选";
+"routing.diagram.backup" = "备用 %@";
 "routing.field.name" = "名称";
 "routing.field.entry" = "模型入口";
 "routing.field.entryHelp" = "在 Codex 模型选择器中选择这个入口即可使用该路由。";

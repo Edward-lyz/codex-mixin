@@ -50,7 +50,10 @@ extension AppDelegate {
                     (provider.id, byName[provider.displayName]?.count == 1
                         ? provider.displayName : "\(provider.displayName) (\(provider.id))")
                 })
-                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns), names)
+                let websites = providers.reduce(into: [String: String]()) { result, provider in
+                    result[provider.id] = provider.websiteURL
+                }
+                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns), names, websites)
             }, slotLoader: { [weak self] interval in
                 guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
                 let toMilliseconds = { (date: Date) in Int64(date.timeIntervalSince1970 * 1000) }
@@ -391,7 +394,7 @@ extension AppDelegate {
         return models.compactMap { model -> FusionModelOption? in
             guard
                 let id = model["id"] as? String,
-                !id.hasPrefix("mixin/fusion/")
+                !id.hasPrefix("mixin/fusion/") && !id.hasPrefix("auto/")
             else { return nil }
             let providerID = model["provider_id"] as? String ?? ""
             let provider = providerByID[providerID]

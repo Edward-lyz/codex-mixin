@@ -192,17 +192,7 @@ impl CatalogService {
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
         models.extend(self.config.fusion_profiles.iter().map(|profile| ModelInfo {
             id: profile.model_slug(),
-            display_name: Some(match profile.mode {
-                FusionMode::Orchestration => format!(
-                    "Fusion ({}): {} → judge {}",
-                    profile.id,
-                    profile.panel_models.join("+"),
-                    profile.judge_model
-                ),
-                FusionMode::TimeRotation => {
-                    format!("Fusion ({}): time rotation", profile.id)
-                }
-            }),
+            display_name: Some(profile.model_slug()),
             object: Some("model".to_owned()),
             created: None,
             owned_by: Some("codex-mixin".to_owned()),
@@ -227,6 +217,25 @@ impl CatalogService {
             supports_web_search: Some(false),
             ..ModelInfo::default()
         }));
+        models.extend(
+            self.config
+                .failover_routes
+                .iter()
+                .filter(|route| route.id.is_some())
+                .map(|route| ModelInfo {
+                    id: route.entry_model(),
+                    display_name: Some(route.entry_model()),
+                    object: Some("model".to_owned()),
+                    owned_by: Some("codex-mixin".to_owned()),
+                    description: Some(format!(
+                        "Never stuck: {} first, then {} when it fails",
+                        route.source,
+                        route.fallbacks.join(", ")
+                    )),
+                    supports_thinking: Some(true),
+                    ..ModelInfo::default()
+                }),
+        );
     }
 
     async fn catalog_sources(&self) -> Result<Arc<CatalogSources>, GatewayError> {

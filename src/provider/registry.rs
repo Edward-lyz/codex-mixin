@@ -11,7 +11,8 @@ use super::types::{
     ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
 };
 
-const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
+const FUSION_MODEL_PREFIX: &str = "auto/";
+const LEGACY_FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
 const OFFICIAL_MODEL_PREFIX: &str = "official:";
 
 #[derive(Clone, Debug)]
@@ -576,6 +577,7 @@ pub struct ResolvedProviderModel<'a> {
 fn validate_catalog_slug(slug: &str) -> anyhow::Result<()> {
     ensure!(
         !slug.starts_with(FUSION_MODEL_PREFIX)
+            && !slug.starts_with(LEGACY_FUSION_MODEL_PREFIX)
             && !slug.starts_with(OFFICIAL_MODEL_PREFIX)
             && !slug.starts_with(super::model_alias::FLAT_MODEL_PREFIX),
         "provider model slug uses a reserved namespace: {slug}"

@@ -252,7 +252,7 @@ try {
     & $WinApp ui invoke apply-changes -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
-    $fusion = @($routes.routes | Where-Object model -eq 'mixin/fusion/ui-fusion')[0]
+    $fusion = @($routes.routes | Where-Object model -eq 'auto/ui-fusion')[0]
     if ($null -eq $fusion -or $fusion.kind -ne 'fusion' -or $fusion.mode -ne 'orchestration') { throw 'Fusion route was not saved' }
     & $WinApp ui invoke route-new-schedule -a $app.Id
     & $WinApp ui invoke 添加时段 -a $app.Id

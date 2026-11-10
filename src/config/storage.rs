@@ -198,6 +198,19 @@ fn save_stored_config_to_path_unlocked(
     validate_fusion_model_references(&config.fusion_profiles, &providers)?;
     validate_failover_routes(&config.failover_routes)?;
     validate_failover_model_references(&config.failover_routes, &providers)?;
+    if let Some(id) = config
+        .failover_routes
+        .iter()
+        .filter_map(|route| route.id.as_deref())
+        .find(|id| {
+            config
+                .fusion_profiles
+                .iter()
+                .any(|profile| profile.id == *id)
+        })
+    {
+        anyhow::bail!("route id {id} is used by more than one route");
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         set_private_dir_permissions(parent)?;

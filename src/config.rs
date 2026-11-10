@@ -19,8 +19,9 @@ pub use failover::{
     validate_failover_routes,
 };
 pub use fusion::{
-    FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
-    PanelToolsConfig, validate_fusion_model_references, validate_fusion_profiles,
+    FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, LEGACY_FUSION_MODEL_PREFIX,
+    OFFICIAL_MODEL_PREFIX, PanelToolsConfig, validate_fusion_model_references,
+    validate_fusion_profiles,
 };
 mod migration;
 mod storage;
