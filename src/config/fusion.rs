@@ -82,21 +82,6 @@ impl FusionProfile {
         format!("{FUSION_MODEL_PREFIX}{}", self.id)
     }
 
-    /// Short client-facing label. Member model ids are long provider
-    /// references, so they stay in the model description instead of the name.
-    pub fn display_name(&self) -> String {
-        let kind = match self.mode {
-            FusionMode::Orchestration => "Fusion",
-            FusionMode::TimeRotation => "Schedule",
-        };
-        let id = self.id.trim();
-        if id.eq_ignore_ascii_case(kind) {
-            kind.to_owned()
-        } else {
-            format!("{kind}: {id}")
-        }
-    }
-
     pub fn validate(&self) -> anyhow::Result<()> {
         let id = self.id.trim();
         if id.is_empty() || id.contains('/') {

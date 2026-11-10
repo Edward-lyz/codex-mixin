@@ -205,13 +205,14 @@ pub(super) fn filter_official_catalog(
     Ok(())
 }
 
-/// Models a coding client lists: each enabled provider's selected models that
-/// have cached metadata, then the official models, as
-/// `(catalog slug, display name, metadata)`. The first use of a slug wins.
-pub(super) fn selected_catalog_models<'a>(
-    config: &'a GatewayConfig,
-    official_models: &'a [ProviderModel],
-) -> Vec<(String, String, &'a ProviderModel)> {
+/// The single model list every coding client derives from: each enabled
+/// provider's selected models that have cached metadata, then the official
+/// models, then enabled routes, as `(catalog slug, display name, metadata)`.
+/// The first use of a slug wins.
+pub(super) fn selected_catalog_models(
+    config: &GatewayConfig,
+    official_models: &[ProviderModel],
+) -> Vec<(String, String, ProviderModel)> {
     let mut seen = HashSet::new();
     let mut models = Vec::new();
     for provider in config.providers.iter().filter(|provider| provider.enabled) {
@@ -226,7 +227,7 @@ pub(super) fn selected_catalog_models<'a>(
             let id = codex_mixin::provider::catalog_model_slug(upstream_model_id, &provider.id);
             if seen.insert(id.clone()) {
                 let name = codex_mixin::provider::provider_model_display_name(cached, provider);
-                models.push((id, name, cached));
+                models.push((id, name, cached.clone()));
             }
         }
     }
@@ -236,7 +237,12 @@ pub(super) fn selected_catalog_models<'a>(
                 "{} · OpenAI",
                 model.display_name.as_deref().unwrap_or(&model.id)
             );
-            models.push((model.id.clone(), name, model));
+            models.push((model.id.clone(), name, model.clone()));
+        }
+    }
+    for route in config.route_models() {
+        if seen.insert(route.id.clone()) {
+            models.push((route.id.clone(), route.id.clone(), route));
         }
     }
     models

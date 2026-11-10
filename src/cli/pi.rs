@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -128,27 +127,10 @@ fn uninstall_pi_at(
 
 fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) -> Vec<Value> {
     let catalog = selected_catalog_models(config, official_models);
-    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
-    let mut models: Vec<Value> = catalog
+    catalog
         .into_iter()
-        .map(|(id, name, model)| pi_model(id, name, model, config))
-        .collect();
-    for profile in &config.fusion_profiles {
-        let id = profile.model_slug();
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        models.push(json!({
-            "id": id,
-            "name": profile.display_name(),
-            "reasoning": false,
-            "input": ["text"],
-            "cost": zero_cost(),
-            "contextWindow": config.default_context_window,
-            "maxTokens": config.default_max_tokens,
-        }));
-    }
-    models
+        .map(|(id, name, model)| pi_model(id, name, &model, config))
+        .collect()
 }
 
 fn pi_model(id: String, name: String, model: &ProviderModel, config: &GatewayConfig) -> Value {

@@ -10,7 +10,6 @@ use serde_json::Value;
 
 use crate::anthropic::ModelInfo;
 use crate::benchmark::BenchmarkTarget;
-use crate::config::FusionMode;
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::provider::{
@@ -190,49 +189,19 @@ impl CatalogService {
     }
 
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
-        models.extend(self.config.fusion_profiles.iter().map(|profile| ModelInfo {
-            id: profile.model_slug(),
-            display_name: Some(profile.display_name()),
-            object: Some("model".to_owned()),
-            created: None,
-            owned_by: Some("codex-mixin".to_owned()),
-            description: Some(match profile.mode {
-                FusionMode::Orchestration => format!(
-                    "Fusion pipeline: {} panel models in parallel, judged by {}, finalized by {}",
-                    profile.panel_models.len(),
-                    profile.judge_model,
-                    profile.final_model
-                ),
-                FusionMode::TimeRotation => format!(
-                    "Fusion time rotation: {} scheduled ranges, defaulting to {}",
-                    profile.time_routes.len(),
-                    profile.final_model
-                ),
-            }),
-            ratio: None,
-            price_type: None,
-            context_window: None,
-            supports_image: Some(false),
-            supports_thinking: Some(true),
-            supports_web_search: Some(false),
-            ..ModelInfo::default()
-        }));
         models.extend(
             self.config
-                .failover_routes
-                .iter()
-                .filter(|route| route.id.is_some())
+                .route_models()
+                .into_iter()
                 .map(|route| ModelInfo {
-                    id: route.entry_model(),
-                    display_name: Some(route.entry_model()),
+                    display_name: route.display_name,
                     object: Some("model".to_owned()),
                     owned_by: Some("codex-mixin".to_owned()),
-                    description: Some(format!(
-                        "Never stuck: {} first, then {} when it fails",
-                        route.source,
-                        route.fallbacks.join(", ")
-                    )),
-                    supports_thinking: Some(true),
+                    description: route.description,
+                    supports_image: route.supports_image,
+                    supports_thinking: route.supports_thinking,
+                    supports_web_search: route.supports_web_search,
+                    id: route.id,
                     ..ModelInfo::default()
                 }),
         );

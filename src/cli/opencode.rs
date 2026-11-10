@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -119,32 +118,10 @@ fn collect_opencode_models(
     official_models: &[ProviderModel],
 ) -> Map<String, Value> {
     let catalog = selected_catalog_models(config, official_models);
-    let mut seen: HashSet<String> = catalog.iter().map(|(id, _, _)| id.clone()).collect();
-    let mut models: Map<String, Value> = catalog
+    catalog
         .into_iter()
-        .map(|(id, name, model)| (id, opencode_model(name, model, config)))
-        .collect();
-    for profile in &config.fusion_profiles {
-        let id = profile.model_slug();
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        models.insert(
-            id,
-            json!({
-                "name": profile.display_name(),
-                "limit": {
-                    "context": config.default_context_window,
-                    "output": config.default_max_tokens,
-                },
-                "modalities": {
-                    "input": ["text"],
-                    "output": ["text"],
-                },
-            }),
-        );
-    }
-    models
+        .map(|(id, name, model)| (id, opencode_model(name, &model, config)))
+        .collect()
 }
 
 fn opencode_model(name: String, model: &ProviderModel, config: &GatewayConfig) -> Value {
