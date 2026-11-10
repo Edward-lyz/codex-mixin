@@ -45,9 +45,47 @@ const TURNS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS token_usage_turns (
     reasoning_tokens INTEGER,
     reasoning_chars INTEGER NOT NULL,
     ttft_ms REAL,
-    output_tps REAL
+    output_tps REAL,
+    status TEXT NOT NULL DEFAULT 'completed',
+    error TEXT
 );
 CREATE INDEX IF NOT EXISTS token_usage_turns_at ON token_usage_turns (at_ms);";
+
+/// Ledger columns added after the first release; older ledgers gain them on the
+/// next write and read them as completed replies until then.
+const TURN_STATUS_COLUMNS: [(&str, &str); 2] = [
+    ("status", "TEXT NOT NULL DEFAULT 'completed'"),
+    ("error", "TEXT"),
+];
+
+/// Longest upstream failure summary kept per reply.
+const MAX_TURN_ERROR_CHARS: usize = 200;
+
+/// Outcome of one upstream reply.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TurnStatus {
+    #[default]
+    Completed,
+    Failed,
+}
+
+impl TurnStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn from_column(value: &str) -> Self {
+        if value == Self::Failed.as_str() {
+            Self::Failed
+        } else {
+            Self::Completed
+        }
+    }
+}
 
 /// One upstream reply. Optional counters stay `None` when the provider did not
 /// report them, so unknown values are never shown as zero.
@@ -77,10 +115,19 @@ pub(crate) struct TurnUsage {
     pub(crate) cache_hit_percent: Option<f64>,
     pub(crate) ttft_ms: Option<f64>,
     pub(crate) output_tps: Option<f64>,
+    pub(crate) status: TurnStatus,
+    /// Short upstream failure summary, such as `HTTP 429`, for failed replies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 impl TurnUsage {
     pub(crate) fn finalize(mut self) -> Self {
+        if let Some(error) = &mut self.error
+            && let Some((cut, _)) = error.char_indices().nth(MAX_TURN_ERROR_CHARS)
+        {
+            error.truncate(cut);
+        }
         self.model_matches = self
             .returned_model
             .as_deref()
@@ -174,17 +221,43 @@ pub(crate) fn latest_session_turn(
 }
 
 /// Providers answer with namespaced or dated snapshots of the requested model
-/// ("openai/gpt-5", "gpt-5-2025-08-07", "claude-sonnet-4-6-20260101"). Only
-/// those variants match: a sibling such as "gpt-5.4-mini" for "gpt-5.4" does
-/// not, because it is a different model.
+/// ("openai/gpt-5", "gpt-5-2025-08-07", "claude-sonnet-4-6-20260101"), and
+/// relays list models under a short alias of the vendor id ("Opus 5.5" for
+/// "claude-opus-5-5"). Only those variants match: a sibling such as
+/// "gpt-5.4-mini" for "gpt-5.4" does not, because it is a different model.
 pub(crate) fn model_matches(requested: &str, returned: &str) -> bool {
     let normalize = |name: &str| {
         let name = name.rsplit('/').next().unwrap_or(name);
-        let name = name.to_ascii_lowercase().replace(['_', '.', ' '], "-");
+        let name = name
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', '.', ' '], "-");
         strip_date_suffix(&name).to_owned()
     };
     let (requested, returned) = (normalize(requested), normalize(returned));
-    !returned.is_empty() && requested == returned
+    if returned.is_empty() {
+        return false;
+    }
+    requested == returned
+        || is_vendor_alias(&requested, &returned)
+        || is_vendor_alias(&returned, &requested)
+}
+
+/// `alias` is `full` without one leading vendor word ("opus-5-5" for
+/// "claude-opus-5-5"). The alias must still name a version, so a bare family
+/// word such as "mini" never matches.
+fn is_vendor_alias(alias: &str, full: &str) -> bool {
+    let Some(vendor) = full
+        .strip_suffix(alias)
+        .and_then(|rest| rest.strip_suffix('-'))
+    else {
+        return false;
+    };
+    !vendor.is_empty()
+        && vendor.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && alias.contains('-')
+        && alias.bytes().any(|byte| byte.is_ascii_digit())
+        && alias.bytes().any(|byte| byte.is_ascii_alphabetic())
 }
 
 /// Removes a trailing snapshot date: `-YYYYMMDD`, `-YYYY-MM-DD`, or `-MMDD`.
@@ -271,17 +344,28 @@ fn query_turns(
     if !table_exists {
         return Ok(Vec::new());
     }
+    // The reader is read-only, so a ledger last written by an older build
+    // reports every row as completed instead of failing the query.
+    let status_columns = if turn_columns(&connection)?
+        .iter()
+        .any(|column| column == "status")
+    {
+        "status, error"
+    } else {
+        "'completed', NULL"
+    };
     // Inserts run on the blocking pool and may land out of order, so order by
     // the reply timestamp rather than the row id.
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "SELECT at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
                 protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
-                output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
+                output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps,
+                {status_columns}
          FROM token_usage_turns
          WHERE (?1 IS NULL OR at_ms >= ?1) AND (?2 IS NULL OR provider_id = ?2)
                AND (?3 IS NULL OR at_ms < ?3)
-         ORDER BY at_ms DESC, id DESC",
-    )?;
+         ORDER BY at_ms DESC, id DESC"
+    ))?;
     let since = query
         .since_ms
         .map(|since| since.min(i64::MAX as u64) as i64);
@@ -319,6 +403,8 @@ fn query_turns(
                 cache_hit_percent: None,
                 ttft_ms: row.get(14)?,
                 output_tps: row.get(15)?,
+                status: TurnStatus::from_column(&row.get::<_, String>(16)?),
+                error: row.get(17)?,
             }
             .finalize(),
         );
@@ -344,12 +430,27 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
     connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
     connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
     connection.execute_batch(TURNS_SCHEMA)?;
+    let columns = turn_columns(connection)?;
+    for (column, definition) in TURN_STATUS_COLUMNS {
+        // Another process may add the column between the check and ALTER.
+        if !columns.iter().any(|existing| existing == column)
+            && let Err(error) = connection.execute(
+                &format!("ALTER TABLE token_usage_turns ADD COLUMN {column} {definition}"),
+                [],
+            )
+            && !turn_columns(connection)?
+                .iter()
+                .any(|existing| existing == column)
+        {
+            return Err(error.into());
+        }
+    }
     connection.execute(
         "INSERT INTO token_usage_turns (
             at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
             protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
-            output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps, status, error
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             turn.at_ms,
             turn.session,
@@ -367,6 +468,8 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
             turn.reasoning_chars,
             turn.ttft_ms,
             turn.output_tps,
+            turn.status.as_str(),
+            turn.error,
         ],
     )?;
     connection.execute(
@@ -374,4 +477,12 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
         [MAX_TRACKED_TURNS as i64],
     )?;
     Ok(())
+}
+
+fn turn_columns(connection: &Connection) -> anyhow::Result<Vec<String>> {
+    let mut statement = connection.prepare("PRAGMA table_info(token_usage_turns)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns)
 }

@@ -38,8 +38,13 @@ pub(crate) async fn usage(json_output: bool, days: Option<u64>) -> anyhow::Resul
             .cache_hit_percent
             .map(|percent| format!(", cache hit {percent:.1}%"))
             .unwrap_or_default();
+        let errors = if row.error_count > 0 {
+            format!(", {} failed", row.error_count)
+        } else {
+            String::new()
+        };
         println!(
-            "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}",
+            "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}{errors}",
             row.provider_id, row.model_id, requests, input, cached, creation, output
         );
     }
@@ -114,8 +119,13 @@ pub(crate) async fn usage_daily(json_output: bool, days: Option<u64>) -> anyhow:
                 },
             )
         });
+        let errors = row["error_count"]
+            .as_u64()
+            .filter(|count| *count > 0)
+            .map(|count| format!(", {count} failed"))
+            .unwrap_or_default();
         println!(
-            "{day} {}/{}: {} requests, {} input, {} cached, {} output",
+            "{day} {}/{}: {} requests, {} input, {} cached, {} output{errors}",
             row["provider_id"].as_str().unwrap_or("?"),
             row["model_id"].as_str().unwrap_or("?"),
             requests,
@@ -196,8 +206,13 @@ fn turn_line(row: &serde_json::Value) -> String {
         (Some(returned), Some(false)) => format!(" (returned {returned})"),
         _ => String::new(),
     };
+    let failure = match (row["status"].as_str(), row["error"].as_str()) {
+        (Some("failed"), Some(error)) => format!(" [failed: {error}]"),
+        (Some("failed"), None) => " [failed]".to_owned(),
+        _ => String::new(),
+    };
     format!(
-        "{} {}/{}{model}: input {}, cached {} ({cache}), output {}, reasoning {}",
+        "{} {}/{}{model}{failure}: input {}, cached {} ({cache}), output {}, reasoning {}",
         row["session_display"]
             .as_str()
             .unwrap_or_else(|| row["session"].as_str().unwrap_or("?")),
@@ -222,4 +237,7 @@ struct ProviderTokenUsageRow {
     cache_hit_percent: Option<f64>,
     average_ttft_ms: Option<f64>,
     output_tps: Option<f64>,
+    /// Absent from gateways that predate failure accounting.
+    #[serde(default)]
+    error_count: u64,
 }
