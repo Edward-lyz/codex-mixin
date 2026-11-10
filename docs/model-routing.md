@@ -5,7 +5,7 @@
 
 | 类型 | 入口模型 | 行为 | 存储 |
 |---|---|---|---|
-| 融合 `fusion` | 虚拟模型 `auto/<id>` | Plan 模式下的用户轮次并行询问 1–8 个面板模型，裁判模型整合，最终模型作答；其余轮次直接走最终模型 | `fusion_profiles`，`mode: orchestration` |
+| 融合 `fusion` | 虚拟模型 `auto/<id>` | 会话中每个新用户轮次并行询问 1–8 个面板模型（附带有界的历史对话），裁判模型整合，最终模型作答；同一轮内的工具续调直接走最终模型 | `fusion_profiles`，`mode: orchestration` |
 | 定时 `schedule` | 虚拟模型 `auto/<id>` | 按本地时间选择模型（1–24 个不重叠时段，跨零点可用），时段外走默认模型 `final_model` | `fusion_profiles`，`mode: time_rotation` |
 | 故障转移 `failover` | 已有 provider 模型或 `official:<slug>`；设置 `id` 时另有虚拟模型 `auto/<id>`（源必须是 provider 模型） | 源模型失败时按顺序改用 1–4 个备用模型 | `failover_routes` |
 

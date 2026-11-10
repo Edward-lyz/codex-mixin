@@ -132,12 +132,7 @@ fn collect_opencode_models(
         models.insert(
             id,
             json!({
-                "name": format!(
-                    "Fusion ({}): {} -> {}",
-                    profile.id,
-                    profile.panel_models.join("+"),
-                    profile.judge_model
-                ),
+                "name": profile.display_name(),
                 "limit": {
                     "context": config.default_context_window,
                     "output": config.default_max_tokens,

@@ -110,12 +110,7 @@ fn collect_dsh_models(
         entry.insert(Value::String("id".to_owned()), Value::String(id));
         entry.insert(
             Value::String("name".to_owned()),
-            Value::String(format!(
-                "Fusion ({}): {} -> {}",
-                profile.id,
-                profile.panel_models.join("+"),
-                profile.judge_model
-            )),
+            Value::String(profile.display_name()),
         );
         models.push(Value::Mapping(entry));
     }

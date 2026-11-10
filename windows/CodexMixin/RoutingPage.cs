@@ -297,7 +297,7 @@ public sealed partial class MainWindow
         var advanced = new StackPanel { Spacing = 12 };
         foreach (var element in new FrameworkElement[] { minimum, timeout, intermediate, tools }) advanced.Children.Add(element);
         foreach (var element in new FrameworkElement[] { search, panels, judge, final, new Expander { Header = "高级选项", Content = advanced, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch },
-            Text("多模型编排仅在 Plan 模式的新用户轮次运行；后续请求直接交给 Final 模型。") })
+            Text("每个新用户轮次都先由 Panel 并行给出意见、Judge 汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。") })
             form.Children.Add(element);
         tracked.AddRange([judge, final, minimum, timeout, intermediate, tools]);
         return () =>
