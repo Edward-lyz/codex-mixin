@@ -31,6 +31,9 @@ pub(crate) struct ProviderTokenUsage {
     pub(crate) cache_hit_percent: Option<f64>,
     pub(crate) average_ttft_ms: Option<f64>,
     pub(crate) output_tps: Option<f64>,
+    /// Upstream replies that failed; `request_count` counts only replies
+    /// that reported usage, so the attempt total is the sum of both.
+    pub(crate) error_count: u64,
     #[serde(skip)]
     pub(crate) observed_cache_read_tokens: u64,
     #[serde(skip)]
@@ -72,17 +75,33 @@ fn ensure_timing_columns(connection: &Connection, table: &str) -> anyhow::Result
         ("timed_output_tokens", "INTEGER"),
         ("total_output_tps", "REAL"),
         ("tps_sample_count", "INTEGER"),
+        ("error_count", "INTEGER"),
     ] {
-        if !columns.iter().any(|existing| existing == column) {
-            connection.execute(
+        if !columns.iter().any(|existing| existing == column)
+            && let Err(error) = connection.execute(
                 &format!(
                     "ALTER TABLE {table} ADD COLUMN {column} {column_type} NOT NULL DEFAULT 0"
                 ),
                 [],
-            )?;
+            )
+            && !column_exists(connection, table, column)?
+        {
+            return Err(error.into());
         }
     }
     Ok(())
+}
+
+/// Another connection may add the same column between our check and ALTER;
+/// the migration succeeded if the column is there afterwards.
+fn column_exists(connection: &Connection, table: &str, column: &str) -> anyhow::Result<bool> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let found = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|existing| existing == column);
+    Ok(found)
 }
 
 fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
@@ -104,6 +123,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (provider_id, model_id)
         );
         CREATE TABLE IF NOT EXISTS token_usage_daily (
@@ -123,6 +143,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (day, provider_id, model_id)
         )",
     )?;
@@ -132,7 +153,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
         "SELECT provider_id, model_id, request_count, input_tokens, cache_read_tokens,
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
                 observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
-                total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count
+                total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
+                error_count
          FROM token_usage",
     )?;
     let rows = statement.query_map([], |row| {
@@ -159,6 +181,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 timed_output_tokens: row.get(12)?,
                 total_output_tps: row.get(13)?,
                 tps_sample_count: row.get(14)?,
+                error_count: row.get(15)?,
             },
         ))
     })?;
@@ -168,7 +191,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
         "SELECT day, provider_id, model_id, request_count, input_tokens, cache_read_tokens,
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
                 observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
-                total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count
+                total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
+                error_count
          FROM token_usage_daily",
     )?;
     let daily_rows = daily_statement.query_map([], |row| {
@@ -196,6 +220,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 timed_output_tokens: row.get(13)?,
                 total_output_tps: row.get(14)?,
                 tps_sample_count: row.get(15)?,
+                error_count: row.get(16)?,
             },
         ))
     })?;
@@ -203,6 +228,56 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
         entries,
         daily_entries: daily_rows.collect::<Result<HashMap<_, _>, _>>()?,
     })
+}
+
+/// Creates or upgrades the aggregate tables on the shared writer connection.
+fn ensure_usage_tables(connection: &Connection) -> anyhow::Result<()> {
+    connection.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         CREATE TABLE IF NOT EXISTS token_usage (
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            request_count INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            observed_cache_read_tokens INTEGER NOT NULL,
+            observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
+            total_output_tps REAL NOT NULL DEFAULT 0,
+            tps_sample_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (provider_id, model_id)
+         );
+         CREATE TABLE IF NOT EXISTS token_usage_daily (
+            day INTEGER NOT NULL,
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            request_count INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            observed_cache_read_tokens INTEGER NOT NULL,
+            observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
+            total_output_tps REAL NOT NULL DEFAULT 0,
+            tps_sample_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, provider_id, model_id)
+         )",
+    )?;
+    ensure_timing_columns(connection, "token_usage")?;
+    ensure_timing_columns(connection, "token_usage_daily")?;
+    Ok(())
 }
 
 fn persist_usage_delta(
@@ -223,49 +298,7 @@ fn persist_usage_delta(
     let Some((_, connection)) = write.as_mut() else {
         anyhow::bail!("usage database connection is unavailable");
     };
-    connection.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         CREATE TABLE IF NOT EXISTS token_usage (
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            request_count INTEGER NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            cache_read_tokens INTEGER NOT NULL,
-            cache_creation_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            observed_cache_read_tokens INTEGER NOT NULL,
-            observed_uncached_input_tokens INTEGER NOT NULL,
-            timing_sample_count INTEGER NOT NULL DEFAULT 0,
-            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
-            total_generation_micros INTEGER NOT NULL DEFAULT 0,
-            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
-            total_output_tps REAL NOT NULL DEFAULT 0,
-            tps_sample_count INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (provider_id, model_id)
-         );
-         CREATE TABLE IF NOT EXISTS token_usage_daily (
-            day INTEGER NOT NULL,
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            request_count INTEGER NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            cache_read_tokens INTEGER NOT NULL,
-            cache_creation_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            observed_cache_read_tokens INTEGER NOT NULL,
-            observed_uncached_input_tokens INTEGER NOT NULL,
-            timing_sample_count INTEGER NOT NULL DEFAULT 0,
-            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
-            total_generation_micros INTEGER NOT NULL DEFAULT 0,
-            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
-            total_output_tps REAL NOT NULL DEFAULT 0,
-            tps_sample_count INTEGER NOT NULL DEFAULT 0,
-            PRIMARY KEY (day, provider_id, model_id)
-         )",
-    )?;
-    ensure_timing_columns(connection, "token_usage")?;
-    ensure_timing_columns(connection, "token_usage_daily")?;
+    ensure_usage_tables(connection)?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
     let timing_recorded = is_representative_timing_sample(usage);
@@ -359,6 +392,45 @@ fn persist_usage_delta(
             output_tps,
             u64::from(output_tps > 0.0),
         ],
+    )?;
+    transaction.commit().map_err(Into::into)
+}
+
+fn persist_failure_delta(path: &Path, provider_id: &str, model_id: &str) -> anyhow::Result<()> {
+    let mut write = USAGE_DB_WRITE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if write.as_ref().is_none_or(|(current, _)| current != path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        *write = Some((path.to_path_buf(), Connection::open(path)?));
+    }
+    let Some((_, connection)) = write.as_mut() else {
+        anyhow::bail!("usage database connection is unavailable");
+    };
+    ensure_usage_tables(connection)?;
+    let day = current_unix_day()?;
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "INSERT INTO token_usage (
+            provider_id, model_id, request_count, input_tokens, cache_read_tokens,
+            cache_creation_tokens, output_tokens, observed_cache_read_tokens,
+            observed_uncached_input_tokens, error_count
+         ) VALUES (?1, ?2, 0, 0, 0, 0, 0, 0, 0, 1)
+         ON CONFLICT(provider_id, model_id) DO UPDATE SET
+            error_count = token_usage.error_count + 1",
+        params![provider_id, model_id],
+    )?;
+    transaction.execute(
+        "INSERT INTO token_usage_daily (
+            day, provider_id, model_id, request_count, input_tokens, cache_read_tokens,
+            cache_creation_tokens, output_tokens, observed_cache_read_tokens,
+            observed_uncached_input_tokens, error_count
+         ) VALUES (?1, ?2, ?3, 0, 0, 0, 0, 0, 0, 0, 1)
+         ON CONFLICT(day, provider_id, model_id) DO UPDATE SET
+            error_count = token_usage_daily.error_count + 1",
+        params![day, provider_id, model_id],
     )?;
     transaction.commit().map_err(Into::into)
 }
@@ -485,6 +557,40 @@ impl TokenUsageAggregator {
             tokio::task::spawn_blocking(move || {
                 if let Err(error) = persist_usage_delta(&path, &provider_id, &model_id, &usage) {
                     tracing::warn!(error = %error, "failed to persist token usage");
+                }
+            });
+        }
+    }
+
+    /// Counts one failed upstream reply for the provider/model and its day.
+    pub(crate) fn record_failure(&self, provider_id: &str, model_id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = (provider_id.to_owned(), model_id.to_owned());
+        let entry = state.entries.entry(key).or_default();
+        entry.provider_id = provider_id.to_owned();
+        entry.model_id = model_id.to_owned();
+        entry.error_count = entry.error_count.saturating_add(1);
+        match current_unix_day() {
+            Ok(day) => {
+                let daily_entry = state
+                    .daily_entries
+                    .entry((day, provider_id.to_owned(), model_id.to_owned()))
+                    .or_default();
+                daily_entry.provider_id = provider_id.to_owned();
+                daily_entry.model_id = model_id.to_owned();
+                daily_entry.error_count = daily_entry.error_count.saturating_add(1);
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "system clock cannot represent token usage day");
+            }
+        }
+        drop(state);
+        if let Some(path) = self.persist_path.clone() {
+            let provider_id = provider_id.to_owned();
+            let model_id = model_id.to_owned();
+            tokio::task::spawn_blocking(move || {
+                if let Err(error) = persist_failure_delta(&path, &provider_id, &model_id) {
+                    tracing::warn!(error = %error, "failed to persist upstream failure");
                 }
             });
         }
@@ -668,6 +774,7 @@ fn add_aggregated_usage(entry: &mut ProviderTokenUsage, usage: &ProviderTokenUsa
     entry.tps_sample_count = entry
         .tps_sample_count
         .saturating_add(usage.tps_sample_count);
+    entry.error_count = entry.error_count.saturating_add(usage.error_count);
 }
 
 fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsage> {

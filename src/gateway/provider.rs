@@ -178,6 +178,18 @@ pub(crate) async fn stream_provider_response(
         ProviderProtocol::OpenAiResponses => stream_openai_responses(ctx).await,
         ProviderProtocol::GoogleGemini => stream_gemini(ctx).await,
     };
+    if let Err(error) = &result
+        && let Some(reason) = upstream_failure_reason(error)
+    {
+        executor.cache_shapes.record_failed_turn(
+            provider.id(),
+            catalog_slug,
+            upstream_model_id,
+            routing,
+            protocol,
+            reason,
+        );
+    }
     for (field, setting, previous, parent) in restored.into_iter().rev() {
         if let Some(parent) = parent {
             restore_optional_field(body, field, parent);
@@ -1000,5 +1012,17 @@ fn restore_reasoning(body: &mut Value, original: Option<ReasoningRestore>) {
         Some(ReasoningRestore::Removed(reasoning)) => body["reasoning"] = reasoning,
         Some(ReasoningRestore::Effort(effort)) => body["reasoning"]["effort"] = effort,
         None => {}
+    }
+}
+
+/// Short ledger summary for failures that reached or tried to reach the
+/// upstream; local validation errors are not upstream replies.
+fn upstream_failure_reason(error: &GatewayError) -> Option<String> {
+    match error {
+        GatewayError::UpstreamStatus { status, .. } => Some(format!("HTTP {}", status.as_u16())),
+        GatewayError::Upstream(_) => Some("upstream error".to_owned()),
+        GatewayError::Http(error) if error.is_timeout() => Some("upstream timeout".to_owned()),
+        GatewayError::Http(_) => Some("upstream connection failed".to_owned()),
+        _ => None,
     }
 }

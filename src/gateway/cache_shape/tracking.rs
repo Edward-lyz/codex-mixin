@@ -11,7 +11,8 @@ use crate::protocol::sse::SseDecoder;
 
 use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};
-use crate::usage::{TurnQuery, TurnUsage, session_tag, unix_millis};
+use crate::provider::ProviderProtocol;
+use crate::usage::{TurnQuery, TurnStatus, TurnUsage, session_tag, unix_millis};
 
 /// Sessions retained for prefix diagnostics. Codex drives one session per
 /// conversation, so this only has to cover concurrently active threads.
@@ -43,6 +44,56 @@ pub(crate) struct CacheShapeTracker {
 }
 
 impl CacheShapeTracker {
+    /// Records an upstream request that failed before any reply streamed, so
+    /// the usage page can show it with its status instead of dropping it.
+    pub(crate) fn record_failed_turn(
+        &self,
+        provider_id: &str,
+        catalog_slug: &str,
+        upstream_model_id: &str,
+        routing: Option<&UpstreamRouting>,
+        protocol: ProviderProtocol,
+        error: String,
+    ) {
+        self.usage.record_failure(provider_id, upstream_model_id);
+        // Rows are grouped by client session; requests without one only count.
+        let Some(routing) = routing else {
+            return;
+        };
+        let protocol = match protocol {
+            ProviderProtocol::AnthropicMessages => super::shape::ANTHROPIC_MESSAGES,
+            ProviderProtocol::OpenAiChat => super::shape::OPENAI_CHAT,
+            ProviderProtocol::OpenAiResponses => super::shape::OPENAI_RESPONSES,
+            ProviderProtocol::GoogleGemini => super::shape::GOOGLE_GEMINI,
+        };
+        self.usage.record_turn(
+            TurnUsage {
+                at_ms: unix_millis(),
+                session: session_tag(&routing.session_id),
+                session_display: None,
+                provider_id: provider_id.to_owned(),
+                catalog_slug: catalog_slug.to_owned(),
+                upstream_model_id: upstream_model_id.to_owned(),
+                returned_model: None,
+                model_matches: None,
+                protocol: protocol.to_owned(),
+                prefix_state: PrefixState::ColdStart.as_str().to_owned(),
+                input_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                reasoning_chars: 0,
+                cache_hit_percent: None,
+                ttft_ms: None,
+                output_tps: None,
+                status: TurnStatus::Failed,
+                error: Some(error),
+            }
+            .finalize(),
+        );
+    }
+
     pub(crate) fn with_usage(usage: TokenUsageAggregator) -> Self {
         Self {
             sessions: Mutex::new(TrackedSessions::default()),
@@ -382,6 +433,8 @@ pub(crate) struct UpstreamCacheObserver {
     returned_model: Option<String>,
     reasoning_tokens: Option<u64>,
     reasoning_chars: u64,
+    /// Upstream error reported inside the stream, or a broken transport.
+    failure: Option<String>,
 }
 
 impl UpstreamCacheObserver {
@@ -393,6 +446,7 @@ impl UpstreamCacheObserver {
             returned_model: None,
             reasoning_tokens: None,
             reasoning_chars: 0,
+            failure: None,
         }
     }
 
@@ -400,6 +454,9 @@ impl UpstreamCacheObserver {
         // AGY envelopes Gemini content in `response`; inspect the same payload
         // for timing, reasoning and usage rather than only unwrapping counters.
         let payload = value.get("response").unwrap_or(value);
+        if self.failure.is_none() {
+            self.failure = stream_failure(value);
+        }
         if self.first_token_at.is_none() && contains_output_delta(payload) {
             self.first_token_at = Some(Instant::now());
         }
@@ -472,8 +529,41 @@ impl UpstreamCacheObserver {
             cache_hit_percent: None,
             ttft_ms: usage.ttft_micros.map(|micros| micros as f64 / 1_000.0),
             output_tps,
+            status: if self.failure.is_some() {
+                TurnStatus::Failed
+            } else {
+                TurnStatus::Completed
+            },
+            error: self.failure.clone(),
         }
         .finalize()
+    }
+}
+
+/// Error events that end a stream without a usable reply: Responses
+/// `error`/`response.failed`, Anthropic `error`, and Chat Completions chunks
+/// that carry an `error` object.
+fn stream_failure(value: &Value) -> Option<String> {
+    let message = |error: &Value| {
+        error
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| error.as_str())
+            .filter(|message| !message.is_empty())
+            .unwrap_or("upstream stream error")
+            .to_owned()
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some("error") => Some(message(value.get("error").unwrap_or(value))),
+        Some("response.failed") => Some(
+            value
+                .pointer("/response/error")
+                .map_or_else(|| "response failed".to_owned(), message),
+        ),
+        _ => value
+            .get("error")
+            .filter(|error| !error.is_null())
+            .map(message),
     }
 }
 
@@ -524,6 +614,16 @@ fn reasoning_delta_chars(value: &Value) -> u64 {
 
 impl Drop for UpstreamCacheObserver {
     fn drop(&mut self) {
+        if self.failure.is_some() {
+            self.observation.usage.record_failure(
+                &self.observation.provider_id,
+                &self.observation.upstream_model_id,
+            );
+            if !self.usage.observed() {
+                self.observation.usage.record_turn(self.turn_usage());
+                return;
+            }
+        }
         if self.usage.observed() {
             if let Some(first_token_at) = self.first_token_at {
                 self.usage.ttft_micros = Some(
@@ -608,6 +708,12 @@ where
         let mut report = observation.map(UpstreamCacheObserver::new);
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
+            if chunk.is_err()
+                && let Some(report) = report.as_mut()
+                && report.failure.is_none()
+            {
+                report.failure = Some("upstream stream interrupted".to_owned());
+            }
             if let Ok(bytes) = &chunk
                 && let Some(report) = report.as_mut()
             {
