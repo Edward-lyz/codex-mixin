@@ -297,6 +297,12 @@ extension AppDelegate {
                 progress.advance(to: 0)
                 _ = try await self.runGateway(["route", "delete", "--model", model])
                 try await self.applyModelRouteChange(progress: progress)
+            },
+            changeHandler: { [weak self] arguments, progress in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                progress?.advance(to: 0)
+                _ = try await self.runGateway(arguments)
+                if let progress { try await self.applyModelRouteChange(progress: progress) }
             }
         )
     }

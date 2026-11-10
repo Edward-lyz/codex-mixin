@@ -342,6 +342,8 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         official_model_contexts: Default::default(),
         fusion_profiles: legacy.fusion_profiles,
         failover_routes: Vec::new(),
+        disabled_routes: Vec::new(),
+        route_order: Vec::new(),
         providers: vec![provider],
     })
 }

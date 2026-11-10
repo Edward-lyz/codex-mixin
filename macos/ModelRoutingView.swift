@@ -28,7 +28,7 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
         switch self {
         case .fusion: "rectangle.3.group"
         case .schedule: "clock"
-        case .failover: "arrow.triangle.branch"
+        case .failover: "arrow.triangle.2.circlepath"
         }
     }
 
@@ -81,14 +81,32 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
     }
 }
 
-/// One editable route. Fusion and schedule routes wrap a Fusion profile and expose
-/// `auto/<id>`; failover routes attach to an existing model and, when named,
-/// also expose `auto/<id>`.
+struct ModelRouteActivity: Equatable {
+    var served: String?
+    var switchedAt: Date?
+    var failed: [String] = []
+    var switchedTo: String?
+    var reason = ""
+
+    init(dictionary: [String: Any]) {
+        served = dictionary["served"] as? String
+        if let last = dictionary["last_switch"] as? [String: Any] {
+            switchedAt = (last["at_ms"] as? Double).map { Date(timeIntervalSince1970: $0 / 1_000) }
+            failed = last["failed"] as? [String] ?? []
+            switchedTo = last["served"] as? String
+            reason = last["reason"] as? String ?? ""
+        }
+    }
+}
+
+/// One editable route, kept separate from the sidebar selection identity.
 struct ModelRouteDraft: Equatable {
     var kind: ModelRouteKind
     var profile = FusionSettingsProfile()
     var source = ""
     var fallbacks: [String] = []
+    var enabled = true
+    var activity: ModelRouteActivity?
 
     init(kind: ModelRouteKind) {
         self.kind = kind
@@ -100,6 +118,8 @@ struct ModelRouteDraft: Equatable {
             return nil
         }
         self.kind = kind
+        enabled = entry["enabled"] as? Bool ?? true
+        activity = (entry["activity"] as? [String: Any]).map(ModelRouteActivity.init(dictionary:))
         if kind == .failover {
             source = entry["source"] as? String ?? ""
             fallbacks = entry["fallbacks"] as? [String] ?? []
@@ -200,7 +220,7 @@ struct ModelRouteDraft: Equatable {
         if source.isEmpty {
             return AppLocalization.string("routing.error.source")
         }
-        if otherSources.contains(source) {
+        if name.isEmpty && otherSources.contains(source) {
             return AppLocalization.string("routing.error.duplicate", source)
         }
         if fallbacks.isEmpty || fallbacks.count > 4 {
@@ -227,11 +247,13 @@ final class ModelRoutingModel: ObservableObject {
     typealias ModelsHandler = () async throws -> [FusionModelOption]
     typealias SaveHandler = (String, String?, OperationProgress) async throws -> Void
     typealias DeleteHandler = (String, OperationProgress) async throws -> Void
+    typealias ChangeHandler = ([String], OperationProgress?) async throws -> Void
 
     private let listHandler: ListHandler
     private let modelsHandler: ModelsHandler
     private let saveHandler: SaveHandler
     private let deleteHandler: DeleteHandler
+    private let changeHandler: ChangeHandler
 
     @Published var routes: [ModelRouteDraft] = []
     @Published var options: [FusionModelOption] = []
@@ -242,17 +264,20 @@ final class ModelRoutingModel: ObservableObject {
     @Published var statusIsError = false
     @Published var isBusy = false
     @Published var hasLoaded = false
+    @Published var suggestionOrder = UserDefaults.standard.stringArray(forKey: "modelRoutingSuggestionOrder") ?? []
 
     init(
         listHandler: @escaping ListHandler,
         modelsHandler: @escaping ModelsHandler,
         saveHandler: @escaping SaveHandler,
-        deleteHandler: @escaping DeleteHandler
+        deleteHandler: @escaping DeleteHandler,
+        changeHandler: @escaping ChangeHandler
     ) {
         self.listHandler = listHandler
         self.modelsHandler = modelsHandler
         self.saveHandler = saveHandler
         self.deleteHandler = deleteHandler
+        self.changeHandler = changeHandler
     }
 
     var validationError: String? {
@@ -260,13 +285,17 @@ final class ModelRoutingModel: ObservableObject {
         let others = routes.filter { $0.model != editingModel }
         return draft.validationError(
             otherModels: Set(others.map(\.model)),
-            otherSources: Set(others.filter { $0.kind == .failover }.map(\.source))
+            otherSources: Set(others.filter { $0.kind == .failover && $0.name.isEmpty }.map(\.source))
         )
     }
 
     var isDirty: Bool {
         guard let draft else { return false }
-        return draft != routes.first { $0.model == editingModel }
+        var edited = draft
+        var saved = routes.first { $0.model == editingModel }
+        edited.activity = nil
+        saved?.activity = nil
+        return edited != saved
     }
 
     var canSave: Bool { !isBusy && isDirty && validationError == nil }
@@ -332,21 +361,40 @@ final class ModelRoutingModel: ObservableObject {
             route.fallbacks = group.dropFirst().prefix(4).map(\.id)
             result.append(route)
         }
-        let models = Set(routes.map(\.model) + [editingModel == nil ? draft?.model : nil].compactMap { $0 })
-        let sources = Set(routes.filter { $0.kind == .failover }.map(\.source))
+        let models = Set(routes.map(\.model))
+        let sources = Set(routes.filter { $0.kind == .failover && $0.name.isEmpty }.map(\.source))
         return result.filter { $0.validationError(otherModels: models, otherSources: sources) == nil }
+            .sorted {
+                (suggestionOrder.firstIndex(of: $0.model) ?? Int.max)
+                    < (suggestionOrder.firstIndex(of: $1.model) ?? Int.max)
+            }
     }
 
     func adopt(_ route: ModelRouteDraft) {
-        selection = nil
+        selection = route.model
         editingModel = nil
         draft = route
         setStatus(nil)
     }
 
+    func refreshActivity() async {
+        guard !isBusy, hasLoaded else { return }
+        do {
+            let loaded = try await listHandler()
+            guard !Task.isCancelled, !isBusy else { return }
+            routes = loaded
+        } catch {
+            setStatus(localizedErrorDescription(error), isError: true)
+        }
+    }
+
     func reloadOnShow() async {
         guard !isBusy else { return }
-        await reload(keeping: selection)
+        if hasLoaded {
+            await refreshActivity()
+        } else {
+            await reload(keeping: selection)
+        }
     }
 
     func reload(keeping model: String?) async {
@@ -366,6 +414,11 @@ final class ModelRoutingModel: ObservableObject {
     }
 
     func select(_ model: String?) {
+        if let model, !routes.contains(where: { $0.model == model }),
+           let route = suggestions.first(where: { $0.model == model }) {
+            adopt(route)
+            return
+        }
         selection = model
         editingModel = model
         draft = routes.first { $0.model == model }
@@ -391,7 +444,7 @@ final class ModelRoutingModel: ObservableObject {
             route.profile.finalModel = ids.first ?? ""
             route.profile.timeRoutes = [FusionTimeRoute(startMinute: 9 * 60, endMinute: 18 * 60, model: ids.dropFirst().first ?? ids.first ?? "")]
         case .failover:
-            let used = Set(routes.filter { $0.kind == .failover }.map(\.source))
+            let used = Set(routes.filter { $0.kind == .failover && $0.name.isEmpty }.map(\.source))
             route.source = ids.first { !used.contains($0) } ?? ""
             route.fallbacks = ids.first { $0 != route.source }.map { [$0] } ?? []
         }
@@ -509,6 +562,57 @@ extension ModelRoutingModel {
         }
     }
 
+    func moveSuggestions(from offsets: IndexSet, to destination: Int) {
+        var ordered = suggestions.map(\.model)
+        ordered.move(fromOffsets: offsets, toOffset: destination)
+        suggestionOrder = ordered
+        UserDefaults.standard.set(ordered, forKey: "modelRoutingSuggestionOrder")
+    }
+
+    func moveRoutes(from offsets: IndexSet, to destination: Int) {
+        guard !isBusy else { return }
+        let previous = routes
+        routes.move(fromOffsets: offsets, toOffset: destination)
+        let models = routes.map(\.model)
+        isBusy = true
+        Task { @MainActor in
+            defer { isBusy = false }
+            do {
+                try await changeHandler(["route", "reorder"] + models, nil)
+                setStatus(nil)
+            } catch {
+                routes = previous
+                setStatus(localizedErrorDescription(error), isError: true)
+            }
+        }
+    }
+
+    func toggleEnabled(_ route: ModelRouteDraft) {
+        guard !isBusy else { return }
+        isBusy = true
+        Task { @MainActor in
+            defer { isBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: AppLocalization.string("routing.progress.saveTitle"),
+                    phases: [AppLocalization.string("routing.progress.write"),
+                             AppLocalization.string("routing.progress.restart"),
+                             AppLocalization.string("routing.progress.refresh"),
+                             AppLocalization.string("routing.progress.done")],
+                    successTitle: AppLocalization.string("routing.progress.saved"),
+                    failureTitle: AppLocalization.string("routing.progress.failed")
+                ) { progress in
+                    try await self.changeHandler(["route", route.enabled ? "disable" : "enable", "--model", route.model], progress)
+                }
+                routes = try await listHandler()
+                if editingModel == route.model { draft?.enabled = !route.enabled }
+                setStatus(nil)
+            } catch {
+                setStatus(localizedErrorDescription(error), isError: true)
+            }
+        }
+    }
+
     func deleteSelected() {
         guard !isBusy, let model = editingModel, confirm(
             title: AppLocalization.string("routing.deleteConfirmTitle"),
@@ -556,6 +660,12 @@ struct ModelRoutingView: View {
         }
         .frame(minWidth: 860, minHeight: 600)
         .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                await model.refreshActivity()
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -584,33 +694,55 @@ struct ModelRoutingView: View {
             } else {
                 List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
                     ForEach(model.routes, id: \.model) { route in
-                        ModelRouteRow(route: route).tag(Optional(route.model))
+                        HStack(spacing: 8) {
+                            ModelRouteRow(route: route)
+                            Toggle(AppLocalization.string("routing.enabled"), isOn: Binding(
+                                get: { route.enabled },
+                                set: { _ in model.toggleEnabled(route) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .labelsHidden()
+                            .accessibilityLabel(AppLocalization.string("routing.enabledFor", route.displayName))
+                            Image(systemName: "line.3.horizontal")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .tag(route.model)
                     }
-                    if model.editingModel == nil, let draft = model.draft {
+                    .onMove { model.moveRoutes(from: $0, to: $1) }
+                    if model.editingModel == nil, model.selection == nil, let draft = model.draft {
                         ModelRouteRow(route: draft, isNew: true)
                     }
                     let suggestions = model.suggestions
                     if !suggestions.isEmpty {
                         Section(AppLocalization.string("routing.suggestions")) {
                             ForEach(suggestions, id: \.model) { route in
-                                Button {
-                                    model.adopt(route)
-                                } label: {
-                                    HStack {
-                                        ModelRouteRow(route: route)
-                                        Spacer(minLength: 4)
-                                        Image(systemName: "plus.circle")
-                                            .foregroundStyle(route.kind.tint)
-                                    }
-                                    .contentShape(Rectangle())
+                                HStack(spacing: 8) {
+                                    ModelRouteRow(route: route)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { model.adopt(route) }
+                                    Toggle(AppLocalization.string("routing.enabled"), isOn: Binding(
+                                        get: { false },
+                                        set: { _ in model.adopt(route); model.save() }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    .controlSize(.mini)
+                                    .labelsHidden()
+                                    .accessibilityLabel(AppLocalization.string("routing.enabledFor", route.displayName))
+                                    Image(systemName: "line.3.horizontal")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(model.isBusy)
+                                .tag(route.model)
                                 .help(AppLocalization.string("routing.suggestions.help"))
                             }
+                            .onMove { model.moveSuggestions(from: $0, to: $1) }
                         }
                     }
                 }
+                .disabled(model.isBusy)
                 .listStyle(.sidebar)
             }
         }
@@ -909,7 +1041,8 @@ private struct ModelRouteRow: View {
                     .truncationMode(.middle)
             }
         }
-        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }
 
@@ -922,8 +1055,13 @@ private struct ModelRouteEditor: View {
         Form {
             Section {
                 header
-                ModelRouteFlow(route: draft, options: model.options)
-                    .padding(.vertical, 4)
+                TimelineView(.periodic(from: .now, by: 30)) { _ in
+                    ModelRouteFlow(route: draft, options: model.options, activity: activity)
+                }
+                .padding(.vertical, 8)
+                if kind == .failover {
+                    activitySummary
+                }
             }
             switch kind {
             case .fusion: fusionSections
@@ -934,6 +1072,45 @@ private struct ModelRouteEditor: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .disabled(model.isBusy)
+    }
+
+    private var activity: ModelRouteActivity? {
+        guard let saved = model.routes.first(where: { $0.model == model.editingModel }),
+              saved.source == draft.source, saved.fallbacks == draft.fallbacks else { return nil }
+        return saved.activity
+    }
+
+    private var activitySummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text(activity.map { $0.served == nil
+                    ? AppLocalization.string("routing.activity.failed")
+                    : AppLocalization.string("routing.activity.served", $0.served ?? "")
+                } ?? AppLocalization.string("routing.activity.waiting"))
+            } icon: {
+                Image(systemName: activity == nil ? "clock" : activity?.served == nil ? "exclamationmark.triangle" : "checkmark.circle")
+                    .foregroundStyle(activity != nil && activity?.served == nil ? Color.orange : kind.tint)
+            }
+            if let activity, let date = activity.switchedAt {
+                Divider()
+                HStack {
+                    Text(AppLocalization.string("routing.activity.lastSwitch")).fontWeight(.medium)
+                    Spacer()
+                    Text(date, format: .dateTime.month().day().hour().minute().second())
+                        .foregroundStyle(.secondary)
+                }
+                Text(activity.failed.joined(separator: " → ") + " → "
+                    + (activity.switchedTo ?? AppLocalization.string("routing.activity.failed")))
+                    .textSelection(.enabled)
+                Text(AppLocalization.string("routing.activity.reason", activity.reason))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(kind.tint.opacity(0.07)))
     }
 
     private var header: some View {
@@ -1296,6 +1473,8 @@ private func routeProviderLogo(_ option: FusionModelOption) -> NSImage? {
 private struct ModelRouteFlow: View {
     let route: ModelRouteDraft
     let options: [FusionModelOption]
+    let activity: ModelRouteActivity?
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct Target: Identifiable {
         let id: Int
@@ -1304,8 +1483,8 @@ private struct ModelRouteFlow: View {
         let isActive: Bool
     }
 
-    private let rowHeight: CGFloat = 34
-    private let rowSpacing: CGFloat = 6
+    private let rowHeight: CGFloat = 46
+    private let rowSpacing: CGFloat = 8
 
     private var targets: [Target] {
         var items: [(String, String, Bool)] = []
@@ -1325,9 +1504,10 @@ private struct ModelRouteFlow: View {
             }
             items.append((route.profile.finalModel, AppLocalization.string("routing.diagram.otherTimes"), !activeShown))
         case .failover:
-            items = [(route.source, AppLocalization.string("routing.diagram.primary"), true)]
+            let active = activity?.served
+            items = [(route.source, AppLocalization.string("routing.diagram.primary"), active == route.source)]
             items += route.fallbacks.enumerated().map {
-                ($0.element, AppLocalization.string("routing.diagram.backup", "\($0.offset + 1)"), false)
+                ($0.element, AppLocalization.string("routing.diagram.backup", "\($0.offset + 1)"), active == $0.element)
             }
         }
         return items.enumerated().map { Target(id: $0.offset, model: $0.element.0, role: $0.element.1, isActive: $0.element.2) }
@@ -1342,7 +1522,7 @@ private struct ModelRouteFlow: View {
         let height = max(rowHeight, CGFloat(targets.count) * rowHeight + CGFloat(max(0, targets.count - 1)) * rowSpacing)
         HStack(spacing: 0) {
             node {
-                Image(systemName: "terminal")
+                Image(systemName: "square.stack.3d.up")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text(AppLocalization.string("routing.diagram.client")).font(.caption.weight(.semibold))
@@ -1353,13 +1533,15 @@ private struct ModelRouteFlow: View {
                     .truncationMode(.middle)
             }
             Rectangle()
-                .fill(Color(nsColor: .separatorColor))
+                .fill(targets.contains(where: \.isActive) ? route.kind.tint : Color(nsColor: .separatorColor))
                 .frame(width: 22, height: 1)
             node(highlighted: true) {
-                Image(systemName: route.kind.symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(route.kind.tint)
-                Text("Codex Mixin").font(.caption.weight(.semibold))
+                Image(nsImage: NSImage(named: colorScheme == .dark ? "CodexMixinDark" : "CodexMixin") ?? NSApp.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 36, height: 36)
+                    .accessibilityHidden(true)
+                Text("Mixin").font(.caption.weight(.semibold))
                 Text(route.kind.title)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white)
@@ -1394,11 +1576,12 @@ private struct ModelRouteFlow: View {
             .frame(maxWidth: .infinity)
         }
         .frame(minHeight: height)
+        .animation(.easeInOut(duration: 0.25), value: targets.filter(\.isActive).map(\.id))
     }
 
     private func node<Content: View>(highlighted: Bool = false, @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 4, content: content)
-            .frame(width: 112)
+            .frame(width: 100)
             .padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(
@@ -1420,21 +1603,26 @@ private struct ModelRouteFlow: View {
             } else {
                 Image(systemName: "cpu").font(.system(size: 11)).foregroundStyle(.secondary)
             }
-            Text(target.model.isEmpty ? AppLocalization.string("routing.chooseModel") : (option?.displayName ?? target.model))
-                .font(.callout)
-                .lineLimit(1)
-                .foregroundStyle(option?.isAvailable == false || option == nil && !target.model.isEmpty ? Color.red : Color.primary)
-            if let option, !option.providerName.isEmpty {
-                Text(option.providerName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(target.model.isEmpty ? AppLocalization.string("routing.chooseModel") : (option?.displayName ?? target.model))
+                    .font(.callout)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(option?.isAvailable == false || option == nil && !target.model.isEmpty ? Color.red : Color.primary)
+                if let option, !option.providerName.isEmpty {
+                    Text(option.providerName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 6)
             Text(target.role)
                 .font(.caption.weight(target.isActive ? .semibold : .regular))
                 .foregroundStyle(target.isActive ? route.kind.tint : Color.secondary)
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 10)
         .frame(height: rowHeight)

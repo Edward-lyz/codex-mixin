@@ -54,8 +54,8 @@ impl<'a> ModelRouter<'a> {
             .strip_prefix(FUSION_MODEL_PREFIX)
             .or_else(|| model.strip_prefix(LEGACY_FUSION_MODEL_PREFIX))
         {
-            // A named failover route enters at its source; the configured
-            // failover then applies because plans match routes by source.
+            // Resolve the primary target here; the request plan retains the
+            // named entry so execution selects its own fallback chain.
             if let Some(route) = self
                 .failover_routes
                 .iter()

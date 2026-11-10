@@ -131,6 +131,22 @@ impl GatewayExecutor {
         &self,
         model: &str,
     ) -> Result<super::ResolvedModelRoute, GatewayError> {
+        let model = self
+            .config
+            .failover_routes
+            .iter()
+            .find(|route| {
+                route.entry_model() == model
+                    || route.id.as_ref().is_some_and(|id| {
+                        model == format!("{}{id}", crate::config::LEGACY_FUSION_MODEL_PREFIX)
+                    })
+            })
+            .and_then(|route| {
+                route
+                    .source
+                    .strip_prefix(crate::config::OFFICIAL_MODEL_PREFIX)
+            })
+            .unwrap_or(model);
         let custom_result = super::ModelRouter::new(
             &self.config.fusion_profiles,
             &self.config.failover_routes,
@@ -321,22 +337,63 @@ impl GatewayExecutor {
         plan: &mut RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
-        let body = std::mem::take(&mut plan.body);
-        let Some(route) = super::failover::route_for(&self.config.failover_routes, plan) else {
+        let route = super::failover::route_for(&self.config.failover_routes, plan);
+        let mut body = std::mem::take(&mut plan.body);
+        let Some(route) = route else {
             let body = prepare_body(body, &plan.target).await?;
             return self.dispatch_round(plan, body, headers).await;
         };
         let original = body.clone();
+        if let Some(model) = route
+            .source
+            .strip_prefix(crate::config::OFFICIAL_MODEL_PREFIX)
+        {
+            plan.downstream_model = plan.downstream_model.take().or_else(|| {
+                body.get("model")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+            body["model"] = serde_json::Value::String(model.to_owned());
+        }
         let primary = match prepare_body(body, &plan.target).await {
             Ok(body) => self.dispatch_round(plan, body, headers).await,
             Err(error) => Err(error),
         };
-        let mut error = match primary {
+        let error = match primary {
             Err(error) if super::failover::is_transient(&error) => error,
-            other => return other,
+            other => {
+                if other.is_ok() {
+                    super::failover::record(route.entry_model(), Some(route.source.clone()), None)
+                        .await;
+                }
+                return other;
+            }
         };
-        let mut failed = route.source.as_str();
+        self.try_fallbacks(route, &original, plan, headers, error)
+            .await
+    }
+
+    /// Try each fallback in order after the source model failed with
+    /// `primary_error`, recording the switch for the app.
+    async fn try_fallbacks(
+        &self,
+        route: &crate::config::FailoverRoute,
+        original: &serde_json::Value,
+        plan: &RequestPlan,
+        headers: &HeaderMap,
+        primary_error: GatewayError,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
+        let mut failed_models = vec![route.source.clone()];
+        let mut error = primary_error;
+        let cause = super::failover::switch(Vec::new(), None, &error);
+        let record_switch = |failed: &[String], served: Option<&str>| {
+            let mut switch = cause.clone();
+            switch.failed = failed.to_vec();
+            switch.served = served.map(str::to_owned);
+            super::failover::record(route.entry_model(), served.map(str::to_owned), Some(switch))
+        };
         for fallback in &route.fallbacks {
+            let failed = failed_models.last().map_or("", String::as_str);
             tracing::warn!(
                 source = route.source,
                 failed,
@@ -362,17 +419,23 @@ impl GatewayExecutor {
             };
             match attempt {
                 Ok((stream, body)) => {
+                    record_switch(&failed_models, Some(fallback)).await;
                     let stream =
                         super::failover::announce(stream, &route.source, fallback, &error)?;
                     return Ok((stream, body));
                 }
                 Err(next) if super::failover::is_transient(&next) => {
                     error = next;
-                    failed = fallback.as_str();
+                    failed_models.push(fallback.clone());
                 }
-                Err(next) => return Err(next),
+                Err(next) => {
+                    failed_models.push(fallback.clone());
+                    record_switch(&failed_models, None).await;
+                    return Err(next);
+                }
             }
         }
+        record_switch(&failed_models, None).await;
         Err(error)
     }
 

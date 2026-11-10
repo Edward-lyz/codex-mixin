@@ -15,9 +15,10 @@ mod fusion;
 pub use context::ContextSettings;
 pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
 pub use failover::{
-    FailoverRoute, MAX_FAILOVER_FALLBACKS, validate_failover_model_references,
-    validate_failover_routes,
+    FailoverActivity, FailoverRoute, FailoverSwitch, MAX_FAILOVER_FALLBACKS,
+    validate_failover_model_references, validate_failover_routes,
 };
+pub(crate) use failover::{load_failover_activity, save_failover_activity};
 pub use fusion::{
     FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, LEGACY_FUSION_MODEL_PREFIX,
     OFFICIAL_MODEL_PREFIX, PanelToolsConfig, validate_fusion_model_references,
@@ -142,6 +143,14 @@ impl GatewayConfig {
             .context("invalid stored gateway bind")?;
         let mut fusion_profiles = stored_config.fusion_profiles;
         migrate_legacy_fusion_panel_tool_limits(&mut fusion_profiles);
+        fusion_profiles.retain(|profile| {
+            !stored_config
+                .disabled_routes
+                .contains(&profile.model_slug())
+        });
+        let mut failover_routes = stored_config.failover_routes;
+        failover_routes
+            .retain(|route| !stored_config.disabled_routes.contains(&route.entry_model()));
         let config = Self {
             bind,
             providers: stored_config.providers,
@@ -162,7 +171,7 @@ impl GatewayConfig {
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
             fusion_profiles,
-            failover_routes: stored_config.failover_routes,
+            failover_routes,
             context: stored_config.context,
         };
         validate_fusion_profiles(&config.fusion_profiles)?;
@@ -232,6 +241,10 @@ pub struct StoredGatewayConfig {
     pub fusion_profiles: Vec<FusionProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failover_routes: Vec<FailoverRoute>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_routes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_order: Vec<String>,
     #[serde(default, skip_serializing_if = "ContextSettings::is_default")]
     pub context: ContextSettings,
     pub providers: Vec<ProviderDefinition>,
@@ -264,6 +277,8 @@ impl Default for StoredGatewayConfig {
             official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
             failover_routes: Vec::new(),
+            disabled_routes: Vec::new(),
+            route_order: Vec::new(),
             context: ContextSettings::default(),
             providers: Vec::new(),
         }

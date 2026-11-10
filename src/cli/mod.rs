@@ -724,6 +724,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 replace_model,
             } => route_config::set_route(&route_json, replace_model.as_deref()),
             RouteCommand::Delete { model } => route_config::delete_route(&model),
+            RouteCommand::Enable { model } => {
+                codex_mixin::application::routing::set_route_enabled(&model, true)?;
+                println!("model route enabled: {model}");
+                Ok(())
+            }
+            RouteCommand::Disable { model } => {
+                codex_mixin::application::routing::set_route_enabled(&model, false)?;
+                println!("model route disabled: {model}");
+                Ok(())
+            }
+            RouteCommand::Reorder { models } => {
+                codex_mixin::application::routing::reorder_routes(&models)?;
+                println!("model routes reordered");
+                Ok(())
+            }
         },
         Command::Benchmark { command } => match command {
             BenchmarkCommand::Status => benchmark_status().await,

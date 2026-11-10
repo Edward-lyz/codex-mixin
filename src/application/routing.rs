@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    FailoverRoute, FusionMode, FusionProfile, StoredGatewayConfig, load_stored_config,
-    mutate_stored_config,
+    FailoverActivity, FailoverRoute, FusionMode, FusionProfile, StoredGatewayConfig,
+    load_failover_activity, load_stored_config, mutate_stored_config,
 };
 use crate::web_search::WebSearchCapabilities;
 
@@ -75,22 +75,40 @@ impl ModelRoute {
 #[derive(Debug, Serialize)]
 pub struct RouteEntry {
     pub model: String,
+    pub enabled: bool,
     #[serde(flatten)]
     pub route: ModelRoute,
+    /// Latest failover activity recorded by the gateway, for failover routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<FailoverActivity>,
 }
 
 pub fn list_routes() -> anyhow::Result<Vec<RouteEntry>> {
     let stored = load_stored_config()?.unwrap_or_default();
-    Ok(stored
+    let mut activity = load_failover_activity()?;
+    let mut routes: Vec<_> = stored
         .fusion_profiles
         .into_iter()
         .map(ModelRoute::from_profile)
         .chain(stored.failover_routes.into_iter().map(ModelRoute::Failover))
         .map(|route| RouteEntry {
+            enabled: !stored.disabled_routes.contains(&route.model()),
             model: route.model(),
+            activity: match &route {
+                ModelRoute::Failover(failover) => activity.remove(&failover.entry_model()),
+                _ => None,
+            },
             route,
         })
-        .collect())
+        .collect();
+    routes.sort_by_key(|entry| {
+        stored
+            .route_order
+            .iter()
+            .position(|model| model == &entry.model)
+            .unwrap_or(usize::MAX)
+    });
+    Ok(routes)
 }
 
 pub fn get_route(model: &str) -> anyhow::Result<Option<RouteEntry>> {
@@ -108,6 +126,18 @@ pub fn set_route(route: ModelRoute, replace_model: Option<&str>) -> Result<Strin
         .map_err(|source| OperationError::BeforeCommit { source })?;
     let model = route.model();
     mutate_stored_config(|config| {
+        if let Some(previous) = replace_model.filter(|previous| *previous != model) {
+            for entry in &mut config.disabled_routes {
+                if entry == previous {
+                    entry.clone_from(&model);
+                }
+            }
+            for entry in &mut config.route_order {
+                if entry == previous {
+                    entry.clone_from(&model);
+                }
+            }
+        }
         upsert_route(config, route, replace_model);
         Ok(())
     })
@@ -129,6 +159,53 @@ pub fn delete_route(model: &str) -> Result<String, OperationError> {
     Ok(model.to_owned())
 }
 
+/// Enable or disable a saved route without discarding its settings.
+pub fn set_route_enabled(model: &str, enabled: bool) -> Result<(), OperationError> {
+    mutate_stored_config(|config| {
+        let exists = config
+            .fusion_profiles
+            .iter()
+            .any(|profile| profile.model_slug() == model)
+            || config
+                .failover_routes
+                .iter()
+                .any(|route| route.entry_model() == model);
+        anyhow::ensure!(exists, "model route not found: {model}");
+        config.disabled_routes.retain(|entry| entry != model);
+        if !enabled {
+            config.disabled_routes.push(model.to_owned());
+        }
+        Ok(())
+    })
+    .map_err(|source| OperationError::BeforeCommit { source })?;
+    invalidate_caches()
+}
+
+/// Persist the complete order shown by route list consumers.
+pub fn reorder_routes(models: &[String]) -> Result<(), OperationError> {
+    mutate_stored_config(|config| {
+        let existing: std::collections::HashSet<_> = config
+            .fusion_profiles
+            .iter()
+            .map(FusionProfile::model_slug)
+            .chain(
+                config
+                    .failover_routes
+                    .iter()
+                    .map(FailoverRoute::entry_model),
+            )
+            .collect();
+        let requested: std::collections::HashSet<_> = models.iter().cloned().collect();
+        anyhow::ensure!(
+            requested == existing && requested.len() == models.len(),
+            "route order must contain every configured route exactly once"
+        );
+        config.route_order = models.to_vec();
+        Ok(())
+    })
+    .map_err(|source| OperationError::BeforeCommit { source })
+}
+
 fn invalidate_caches() -> Result<(), OperationError> {
     WebSearchCapabilities::clear_default_cache()
         .map(|_| ())
@@ -146,7 +223,12 @@ fn remove_route(config: &mut StoredGatewayConfig, model: &str) -> bool {
     config
         .failover_routes
         .retain(|route| route.entry_model() != model);
-    before != config.fusion_profiles.len() + config.failover_routes.len()
+    let removed = before != config.fusion_profiles.len() + config.failover_routes.len();
+    if removed {
+        config.disabled_routes.retain(|entry| entry != model);
+        config.route_order.retain(|entry| entry != model);
+    }
+    removed
 }
 
 /// Replace in place when the edited route stays in the same collection so the
@@ -179,9 +261,9 @@ fn upsert_route(config: &mut StoredGatewayConfig, route: ModelRoute, replace_mod
                 .iter()
                 .position(|current| current.entry_model() == previous)
                 .or_else(|| {
-                    routes
-                        .iter()
-                        .position(|current| current.source == route.source)
+                    routes.iter().position(|current| {
+                        current.id.is_none() && route.id.is_none() && current.source == route.source
+                    })
                 });
             match index {
                 Some(index) => routes[index] = route,
