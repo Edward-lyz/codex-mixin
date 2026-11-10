@@ -676,13 +676,7 @@ struct ModelRoutingView: View {
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 30, height: 30)
                     .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.opacity(0.12)))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(AppLocalization.string("routing.title")).font(.headline)
-                    Text(AppLocalization.string("routing.subtitle"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                Text(AppLocalization.string("routing.title")).font(.headline)
                 Spacer(minLength: 4)
                 newRouteMenu
             }
@@ -706,7 +700,6 @@ struct ModelRoutingView: View {
                             .labelsHidden()
                             .accessibilityLabel(AppLocalization.string("routing.enabledFor", route.displayName))
                             Image(systemName: "line.3.horizontal")
-                                .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
                         .tag(route.model)
@@ -721,7 +714,6 @@ struct ModelRoutingView: View {
                             ForEach(suggestions, id: \.model) { route in
                                 suggestionRow(route)
                                     .tag(route.model)
-                                    .help(AppLocalization.string("routing.suggestions.help"))
                             }
                             .onMove { model.moveSuggestions(from: $0, to: $1) }
                         } header: {
@@ -738,13 +730,12 @@ struct ModelRoutingView: View {
     /// Suggestions are not running yet, so they stay one quiet line each and
     /// leave the visual weight to the routes that are configured.
     private func suggestionRow(_ route: ModelRouteDraft) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 10) {
             Image(systemName: route.kind.symbol)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.tertiary)
-                .frame(width: 16)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, height: 26)
             Text(route.displayName)
-                .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -754,11 +745,9 @@ struct ModelRoutingView: View {
                 model.save()
             }
             .buttonStyle(.borderless)
-            .controlSize(.small)
-            .font(.caption)
             .accessibilityLabel(AppLocalization.string("routing.enabledFor", route.displayName))
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 4)
     }
 
     private var newRouteMenu: some View {
@@ -789,10 +778,6 @@ struct ModelRoutingView: View {
             Text(AppLocalization.string("routing.empty"))
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.secondary)
-            Text(AppLocalization.string("routing.emptyHint"))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -820,7 +805,6 @@ struct ModelRoutingView: View {
                 Image(systemName: isError ? "exclamationmark.triangle" : "checkmark.circle")
                     .foregroundStyle(isError ? Color.red : Color.green)
                 Text(message)
-                    .font(.caption)
                     .foregroundStyle(isError ? Color.red : Color.secondary)
                     .lineLimit(2)
             }
@@ -960,10 +944,6 @@ private struct ModelRouteKindCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 flow
-                Text(kind.bestFor)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 HStack(spacing: 4) {
                     Text(AppLocalization.string("routing.gallery.create"))
@@ -1028,24 +1008,12 @@ private struct ModelRouteRow: View {
                 .foregroundStyle(route.kind.tint)
                 .frame(width: 26, height: 26)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(route.kind.tint.opacity(0.14)))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if isNew {
-                        Text(AppLocalization.string("routing.newBadge"))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text(route.summary(atMinute: currentLocalMinute()))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .fontWeight(isNew ? .semibold : .regular)
         }
+        .help(route.summary(atMinute: currentLocalMinute()))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
     }
@@ -1064,18 +1032,24 @@ private struct ModelRouteEditor: View {
                         .padding(.vertical, 8)
                 } else {
                     TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        ModelRouteFlow(route: draft, options: model.options, activity: activity)
+                        ModelRouteFlow(model: model, activity: activity)
                     }
                     .padding(.vertical, 8)
                 }
-                if kind == .failover {
-                    activitySummary
+                if kind == .failover, let activity {
+                    activitySummary(activity)
                 }
             }
-            switch kind {
-            case .fusion: fusionSections
-            case .schedule: scheduleSections
-            case .failover: failoverSections
+            Section {
+                TextField(AppLocalization.string("routing.field.name"), text: binding(\.profile.id, ""))
+                LabeledContent(AppLocalization.string("routing.field.entry")) {
+                    Text(draft.model)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+            if kind == .fusion {
+                fusionAdvanced
             }
         }
         .formStyle(.grouped)
@@ -1089,56 +1063,50 @@ private struct ModelRouteEditor: View {
         return saved.activity
     }
 
-    private var activitySummary: some View {
+    private func activitySummary(_ activity: ModelRouteActivity) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label {
-                Text(activity.map { $0.served == nil
+                Text(activity.served == nil
                     ? AppLocalization.string("routing.activity.failed")
-                    : AppLocalization.string("routing.activity.served", $0.served ?? "")
-                } ?? AppLocalization.string("routing.activity.waiting"))
+                    : AppLocalization.string("routing.activity.served", activity.served ?? ""))
             } icon: {
-                Image(systemName: activity == nil ? "clock" : activity?.served == nil ? "exclamationmark.triangle" : "checkmark.circle")
-                    .foregroundStyle(activity != nil && activity?.served == nil ? Color.orange : kind.tint)
+                Image(systemName: activity.served == nil ? "exclamationmark.triangle" : "checkmark.circle")
+                    .foregroundStyle(activity.served == nil ? Color.orange : kind.tint)
             }
-            if let activity, let date = activity.switchedAt {
+            if let date = activity.switchedAt {
                 Divider()
                 HStack {
                     Text(AppLocalization.string("routing.activity.lastSwitch")).fontWeight(.medium)
                     Spacer()
                     Text(date, format: .dateTime.month().day().hour().minute().second())
-                        .foregroundStyle(.secondary)
                 }
                 Text(activity.failed.joined(separator: " → ") + " → "
                     + (activity.switchedTo ?? AppLocalization.string("routing.activity.failed")))
                     .textSelection(.enabled)
                 Text(AppLocalization.string("routing.activity.reason", activity.reason))
-                    .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
         }
-        .font(.caption)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 8).fill(kind.tint.opacity(0.07)))
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 12) {
             Image(systemName: kind.symbol)
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(kind.tint)
                 .frame(width: 34, height: 34)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(kind.tint.opacity(0.14)))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(kind.title).font(.headline)
-                Text(kind.help).font(.caption).foregroundStyle(.secondary)
-            }
+            Text(kind.title).font(.headline)
             Spacer(minLength: 8)
             if model.editingModel != nil {
                 moreMenu
             }
         }
         .padding(.vertical, 2)
+        .help(kind.help)
     }
 
     /// Destructive actions live here, away from Save, and still confirm first.
@@ -1169,64 +1137,7 @@ private struct ModelRouteEditor: View {
 
     private var draft: ModelRouteDraft { model.draft ?? ModelRouteDraft(kind: kind) }
 
-    private func modelPicker(_ title: String, selection: Binding<String>, labelsHidden: Bool = false) -> some View {
-        let groups = model.pickerGroups(including: [selection.wrappedValue])
-        return Picker(title, selection: selection) {
-            if selection.wrappedValue.isEmpty {
-                Text(AppLocalization.string("routing.chooseModel")).tag("")
-            }
-            ForEach(groups.indices, id: \.self) { index in
-                Section {
-                    ForEach(groups[index].options, id: \.id) { option in
-                        Label {
-                            Text(option.isAvailable
-                                ? option.displayName
-                                : "\(option.id) \(AppLocalization.string("fusion.unavailable"))")
-                        } icon: {
-                            if let image = routeProviderLogo(option) {
-                                Image(nsImage: image)
-                            } else {
-                                Image(systemName: "cube")
-                            }
-                        }
-                        .tag(option.id)
-                    }
-                } header: {
-                    if !groups[index].name.isEmpty { Text(groups[index].name) }
-                }
-            }
-        }
-        .labelsHidden(labelsHidden)
-        .help(selection.wrappedValue)
-    }
-
-    private var nameSection: some View {
-        Section {
-            TextField(AppLocalization.string("routing.field.name"), text: binding(\.profile.id, ""))
-            LabeledContent(AppLocalization.string("routing.field.entry")) {
-                Text(draft.model)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            }
-        } footer: {
-            Text(AppLocalization.string(kind == .failover ? "routing.failover.nameHelp" : "routing.field.entryHelp"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func labelsHidden(_ hidden: Bool) -> some View {
-        if hidden { labelsHidden() } else { self }
-    }
-}
-
-private extension ModelRouteEditor {
-    @ViewBuilder
-    var fusionSections: some View {
-        nameSection
+    private var fusionAdvanced: some View {
         Section {
             DisclosureGroup(AppLocalization.string("routing.fusion.advanced")) {
                 Stepper(
@@ -1246,156 +1157,6 @@ private extension ModelRouteEditor {
                 Toggle(AppLocalization.string("routing.fusion.showIntermediate"), isOn: binding(\.profile.showIntermediateResults, true))
                 Toggle(AppLocalization.string("routing.fusion.panelTools"), isOn: binding(\.profile.panelToolsEnabled, true))
             }
-        } footer: {
-            Text(AppLocalization.string("routing.fusion.footer")).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    var scheduleSections: some View {
-        nameSection
-        Section {
-            modelPicker(AppLocalization.string("routing.schedule.default"), selection: binding(\.profile.finalModel, ""))
-            ForEach(draft.profile.timeRoutes) { route in
-                timeRouteRow(route.id)
-            }
-            Button {
-                model.addTimeRoute()
-            } label: {
-                Label(AppLocalization.string("routing.schedule.add"), systemImage: "plus")
-            }
-            .disabled(draft.profile.timeRoutes.count >= 24)
-        } header: {
-            Text(AppLocalization.string("routing.schedule.slots"))
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(AppLocalization.string("routing.schedule.now", draft.profile.activeModel(atMinute: currentLocalMinute())))
-                Text(AppLocalization.string("routing.schedule.footer"))
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    func timeRouteRow(_ id: UUID) -> some View {
-        let index = draft.profile.timeRoutes.firstIndex { $0.id == id }
-        func field<T>(_ keyPath: WritableKeyPath<FusionTimeRoute, T>, _ fallback: T) -> Binding<T> {
-            Binding(
-                get: { index.flatMap { model.draft?.profile.timeRoutes[safe: $0]?[keyPath: keyPath] } ?? fallback },
-                set: { value in
-                    guard let index, model.draft?.profile.timeRoutes.indices.contains(index) == true else { return }
-                    model.draft?.profile.timeRoutes[index][keyPath: keyPath] = value
-                }
-            )
-        }
-        return HStack(spacing: 8) {
-            DatePicker("", selection: timeBinding(field(\.startMinute, 0)), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-                .frame(width: 92)
-            Text(AppLocalization.string("routing.schedule.to")).foregroundStyle(.secondary)
-            DatePicker("", selection: timeBinding(field(\.endMinute, 0)), displayedComponents: .hourAndMinute)
-                .labelsHidden()
-                .frame(width: 92)
-            modelPicker("", selection: field(\.model, ""), labelsHidden: true)
-                .frame(maxWidth: .infinity)
-            Button {
-                model.removeTimeRoute(id)
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help(AppLocalization.string("routing.schedule.remove"))
-        }
-    }
-
-    func timeBinding(_ minute: Binding<Int>) -> Binding<Date> {
-        Binding(
-            get: {
-                Calendar.current.date(
-                    bySettingHour: minute.wrappedValue / 60,
-                    minute: minute.wrappedValue % 60,
-                    second: 0,
-                    of: Date()
-                ) ?? Date()
-            },
-            set: { date in
-                let components = Calendar.current.dateComponents([.hour, .minute], from: date)
-                minute.wrappedValue = (components.hour ?? 0) * 60 + (components.minute ?? 0)
-            }
-        )
-    }
-}
-
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
-
-private extension ModelRouteEditor {
-    @ViewBuilder
-    var failoverSections: some View {
-        nameSection
-        Section {
-            modelPicker(AppLocalization.string("routing.failover.source"), selection: binding(\.source, ""))
-        } footer: {
-            Text(AppLocalization.string("routing.failover.sourceHelp")).font(.caption).foregroundStyle(.secondary)
-        }
-        Section {
-            ForEach(Array(draft.fallbacks.indices), id: \.self) { index in
-                fallbackRow(index)
-            }
-            Button {
-                model.addFallback()
-            } label: {
-                Label(AppLocalization.string("routing.failover.add"), systemImage: "plus")
-            }
-            .disabled(draft.fallbacks.count >= 4)
-        } header: {
-            Text(AppLocalization.string("routing.failover.fallbacks"))
-        } footer: {
-            Text(AppLocalization.string("routing.failover.footer")).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-
-    func fallbackRow(_ index: Int) -> some View {
-        let selection = Binding(
-            get: { model.draft?.fallbacks[safe: index] ?? "" },
-            set: { value in
-                guard model.draft?.fallbacks.indices.contains(index) == true else { return }
-                model.draft?.fallbacks[index] = value
-            }
-        )
-        return HStack(spacing: 8) {
-            Text("\(index + 1)")
-                .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            modelPicker("", selection: selection, labelsHidden: true)
-                .frame(maxWidth: .infinity)
-            Button {
-                model.moveFallback(at: index, by: -1)
-            } label: {
-                Image(systemName: "chevron.up")
-            }
-            .buttonStyle(.borderless)
-            .disabled(index == 0)
-            .help(AppLocalization.string("routing.failover.moveUp"))
-            Button {
-                model.moveFallback(at: index, by: 1)
-            } label: {
-                Image(systemName: "chevron.down")
-            }
-            .buttonStyle(.borderless)
-            .disabled(index >= draft.fallbacks.count - 1)
-            .help(AppLocalization.string("routing.failover.moveDown"))
-            Button {
-                model.removeFallback(at: index)
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .help(AppLocalization.string("routing.failover.remove"))
         }
     }
 }
@@ -1410,91 +1171,111 @@ private func routeProviderLogo(_ option: FusionModelOption) -> NSImage? {
     return image
 }
 
-/// How a route sends a request, drawn like a switchboard: the client entry,
-/// the gateway with the route type, and every model the request can reach.
+/// How a failover or schedule route sends a request, drawn like a
+/// switchboard: Agents, the gateway, and every model the request can reach.
+/// The model rows are the editor: click a model to change it, add, reorder
+/// or remove rows and edit time slots in place.
 private struct ModelRouteFlow: View {
-    let route: ModelRouteDraft
-    let options: [FusionModelOption]
+    @ObservedObject var model: ModelRoutingModel
     let activity: ModelRouteActivity?
     @Environment(\.colorScheme) private var colorScheme
+    @State private var editing: Slot?
+    @State private var hovered: Slot?
+
+    private enum Slot: Hashable {
+        case source
+        case fallback(Int)
+        case time(UUID)
+        case otherTimes
+    }
 
     private struct Target: Identifiable {
         let id: Int
+        let slot: Slot
         let model: String
         let role: String
         let isActive: Bool
     }
 
-    private let rowHeight: CGFloat = 46
+    private let rowHeight: CGFloat = 44
     private let rowSpacing: CGFloat = 8
+    private let nodeHeight: CGFloat = 104
+    private let maxFallbacks = 4
+    private let maxTimeRoutes = 24
+
+    private var route: ModelRouteDraft { model.draft ?? ModelRouteDraft(kind: .failover) }
 
     private var targets: [Target] {
-        var items: [(String, String, Bool)] = []
+        var items: [(Slot, String, String, Bool)] = []
         switch route.kind {
         case .fusion:
-            items = route.profile.panelModels.map { ($0, AppLocalization.string("routing.diagram.panel"), true) }
-            items.append((route.profile.judgeModel, AppLocalization.string("routing.diagram.judge"), false))
-            items.append((route.profile.finalModel, AppLocalization.string("routing.diagram.final"), false))
+            break
         case .schedule:
-            let active = route.profile.activeModel(atMinute: currentLocalMinute())
+            let minute = currentLocalMinute()
+            let active = route.profile.activeModel(atMinute: minute)
             var activeShown = false
             for slot in route.profile.timeRoutes {
-                let isActive = !activeShown && slot.model == active
-                    && fusionTimeRoute(slot, contains: currentLocalMinute())
+                let isActive = !activeShown && slot.model == active && fusionTimeRoute(slot, contains: minute)
                 activeShown = activeShown || isActive
-                items.append((slot.model, "\(clock(slot.startMinute))–\(clock(slot.endMinute))", isActive))
+                items.append((.time(slot.id), slot.model, "", isActive))
             }
-            items.append((route.profile.finalModel, AppLocalization.string("routing.diagram.otherTimes"), !activeShown))
+            items.append((.otherTimes, route.profile.finalModel, AppLocalization.string("routing.diagram.otherTimes"), !activeShown))
         case .failover:
             let active = activity?.served
-            items = [(route.source, AppLocalization.string("routing.diagram.primary"), active == route.source)]
+            items = [(.source, route.source, AppLocalization.string("routing.diagram.primary"), active == route.source)]
             items += route.fallbacks.enumerated().map {
-                ($0.element, AppLocalization.string("routing.diagram.backup", "\($0.offset + 1)"), active == $0.element)
+                (.fallback($0.offset), $0.element, AppLocalization.string("routing.diagram.backup", "\($0.offset + 1)"), active == $0.element)
             }
         }
-        return items.enumerated().map { Target(id: $0.offset, model: $0.element.0, role: $0.element.1, isActive: $0.element.2) }
+        return items.enumerated().map {
+            Target(id: $0.offset, slot: $0.element.0, model: $0.element.1, role: $0.element.2, isActive: $0.element.3)
+        }
     }
 
-    private func clock(_ minute: Int) -> String {
-        String(format: "%02d:%02d", minute / 60 % 24, minute % 60)
+    private var canAdd: Bool {
+        switch route.kind {
+        case .fusion: return false
+        case .schedule: return route.profile.timeRoutes.count < maxTimeRoutes
+        case .failover: return route.fallbacks.count < maxFallbacks
+        }
+    }
+
+    private func stackHeight(_ count: Int) -> CGFloat {
+        CGFloat(count) * rowHeight + CGFloat(max(0, count - 1)) * rowSpacing
     }
 
     var body: some View {
         let targets = targets
-        let height = max(rowHeight, CGFloat(targets.count) * rowHeight + CGFloat(max(0, targets.count - 1)) * rowSpacing)
-        HStack(spacing: 0) {
-            node {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Text(AppLocalization.string("routing.diagram.client")).font(.caption.weight(.semibold))
-                Text(route.model.isEmpty ? "auto/…" : route.model)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        let targetsHeight = stackHeight(targets.count)
+        let centerHeight = max(targetsHeight, nodeHeight)
+        let topInset = (centerHeight - targetsHeight) / 2
+        let columnHeight = topInset + stackHeight(targets.count + (canAdd ? 1 : 0))
+        let tint = route.kind.tint
+        HStack(alignment: .top, spacing: 0) {
+            HStack(spacing: 0) {
+                node {
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text(AppLocalization.string("routing.diagram.client")).font(.callout.weight(.semibold))
+                }
+                Rectangle()
+                    .fill(targets.contains(where: \.isActive) ? tint : Color(nsColor: .separatorColor))
+                    .frame(width: 22, height: 1)
+                node(highlighted: true) {
+                    Image(nsImage: NSImage(named: colorScheme == .dark ? "CodexMixinDark" : "CodexMixin") ?? NSApp.applicationIconImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 36, height: 36)
+                        .accessibilityHidden(true)
+                    Text("Mixin").font(.callout.weight(.semibold))
+                }
             }
-            Rectangle()
-                .fill(targets.contains(where: \.isActive) ? route.kind.tint : Color(nsColor: .separatorColor))
-                .frame(width: 22, height: 1)
-            node(highlighted: true) {
-                Image(nsImage: NSImage(named: colorScheme == .dark ? "CodexMixinDark" : "CodexMixin") ?? NSApp.applicationIconImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 36, height: 36)
-                    .accessibilityHidden(true)
-                Text("Mixin").font(.caption.weight(.semibold))
-                Text(route.kind.title)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(route.kind.tint))
-            }
+            .frame(height: centerHeight)
             Canvas { context, size in
-                let start = CGPoint(x: 0, y: size.height / 2)
+                let start = CGPoint(x: 0, y: centerHeight / 2)
                 for target in targets {
-                    let y = CGFloat(target.id) * (rowHeight + rowSpacing) + rowHeight / 2
+                    let y = topInset + CGFloat(target.id) * (rowHeight + rowSpacing) + rowHeight / 2
                     var path = Path()
                     path.move(to: start)
                     path.addCurve(
@@ -1504,27 +1285,30 @@ private struct ModelRouteFlow: View {
                     )
                     context.stroke(
                         path,
-                        with: .color(target.isActive ? route.kind.tint : Color(nsColor: .separatorColor)),
+                        with: .color(target.isActive ? tint : Color(nsColor: .separatorColor)),
                         lineWidth: target.isActive ? 1.6 : 1
                     )
                 }
             }
-            .frame(width: 44, height: height)
+            .frame(width: 44, height: max(centerHeight, columnHeight))
+            .accessibilityHidden(true)
             VStack(spacing: rowSpacing) {
                 ForEach(targets) { target in
                     targetRow(target)
                 }
+                if canAdd {
+                    addRow
+                }
             }
+            .padding(.top, topInset)
             .frame(maxWidth: .infinity)
         }
-        .frame(minHeight: height)
         .animation(.easeInOut(duration: 0.25), value: targets.filter(\.isActive).map(\.id))
     }
 
     private func node<Content: View>(highlighted: Bool = false, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 4, content: content)
-            .frame(width: 100)
-            .padding(.vertical, 10)
+        VStack(spacing: 6, content: content)
+            .frame(width: 96, height: highlighted ? 92 : 72)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1533,47 +1317,229 @@ private struct ModelRouteFlow: View {
             )
     }
 
+    private func isEditing(_ slot: Slot) -> Binding<Bool> {
+        Binding(get: { editing == slot }, set: { if !$0 { editing = nil } })
+    }
+
     private func targetRow(_ target: Target) -> some View {
-        let option = options.first { $0.id == target.model }
-        return HStack(spacing: 7) {
+        let tint = route.kind.tint
+        let label = routeModelLabel(target.model, options: model.options)
+        let isHovered = hovered == target.slot
+        return HStack(spacing: 8) {
             Circle()
-                .fill(target.isActive ? route.kind.tint : Color.clear)
-                .overlay(Circle().strokeBorder(target.isActive ? route.kind.tint : Color.secondary.opacity(0.5)))
+                .fill(target.isActive ? tint : Color.clear)
+                .overlay(Circle().strokeBorder(target.isActive ? tint : Color.secondary.opacity(0.5)))
                 .frame(width: 7, height: 7)
-            if let option, let logo = routeProviderLogo(option) {
-                Image(nsImage: logo)
-            } else {
-                Image(systemName: "cpu").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(target.model.isEmpty ? AppLocalization.string("routing.chooseModel") : (option?.displayName ?? target.model))
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(option?.isAvailable == false || option == nil && !target.model.isEmpty ? Color.red : Color.primary)
-                if let option, !option.providerName.isEmpty {
-                    Text(option.providerName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Button {
+                editing = target.slot
+            } label: {
+                HStack(spacing: 7) {
+                    Group {
+                        if let option = label.option, let logo = routeProviderLogo(option) {
+                            Image(nsImage: logo)
+                        } else {
+                            Image(systemName: "cpu").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    Text(target.model.isEmpty ? AppLocalization.string("routing.chooseModel") : label.name)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(target.model.isEmpty ? Color.secondary : label.isMissing ? Color.red : Color.primary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help([target.model, label.detail].filter { !$0.isEmpty }.joined(separator: " · "))
+            .accessibilityLabel([target.role, target.model.isEmpty ? AppLocalization.string("routing.chooseModel") : label.name]
+                .filter { !$0.isEmpty }
+                .joined(separator: ", "))
+            .accessibilityHint(AppLocalization.string("routing.stage.change"))
+            .popover(isPresented: isEditing(target.slot), arrowEdge: .bottom) {
+                RouteModelChoiceList(
+                    model: model,
+                    title: chooserTitle(target),
+                    placeholder: AppLocalization.string("routing.searchModels"),
+                    selected: [target.model].filter { !$0.isEmpty },
+                    limit: 1
+                ) { id in
+                    setModel(id, for: target.slot)
+                    editing = nil
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer(minLength: 6)
-            Text(target.role)
-                .font(.caption.weight(target.isActive ? .semibold : .regular))
-                .foregroundStyle(target.isActive ? route.kind.tint : Color.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+            trailing(target, isHovered: isHovered)
         }
         .padding(.horizontal, 10)
         .frame(height: rowHeight)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(target.isActive ? route.kind.tint.opacity(0.6) : Color(nsColor: .separatorColor))
+                .strokeBorder(target.isActive ? tint.opacity(0.6) : Color(nsColor: .separatorColor))
         )
-        .help(target.model)
+        .onHover { inside in
+            if inside {
+                hovered = target.slot
+            } else if hovered == target.slot {
+                hovered = nil
+            }
+        }
+        .contextMenu { rowActions(target) }
+    }
+
+    @ViewBuilder
+    private func trailing(_ target: Target, isHovered: Bool) -> some View {
+        switch target.slot {
+        case .source, .otherTimes:
+            roleText(target)
+        case .fallback(let index):
+            HStack(spacing: 2) {
+                iconButton("chevron.up", "routing.failover.moveUp") { model.moveFallback(at: index, by: -1) }
+                    .disabled(index == 0)
+                iconButton("chevron.down", "routing.failover.moveDown") { model.moveFallback(at: index, by: 1) }
+                    .disabled(index >= route.fallbacks.count - 1)
+                iconButton("trash", "routing.failover.remove") { model.removeFallback(at: index) }
+            }
+            .opacity(isHovered ? 1 : 0)
+            roleText(target)
+        case .time(let id):
+            HStack(spacing: 6) {
+                timePicker(id, \.startMinute)
+                Text("–").foregroundStyle(.secondary)
+                timePicker(id, \.endMinute)
+            }
+            iconButton("trash", "routing.schedule.remove") { model.removeTimeRoute(id) }
+                .opacity(isHovered ? 1 : 0)
+        }
+    }
+
+    private func roleText(_ target: Target) -> some View {
+        Text(target.role)
+            .fontWeight(target.isActive ? .semibold : .regular)
+            .foregroundStyle(target.isActive ? route.kind.tint : Color.secondary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    @ViewBuilder
+    private func rowActions(_ target: Target) -> some View {
+        Button(AppLocalization.string("routing.stage.change")) { editing = target.slot }
+        switch target.slot {
+        case .fallback(let index):
+            Divider()
+            Button(AppLocalization.string("routing.failover.moveUp")) { model.moveFallback(at: index, by: -1) }
+                .disabled(index == 0)
+            Button(AppLocalization.string("routing.failover.moveDown")) { model.moveFallback(at: index, by: 1) }
+                .disabled(index >= route.fallbacks.count - 1)
+            Button(AppLocalization.string("routing.failover.remove"), role: .destructive) { model.removeFallback(at: index) }
+        case .time(let id):
+            Divider()
+            Button(AppLocalization.string("routing.schedule.remove"), role: .destructive) { model.removeTimeRoute(id) }
+        case .source, .otherTimes:
+            EmptyView()
+        }
+    }
+
+    private func iconButton(_ symbol: String, _ key: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(AppLocalization.string(key))
+        .accessibilityLabel(AppLocalization.string(key))
+    }
+
+    private var addRow: some View {
+        let isSchedule = route.kind == .schedule
+        return Button {
+            if isSchedule {
+                model.addTimeRoute()
+            } else {
+                model.addFallback()
+            }
+            let slot: Slot? = isSchedule
+                ? model.draft?.profile.timeRoutes.last.map { .time($0.id) }
+                : model.draft.map { .fallback($0.fallbacks.count - 1) }
+            DispatchQueue.main.async { editing = slot }
+        } label: {
+            Label(
+                AppLocalization.string(isSchedule ? "routing.schedule.add" : "routing.failover.add"),
+                systemImage: "plus"
+            )
+            .foregroundStyle(route.kind.tint)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(route.kind.tint.opacity(0.45))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chooserTitle(_ target: Target) -> String {
+        switch target.slot {
+        case .source: return AppLocalization.string("routing.failover.source")
+        case .fallback: return target.role
+        case .otherTimes: return AppLocalization.string("routing.schedule.default")
+        case .time(let id):
+            guard let slot = route.profile.timeRoutes.first(where: { $0.id == id }) else { return "" }
+            return "\(clock(slot.startMinute))–\(clock(slot.endMinute))"
+        }
+    }
+
+    private func clock(_ minute: Int) -> String {
+        String(format: "%02d:%02d", minute / 60 % 24, minute % 60)
+    }
+
+    private func setModel(_ id: String, for slot: Slot) {
+        switch slot {
+        case .source:
+            model.draft?.source = id
+        case .fallback(let index):
+            guard model.draft?.fallbacks.indices.contains(index) == true else { return }
+            model.draft?.fallbacks[index] = id
+        case .time(let uuid):
+            guard let index = model.draft?.profile.timeRoutes.firstIndex(where: { $0.id == uuid }) else { return }
+            model.draft?.profile.timeRoutes[index].model = id
+        case .otherTimes:
+            model.draft?.profile.finalModel = id
+        }
+    }
+
+    private func timePicker(_ id: UUID, _ keyPath: WritableKeyPath<FusionTimeRoute, Int>) -> some View {
+        let minute = Binding<Int>(
+            get: { model.draft?.profile.timeRoutes.first { $0.id == id }?[keyPath: keyPath] ?? 0 },
+            set: { value in
+                guard let index = model.draft?.profile.timeRoutes.firstIndex(where: { $0.id == id }) else { return }
+                model.draft?.profile.timeRoutes[index][keyPath: keyPath] = value
+            }
+        )
+        let date = Binding<Date>(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: minute.wrappedValue / 60 % 24,
+                    minute: minute.wrappedValue % 60,
+                    second: 0,
+                    of: Date()
+                ) ?? Date()
+            },
+            set: { date in
+                let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+                minute.wrappedValue = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+            }
+        )
+        return DatePicker("", selection: date, displayedComponents: .hourAndMinute)
+            .labelsHidden()
+            .fixedSize()
     }
 }
 
@@ -1603,14 +1569,13 @@ private struct FusionStageFlow: View {
         let columnHeight = CGFloat(rows) * cardHeight + CGFloat(rows - 1) * cardSpacing
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .bottom, spacing: 0) {
-                stageHeader(1, AppLocalization.string("routing.stage.panels"),
-                            AppLocalization.string("routing.stage.panelsCount", "\(panels.count)"))
+                stageHeader(1, AppLocalization.string("routing.stage.panels"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Color.clear.frame(width: connectorWidth, height: 1)
-                stageHeader(2, AppLocalization.string("routing.stage.judge"), nil)
+                stageHeader(2, AppLocalization.string("routing.stage.judge"))
                     .frame(width: stageWidth, alignment: .leading)
                 Color.clear.frame(width: connectorWidth, height: 1)
-                stageHeader(3, AppLocalization.string("routing.stage.final"), nil)
+                stageHeader(3, AppLocalization.string("routing.stage.final"))
                     .frame(width: stageWidth, alignment: .leading)
             }
             HStack(spacing: 0) {
@@ -1696,7 +1661,7 @@ private struct FusionStageFlow: View {
         context.stroke(head, with: .color(tint.opacity(0.8)), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
     }
 
-    private func stageHeader(_ step: Int, _ title: String, _ detail: String?) -> some View {
+    private func stageHeader(_ step: Int, _ title: String) -> some View {
         HStack(spacing: 6) {
             Text("\(step)")
                 .font(.caption2.weight(.bold))
@@ -1704,14 +1669,8 @@ private struct FusionStageFlow: View {
                 .frame(width: 16, height: 16)
                 .background(Circle().fill(tint.opacity(0.14)))
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.callout.weight(.semibold))
                 .lineLimit(1)
-            if let detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -1728,19 +1687,10 @@ private struct FusionStageFlow: View {
                     }
                 }
                 .frame(width: 16, height: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(id.isEmpty ? AppLocalization.string("routing.chooseModel") : label.name)
-                        .font(.callout)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(id.isEmpty ? Color.secondary : label.isMissing ? Color.red : Color.primary)
-                    if !label.detail.isEmpty {
-                        Text(label.detail)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
+                Text(id.isEmpty ? AppLocalization.string("routing.chooseModel") : label.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(id.isEmpty ? Color.secondary : label.isMissing ? Color.red : Color.primary)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
@@ -1756,7 +1706,7 @@ private struct FusionStageFlow: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(id.isEmpty ? AppLocalization.string("routing.stage.change") : "\(id) · \(AppLocalization.string("routing.stage.change"))")
+        .help([id, label.detail].filter { !$0.isEmpty }.joined(separator: " · "))
         .accessibilityLabel([role, id.isEmpty ? AppLocalization.string("routing.chooseModel") : label.name]
             .compactMap { $0 }
             .joined(separator: ", "))
@@ -1771,10 +1721,7 @@ private struct FusionStageFlow: View {
                 Image(systemName: count == 0 ? "plus.circle" : "checklist")
                 Text(AppLocalization.string("routing.stage.editPanels"))
                 Spacer(minLength: 4)
-                Text(AppLocalization.string("routing.fusion.panelCount", "\(count)"))
-                    .foregroundStyle(.tertiary)
             }
-            .font(.caption)
             .foregroundStyle(count == 0 ? Color.red : tint)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .leading)
@@ -1837,7 +1784,7 @@ private struct RouteModelChoiceList: View {
                 Spacer()
                 if isMultiple {
                     Text(AppLocalization.string("routing.fusion.panelCount", "\(selected.count)"))
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
