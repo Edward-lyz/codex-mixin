@@ -98,6 +98,25 @@
         <Setter Property="Stroke" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
         <Setter Property="StrokeThickness" Value="1.5" /><Setter Property="StrokeLineJoin" Value="Round" />
       </Style>
+      <Style x:Key="FlowArrow" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+      </Style>
+      <Style x:Key="FlowArrowActive" TargetType="FontIcon" BasedOn="{StaticResource FlowArrow}">
+        <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+      </Style>
+      <!-- Provider logos sit on an opaque chip so overlapping logos stay legible. -->
+      <Style x:Key="LogoChip" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SolidBackgroundFillColorTertiaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="3" />
+      </Style>
+      <Style x:Key="RouteBadge" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SolidBackgroundFillColorQuarternaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
+      </Style>
       <Style x:Key="GlyphOn" TargetType="FontIcon">
         <Setter Property="FontSize" Value="15" />
         <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />

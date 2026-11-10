@@ -246,6 +246,7 @@ try {
     $stage = 'model routing: fusion, schedule, failover'
     & $WinApp ui invoke console-routing-tab -a $app.Id --action select
     & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
+    & $WinApp ui invoke route-new -a $app.Id
     & $WinApp ui invoke route-new-fusion -a $app.Id
     $field = & $WinApp ui search '名称' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector ui-fusion -a $app.Id
@@ -254,6 +255,7 @@ try {
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     $fusion = @($routes.routes | Where-Object model -eq 'auto/ui-fusion')[0]
     if ($null -eq $fusion -or $fusion.kind -ne 'fusion' -or $fusion.mode -ne 'orchestration') { throw 'Fusion route was not saved' }
+    & $WinApp ui invoke route-new -a $app.Id
     & $WinApp ui invoke route-new-schedule -a $app.Id
     & $WinApp ui invoke 添加时段 -a $app.Id
     $slots = & $WinApp ui search 移除此时段 -a $app.Id --type Button --json | ConvertFrom-Json
@@ -264,6 +266,7 @@ try {
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     $schedule = @($routes.routes | Where-Object kind -eq 'schedule')[0]
     if ($null -eq $schedule -or $schedule.mode -ne 'time_rotation' -or @($schedule.time_routes).Count -ne 1) { throw 'Schedule route was not saved' }
+    & $WinApp ui invoke route-new -a $app.Id
     & $WinApp ui invoke route-new-failover -a $app.Id
     & $WinApp ui invoke apply-changes -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
@@ -271,10 +274,12 @@ try {
     $failover = @($routes.routes | Where-Object kind -eq 'failover')[0]
     if ($null -eq $failover -or @($failover.fallbacks).Count -ne 1 -or $failover.fallbacks[0] -eq $failover.source) { throw 'Failover route was not saved' }
     & $WinApp ui screenshot -a $app.Id --output "$evidence\routing.png"
+    & $WinApp ui invoke route-more -a $app.Id
     & $WinApp ui invoke route-delete -a $app.Id
     & $WinApp ui invoke CloseButton -a $app.Id
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     if (@($routes.routes).Count -ne 3) { throw 'Cancelled route deletion removed a route' }
+    & $WinApp ui invoke route-more -a $app.Id
     & $WinApp ui invoke route-delete -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '删除模型路由完成' --contains --timeout 90000
