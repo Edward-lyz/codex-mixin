@@ -243,6 +243,7 @@ struct AgentRowPresentation: Equatable {
     let isUpdating: Bool
     let statusText: String
     let statusIsError: Bool
+    let statusIsWarning: Bool
     let detailText: String
     let isConnected: Bool
     let isBusy: Bool
@@ -254,7 +255,7 @@ func agentIntegrationStateText(_ state: AgentIntegrationState) -> String {
     case .unmanaged: return AppLocalization.string("agentManagement.state.unmanaged")
     case .error: return AppLocalization.string("agentManagement.state.error")
     case .unsupported: return "Unsupported"
-    case .drift: return "Configuration drift"
+    case .drift: return AppLocalization.string("agentManagement.state.drift")
     case .pending: return AppLocalization.string("agentManagement.state.pending")
     case .pendingRemoval: return AppLocalization.string("agentManagement.state.pendingRemoval")
     }
@@ -320,6 +321,7 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
         isUpdating: isBusy,
         statusText: statusText,
         statusIsError: entry.integration.state == .error,
+        statusIsWarning: entry.integration.state == .drift,
         detailText: parts.joined(separator: AppLocalization.string("agentManagement.detailSeparator")),
         isConnected: [.managed, .drift, .pending, .pendingRemoval].contains(entry.integration.state),
         isBusy: isBusy

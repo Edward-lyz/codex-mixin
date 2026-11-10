@@ -87,6 +87,7 @@ extension AppDelegate {
             let routingModel = makeModelRoutingModel()
             let container = ConsoleContainerController(
                 pages: [
+                    .overview: { NSHostingController(rootView: AnyView(ConsoleUsageView(model: usageModel, overview: true))) },
                     .providers: { providerPage },
                     .agents: { makeAgentManagementPageController(model: agentModel) },
                     .usage: { NSHostingController(rootView: AnyView(ConsoleUsageView(model: usageModel))) },
@@ -98,7 +99,7 @@ extension AppDelegate {
                 onShow: { page in
                     switch page {
                     case .agents: await agentModel.refresh()
-                    case .usage: await usageModel.refresh()
+                    case .overview, .usage: await usageModel.refresh()
                     case .context: await contextModel.reloadOnShow()
                     case .routing: await routingModel.reloadOnShow()
                     case .providers: break
@@ -111,7 +112,7 @@ extension AppDelegate {
             window.contentViewController = container
             window.setFrame(frame, display: false)
             window.title = AppLocalization.string("console.windowTitle")
-            container.installToolbar(in: window)
+            container.configureWindow(window)
             consoleContainer = container
         }
         controller.present()

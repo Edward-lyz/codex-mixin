@@ -381,12 +381,29 @@ struct ProviderSettingsRootView: View {
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 6)
                     } else {
-                        ForEach(model.rows()) { row in
-                            ProviderSidebarRow(provider: row.provider)
-                                .tag(row.id)
-                                .moveDisabled(row.provider.kind == .official)
+                        ForEach([true, false], id: \.self) { enabledGroup in
+                            let group = model.rows().filter { $0.provider.enabled == enabledGroup }
+                            if !group.isEmpty {
+                                Section(enabledGroup ? "已启用" : "已停用") {
+                                    ForEach(group) { row in
+                                        ProviderSidebarRow(provider: row.provider)
+                                            .tag(row.id)
+                                            .moveDisabled(row.provider.kind == .official)
+                                    }
+                                    .onMove { offsets, destination in
+                                        // Rows are grouped; translate to indices in the full list.
+                                        guard let local = offsets.first,
+                                              let source = model.providers.firstIndex(where: { $0.id == group[local].id })
+                                        else { return }
+                                        let target = destination < group.count
+                                            ? model.providers.firstIndex(where: { $0.id == group[destination].id })
+                                            : model.providers.firstIndex(where: { $0.id == group[group.count - 1].id }).map { $0 + 1 }
+                                        guard let target else { return }
+                                        onMove(IndexSet(integer: source), target)
+                                    }
+                                }
+                            }
                         }
-                        .onMove(perform: onMove)
                     }
                 }
                 .listStyle(.sidebar)
@@ -499,6 +516,8 @@ private struct ProviderSidebarRow: View {
                 Text(provider.displayName)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(provider.displayName)
                 HStack(spacing: 5) {
                     Circle()
                         .fill(providerStatusColor(provider))
@@ -663,11 +682,16 @@ private struct ProviderDetailForm: View {
                                     .disabled(operationsBusy)
                             }
                         } else {
-                            HStack(spacing: 8) {
-                                SecureField(apiKeyPrompt, text: $formState.apiKey)
-                                if apiKeyConfigured {
-                                    Button("清除密钥", action: onClearKey)
-                                        .disabled(operationsBusy || !provider.apiKeyConfigured)
+                            LabeledContent("API 密钥") {
+                                HStack(spacing: 8) {
+                                    SecureField("API 密钥", text: $formState.apiKey, prompt: Text(apiKeyPrompt))
+                                        .labelsHidden()
+                                    if apiKeyConfigured {
+                                        // onClearKey asks for confirmation before clearing.
+                                        Button("清除密钥", role: .destructive, action: onClearKey)
+                                            .foregroundStyle(.red)
+                                            .disabled(operationsBusy || !provider.apiKeyConfigured)
+                                    }
                                 }
                             }
                         }
@@ -715,7 +739,10 @@ private struct ProviderDetailForm: View {
                                     .flexiblePickerSizing()
                                 }
                                 advancedOptionDivider
-                                advancedOptionRow(title: "上报 AI 代码使用数据") {
+                                advancedOptionRow(
+                                    title: "上报 AI 代码使用数据",
+                                    detail: AppLocalization.string("provider.codeReportDetail")
+                                ) {
                                     Toggle("", isOn: $formState.baiduCodeReport)
                                         .labelsHidden()
                                 }
@@ -826,8 +853,16 @@ private struct ProviderDetailForm: View {
         @ViewBuilder control: () -> Control
     ) -> some View {
         HStack(alignment: .center, spacing: 20) {
-            Text(title)
-                .help(detail ?? "")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let detail {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .help(detail ?? "")
             Spacer(minLength: 20)
             control()
         }
@@ -925,7 +960,7 @@ private struct ProviderDetailForm: View {
         let counts = benchmarkModel.selectionChangeCounts(for: provider.id)
         if counts.added > 0 { changes.append("加入 \(counts.added) 个") }
         if counts.removed > 0 { changes.append("移除 \(counts.removed) 个") }
-        return changes.isEmpty ? "没有待应用的更改" : changes.joined(separator: "；")
+        return changes.isEmpty ? "" : changes.joined(separator: "；")
     }
 
     private func handleIssueAction(_ action: ProviderIssueAction) {
@@ -1016,10 +1051,12 @@ private struct ProviderActionBar: View {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Text(applySummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !applySummary.isEmpty {
+                    Text(applySummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 Menu {
                     Button("检查模型接口", action: onTest)

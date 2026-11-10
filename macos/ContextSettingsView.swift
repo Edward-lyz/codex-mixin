@@ -298,7 +298,7 @@ struct ContextSettingsView: View {
     }
 
     private func metrics(_ totals: ContextStatsTotals) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
             ConsoleMetricCard(
                 title: AppLocalization.string("context.stats.sessions"),
                 value: String(totals.sessions),
