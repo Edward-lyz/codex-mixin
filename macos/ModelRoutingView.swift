@@ -26,17 +26,9 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .fusion: "rectangle.3.group"
+        case .fusion: "arrow.triangle.merge"
         case .schedule: "clock"
-        case .failover: "arrow.triangle.2.circlepath"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .fusion: .purple
-        case .schedule: .orange
-        case .failover: .teal
+        case .failover: "arrow.triangle.branch"
         }
     }
 
@@ -905,9 +897,9 @@ private struct ModelRouteGallery: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text("\(index + 1)")
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.secondary)
                             .frame(width: 20, height: 20)
-                            .background(Circle().fill(Color.accentColor.opacity(0.14)))
+                            .overlay(Circle().strokeBorder(RouteInk.borderStrong))
                         Text(text)
                             .font(.callout)
                             .foregroundStyle(.secondary)
@@ -929,6 +921,15 @@ private struct ModelRouteGallery: View {
     }
 }
 
+/// Routing visuals stay monochrome: hairlines and ink, no per-kind colors.
+private enum RouteInk {
+    static let line = Color.primary.opacity(0.3)
+    static let lineActive = Color.primary.opacity(0.7)
+    static let border = Color(nsColor: .separatorColor)
+    static let borderStrong = Color.primary.opacity(0.25)
+    static let fill = Color.primary.opacity(0.05)
+}
+
 private struct ModelRouteKindCard: View {
     let kind: ModelRouteKind
     let isEnabled: Bool
@@ -940,9 +941,9 @@ private struct ModelRouteKindCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: kind.symbol)
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(kind.tint)
+                    .foregroundStyle(.primary)
                     .frame(width: 40, height: 40)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(kind.tint.opacity(0.14)))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(RouteInk.borderStrong))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.title).font(.headline)
                     Text(kind.pitch)
@@ -957,7 +958,7 @@ private struct ModelRouteKindCard: View {
                     Image(systemName: "arrow.right")
                 }
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(isEnabled ? kind.tint : Color.secondary)
+                .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
             }
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
@@ -967,7 +968,7 @@ private struct ModelRouteKindCard: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isHovered && isEnabled ? kind.tint.opacity(0.7) : Color(nsColor: .separatorColor))
+                    .strokeBorder(isHovered && isEnabled ? RouteInk.lineActive : RouteInk.border)
             )
             .shadow(color: .black.opacity(isHovered && isEnabled ? 0.08 : 0), radius: 8, y: 2)
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -995,8 +996,7 @@ private struct ModelRouteKindCard: View {
                     .lineLimit(1)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(kind.tint.opacity(0.12)))
-                    .foregroundStyle(kind.tint)
+                    .overlay(Capsule().strokeBorder(RouteInk.border))
                     .foregroundStyle(.secondary)
             }
         }
@@ -1010,13 +1010,13 @@ private struct ModelRouteRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Solid tile with a white glyph, like provider logos, so the icon
-            // stays legible on the blue selection highlight.
+            // Outlined tile with hierarchical styles, so it follows the
+            // selection highlight instead of fighting it.
             Image(systemName: route.kind.symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(route.kind.tint.gradient))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.tertiary))
             Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
@@ -1080,7 +1080,7 @@ private struct ModelRouteEditor: View {
                     : AppLocalization.string("routing.activity.served", activity.served ?? ""))
             } icon: {
                 Image(systemName: activity.served == nil ? "exclamationmark.triangle" : "checkmark.circle")
-                    .foregroundStyle(activity.served == nil ? Color.orange : kind.tint)
+                    .foregroundStyle(activity.served == nil ? Color.orange : Color.secondary)
             }
             if let date = activity.switchedAt {
                 Divider()
@@ -1098,16 +1098,16 @@ private struct ModelRouteEditor: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(kind.tint.opacity(0.07)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(RouteInk.fill))
     }
 
     private var header: some View {
         HStack(spacing: 12) {
             Image(systemName: kind.symbol)
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(kind.tint)
+                .foregroundStyle(.primary)
                 .frame(width: 34, height: 34)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(kind.tint.opacity(0.14)))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(RouteInk.borderStrong))
             Text(kind.title).font(.headline)
             Spacer(minLength: 8)
             if model.editingModel != nil {
@@ -1259,7 +1259,6 @@ private struct ModelRouteFlow: View {
         let centerHeight = max(targetsHeight, nodeHeight)
         let topInset = (centerHeight - targetsHeight) / 2
         let columnHeight = topInset + stackHeight(targets.count + (canAdd ? 1 : 0))
-        let tint = route.kind.tint
         HStack(alignment: .top, spacing: 0) {
             HStack(spacing: 0) {
                 node {
@@ -1269,7 +1268,7 @@ private struct ModelRouteFlow: View {
                     Text(AppLocalization.string("routing.diagram.client")).font(.callout.weight(.semibold))
                 }
                 Rectangle()
-                    .fill(targets.contains(where: \.isActive) ? tint : Color(nsColor: .separatorColor))
+                    .fill(targets.contains(where: \.isActive) ? RouteInk.lineActive : RouteInk.line)
                     .frame(width: 22, height: 1)
                 node(highlighted: true) {
                     Image(nsImage: NSImage(named: colorScheme == .dark ? "CodexMixinDark" : "CodexMixin") ?? NSApp.applicationIconImage)
@@ -1294,7 +1293,7 @@ private struct ModelRouteFlow: View {
                     )
                     context.stroke(
                         path,
-                        with: .color(target.isActive ? tint : Color(nsColor: .separatorColor)),
+                        with: .color(target.isActive ? RouteInk.lineActive : RouteInk.line),
                         lineWidth: target.isActive ? 1.6 : 1
                     )
                 }
@@ -1321,7 +1320,7 @@ private struct ModelRouteFlow: View {
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(highlighted ? route.kind.tint.opacity(0.7) : Color(nsColor: .separatorColor),
+                    .strokeBorder(highlighted ? RouteInk.lineActive : RouteInk.border,
                                   lineWidth: highlighted ? 1.5 : 1)
             )
     }
@@ -1331,13 +1330,12 @@ private struct ModelRouteFlow: View {
     }
 
     private func targetRow(_ target: Target) -> some View {
-        let tint = route.kind.tint
         let label = routeModelLabel(target.model, options: model.options)
         let isHovered = hovered == target.slot
         return HStack(spacing: 8) {
             Circle()
-                .fill(target.isActive ? tint : Color.clear)
-                .overlay(Circle().strokeBorder(target.isActive ? tint : Color.secondary.opacity(0.5)))
+                .fill(target.isActive ? Color.primary : Color.clear)
+                .overlay(Circle().strokeBorder(target.isActive ? Color.primary : Color.secondary.opacity(0.5)))
                 .frame(width: 7, height: 7)
             Button {
                 editing = target.slot
@@ -1388,7 +1386,7 @@ private struct ModelRouteFlow: View {
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(target.isActive ? tint.opacity(0.6) : Color(nsColor: .separatorColor))
+                .strokeBorder(target.isActive ? RouteInk.lineActive : RouteInk.border)
         )
         .onHover { inside in
             if inside {
@@ -1429,7 +1427,7 @@ private struct ModelRouteFlow: View {
     private func roleText(_ target: Target) -> some View {
         Text(target.role)
             .fontWeight(target.isActive ? .semibold : .regular)
-            .foregroundStyle(target.isActive ? route.kind.tint : Color.secondary)
+            .foregroundStyle(target.isActive ? Color.primary : Color.secondary)
             .lineLimit(1)
             .fixedSize()
     }
@@ -1481,13 +1479,13 @@ private struct ModelRouteFlow: View {
                 AppLocalization.string(isSchedule ? "routing.schedule.add" : "routing.failover.add"),
                 systemImage: "plus"
             )
-            .foregroundStyle(route.kind.tint)
+            .foregroundStyle(.secondary)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundStyle(route.kind.tint.opacity(0.45))
+                    .foregroundStyle(RouteInk.line)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -1570,7 +1568,6 @@ private struct FusionStageFlow: View {
     private let maxPanels = 8
 
     private var profile: FusionSettingsProfile { model.draft?.profile ?? FusionSettingsProfile() }
-    private var tint: Color { ModelRouteKind.fusion.tint }
 
     var body: some View {
         let panels = profile.panelModels
@@ -1615,7 +1612,7 @@ private struct FusionStageFlow: View {
                             control1: CGPoint(x: size.width * 0.6, y: y),
                             control2: CGPoint(x: size.width * 0.4, y: end.y)
                         )
-                        context.stroke(path, with: .color(tint.opacity(0.55)), lineWidth: 1.2)
+                        context.stroke(path, with: .color(RouteInk.line), lineWidth: 1)
                     }
                     drawArrowHead(context, at: end)
                 }
@@ -1631,7 +1628,7 @@ private struct FusionStageFlow: View {
                     var path = Path()
                     path.move(to: CGPoint(x: 0, y: y))
                     path.addLine(to: CGPoint(x: size.width - 2, y: y))
-                    context.stroke(path, with: .color(tint.opacity(0.55)), lineWidth: 1.2)
+                    context.stroke(path, with: .color(RouteInk.line), lineWidth: 1)
                     drawArrowHead(context, at: CGPoint(x: size.width - 2, y: y))
                 }
                 .frame(width: connectorWidth, height: cardHeight)
@@ -1667,16 +1664,16 @@ private struct FusionStageFlow: View {
         head.move(to: CGPoint(x: point.x - 6, y: point.y - 4))
         head.addLine(to: point)
         head.addLine(to: CGPoint(x: point.x - 6, y: point.y + 4))
-        context.stroke(head, with: .color(tint.opacity(0.8)), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        context.stroke(head, with: .color(RouteInk.lineActive), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
     }
 
     private func stageHeader(_ step: Int, _ title: String) -> some View {
         HStack(spacing: 6) {
             Text("\(step)")
                 .font(.caption2.weight(.bold))
-                .foregroundStyle(tint)
+                .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
-                .background(Circle().fill(tint.opacity(0.14)))
+                .overlay(Circle().strokeBorder(RouteInk.borderStrong))
             Text(title)
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
@@ -1710,7 +1707,7 @@ private struct FusionStageFlow: View {
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(id.isEmpty || label.isMissing ? Color.red.opacity(0.5) : tint.opacity(0.35))
+                    .strokeBorder(id.isEmpty || label.isMissing ? Color.red.opacity(0.5) : RouteInk.borderStrong)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -1731,13 +1728,13 @@ private struct FusionStageFlow: View {
                 Text(AppLocalization.string("routing.stage.editPanels"))
                 Spacer(minLength: 4)
             }
-            .foregroundStyle(count == 0 ? Color.red : tint)
+            .foregroundStyle(count == 0 ? Color.red : Color.secondary)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .leading)
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundStyle(tint.opacity(0.45))
+                    .foregroundStyle(RouteInk.line)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
