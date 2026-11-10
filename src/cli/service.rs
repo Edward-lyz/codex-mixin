@@ -424,7 +424,7 @@ fn model_refresh_targets(
         .iter()
         .filter(|provider| provider.enabled)
         .filter(|provider| {
-            provider.preset_id.as_deref() == Some("agy")
+            matches!(provider.preset_id.as_deref(), Some("agy" | "claude-code"))
                 || provider.discovered_credential.is_some()
                 || !matches!(provider.model_source, ProviderModelSource::Static)
         })

@@ -320,7 +320,7 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
         ProviderModelSource::Static
             if !matches!(
                 provider.preset_id.as_deref(),
-                Some("agy" | "agy-business" | "kiro")
+                Some("agy" | "agy-business" | "kiro" | "claude-code")
             ) =>
         {
             (
