@@ -192,7 +192,7 @@ impl CatalogService {
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
         models.extend(self.config.fusion_profiles.iter().map(|profile| ModelInfo {
             id: profile.model_slug(),
-            display_name: Some(profile.model_slug()),
+            display_name: Some(profile.display_name()),
             object: Some("model".to_owned()),
             created: None,
             owned_by: Some("codex-mixin".to_owned()),

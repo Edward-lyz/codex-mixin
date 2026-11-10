@@ -1,4 +1,4 @@
-use super::routing::{input_items, is_user_message};
+use super::routing::input_items;
 use super::types::{JudgeSynthesis, PanelAnalysis, PanelResult};
 use super::*;
 
@@ -111,28 +111,114 @@ pub(super) fn inject_fusion_analysis(body: &mut Value, analysis: &str, panels: &
     }
 }
 
+/// Upper bound on earlier-conversation text forwarded to every panel model,
+/// so long sessions keep panel cost bounded while still giving context.
+const EARLIER_CONVERSATION_MAX_CHARS: usize = 32_000;
+/// Per-message cap inside the earlier conversation; long replies keep their tail.
+const EARLIER_MESSAGE_MAX_CHARS: usize = 4_000;
+/// Client-injected user messages that describe the workspace rather than the
+/// request. The latest of each kind is always forwarded, even when the
+/// earlier conversation is trimmed.
+const WORKSPACE_CONTEXT_PREFIXES: [&str; 2] = ["<environment_context>", "# AGENTS.md instructions"];
+
+/// Builds the panel task for one session turn: pinned workspace context, a
+/// bounded tail of the earlier conversation, and the current user request.
 pub(super) fn extract_user_task(body: &Value) -> String {
     if let Some(input) = body.get("input").and_then(Value::as_str) {
         return input.to_owned();
     }
-    let mut text = Vec::new();
-    for item in input_items(body).filter(|item| is_user_message(item)) {
-        match item.get("content") {
-            Some(Value::String(content)) => text.push(content.clone()),
-            Some(Value::Array(parts)) => {
-                text.extend(parts.iter().filter_map(|part| {
-                    matches!(
-                        part.get("type").and_then(Value::as_str),
-                        Some("input_text" | "text")
-                    )
-                    .then(|| part.get("text").and_then(Value::as_str).map(str::to_owned))
-                    .flatten()
-                }));
-            }
-            _ => {}
+    let mut workspace: [Option<String>; WORKSPACE_CONTEXT_PREFIXES.len()] = Default::default();
+    let mut conversation = Vec::new();
+    for item in input_items(body) {
+        if item.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
         }
+        let role = match item.get("role").and_then(Value::as_str) {
+            Some(role @ ("user" | "assistant")) => role,
+            _ => continue,
+        };
+        let text = message_text(item);
+        if text.trim().is_empty() {
+            continue;
+        }
+        if role == "user"
+            && let Some(slot) = WORKSPACE_CONTEXT_PREFIXES
+                .iter()
+                .position(|prefix| text.trim_start().starts_with(prefix))
+        {
+            workspace[slot] = Some(text);
+            continue;
+        }
+        conversation.push((role, text));
     }
-    text.join("\n\n")
+    let current_start = conversation
+        .iter()
+        .rposition(|(role, _)| *role == "assistant")
+        .map_or(0, |index| index + 1);
+    let current = conversation[current_start..]
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let mut earlier = Vec::new();
+    let mut budget = EARLIER_CONVERSATION_MAX_CHARS;
+    for (role, text) in conversation[..current_start].iter().rev() {
+        let text = tail_chars(text, EARLIER_MESSAGE_MAX_CHARS.min(budget));
+        if text.is_empty() {
+            break;
+        }
+        budget -= text.chars().count();
+        earlier.push(format!("[{role}]\n{text}"));
+    }
+    earlier.reverse();
+
+    let mut sections = Vec::new();
+    let workspace = workspace.into_iter().flatten().collect::<Vec<_>>();
+    if !workspace.is_empty() {
+        sections.push(format!(
+            "<WORKSPACE_CONTEXT>\n{}\n</WORKSPACE_CONTEXT>",
+            workspace.join("\n\n")
+        ));
+    }
+    if !earlier.is_empty() {
+        sections.push(format!(
+            "<EARLIER_CONVERSATION>\n{}\n</EARLIER_CONVERSATION>",
+            earlier.join("\n\n")
+        ));
+    }
+    sections.push(format!("<CURRENT_REQUEST>\n{current}\n</CURRENT_REQUEST>"));
+    sections.join("\n\n")
+}
+
+fn message_text(item: &Value) -> String {
+    match item.get("content") {
+        Some(Value::String(content)) => content.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter(|part| {
+                matches!(
+                    part.get("type").and_then(Value::as_str),
+                    Some("input_text" | "output_text" | "text")
+                )
+            })
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        _ => String::new(),
+    }
+}
+
+fn tail_chars(text: &str, max_chars: usize) -> &str {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text;
+    }
+    let start = text
+        .char_indices()
+        .nth(count - max_chars)
+        .map_or(text.len(), |(index, _)| index);
+    &text[start..]
 }
 
 pub(super) fn extract_environment_cwd(task: &str) -> Option<PathBuf> {

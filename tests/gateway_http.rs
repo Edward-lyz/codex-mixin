@@ -4864,7 +4864,7 @@ async fn context_official_route_keeps_the_upstream_status() {
 }
 
 #[tokio::test]
-async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
+async fn fusion_runs_on_every_user_turn_then_routes_tool_continuations_to_final() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![fusion_profile()];
@@ -4886,7 +4886,7 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
         .iter()
         .find(|model| model["id"] == "auto/default")
         .unwrap();
-    assert_eq!(fusion_model["display_name"], "auto/default");
+    assert_eq!(fusion_model["display_name"], "Fusion: default");
 
     let mut request = fusion_request();
     let response = client
@@ -5025,9 +5025,17 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let later_body = response.text().await.unwrap();
-    assert!(!later_body.contains("response.reasoning_summary_text.delta"));
-    assert_eq!(requests.lock().unwrap().len(), 5);
-    assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
+    assert!(later_body.contains("response.reasoning_summary_text.delta"));
+    let later_turn_requests = requests.lock().unwrap()[4..].to_vec();
+    assert_eq!(later_turn_requests.len(), 4);
+    let panel_task = later_turn_requests
+        .iter()
+        .find(|request| request["model"] == "panel-a")
+        .unwrap()
+        .to_string();
+    assert!(panel_task.contains("EARLIER_CONVERSATION"), "{panel_task}");
+    assert!(panel_task.contains("answer"), "{panel_task}");
+    assert!(panel_task.contains("implement the plan"), "{panel_task}");
 
     request["input"] = json!([
         {"type":"message","role":"user","content":[{"type":"input_text","text":"run a tool"}]},
@@ -5045,7 +5053,7 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
     let continuation_body = response.text().await.unwrap();
     assert!(!continuation_body.contains("response.reasoning_summary_text.delta"));
     let captured = requests.lock().unwrap();
-    assert_eq!(captured.len(), 6);
+    assert_eq!(captured.len(), 9);
     assert_eq!(captured.last().unwrap()["model"], "final");
 }
 
@@ -7760,9 +7768,9 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
     assert!(
         follow_up_frames
             .iter()
-            .all(|frame| !frame.contains("response.reasoning_summary_text.delta"))
+            .any(|frame| frame.contains("response.reasoning_summary_text.delta"))
     );
-    assert_eq!(requests.lock().unwrap().len(), 5);
+    assert_eq!(requests.lock().unwrap().len(), 8);
     assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
     let follow_up_completed: Value = follow_up_frames
         .iter()
@@ -7789,7 +7797,7 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
             .iter()
             .all(|frame| !frame.contains("response.reasoning_summary_text.delta"))
     );
-    assert_eq!(requests.lock().unwrap().len(), 6);
+    assert_eq!(requests.lock().unwrap().len(), 9);
     assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
 }
 

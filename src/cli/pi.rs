@@ -140,12 +140,7 @@ fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) 
         }
         models.push(json!({
             "id": id,
-            "name": format!(
-                "Fusion ({}): {} -> {}",
-                profile.id,
-                profile.panel_models.join("+"),
-                profile.judge_model
-            ),
+            "name": profile.display_name(),
             "reasoning": false,
             "input": ["text"],
             "cost": zero_cost(),
