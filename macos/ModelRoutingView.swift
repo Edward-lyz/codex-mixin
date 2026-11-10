@@ -28,7 +28,7 @@ enum ModelRouteKind: String, CaseIterable, Identifiable {
         switch self {
         case .fusion: "arrow.triangle.merge"
         case .schedule: "clock"
-        case .failover: "arrow.triangle.branch"
+        case .failover: "arrow.uturn.right"
         }
     }
 
@@ -132,6 +132,20 @@ struct ModelRouteDraft: Equatable {
 
     var referencedModels: [String] {
         kind == .failover ? [source] + fallbacks : profile.referencedModels
+    }
+
+    /// Referenced models in the order the route reaches them: the model that
+    /// answers comes first, so its provider leads the logo stack.
+    var modelsByPrecedence: [String] {
+        switch kind {
+        case .fusion:
+            return [profile.finalModel, profile.judgeModel] + profile.panelModels
+        case .schedule:
+            return [profile.activeModel(atMinute: currentLocalMinute())]
+                + profile.timeRoutes.map(\.model) + [profile.finalModel]
+        case .failover:
+            return [source] + fallbacks
+        }
     }
 
     func summary(atMinute minute: Int) -> String {
@@ -686,7 +700,7 @@ struct ModelRoutingView: View {
                 List(selection: Binding(get: { model.selection }, set: { model.select($0) })) {
                     ForEach(model.routes, id: \.model) { route in
                         HStack(spacing: 8) {
-                            ModelRouteRow(route: route)
+                            ModelRouteRow(route: route, options: model.options)
                                 .opacity(route.enabled ? 1 : 0.55)
                             Toggle(AppLocalization.string("routing.enabled"), isOn: Binding(
                                 get: { route.enabled },
@@ -703,7 +717,7 @@ struct ModelRoutingView: View {
                     }
                     .onMove { model.moveRoutes(from: $0, to: $1) }
                     if model.editingModel == nil, model.selection == nil, let draft = model.draft {
-                        ModelRouteRow(route: draft, isNew: true)
+                        ModelRouteRow(route: draft, options: model.options, isNew: true)
                     }
                     let suggestions = model.suggestions
                     if !suggestions.isEmpty {
@@ -730,10 +744,8 @@ struct ModelRoutingView: View {
     /// leave the visual weight to the routes that are configured.
     private func suggestionRow(_ route: ModelRouteDraft) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: route.kind.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
+            RouteProviderStack(route: route, options: model.options)
+                .opacity(0.6)
             Text(route.displayName)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -755,7 +767,7 @@ struct ModelRoutingView: View {
                 Button {
                     model.newRoute(kind)
                 } label: {
-                    Label(kind.title, systemImage: kind.symbol)
+                    Text(kind.title)
                 }
             }
         } label: {
@@ -1006,17 +1018,12 @@ private struct ModelRouteKindCard: View {
 
 private struct ModelRouteRow: View {
     let route: ModelRouteDraft
+    let options: [FusionModelOption]
     var isNew = false
 
     var body: some View {
         HStack(spacing: 10) {
-            // Outlined tile with hierarchical styles, so it follows the
-            // selection highlight instead of fighting it.
-            Image(systemName: route.kind.symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.tertiary))
+            RouteProviderStack(route: route, options: options)
             Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
@@ -1103,11 +1110,7 @@ private struct ModelRouteEditor: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: kind.symbol)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 34, height: 34)
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(RouteInk.borderStrong))
+            RouteProviderStack(route: draft, options: model.options, logoSize: 22)
             Text(kind.title).font(.headline)
             Spacer(minLength: 8)
             if model.editingModel != nil {
@@ -1167,6 +1170,87 @@ private struct ModelRouteEditor: View {
                 Toggle(AppLocalization.string("routing.fusion.panelTools"), isOn: binding(\.profile.panelToolsEnabled, true))
             }
         }
+    }
+}
+
+/// A route's icon: logos of the providers it reaches, overlapped like an
+/// avatar stack in precedence order, with a small badge for the route kind
+/// so single-provider routes still read as fusion, schedule or failover.
+private struct RouteProviderStack: View {
+    let route: ModelRouteDraft
+    let options: [FusionModelOption]
+    var logoSize: CGFloat = 18
+
+    private let maxLogos = 3
+
+    /// One entry per provider; models missing from the catalog share one
+    /// placeholder.
+    private var providers: [FusionModelOption?] {
+        var seen = Set<String>()
+        var result: [FusionModelOption?] = []
+        for id in route.modelsByPrecedence where !id.isEmpty {
+            let option = options.first { $0.id == id && $0.isAvailable && !$0.providerID.isEmpty }
+            let key = option?.providerID ?? ""
+            if seen.insert(key).inserted { result.append(option) }
+        }
+        return result
+    }
+
+    var body: some View {
+        let providers = providers
+        let shown = Array(providers.prefix(maxLogos))
+        let overflow = providers.count - shown.count
+        let overlap = logoSize / 3
+        HStack(spacing: -overlap) {
+            if shown.isEmpty {
+                logo(nil)
+            }
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, option in
+                logo(option).zIndex(Double(shown.count - index))
+            }
+            if overflow > 0 {
+                Text("+\(overflow)")
+                    .font(.system(size: logoSize * 0.45, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: logoSize, height: logoSize)
+                    .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(Circle().strokeBorder(RouteInk.border))
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            Image(systemName: route.kind.symbol)
+                .font(.system(size: logoSize * 0.4, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: logoSize * 0.62, height: logoSize * 0.62)
+                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+                .overlay(Circle().strokeBorder(RouteInk.border))
+                .offset(x: logoSize * 0.2, y: logoSize * 0.2)
+        }
+        .padding(.trailing, logoSize * 0.2)
+        .padding(.bottom, logoSize * 0.2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(route.kind.title)
+    }
+
+    private func logo(_ option: FusionModelOption?) -> some View {
+        Group {
+            if let option, let image = routeProviderLogo(option) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(logoSize * 0.12)
+            } else {
+                Image(systemName: "cpu")
+                    .font(.system(size: logoSize * 0.5))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: logoSize, height: logoSize)
+        .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+        .overlay(Circle().strokeBorder(RouteInk.border).padding(1.5))
     }
 }
 
