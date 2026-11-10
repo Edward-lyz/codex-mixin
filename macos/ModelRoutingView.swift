@@ -650,16 +650,27 @@ extension ModelRoutingModel {
 
 struct ModelRoutingView: View {
     @ObservedObject var model: ModelRoutingModel
+    /// Same split as Models & Services: the console has no toolbar button to
+    /// bring a collapsed sidebar back, so it stays visible.
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
-        HSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
-                .frame(minWidth: 250, idealWidth: 280, maxWidth: 360)
+                .navigationSplitViewColumnWidth(
+                    min: providerSidebarMinimumWidth,
+                    ideal: providerSidebarIdealWidth,
+                    max: providerSidebarMaximumWidth
+                )
+        } detail: {
             detail
                 .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor))
         }
         .frame(minWidth: 860, minHeight: 600)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: columnVisibility) { visibility in
+            if visibility != .all { columnVisibility = .all }
+        }
         .task {
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
@@ -670,19 +681,13 @@ struct ModelRoutingView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "point.3.filled.connected.trianglepath.dotted")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 30, height: 30)
-                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.opacity(0.12)))
+            HStack(spacing: 6) {
                 Text(AppLocalization.string("routing.title")).font(.headline)
                 Spacer(minLength: 4)
                 newRouteMenu
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            Divider()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             if model.routes.isEmpty && model.draft == nil && model.suggestions.isEmpty {
                 emptySidebar
             } else {
@@ -723,6 +728,8 @@ struct ModelRoutingView: View {
                 }
                 .disabled(model.isBusy)
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
             }
         }
     }
@@ -1003,15 +1010,17 @@ private struct ModelRouteRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // Solid tile with a white glyph, like provider logos, so the icon
+            // stays legible on the blue selection highlight.
             Image(systemName: route.kind.symbol)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(route.kind.tint)
-                .frame(width: 26, height: 26)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(route.kind.tint.opacity(0.14)))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(route.kind.tint.gradient))
             Text(route.displayName.isEmpty ? AppLocalization.string("routing.untitled") : route.displayName)
+                .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .fontWeight(isNew ? .semibold : .regular)
         }
         .help(route.summary(atMinute: currentLocalMinute()))
         .frame(maxWidth: .infinity, alignment: .leading)
