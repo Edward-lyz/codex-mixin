@@ -329,9 +329,11 @@ fn paste(
         writer.write_all(b"\x1b[201~")?;
         writer.flush()?;
     }
+    // The terminal wraps and indents inline pastes, so compare without any
+    // whitespace; a tail ending in a line break would otherwise never match.
     let tail = text
-        .trim()
         .chars()
+        .filter(|character| !character.is_whitespace())
         .rev()
         .take(20)
         .collect::<String>()
@@ -365,7 +367,15 @@ fn paste(
             })
             .max()
             .unwrap_or_default();
-        if taken > previous || (!image && now != before && now.replace('\n', "").contains(&tail)) {
+        if taken > previous
+            || (!image
+                && now != before
+                && now
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect::<String>()
+                    .contains(&tail))
+        {
             std::thread::sleep(Duration::from_millis(100));
             return Ok(());
         }
