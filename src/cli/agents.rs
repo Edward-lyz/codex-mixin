@@ -417,6 +417,14 @@ fn framework_model(
     let context = model
         .context_window
         .unwrap_or(config.default_context_window);
+    let reasoning = if model.supports_thinking == Some(false) {
+        None
+    } else {
+        codex_mixin::protocol::model_reasoning::resolve_model_reasoning(
+            &model.id,
+            model.supports_thinking,
+        )
+    };
     codex_mixin::clients::frameworks::FrameworkModel {
         id,
         name,
@@ -428,13 +436,7 @@ fn framework_model(
             .min(context),
         supports_image: model.supports_image.unwrap_or(false),
         protocol: model.protocol.unwrap_or(protocol),
-        efforts: if model.supports_thinking == Some(false) {
-            Vec::new()
-        } else {
-            codex_mixin::protocol::model_reasoning::resolve_model_reasoning(
-                &model.id,
-                model.supports_thinking,
-            )
+        efforts: reasoning
             .map(|c| {
                 c.supported_levels
                     .iter()
@@ -442,7 +444,7 @@ fn framework_model(
                     .map(|l| l.effort.to_owned())
                     .collect()
             })
-            .unwrap_or_default()
-        },
+            .unwrap_or_default(),
+        default_effort: reasoning.map(|c| c.default_effort.to_owned()),
     }
 }
