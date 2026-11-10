@@ -70,15 +70,27 @@ const onInput = async text => {
   }
 };
 let buffer = '';
+let input = '';
+let pastes = 0;
 process.stdin.on('data', bytes => {
-  process.stdout.write(bytes);
   buffer += bytes.toString();
-  const end = buffer.indexOf('\x1b[201~\r');
-  if (end < 0) return;
-  const start = buffer.indexOf('\x1b[200~');
-  const text = buffer.slice(start + 6, end);
-  buffer = buffer.slice(end + 7);
-  onInput(text).catch(() => process.exit(1));
+  while (buffer.length) {
+    if (buffer.startsWith('\r')) {
+      buffer = buffer.slice(1);
+      const text = input;
+      input = '';
+      onInput(text).catch(() => process.exit(1));
+      continue;
+    }
+    const start = buffer.indexOf('\x1b[200~');
+    const end = buffer.indexOf('\x1b[201~');
+    if (start < 0 || end < 0) return;
+    input += buffer.slice(start + 6, end);
+    buffer = buffer.slice(end + 6);
+    // Replay the folded marker captured when the terminal split it before '#'.
+    // A turn can paste several blocks before Enter; acknowledge each new ID.
+    process.stdout.write(`\r\n[Pasted text\r\n#${++pastes} +32 lines]\r\n`);
+  }
 });
 "#;
 
@@ -133,9 +145,19 @@ async fn turn(address: SocketAddr, input: &[Value]) -> Vec<Value> {
         .text()
         .await
         .unwrap();
-    text.lines()
+    let events: Vec<Value> = text
+        .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .collect();
+    assert!(
+        !events
+            .iter()
+            .any(|event| event["type"] == "response.failed"),
+        "Claude Code turn failed: {text}"
+    );
+    events
+        .into_iter()
         .filter(|event| event["type"] == "response.output_item.done")
         .map(|event| event["item"].clone())
         .collect()
