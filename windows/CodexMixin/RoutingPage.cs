@@ -685,6 +685,7 @@ public sealed partial class MainWindow
         }
         else
         {
+            if (ids.Distinct().Count() < 2) throw new InvalidOperationException("故障转移至少需要两个可用模型，请先在「模型与服务」中再添加一个模型。");
             source = ids.FirstOrDefault(id => !models.Contains(id)) ?? throw new InvalidOperationException("所有模型都已配置故障转移。");
             fallbacks = [ids.FirstOrDefault(id => id != source) ?? ids[0]];
         }

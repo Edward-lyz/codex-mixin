@@ -244,6 +244,9 @@ try {
     $completed.Add($stage)
 
     $stage = 'model routing: fusion, schedule, failover'
+    # Failover needs a second routable model besides `shared`.
+    $null = & $cli --no-tui --json-errors provider select ui-local --model shared --model hidden
+    if ($LASTEXITCODE -ne 0) { throw 'Selecting a second model for routing failed' }
     & $WinApp ui invoke console-routing-tab -a $app.Id --action select
     & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
     & $WinApp ui invoke route-new -a $app.Id
