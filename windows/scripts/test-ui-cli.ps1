@@ -65,6 +65,7 @@ try {
     $guiVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $AppDirectory 'codex_mixin_ui.dll')).Version.ToString(3)
     if ($guiVersion -ne ($interface.version -split '-', 2)[0]) { throw 'Published GUI and CLI versions do not match' }
     @{ gui = $guiVersion; cli = $interface.version } | ConvertTo-Json | Set-Content "$evidence\versions.json"
+    $appStartedAt = [DateTime]::Now
     $app = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -PassThru
     & $WinApp ui wait-for operation-status -a $app.Id --timeout 60000
     & $WinApp ui wait-for operation-status -a $app.Id --value '连接 CLI完成' --contains --timeout 90000
@@ -211,7 +212,10 @@ try {
 
     $stage = 'context toggle and save'
     & $WinApp ui invoke console-context-tab -a $app.Id --action select
-    & $WinApp ui wait-for context-enabled -a $app.Id --timeout 30000
+    # The settings card appears before the statistics query finishes. Presence
+    # alone does not mean PageShell has been re-enabled for automation edits.
+    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
+    & $WinApp ui wait-for context-enabled -a $app.Id --property IsEnabled --value True --timeout 30000
     $before = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
     & $WinApp ui invoke context-enabled -a $app.Id --action toggle
     & $WinApp ui invoke apply-changes -a $app.Id
@@ -466,7 +470,17 @@ finally {
     if ($null -ne $app) {
         & $WinApp ui inspect -a $app.Id --depth 10 --json 2> "$evidence\inspect-error.txt" | Set-Content "$evidence\final-tree.json"
         & $WinApp ui screenshot -a $app.Id --output "$evidence\final.png" 2> "$evidence\screenshot-error.txt"
-        if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force -ErrorAction Continue }
+        if ($app.HasExited) {
+            # UI Automation reports only a stale element when the process dies.
+            # Preserve the native crash cause instead of losing it with the runner.
+            @{ pid = $app.Id; exitCode = $app.ExitCode; stage = $stage } |
+                ConvertTo-Json | Set-Content "$evidence\app-exit.json"
+            @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $appStartedAt; Level = 2 } -ErrorAction SilentlyContinue |
+                Where-Object { $_.Message -match 'codex_mixin_ui|CodexMixin|Microsoft.UI.Xaml' } |
+                Select-Object TimeCreated, ProviderName, Id, Message) |
+                ConvertTo-Json -Depth 4 | Set-Content "$evidence\app-crashes.json"
+        }
+        else { Stop-Process -Id $app.Id -Force -ErrorAction Continue }
     }
     & $cli --no-tui --json-errors service stop --force --allow-codex-disconnect --restore-clients *> "$evidence\service-cleanup.txt"
     if ($null -ne $upstream -and -not $upstream.HasExited) { Stop-Process -Id $upstream.Id -Force -ErrorAction Continue }
