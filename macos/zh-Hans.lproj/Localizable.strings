@@ -330,7 +330,7 @@
 "routing.selectHint" = "在左侧选择一条路由进行编辑，或在下方新建。";
 "routing.emptyHint" = "在右侧选择一种路由类型开始。";
 "routing.gallery.title" = "让一个模型名背后有多个模型";
-"routing.gallery.subtitle" = "路由由本地网关执行，Codex 等客户端无需改动。选择一种类型开始，保存后网关会自动重启并刷新模型目录。";
+"routing.gallery.subtitle" = "路由由本地网关执行，已接入的 Agent 无需改动。选择一种类型开始，保存后网关会自动重启并刷新模型目录。";
 "routing.gallery.create" = "创建";
 "routing.gallery.createAccessibility" = "创建%@路由";
 "routing.kind.fusionPitch" = "多个模型并行作答，评审后给出最好的回答。";
@@ -351,7 +351,7 @@
 "routing.steps.title" = "使用方式";
 "routing.steps.pick" = "选择一种路由类型。";
 "routing.steps.save" = "选好模型，点击「保存并应用」。";
-"routing.steps.use" = "在 Codex 模型选择器中选择路由入口；故障转移直接作用于原模型。";
+"routing.steps.use" = "在 Agent 模型选择器中选择 auto/名称；未命名的故障转移直接作用于原模型。";
 "routing.kind.fusion" = "模型融合";
 "routing.kind.schedule" = "定时切换";
 "routing.kind.failover" = "故障转移";
@@ -363,10 +363,10 @@
 "routing.summary.failover" = "备用：%@";
 "routing.chooseModel" = "选择模型";
 "routing.noMatches" = "没有匹配的模型";
-"routing.failover.nameHelp" = "可选。留空时只作用于原模型；填写名称后，Codex 模型选择器里会多出入口 auto/名称，选它即可获得故障转移。";
+"routing.failover.nameHelp" = "可选。留空时只作用于原模型；填写名称后，Agent 模型选择器里会多出入口 auto/名称，选它即可获得故障转移。";
 "routing.suggestions" = "推荐路由";
 "routing.suggestions.help" = "打开预填好的路由，检查模型后点击「保存并应用」即可启用。";
-"routing.diagram.client" = "Codex";
+"routing.diagram.client" = "Agents";
 "routing.diagram.panel" = "并行作答";
 "routing.diagram.judge" = "评审";
 "routing.diagram.final" = "最终作答";
@@ -375,7 +375,7 @@
 "routing.diagram.backup" = "备用 %@";
 "routing.field.name" = "名称";
 "routing.field.entry" = "模型入口";
-"routing.field.entryHelp" = "在 Codex 模型选择器中选择这个入口即可使用该路由。";
+"routing.field.entryHelp" = "在 Agent 模型选择器中选择这个入口即可使用该路由。";
 "routing.fusion.searchPanels" = "搜索 Panel 模型";
 "routing.fusion.panels" = "Panel 模型";
 "routing.fusion.panelCount" = "已选择 %@ / 8 个";
@@ -413,7 +413,7 @@
 "routing.progress.write" = "写入路由配置";
 "routing.progress.delete" = "删除路由配置";
 "routing.progress.restart" = "重启本地网关";
-"routing.progress.refresh" = "刷新 Codex 模型目录";
+"routing.progress.refresh" = "刷新 Agent 模型目录";
 "routing.progress.done" = "完成";
 "routing.progress.saved" = "✓ 路由已保存";
 "routing.progress.deleted" = "✓ 路由已删除";
@@ -435,3 +435,16 @@
 "routing.error.fallbackRepeat" = "备用模型不能重复，也不能和原模型相同。";
 "routing.error.encode" = "路由无法编码为 JSON。";
 "routing.error.invalidJSON" = "路由命令返回了无效 JSON。";
+
+"routing.activity.waiting" = "暂无请求记录 · 首次请求从首选模型开始";
+
+"routing.activity.failed" = "所有尝试均失败";
+
+"routing.activity.served" = "最近接通：%@";
+
+"routing.activity.lastSwitch" = "最近一次故障切换";
+
+"routing.activity.reason" = "原因：%@";
+
+"routing.enabled" = "启用";
+"routing.enabledFor" = "启用 %@";

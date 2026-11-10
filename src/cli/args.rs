@@ -597,6 +597,21 @@ pub(super) enum RouteCommand {
         #[arg(long)]
         replace_model: Option<String>,
     },
+    /// Enable a saved route.
+    Enable {
+        #[arg(long)]
+        model: String,
+    },
+    /// Disable a saved route while keeping its configuration.
+    Disable {
+        #[arg(long)]
+        model: String,
+    },
+    /// Reorder every saved route by its entry model.
+    Reorder {
+        #[arg(required = true)]
+        models: Vec<String>,
+    },
     /// Delete the route entered by a model.
     Delete {
         #[arg(long)]
