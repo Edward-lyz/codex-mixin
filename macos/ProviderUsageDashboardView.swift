@@ -113,7 +113,7 @@ private func providerBrandColor(_ providerID: String) -> Color {
 
 private let dashboardBundledLogoCache = NSCache<NSString, NSImage>()
 
-private func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSImage? {
+func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSImage? {
     let assetName = providerLogoAssetName(providerID)
     if assetName == "custom",
        let cached = cachedProviderLogoImage(providerID: providerID, websiteURL: websiteURL) {

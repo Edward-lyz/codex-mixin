@@ -376,7 +376,12 @@ extension AppDelegate {
     }
 
     func fetchRouteModelOptions() async throws -> [FusionModelOption] {
-        let data = Data(try await runGateway(["route", "models", "--json"]).utf8)
+        async let modelList = runGateway(["route", "models", "--json"])
+        async let providerList = runGateway(["providers", "list", "--json"])
+        let providers = try decodeProviderList(try await providerList).providers
+        let providerByID = Dictionary(providers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let providerOrder = Dictionary(providers.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let data = Data(try await modelList.utf8)
         guard
             let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             let models = response["models"] as? [[String: Any]]
@@ -388,12 +393,20 @@ extension AppDelegate {
                 let id = model["id"] as? String,
                 !id.hasPrefix("mixin/fusion/")
             else { return nil }
+            let providerID = model["provider_id"] as? String ?? ""
+            let provider = providerByID[providerID]
             return FusionModelOption(
                 id: id,
-                displayName: model["display_name"] as? String ?? id
+                displayName: model["display_name"] as? String ?? id,
+                providerID: providerID,
+                providerName: provider?.displayName ?? providerID,
+                providerWebsiteURL: provider?.websiteURL
             )
         }.sorted {
-            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+            let lhsOrder = providerOrder[$0.providerID] ?? Int.max
+            let rhsOrder = providerOrder[$1.providerID] ?? Int.max
+            if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+            return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
         }
     }
 
