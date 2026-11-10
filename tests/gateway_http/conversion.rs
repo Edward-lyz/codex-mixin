@@ -1312,7 +1312,10 @@ async fn locally_compacts_custom_provider_and_replays_across_models() {
     assert_eq!(replay.status(), StatusCode::OK);
     let request = requests.lock().unwrap()[0].clone();
     assert_eq!(request["model"], "DeepSeek-V4-Flash");
-    let compacted = request["system"][0]["text"].as_str().unwrap();
+    assert_eq!(request["messages"][0]["role"], "user");
+    let compacted = request["messages"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
     assert!(compacted.contains("fix the parser"));
     assert!(compacted.contains("The parser fix is complete."));
     assert!(!compacted.contains("cargo test"));
@@ -1352,6 +1355,12 @@ async fn materializes_local_compaction_before_switching_to_official_model() {
             "input": [
                 {"type":"message","role":"user","content":[
                     {"type":"input_text","text":"portable local context"}
+                ]},
+                {"type":"function_call","call_id":"call-1","name":"exec_command","arguments":"private tool arguments"},
+                {"type":"function_call_output","call_id":"call-1","output":"private tool results"},
+                {"type":"reasoning","encrypted_content":"private reasoning"},
+                {"type":"message","role":"assistant","content":[
+                    {"type":"output_text","text":"previous assistant answer"}
                 ]}
             ]
         }))
@@ -1362,37 +1371,287 @@ async fn materializes_local_compaction_before_switching_to_official_model() {
         .await
         .unwrap();
     let token = compacted["output"][0]["encrypted_content"].clone();
-
-    let response = client
-        .post(format!("{gateway_url}/v1/responses"))
+    let legacy_token = legacy_compaction_token();
+    let recompacted_legacy: Value = client
+        .post(format!("{gateway_url}/v1/responses/compact"))
         .bearer_auth("gateway-key")
         .json(&json!({
-            "model": "gpt-6.1-sol",
-            "stream": true,
-            "input": [
-                {"type":"compaction","encrypted_content":token},
-                {"type":"message","role":"user","content":[
-                    {"type":"input_text","text":"continue officially"}
-                ]}
-            ]
+            "model":"Claude Sonnet 5-custom",
+            "input":[{"type":"compaction","encrypted_content":legacy_token}]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let recompacted_legacy_token = recompacted_legacy["output"][0]["encrypted_content"].clone();
+
+    let native_checkpoint = json!({
+        "type":"compaction", "id":"cmp_official", "created_by":"openai",
+        "encrypted_content":"opaque-official-compaction"
+    });
+    for websocket in [false, true] {
+        assert_compaction_replay_completes(
+            &gateway_url,
+            json!({
+                "model": "gpt-6.1-sol",
+                "stream": true,
+                "input": [
+                    native_checkpoint,
+                    {"type":"compaction","encrypted_content":token},
+                    {"type":"compaction","encrypted_content":legacy_token},
+                    {"type":"message","role":"user","content":[
+                        {"type":"input_text","text":"continue officially"}
+                    ]}
+                ]
+            }),
+            websocket,
+            None,
+        )
+        .await;
+    }
+
+    let compact_response = client
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model":"gpt-6.1-sol", "stream":true,
+            "input":[native_checkpoint, {"type":"compaction","encrypted_content":token},
+                {"type":"compaction","encrypted_content":recompacted_legacy_token}]
         }))
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(compact_response.status(), StatusCode::OK);
+    let compact_response: Value = compact_response.json().await.unwrap();
+    assert_eq!(compact_response["status"], "completed");
+    assert_eq!(
+        compact_response["output"][0]["encrypted_content"],
+        "official-opaque-token"
+    );
 
     let requests = official_requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    let input = requests[0]["input"].as_array().unwrap();
-    assert_eq!(input[0]["type"], "message");
-    assert_eq!(input[0]["role"], "developer");
+    assert_eq!(requests.len(), 3);
+    for request in requests.iter() {
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input[0], native_checkpoint);
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["role"], "user");
+        let text = input[1]["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with("[Previous context summary]"));
+        assert!(text.contains("portable local context"));
+        assert!(text.contains("previous assistant answer"));
+        assert_eq!(input[2]["role"], "user");
+        assert!(
+            input[2]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("legacy summary goal")
+        );
+        for omitted in [
+            "private tool arguments",
+            "private tool results",
+            "private reasoning",
+            "private legacy tool results",
+        ] {
+            assert!(!request.to_string().contains(omitted));
+        }
+        if input.len() > 3 {
+            assert_eq!(input[3]["role"], "user");
+        }
+        assert!(!request.to_string().contains("codex-mixin:compaction:v1:"));
+    }
+}
+
+/// An older structured v1 token exercises compatibility independently of the
+/// current compact endpoint, which only emits local text transcripts.
+fn legacy_compaction_token() -> String {
+    use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
+    use ring::rand::SecureRandom;
+    let secret = codex_mixin::config::ensure_compaction_secret().unwrap();
+    let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(secret)
+        .unwrap();
+    let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &secret).unwrap());
+    let mut payload = serde_json::to_vec(&json!({
+        "version":1, "model":"older-custom-model", "created_at":1,
+        "summary":{
+            "goal":"legacy summary goal", "constraints":[], "decisions":[], "files":[],
+            "tool_results":["private legacy tool results"], "pending_work":[]
+        }
+    }))
+    .unwrap();
+    let mut nonce = [0_u8; 12];
+    ring::rand::SystemRandom::new().fill(&mut nonce).unwrap();
+    key.seal_in_place_append_tag(
+        Nonce::assume_unique_for_key(nonce),
+        Aad::empty(),
+        &mut payload,
+    )
+    .unwrap();
+    let mut token = nonce.to_vec();
+    token.extend(payload);
+    format!(
+        "codex-mixin:compaction:v1:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(token)
+    )
+}
+
+async fn assert_compaction_replay_completes(
+    gateway_url: &str,
+    mut body: Value,
+    websocket: bool,
+    session: Option<&str>,
+) {
+    let response = if websocket {
+        body["type"] = json!("response.create");
+        let mut request = format!(
+            "{}/v1/responses",
+            gateway_url.replacen("http://", "ws://", 1)
+        )
+        .into_client_request()
+        .unwrap();
+        request
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+        if let Some(session) = session {
+            request
+                .headers_mut()
+                .insert("x-session-id", session.parse().unwrap());
+        }
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        socket
+            .send(WsMessage::Text(body.to_string().into()))
+            .await
+            .unwrap();
+        websocket_response_frames(&mut socket).await.join("\n")
+    } else {
+        let mut request = reqwest::Client::new()
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&body);
+        if let Some(session) = session {
+            request = request.header("x-session-id", session);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{text}");
+        text
+    };
     assert!(
-        input[0]["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("portable local context")
+        response.contains("\"type\":\"response.completed\""),
+        "{response}"
     );
-    assert_eq!(input[1]["role"], "user");
+    assert!(
+        !response.contains("\"type\":\"response.failed\""),
+        "{response}"
+    );
+}
+
+#[tokio::test]
+async fn continues_after_unreadable_local_compaction_on_http_and_websocket() {
+    let (upstream_url, provider_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (mut config, official_requests, _, _auth_home) = mock_official_gateway_config(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(30),
+    )
+    .await;
+    config.providers[0].base_url = upstream_url;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    // This has the local prefix but cannot authenticate with the current key,
+    // as happens when a checkpoint outlives a key rotation.
+    let unreadable = format!(
+        "codex-mixin:compaction:v1:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0_u8; 40])
+    );
+    for model in ["gpt-6.1-sol", "Claude Sonnet 5-custom"] {
+        for websocket in [false, true] {
+            assert_compaction_replay_completes(&gateway_url, json!({
+                "model": model, "stream": true,
+                "input": [
+                    {"type":"compaction", "encrypted_content":unreadable},
+                    {"type":"message", "role":"user", "content":[{"type":"input_text", "text":"visible follow-up"}]}
+                ]
+            }), websocket, None).await;
+        }
+    }
+    for requests in [&official_requests, &provider_requests] {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            let replay = request.to_string();
+            assert!(!replay.contains(&unreadable));
+            assert!(replay.contains("could not be authenticated"));
+            assert!(replay.contains("visible follow-up"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn handles_context_checkpoints_when_switching_providers() {
+    let (upstream_url, provider_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (mut config, official_requests, _, _auth_home) = mock_official_gateway_config(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(30),
+    )
+    .await;
+    config.providers[0].base_url = upstream_url;
+    config.context.enabled = true;
+    config.context.context_window_tokens = Some(50_000);
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config.clone(), &database_path).await;
+    let session = "cross-provider-checkpoint";
+    let token = request_context_checkpoint(&gateway_url, session).await;
+    assert!(token.starts_with("codex-mixin:context:v2:"));
+
+    config.context.enabled = false;
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    for model in ["gpt-6.1-sol", "Claude Sonnet 5-custom"] {
+        for websocket in [false, true] {
+            // Without session identity the gateway cannot resolve the archive.
+            // The token must become a notice, never an upstream token or a
+            // silently discarded item in a custom converter.
+            assert_compaction_replay_completes(&gateway_url, json!({
+                "model":model, "stream":true,
+                "input":[
+                    {"type":"compaction", "encrypted_content":token},
+                    {"type":"message", "role":"user", "content":[{"type":"input_text", "text":"visible follow-up"}]}
+                ]
+            }), websocket, None).await;
+        }
+    }
+    for requests in [&official_requests, &provider_requests] {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            let replay = request.to_string();
+            assert!(!replay.contains("codex-mixin:context:v2:"));
+            assert!(replay.contains("archived session is unavailable"));
+            assert!(replay.contains("visible follow-up"));
+        }
+    }
+
+    for websocket in [false, true] {
+        assert_compaction_replay_completes(&gateway_url, json!({
+            "model":"gpt-6.1-sol", "stream":true,
+            "input":[
+                {"type":"compaction", "encrypted_content":token},
+                {"type":"message", "role":"user", "content":[{"type":"input_text", "text":"resume archived context"}]}
+            ]
+        }), websocket, Some(session)).await;
+    }
+    let requests = official_requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    for request in &requests[2..] {
+        let replay = request.to_string();
+        assert!(replay.contains("distinctive opening request"));
+        assert!(replay.contains("resume archived context"));
+        assert!(!replay.contains("codex-mixin:context:v2:"));
+        assert!(!replay.contains("archived session is unavailable"));
+    }
 }
 
 #[tokio::test]
