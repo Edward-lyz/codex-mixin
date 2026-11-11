@@ -18,7 +18,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use super::capture::{CaptureProxy, REPORT_CLIENT_TOKEN_HEADER};
-use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
+use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, UPDATE_GUARDS, VERSION};
 
 /// DUCX platform identity required for the comate source-auth handshake.
 const DUCX_PLATFORM: &str = "AIIDE-terminal";
@@ -121,6 +121,7 @@ impl DucxRuntime {
             .env("CODEX_HOME", &codex_home)
             .env("DUCX_USERNAME", &username)
             .env("GIT_CEILING_DIRECTORIES", git_ceiling)
+            .envs(UPDATE_GUARDS.map(|name| (name, "1")))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -255,8 +256,7 @@ impl DucxRuntime {
             .current_dir(working_directory.path())
             .env("CODEX_HOME", &codex_home)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
-            .env("DISABLE_DUCX_CLI_UPDATE", "1")
-            .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
+            .envs(UPDATE_GUARDS.map(|name| (name, "1")))
             .env("GIT_CEILING_DIRECTORIES", git_ceiling)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
