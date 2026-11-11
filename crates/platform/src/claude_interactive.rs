@@ -11,7 +11,7 @@ use anyhow::{Context, bail};
 use portable_pty::{ChildKiller, CommandBuilder, PtySize, native_pty_system};
 use serde_json::{Value, json};
 
-pub(crate) struct InteractiveChild {
+pub struct InteractiveChild {
     stopped: Arc<AtomicBool>,
     killer: Box<dyn ChildKiller + Send + Sync>,
 }
@@ -23,10 +23,10 @@ impl Drop for InteractiveChild {
     }
 }
 
-pub(crate) type InteractiveInput = tokio::sync::mpsc::Sender<Vec<Value>>;
+pub type InteractiveInput = tokio::sync::mpsc::Sender<Vec<Value>>;
 
 /// The command must describe an interactive invocation, never print mode.
-pub(crate) fn spawn(
+pub fn spawn(
     command: &std::process::Command,
 ) -> anyhow::Result<(
     InteractiveChild,

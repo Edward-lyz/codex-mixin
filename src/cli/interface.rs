@@ -1,5 +1,5 @@
 use codex_mixin::application::error::OperationError;
-use codex_mixin::provider::{ProviderPreset, ProviderProtocol};
+use codex_mixin::provider::{AuthMode, ProviderPreset, ProviderProtocol, QuotaLogin};
 use serde_json::{Value, json};
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
@@ -53,26 +53,6 @@ fn provider_catalog() -> Value {
         .iter()
         .map(|preset| {
             let spec = preset.spec();
-            let (auth_mode, credential_url) = match preset {
-                ProviderPreset::Custom => ("api_key", None),
-                ProviderPreset::Official | ProviderPreset::Agy | ProviderPreset::AgyBusiness => {
-                    ("local_oauth", None)
-                }
-                ProviderPreset::Kiro | ProviderPreset::ClaudeCode => {
-                    ("local_session", spec.website_url)
-                }
-                ProviderPreset::AwsBedrock => ("aws_sigv4", spec.website_url),
-                ProviderPreset::BaiduOneApi => {
-                    ("api_key", Some("https://oneapi-comate.baidu-int.com/token"))
-                }
-                ProviderPreset::OpenRouter => {
-                    ("api_key", Some("https://openrouter.ai/settings/keys"))
-                }
-                ProviderPreset::DeepSeek => {
-                    ("api_key", Some("https://platform.deepseek.com/api_keys"))
-                }
-                ProviderPreset::OpenCodeGo => ("api_key", Some("https://opencode.ai/go")),
-            };
             json!({
                 "id": spec.id,
                 "default_id": preset.default_id(),
@@ -81,12 +61,12 @@ fn provider_catalog() -> Value {
                 "description": spec.description,
                 "icon": spec.icon,
                 "protocol": spec.protocol,
-                "auth_mode": auth_mode,
-                "api_key_required": auth_mode == "api_key",
-                "credential_url": credential_url,
+                "auth_mode": spec.auth_mode,
+                "api_key_required": spec.auth_mode == AuthMode::ApiKey,
+                "credential_url": spec.credential_url,
                 "custom_endpoint": *preset == ProviderPreset::Custom,
-                "quota_username_required": *preset == ProviderPreset::BaiduOneApi,
-                "quota_credentials_required": *preset == ProviderPreset::OpenCodeGo,
+                "quota_username_required": spec.quota_login == QuotaLogin::Username,
+                "quota_credentials_required": spec.quota_login == QuotaLogin::Credentials,
             })
         })
         .collect();

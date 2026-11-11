@@ -4,7 +4,7 @@ use std::time::Duration;
 
 /// Select user profiles without replacing vendor executables or changing PATH.
 /// The returned scripts contain no credentials. Blocking on Windows profile discovery.
-pub(crate) fn profiles(
+pub fn profiles(
     id: &str,
     executable: &Path,
     config: &Path,

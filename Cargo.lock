@@ -599,6 +599,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap",
+ "codex-mixin-platform",
  "console",
  "crossterm",
  "flate2",
@@ -642,6 +643,30 @@ dependencies = [
  "webpki-roots 1.0.8",
  "windows-registry",
  "zstd",
+]
+
+[[package]]
+name = "codex-mixin-platform"
+version = "0.7.7"
+dependencies = [
+ "anyhow",
+ "base64",
+ "fs2",
+ "portable-pty",
+ "reqwest",
+ "ring",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "system-configuration",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+ "vt100",
+ "wait-timeout",
+ "walkdir",
+ "windows-registry",
 ]
 
 [[package]]

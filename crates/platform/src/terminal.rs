@@ -130,7 +130,7 @@ mod implementation {
         }
         let mut lookup = std::process::Command::new("where.exe");
         lookup.arg("wt.exe");
-        crate::platform::prepare_background_command(&mut lookup);
+        crate::prepare_background_command(&mut lookup);
         if let Ok(output) = lookup.output()
             && output.status.success()
         {
@@ -173,8 +173,7 @@ mod implementation {
     fn write_script(command: &TerminalCommand<'_>, name: &str) -> anyhow::Result<PathBuf> {
         let launcher = command.script_directory.join(name);
         std::fs::write(&launcher, posix_script(command)).context("write terminal launcher")?;
-        crate::platform::make_private_executable(&launcher)
-            .context("make terminal launcher executable")?;
+        crate::make_private_executable(&launcher).context("make terminal launcher executable")?;
         Ok(launcher)
     }
 

@@ -1,0 +1,40 @@
+[package]
+name = "codex-mixin-platform"
+description = "Operating-system adapters for codex-mixin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+fs2 = "0.4"
+portable-pty = "0.9"
+reqwest = { version = "0.12", default-features = false }
+ring = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.23"
+tokio = { version = "1.48", features = ["macros", "process", "signal", "sync"] }
+url = "2.5"
+uuid = { version = "1.18", features = ["v4"] }
+wait-timeout = "0.2"
+walkdir = "2.5"
+vt100 = "0.15"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["process"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "=0.8.0"
+
+[target."cfg(windows)".dependencies]
+windows-registry = "=0.100.0"

@@ -153,9 +153,35 @@ impl ModelSourceSpec {
     }
 }
 
+/// How a preset obtains its upstream credential.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    /// The user pastes an API key.
+    ApiKey,
+    /// Browser OAuth or a token another app already stored on this machine.
+    LocalOauth,
+    /// A session signed in by the vendor's own desktop/CLI app.
+    LocalSession,
+    /// AWS access key pair or Bedrock API key.
+    AwsSigV4,
+}
+
+/// Extra quota sign-in the preset needs beyond its API key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuotaLogin {
+    None,
+    Username,
+    Credentials,
+}
+
 /// Static knowledge for one provider preset.
 pub struct ProviderSpec {
     pub preset: ProviderPreset,
+    pub auth_mode: AuthMode,
+    /// Page where the user creates or manages the credential.
+    pub credential_url: Option<&'static str>,
+    pub quota_login: QuotaLogin,
     pub id: &'static str,
     pub display_name: &'static str,
     pub description: &'static str,
@@ -230,6 +256,9 @@ impl ProviderSpec {
 static SPECS: [ProviderSpec; 11] = [
     ProviderSpec {
         preset: ProviderPreset::Custom,
+        auth_mode: AuthMode::ApiKey,
+        credential_url: None,
+        quota_login: QuotaLogin::None,
         id: "custom",
         display_name: "Custom",
         description: "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint",
@@ -253,6 +282,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::Official,
+        auth_mode: AuthMode::LocalOauth,
+        credential_url: None,
+        quota_login: QuotaLogin::None,
         id: "openai",
         display_name: "OpenAI (ChatGPT OAuth)",
         description: "Official OpenAI account with browser OAuth",
@@ -274,6 +306,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::Agy,
+        auth_mode: AuthMode::LocalOauth,
+        credential_url: None,
+        quota_login: QuotaLogin::None,
         id: "agy",
         display_name: "Google Antigravity (agy)",
         description: "Google Antigravity with account-scoped model discovery",
@@ -295,6 +330,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::AgyBusiness,
+        auth_mode: AuthMode::LocalOauth,
+        credential_url: None,
+        quota_login: QuotaLogin::None,
         id: "agy-business",
         display_name: "Antigravity Business",
         description: "Gemini Enterprise license with a Google Cloud project and location",
@@ -316,6 +354,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::Kiro,
+        auth_mode: AuthMode::LocalSession,
+        credential_url: Some("https://kiro.dev"),
+        quota_login: QuotaLogin::None,
         id: "kiro",
         display_name: "Kiro",
         description: "Kiro account with native streaming and model discovery",
@@ -337,6 +378,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::BaiduOneApi,
+        auth_mode: AuthMode::ApiKey,
+        credential_url: Some("https://oneapi-comate.baidu-int.com/token"),
+        quota_login: QuotaLogin::Username,
         id: "baidu-oneapi",
         display_name: "Baidu OneAPI",
         description: "Baidu internal OneAPI with managed DUCX authentication",
@@ -360,6 +404,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::OpenRouter,
+        auth_mode: AuthMode::ApiKey,
+        credential_url: Some("https://openrouter.ai/settings/keys"),
+        quota_login: QuotaLogin::None,
         id: "openrouter",
         display_name: "OpenRouter",
         description: "OpenRouter multi-model router",
@@ -381,6 +428,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::DeepSeek,
+        auth_mode: AuthMode::ApiKey,
+        credential_url: Some("https://platform.deepseek.com/api_keys"),
+        quota_login: QuotaLogin::None,
         id: "deepseek",
         display_name: "DeepSeek",
         description: "DeepSeek official API",
@@ -404,6 +454,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::OpenCodeGo,
+        auth_mode: AuthMode::ApiKey,
+        credential_url: Some("https://opencode.ai/go"),
+        quota_login: QuotaLogin::Credentials,
         id: OPEN_CODE_GO_PRESET_ID,
         display_name: "OpenCode Go",
         description: "OpenCode Go subscription models",
@@ -430,6 +483,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::AwsBedrock,
+        auth_mode: AuthMode::AwsSigV4,
+        credential_url: Some("https://aws.amazon.com/bedrock/"),
+        quota_login: QuotaLogin::None,
         id: AWS_BEDROCK_PRESET_ID,
         display_name: "Amazon Bedrock (Mantle)",
         description: "Amazon Bedrock Mantle with a Bedrock API key",
@@ -451,6 +507,9 @@ static SPECS: [ProviderSpec; 11] = [
     },
     ProviderSpec {
         preset: ProviderPreset::ClaudeCode,
+        auth_mode: AuthMode::LocalSession,
+        credential_url: Some("https://claude.com/claude-code"),
+        quota_login: QuotaLogin::None,
         id: CLAUDE_CODE_PRESET_ID,
         display_name: "ClaudeCode",
         description: "Signed-in local Claude Code CLI; requests run through the official client",

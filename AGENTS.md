@@ -35,12 +35,12 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 | `src/provider/` | Provider 定义及能力适配 | 规则与元数据；现有 discovery/auth/probe 可有受限 I/O，不负责网关编排 |
 | `src/config/` | 配置模型与存储 | 版本、校验、迁移、加密、锁、原子替换；不发请求或呈现 UI |
 | `src/clients/` | 编码客户端配置 adapter | 显式路径与网关数据，保留非托管配置；流程次序交给 application |
-| `src/platform/` | OS adapter | 路径、权限、进程、终端、系统服务、安装与签名的平台差异 |
+| `crates/platform/` | OS adapter | 路径、权限、进程、终端、系统服务、安装与签名的平台差异 |
 | `src/catalog/` | 模型目录 | 来源合并、生成、缓存；不参与请求发送或 UI |
 | `src/benchmark/`、`src/web_search/`、`src/images/`、`src/ech/` | 专用能力 | 按 `src/AGENTS.md` 处理探测、媒体或连接；不引用上层控制面 |
 | `macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
 
-`src/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达（`check_arch.sh` 检查）。`tests/` 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
+`crates/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达（`check_arch.sh` 检查）。`tests/` 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
 
 可见性默认 private，跨兄弟模块按最小需要使用 `pub(super)` / `pub(crate)`。新增对外 `pub` API、protocol 字段或扩展点先说明使用方与契约并取得确认，不为测试随意公开内部实现。
 

@@ -13,7 +13,7 @@ pub(super) const SUPPORTED: bool = true;
 fn unit_path() -> anyhow::Result<PathBuf> {
     let config_dir = match std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
         Some(value) => PathBuf::from(value),
-        None => crate::platform::home_dir_required()?.join(".config"),
+        None => crate::home_dir_required()?.join(".config"),
     };
     Ok(config_dir.join("systemd/user").join(systemd_unit_name()?))
 }

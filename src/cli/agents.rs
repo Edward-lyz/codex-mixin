@@ -321,7 +321,7 @@ async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
 }
 
 fn is_legacy(id: &str) -> bool {
-    ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"].contains(&id)
+    codex_mixin::application::agents::manifest(id).is_some()
 }
 
 fn framework_client(id: &str) -> anyhow::Result<codex_mixin::gateway_access::GatewayClient> {

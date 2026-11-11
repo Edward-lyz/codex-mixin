@@ -283,7 +283,7 @@ pub fn terminate_isolated_child(child: &mut std::process::Child) -> std::io::Res
 /// Windows PowerShell 5.1 by absolute path, so spawning never depends on the
 /// child's `PATH` (tests and service hosts may clear it).
 #[cfg(windows)]
-pub(crate) fn system_powershell() -> anyhow::Result<std::path::PathBuf> {
+pub fn system_powershell() -> anyhow::Result<std::path::PathBuf> {
     use anyhow::Context;
     let root = std::env::var_os("SystemRoot")
         .or_else(|| std::env::var_os("windir"))

@@ -83,7 +83,7 @@ pub fn claude_desktop_config_root() -> anyhow::Result<PathBuf> {
 }
 
 // Framework configuration locations follow each vendor's OS conventions.
-pub(crate) fn framework_app_root() -> anyhow::Result<PathBuf> {
+pub fn framework_app_root() -> anyhow::Result<PathBuf> {
     if cfg!(target_os = "macos") {
         framework_home_path("", "Library/Application Support")
     } else if cfg!(windows) {
@@ -93,7 +93,7 @@ pub(crate) fn framework_app_root() -> anyhow::Result<PathBuf> {
     }
 }
 
-pub(crate) fn reasonix_home() -> anyhow::Result<PathBuf> {
+pub fn reasonix_home() -> anyhow::Result<PathBuf> {
     if std::env::var_os("REASONIX_HOME").is_some() {
         return framework_home_path("REASONIX_HOME", ".reasonix");
     }
@@ -104,11 +104,11 @@ pub(crate) fn reasonix_home() -> anyhow::Result<PathBuf> {
     }
 }
 
-pub(crate) fn vscodium_extensions_root() -> anyhow::Result<PathBuf> {
+pub fn vscodium_extensions_root() -> anyhow::Result<PathBuf> {
     framework_home_path("VSCODE_EXTENSIONS", ".vscode-oss/extensions")
 }
 
-pub(crate) fn copilot_config_root() -> anyhow::Result<PathBuf> {
+pub fn copilot_config_root() -> anyhow::Result<PathBuf> {
     if cfg!(windows) && std::env::var_os("XDG_CONFIG_HOME").is_none() {
         framework_home_path("", "AppData/Local")
     } else {
@@ -116,7 +116,7 @@ pub(crate) fn copilot_config_root() -> anyhow::Result<PathBuf> {
     }
 }
 
-pub(crate) fn crush_config_paths() -> anyhow::Result<(PathBuf, PathBuf)> {
+pub fn crush_config_paths() -> anyhow::Result<(PathBuf, PathBuf)> {
     let root = if cfg!(windows) {
         framework_home_path("LOCALAPPDATA", "AppData/Local")?
     } else {

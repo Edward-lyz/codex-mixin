@@ -162,7 +162,7 @@ struct NativeInventory {
 
 /// A registered application can be installed even without version metadata.
 /// The path is an application location, never a runnable CLI contract.
-pub(crate) fn desktop_app_installation(
+pub fn desktop_app_installation(
     app: DesktopApp,
 ) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
     let inventory = native_inventory()?;

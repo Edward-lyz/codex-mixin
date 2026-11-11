@@ -40,7 +40,7 @@ check_no_match() {
 CORE=(
     src/gateway src/upstream src/ech.rs src/ech src/provider src/protocol src/fusion
     src/catalog.rs src/catalog src/config.rs src/config src/benchmark
-    src/web_search src/images src/application src/clients src/platform src/context
+    src/web_search src/images src/application src/clients crates/platform/src src/context
 )
 PROTO_CONVERT=(
     src/protocol/convert src/protocol/sse.rs src/protocol/openai_chat
@@ -84,11 +84,11 @@ check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|p
     src/web_search src/images src/clients src/server src/cli
 check_no_match "panel shell must not reach CLI internals" 'crate::cli\b|super::super::cli' panel
 
-# Every OS difference lives behind src/platform; the rest of the code only
+# Every OS difference lives behind crates/platform; the rest of the code only
 # expresses intent through the platform API.
-check_no_match "platform-specific code must live in src/platform" \
+check_no_match "platform-specific code must live in crates/platform" \
     '^\s*[^/\s].*(cfg!?\((not\()?(unix|windows)|any\((unix|windows)|target_os|target_family|std::os::(unix|windows)|consts::(OS|EXE_SUFFIX)|\.exe"|USERPROFILE|LOCALAPPDATA|"APPDATA|var(_os)?\("HOME"\)|env\("HOME"|launchctl|osascript|codesign|plutil|/Applications/|Library/|systemctl|schtasks|taskkill|tasklist|powershell|cmd\.exe|icacls|"/usr/|"/bin/|process_group\(0|kill_process_group|PermissionsExt|from_mode\()' \
-    --glob '*.rs' --glob '!src/platform/**' src panel
+    --glob '*.rs' src panel
 
 # Tests that run the real binary must use the hermetic launcher; a bare
 # spawn would stop the developer's real gateway through the shared service.

@@ -16,7 +16,7 @@ const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_VERSION_OUTPUT_BYTES: u64 = 256;
 
 fn agent_path() -> anyhow::Result<PathBuf> {
-    Ok(crate::platform::home_dir_required()?
+    Ok(crate::home_dir_required()?
         .join("Library/LaunchAgents")
         .join(format!("{}.plist", launchd_label()?)))
 }
@@ -126,7 +126,7 @@ pub(super) fn status(spec: &StartupServiceSpec<'_>) -> anyhow::Result<StartupSer
 }
 
 pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
-    let home = crate::platform::home_dir_required()?;
+    let home = crate::home_dir_required()?;
     let path = agent_path()?;
     let parent = path.parent().context("LaunchAgent path has no parent")?;
     std::fs::create_dir_all(parent).context("create LaunchAgents directory")?;
