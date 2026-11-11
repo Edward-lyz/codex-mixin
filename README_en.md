@@ -5,8 +5,8 @@
 <h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <b>One model gateway for official Codex and your coding agents.</b><br>
-  Configure providers once. Keep official GPT models and ChatGPT sign-in alongside your custom models.
+  <b>Use any model in official Codex. Official GPT models and ChatGPT sign-in stay as they are.</b><br>
+  A local model gateway written in Rust: configure providers once, and Codex plus 50 coding agents share one model list.
 </p>
 
 <p align="center">
@@ -20,61 +20,122 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>Download for macOS</b></a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>Download for Windows</b></a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>Download for Linux</b></a><br>
-  <sub>Native menu bar / tray apps on macOS and Windows · CLI and Web panel on Linux</sub>
+  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin model routing: several models answer in parallel, a judge model reviews, a final model replies"></a>
 </p>
 
 <p align="center">
-  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" width="1000" alt="Codex Mixin macOS console: providers, models, and capabilities in one place"></a>
-</p>
-
-<p align="center">
-  <a href="#why-codex-mixin">Why Mixin</a> ·
-  <a href="#benchmarks">Benchmarks</a> ·
-  <a href="#features-and-interface">Features</a> ·
-  <a href="#providers">Providers</a> ·
-  <a href="#agent-integrations">50 Agents</a> ·
+  <a href="#core-capabilities">Core Capabilities</a> ·
+  <a href="#resource-usage">Resource Usage</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#interface">Interface</a> ·
+  <a href="#providers">Providers</a> ·
+  <a href="#agent-integrations">Agents</a> ·
   <a href="#documentation">Docs</a> ·
   <a href="#faq">FAQ</a>
 </p>
 
 ---
 
+## Core Capabilities
+
+Codex Mixin runs on your machine, between your agents and your model providers. It converts requests and streaming responses across four protocols: OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning content and tool calls. The CLI, the native macOS and Windows apps, and the Web panel share one core.
+
+### Official Codex stays intact
+
+Connect Codex in Official Account mode and your custom models join the official model picker, next to GPT. ChatGPT sign-in, session history, mobile remote tasks, and voice keep working. Connecting and disconnecting never touch the Codex session database or account state; after you disconnect, the Codex configuration returns to the official OpenAI defaults.
+
+### Model routing: one model name, a group of models behind it
+
+Each route appears as an `auto/<name>` model that every connected client can pick from its model list. All three interfaces let you edit routes directly on a flow chart; the CLI uses `codex-mixin route`.
+
+| Route type | Behavior |
+| --- | --- |
+| Failover | When the source model errors before producing output (including exhausted quota), or produces nothing for 30 seconds, the gateway switches to 1–4 fallback models in order |
+| Fusion | 1–8 models answer in parallel, a judge model reviews, and a final model revises and replies |
+| Schedule | Requests go to different models by local time, across 1–24 time slots |
+
+See [Model routing](docs/model-routing.md) for triggers, limits, and coverage.
+
+### Context engine: compress history, keep the originals restorable
+
+The gateway keeps an archive of original messages and a compressed view for each session. The model compresses older history itself through internal tools injected by the gateway, and searches or restores the originals when it needs them; the most recent 10,000 tokens always stay verbatim. Compression has three tiers, with rules ported from Billion Context.
+
+The engine is off by default. Enable it with `codex-mixin context config set --enabled true` or the console switch. See [Context engine](docs/context-engine.md) for supported request paths and every setting.
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS context engine settings and session statistics"></a><br>
+      <sub><b>Console</b> · Sessions, compressions, tokens saved</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/context-engine-comparison.svg"><img src="docs/assets/context-engine-comparison.svg" alt="Built-in compaction compared with archived, tiered context management"></a><br>
+      <sub><b>Mechanism</b> · Built-in compaction vs. archived tiers</sub>
+    </td>
+  </tr>
+</table>
+
+### Usage, reply by reply
+
+The latest 100,000 replies are kept locally with tokens, cache hits, reasoning cost, first-token latency, and output speed for each one. Failed replies are recorded too. The menu bar and tray show provider quota directly.
+
+---
+
+## Resource Usage
+
+With the full UI running, Codex Mixin uses **76.8 MiB** at idle and **113.5 MiB** with 40 concurrent requests. In Lightweight mode only the background gateway stays, and the gateway process idles at about 5 MiB.
+
+The table below compares Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 on the same Apple M2, all connected to a controlled local upstream at the same time. Every request carries 1,000,000 text tokens and two 1024 × 768 PNGs.
+
+| Measurement | Codex Mixin | CC Switch | Magpie |
+| --- | ---: | ---: | ---: |
+| Idle memory | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
+| 10 active requests | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
+| 20 active requests | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
+| 40 active requests | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
+| CPU · 40 active requests | **1.047%** | 1.777% | 6.743% |
+
+<p align="center">
+  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png" width="1000" alt="Desktop physical memory and gateway-host CPU at 0, 10, 20, and 40 active requests"></a>
+</p>
+
+Method, raw samples, and validation data are in the [benchmark report](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md).
+
+---
+
 ## Quick Start
 
-### 1. Download and open
+### Install
 
-Choose your platform and architecture from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest). You do not need Rust or a source build.
+Download the package for your platform from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest). You do not need Rust or a source build.
 
-| Platform | Download and run | Graphical entry |
+| Platform | Install | Entry point |
 | --- | --- | --- |
-| macOS | Download the Apple Silicon or Intel `.dmg`, drag the app to Applications, and launch it | Menu bar icon → Open Console |
-| Windows | Run `windows-x86_64-setup.exe`, or extract and launch the portable Zip | System tray icon → Open Console |
-| Linux | Download the x86_64 or ARM64 `unknown-linux-musl.tar.gz`, extract it, and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal in your browser |
-
-The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
-
-You can also install with a package manager or a container:
+| macOS | Download the Apple Silicon or Intel `.dmg` and drag the app to Applications | Menu bar icon → Open Console |
+| Windows | Run `windows-x86_64-setup.exe`, or extract the portable Zip | System tray icon → Open Console |
+| Linux | Extract the x86_64 or ARM64 `unknown-linux-musl.tar.gz` and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal |
 
 ```bash
-# macOS / Linux: Homebrew (CLI; use --cask for the desktop app)
+# Homebrew (macOS / Linux): CLI; use --cask for the desktop app
 brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # or: brew install --cask codex-mixin
+
 # Docker: 8317 is the gateway, 8318 the control panel; get the panel URL and token from docker logs codex-mixin
 docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```
 
-### 2. Configure models and connect an Agent
+See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
+
+### Set up in the console
 
 1. In Models & Services, add a provider with an API key or OAuth sign-in.
-2. Refresh the model list, select models, save, and make sure the gateway is running.
-3. Open the Agents page and connect an installed client. For Codex, choose Official Account mode to keep official GPT models and ChatGPT sign-in.
-4. Restart the client or open a new session, then select a custom model.
+2. Refresh the model list, check the models you want, and save.
+3. On the Agents page, connect an installed client. For Codex, choose Official Account mode.
+4. Restart the client or open a new session, then pick a custom model in the model picker.
 
-### 30-second CLI path
+To restore a client's original configuration, disconnect it on the same page.
+
+### Or use only the command line
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
@@ -84,155 +145,53 @@ codex-mixin service start
 curl http://127.0.0.1:8317/v1/models                      # a model list means it works
 ```
 
-### 3. Check status and usage
+<details>
+<summary>Ports, remote access, and access keys</summary>
 
-Use the menu bar or tray for gateway status and provider quota. Open Usage in the console for daily and per-reply Tokens, cache results, and speed. Disconnect an Agent to restore its original configuration.
+The gateway listens only on `127.0.0.1:8317` by default. The Web panel listens on all interfaces on port 8318 and requires a token generated for each start. If a port is taken, either one falls back to a free port in 8000–9000.
 
-The Web panel listens on all interfaces on port 8318 (falling back to a free port in 8000–9000 if 8318 is taken) and still requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
+To let other devices reach the gateway, start it with `codex-mixin service start --bind 0.0.0.0:PORT`; the listen address is saved. When the gateway listens beyond localhost, its first start generates an `sk-` access key and prints it to the terminal. Requests from the local machine and private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10) need no key; any other source must send the key in the `Authorization: Bearer <key>` or `x-api-key` header, or the gateway returns 401. Manage multiple keys with `codex-mixin config keys list / create / revoke` or the Access Keys page of the control panel.
 
-### Network access and gateway key
+See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for the access boundaries.
 
-The gateway listens on `127.0.0.1:8317` by default (falling back to a free port in 8000–9000 if 8317 is taken). The gateway listens only on `127.0.0.1` by default. To let other devices connect, start it with `codex-mixin service start --bind 0.0.0.0:PORT` (replace PORT with the actual port); the listen address is saved and kept across restarts.
-
-When the gateway listens beyond localhost, the first start generates an `sk-` access key, prints it to the terminal, and saves it as `gateway_api_key` in the configuration file. Requests from the local machine and private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10) need no key; any other source must send the key in the `Authorization: Bearer <key>` or `x-api-key` header, or the gateway returns 401.
-
----
-
-## Why Codex Mixin
-
-Codex Mixin is a local gateway with a Rust core. It routes requests to your configured providers through OpenAI-, Anthropic-, and Gemini-compatible interfaces. The CLI, native desktop apps, and Web panel share the same core.
-
-```mermaid
-flowchart LR
-  A["Agents / clients<br/>Codex · Claude Code · OpenCode …"] --> M
-  subgraph M["Codex Mixin"]
-    direction TB
-    P["Protocol conversion"] --- R["Routing & failover"] --- C["Context engine"]
-  end
-  M --> V["Providers<br/>DeepSeek · OpenRouter · official APIs …"]
-```
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Seamless official ecosystem</h3>
-      Custom models appear next to official GPT models. ChatGPT sign-in, session history, and mobile remote tasks keep working, and voice and dots are preserved too.
-    </td>
-    <td width="50%" valign="top">
-      <h3>Manage 50 agents in one place</h3>
-      47 entries support one-click setup. Cursor CLI, Copilot CLI, and Devin provide vendor-native model management. <a href="#agent-integrations">See the full catalog</a>.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Connect across 4 API families</h3>
-      Translate requests and streams losslessly between OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning and tool calls.
-    </td>
-    <td width="50%" valign="top">
-      <h3>Built-in context compression engine saves tokens</h3>
-      A 3-tier context engine adopts Billion Context's compaction rules. Models can compress, search, and restore archived history. Turn it on to save tokens while compacting history. <a href="docs/context-engine.md">How it works</a>.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Usage and cache, fully in view</h3>
-      Keep the latest 100,000 replies locally (a single query returns at most 5,000), with tokens, cache hits, first-token latency, and output speed. Check provider quota directly from the menu bar or tray.
-    </td>
-    <td width="50%" valign="top">
-      <h3>Peak performance</h3>
-      Only 76.8 MiB at idle, and 113.5 MiB under 40 fully loaded active requests. <a href="#benchmarks">See below</a>.
-    </td>
-  </tr>
-</table>
+</details>
 
 ---
 
-## Benchmarks
-Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 ran simultaneously against a controlled local HTTP/SSE upstream. Each request carried **1,000,000 text tokens + two 1024 × 768 PNGs**. Each main session started 4 child sessions: 0 / 2 / 4 / 8 main sessions produced 0 / 10 / 20 / 40 active requests per product.
+## Interface
 
-| Measurement | Codex Mixin | CC Switch | Magpie |
-| --- | ---: | ---: | ---: |
-| Idle memory | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| 10 active requests | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| 20 active requests | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| 40 active requests | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| CPU overhead · 40 active requests | **1.047%** | 1.777% | 6.743% |
-
-<p align="center">
-  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png" width="1000" alt="Measured desktop physical memory and gateway-host CPU at 0, 10, 20, and 40 active requests"></a>
-</p>
-
----
-
-## Features and Interface
-
-### Models, agents, and usage
-
-Add providers, refresh models, and probe **Reasoning, Function Calling, Tool Search, and Web Search** capabilities. Probe results are cached for the catalog and Fusion. Probes send real requests and can consume quota.
-
-Connect installed clients from the Agents page; disconnect to restore managed fields while keeping unrelated settings. Usage shows daily and per-reply tokens, cache hit ratio, reasoning usage, returned model, first-token latency, and output speed. Quota rings or bars turn red at 90% used or higher.
+macOS has a native menu bar app and console, Windows has a WinUI 3 console and tray, and Linux uses the CLI and Web panel. All three offer the same features.
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS Agents page with installed versions and connection controls"></a><br>
-      <sub><b>Agent integrations</b> · Versions, connection state, and restore controls</sub>
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS Models and Services page: provider list and model selection"></a><br>
+      <sub><b>Models & Services</b> · Providers, models, and capabilities</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS Usage page with daily and per-reply statistics"></a><br>
-      <sub><b>Usage</b> · Tokens, cache hits, and speed for each reply</sub>
+      <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS Agents page: installed versions and connection actions"></a><br>
+      <sub><b>Agents</b> · Installed versions, connection state, and restore</sub>
     </td>
   </tr>
-</table>
-
-### Context that can be restored
-
-Enable the context engine to let the model compress older history during supported requests, then search or restore the originals from the local archive. Recent messages and tool-call pairs are protected. The console shows sessions, compressions, tokens saved, and cache hits. See [supported paths and settings](docs/context-engine.md).
-
-<table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS context engine settings and session statistics"></a><br>
-      <sub><b>Context engine</b> · Enable it and inspect session statistics</sub>
+      <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS Usage page: daily statistics and per-reply data"></a><br>
+      <sub><b>Usage</b> · Tokens, cache, and speed for every reply</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/context-engine-comparison.svg"><img src="docs/assets/context-engine-comparison.svg" alt="Mechanism comparison: built-in compaction and archived hierarchical context"></a><br>
-      <sub><b>Compaction and archive</b> · Mechanism diagram</sub>
-    </td>
-  </tr>
-</table>
-
-### Native Windows console and tray
-
-The WinUI 3 console manages models, agents, usage, and context. The tray keeps gateway status and quota within reach. The macOS app provides a native menu bar and console; Linux uses the CLI and Web panel.
-
-<table>
-  <tr>
-    <td width="65%" align="center">
-      <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows native Models and Services console"></a><br>
+      <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Native Windows Models and Services console"></a><br>
       <sub><b>Windows console</b> · Models & Services</sub>
     </td>
-    <td width="35%" align="center">
-      <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows tray showing gateway status and quota rings"></a><br>
-      <sub><b>System tray</b> · Gateway status and quota</sub>
-    </td>
   </tr>
 </table>
 
-See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour). Screenshots show models and statistics at capture time.
-
-### More gateway controls
-
-- **Model fusion (Fusion):** route one model ID to primary and helper models with a judge reviewing results, or to different providers by time of day.
-- **Configuration backup:** export or import providers, models, and Fusion settings from the advanced menu. Backups contain API keys; **Base64 is encoding, not encryption**. Protect backups as credentials.
-- **ECH for official GPT (experimental):** test DNS and TLS before connecting to official OpenAI endpoints through DoH and ECH. See [ECH GPT](docs/ech-gpt.md).
-- **Optional client authentication:** the default build does not validate inbound keys; builds with `--features client-auth` require a client key.
+More screens are in the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour).
 
 ---
 
 ## Providers
 
-Choose one of these presets when adding a provider in the interface. Use Custom for other compatible endpoints.
+Choose one of these presets when adding a provider, or Custom for any other compatible endpoint. After adding one, you can test the connection, refresh the model list, and probe Reasoning, Function Calling, Tool Search, and Web Search support. Probing sends real requests and may consume quota.
 
 | Preset | Provider | Upstream protocol | Authentication |
 | --- | --- | --- | --- |
@@ -248,19 +207,13 @@ Choose one of these presets when adding a provider in the interface. Use Custom 
 | `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API key or AWS access key |
 | `custom` | Any compatible endpoint | OpenAI Responses (default) | Custom headers and key |
 
-Test the connection and refresh models in the interface. Use the model action menu to probe capabilities again; probes send real requests and can consume quota.
-
-### Claude Code subscription
-
-Claude Code subscriptions reuse the local login through Mixin’s built-in PTY/ConPTY bridge to the official interactive `claude` executable, with streaming, MCP tool round trips, and live session reuse. Magpie is not required and there is no automatic `claude -p` fallback. Claude Code must be installed; streaming capture depends on its Bun runtime and fails explicitly when incompatible.
+The Claude Code subscription reuses your local login and runs the official interactive `claude` through a built-in PTY/ConPTY bridge, with streaming output, MCP tool round trips, and in-process session reuse. This path requires Claude Code to be installed, and stream capture depends on its Bun runtime; an incompatible runtime produces an explicit error.
 
 ---
 
 ## Agent Integrations
 
-All 50 catalog entries have a supported integration or native model manager. The 47 gateway/native-app integrations preserve unrelated settings and restore owned fields on disconnect. Cursor CLI, Copilot CLI, and Devin manage vendor-native models using the vendor account; they do not route arbitrary models through the gateway.
-
-### Supported Agents (50)
+50 agents are supported. 47 of them use custom models through the gateway, and disconnecting restores the managed fields while keeping unrelated configuration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Prerequisites for each client are in the [Agent contracts](docs/agent-integration-contracts.md).
 
 <details>
 <summary>Show all 50 agents</summary>
@@ -494,25 +447,25 @@ All 50 catalog entries have a supported integration or native model manager. The
 
 ## Documentation
 
-In this repository:
+Guides live in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
 
-- [Architecture and module boundaries](docs/architecture.md)
-- [Agent integration contracts](docs/agent-integration-contracts.md)
-- [Google Antigravity](docs/antigravity.md)
-- [ECH access to official GPT](docs/ech-gpt.md)
-- [Browser CORS allowlist](docs/cors.md)
-- [Context engine](docs/context-engine.md)
-
-Guides in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
-
-- [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
 - [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) and [Quick Start](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [Usage and quota](https://github.com/Edward-lyz/codex-mixin/wiki/Usage-and-Quota)
-- [Configuration backup and restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [Providers and models](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
 - [Client integrations](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
+- [Usage and quota](https://github.com/Edward-lyz/codex-mixin/wiki/Usage-and-Quota)
+- [Configuration backup and restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [CLI reference](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
 - [Troubleshooting](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) and [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+
+Design and mechanism documents live in the repository:
+
+- [Architecture and module boundaries](docs/architecture.md)
+- [Model routing](docs/model-routing.md)
+- [Long-context engine](docs/context-engine.md)
+- [Agent integration contracts](docs/agent-integration-contracts.md)
+- [Google Antigravity](docs/antigravity.md)
+- [ECH for official GPT (experimental)](docs/ech-gpt.md)
+- [Browser CORS allowlist](docs/cors.md)
 
 For version changes, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
@@ -530,7 +483,7 @@ Yes. Connect Codex in Official Account mode. Custom models join the official mod
 <details>
 <summary>Do all 50 agents use custom gateway models?</summary>
 
-47 entries support gateway configuration or native-app integration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Native applications and terminal launches have specific prerequisites; see the notes in <a href="#agent-integrations">Agent integrations</a> and [Agent contracts](docs/agent-integration-contracts.md).
+47 support gateway configuration or native-app integration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Native applications and terminal launches have specific prerequisites; see the [Agent contracts](docs/agent-integration-contracts.md).
 
 </details>
 
@@ -554,12 +507,6 @@ It is off by default. When enabled, it requires a session ID and a supported req
 No. Backups contain API keys and use Base64 encoding. Treat them as credentials. See [Configuration backup and restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore).
 
 </details>
-
----
-
-## Star History
-
-[![Star History](https://api.star-history.com/svg?repos=Edward-lyz/codex-mixin&type=Date)](https://www.star-history.com/#Edward-lyz/codex-mixin&Date)
 
 ---
 

@@ -5,8 +5,7 @@
 <h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <b>一处配置，让官方 Codex 与常用 Coding Agent 用上你的模型。</b><br>
-  统一管理模型供应商，自定义模型与官方 GPT 并列，保留 ChatGPT 登录与会话。
+  <b>让官方 Codex 用上任何模型, 无缝连接所有主流框架</b>
 </p>
 
 <p align="center">
@@ -20,61 +19,122 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>下载 macOS 版</b></a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>下载 Windows 版</b></a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><b>下载 Linux 版</b></a><br>
-  <sub>macOS / Windows 原生菜单栏与托盘应用 · Linux CLI 与 Web 面板</sub>
+  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin 模型路由：多个模型并行作答，裁判模型评审，最终模型回复"></a>
 </p>
 
 <p align="center">
-  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" width="1000" alt="Codex Mixin macOS 主控制台：统一管理供应商、模型与能力"></a>
-</p>
-
-<p align="center">
-  <a href="#为什么选-codex-mixin">为什么选 Mixin</a> ·
-  <a href="#实测对比">实测对比</a> ·
-  <a href="#功能与界面">功能与界面</a> ·
-  <a href="#供应商">供应商</a> ·
-  <a href="#agent-接入">50 款 Agent</a> ·
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#资源占用">资源占用</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="#界面">界面</a> ·
+  <a href="#供应商">供应商</a> ·
+  <a href="#agent-接入">Agent 接入</a> ·
   <a href="#文档">文档</a> ·
   <a href="#faq">FAQ</a>
 </p>
 
 ---
 
+## 核心能力
+
+Codex Mixin 运行在本机，位于 Agent 与模型供应商之间。它在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 四种协议之间转换请求与流式响应，包括思考内容和工具调用。CLI、macOS / Windows 原生应用和 Web 面板共用同一套核心。
+
+### 官方 Codex 原样保留
+
+Codex 以「官方账号模式」接入后，自定义模型加入官方模型选择器，与 GPT 并列。ChatGPT 登录、历史会话、移动端远程任务和语音照常可用。接入和断开都不改动 Codex 的会话数据库与账号状态；断开后，Codex 配置恢复为官方 OpenAI 默认配置。
+
+### 模型路由：一个模型名背后是一组模型
+
+每条路由对外是一个 `auto/<名称>` 模型，所有接入的客户端都能在模型列表里选到它。三端都可以直接在流程图上编辑路由，命令行使用 `codex-mixin route`。
+
+| 路由类型 | 行为 |
+| --- | --- |
+| 故障转移 | 原模型在输出前报错（包括额度用尽），或 30 秒内没有输出，按顺序切换到 1–4 个备用模型 |
+| 模型融合 | 1–8 个模型并行作答，裁判模型评审，最终模型修改并回复 |
+| 定时路由 | 按本地时间把请求交给不同模型，支持 1–24 个时段 |
+
+触发条件、上限与覆盖范围见 [模型路由](docs/model-routing.md)。
+
+### 上下文引擎：压缩历史，原文可恢复
+
+网关为每个会话保存原始消息归档和一份压缩视图。模型通过网关注入的内部工具自行压缩较早的历史，需要时检索或恢复原文；最近 10,000 tokens 始终保持原文。压缩分三级，规则移植自 Billion Context。
+
+引擎默认关闭，用 `codex-mixin context config set --enabled true` 或控制台开关启用。适用的请求路径与全部配置项见 [上下文引擎](docs/context-engine.md)。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS 上下文引擎设置与会话统计"></a><br>
+      <sub><b>控制台</b> · 会话数、压缩次数、节省的 Token</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/context-engine-comparison.svg"><img src="docs/assets/context-engine-comparison.svg" alt="内置压缩与归档式分层上下文管理的机制对比"></a><br>
+      <sub><b>机制示意</b> · 内置压缩与归档式分层管理</sub>
+    </td>
+  </tr>
+</table>
+
+### 用量逐次可查
+
+本地保留最近 100,000 次回复，记录每次的 Token、缓存命中、思考消耗、首字延迟和输出速度，失败的回复同样入账。菜单栏和托盘直接显示供应商额度。
+
+---
+
+## 资源占用
+
+带完整界面运行，空闲时占用 **76.8 MiB**，40 路并发请求时 **113.5 MiB**。开启「轻量模式」后只保留后台网关，空闲时网关进程约 5 MiB。
+
+下表是 Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 在同一台 Apple M2 上同时连接本机受控上游的实测结果。每个请求携带 1,000,000 文本 token 和 2 张 1024 × 768 PNG。
+
+| 测量项 | Codex Mixin | CC Switch | Magpie |
+| --- | ---: | ---: | ---: |
+| 空闲内存 | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
+| 10 路活动请求 | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
+| 20 路活动请求 | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
+| 40 路活动请求 | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
+| CPU · 40 路活动请求 | **1.047%** | 1.777% | 6.743% |
+
+<p align="center">
+  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png" width="1000" alt="0、10、20、40 路活动请求下的桌面物理内存与网关宿主 CPU 实测曲线"></a>
+</p>
+
+测量方法、原始采样和校验数据见 [基准报告](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md)。
+
+---
+
 ## 快速开始
 
-### 1. 下载并打开
+### 安装
 
-从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 选择对应平台和架构的发布包，无需安装 Rust 或从源码编译。
+从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载对应平台的发布包，无需安装 Rust 或从源码编译。
 
-| 平台 | 下载与运行 | 图形入口 |
+| 平台 | 安装 | 入口 |
 | --- | --- | --- |
-| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」后启动 | 点击菜单栏图标 →「打开控制台…」 |
-| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
-| Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
-
-Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
-
-也可以用包管理器或容器安装：
+| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」 | 菜单栏图标 →「打开控制台…」 |
+| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip | 系统托盘图标 →「打开控制台…」 |
+| Linux | 解压 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz` 后运行 `./codex-mixin panel`，也可安装 `.deb` | 浏览器打开终端打印的地址 |
 
 ```bash
-# macOS / Linux：Homebrew（命令行版；桌面 App 用 --cask）
+# Homebrew（macOS / Linux）：命令行版；桌面 App 用 --cask
 brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # 或 brew install --cask codex-mixin
+
 # Docker：8317 是网关，8318 是控制面板；面板地址和 token 用 docker logs codex-mixin 查看
 docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```
 
-### 2. 配置模型并接入 Agent
+系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
+
+### 在控制台配置
 
 1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
-2. 刷新模型列表，选择要使用的模型并保存，确认网关已启动。
-3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
-4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
+2. 刷新模型列表，勾选要使用的模型并保存。
+3. 在「Agent 接入」页接入已安装的客户端；Codex 选择「官方账号模式」。
+4. 重启客户端或打开新会话，在模型选择器中选择自定义模型。
 
-### 命令行 30 秒上手
+需要恢复客户端原配置时，在同一页面断开接入。
+
+### 或者只用命令行
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
@@ -84,154 +144,53 @@ codex-mixin service start
 curl http://127.0.0.1:8317/v1/models                      # 返回模型列表即成功
 ```
 
-### 3. 查看状态与用量
+<details>
+<summary>端口、远程访问与访问密钥</summary>
 
-菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
+网关默认只监听本机 `127.0.0.1:8317`，Web 面板默认监听所有网卡的 8318 端口并要求本次启动生成的 Token；端口被占用时，两者都回退到 8000–9000 的空闲端口。
 
-Web 面板默认监听所有网卡的 8318 端口（端口被占用时回退到 8000–9000 的空闲端口），访问仍需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+需要让其他设备访问网关时，用 `codex-mixin service start --bind 0.0.0.0:PORT` 启动，监听地址会被保存。监听本机以外的地址时，网关首次启动会生成一个 `sk-` 开头的访问密钥并打印在终端。本机和局域网（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16、fc00::/7、fe80::/10）的请求不需要密钥；其他来源必须在 `Authorization: Bearer <key>` 或 `x-api-key` 头里携带密钥，否则返回 401。多把密钥用 `codex-mixin config keys list / create / revoke` 或控制面板的「访问密钥」页管理。
 
-### 网络访问与访问密钥
+访问边界详见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
 
-网关默认只监听本机 `127.0.0.1:8317`（端口被占用时回退到 8000–9000 的空闲端口）。需要让其他设备访问时，用 `codex-mixin service start --bind 0.0.0.0:PORT` 启动（PORT 换成实际端口），监听地址会被保存，重启后保持。
-
-监听本机以外的地址时，网关首次启动会生成一个 `sk-` 开头的访问密钥，打印在终端并保存在配置文件的 `gateway_api_key`。本机和局域网（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16、fc00::/7、fe80::/10）的请求不需要密钥；其他来源必须在 `Authorization: Bearer <key>` 或 `x-api-key` 头里携带密钥，否则返回 401。
+</details>
 
 ---
 
-## 为什么选 Codex Mixin
+## 界面
 
-Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anthropic 和 Gemini 兼容接口，把请求路由到你配置的供应商。CLI、原生桌面应用和 Web 面板共用同一套核心能力。
-
-```mermaid
-flowchart LR
-  A["Agent / 客户端<br/>Codex · Claude Code · OpenCode …"] --> M
-  subgraph M["Codex Mixin"]
-    direction TB
-    P["协议转换"] --- R["路由与故障转移"] --- C["上下文引擎"]
-  end
-  M --> V["供应商<br/>DeepSeek · OpenRouter · 官方 API …"]
-```
+macOS 提供原生菜单栏与控制台，Windows 提供 WinUI 3 控制台与托盘，Linux 使用 CLI 和 Web 面板。三端功能一致。
 
 <table>
   <tr>
-    <td width="50%" valign="top">
-      <h3>官方生态无缝接入</h3>
-      自定义模型与官方 GPT 并列显示。ChatGPT 登录、历史会话和移动端远程任务照常可用，语音、dots 全部保留。
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS 模型与服务页：供应商列表与模型勾选"></a><br>
+      <sub><b>模型与服务</b> · 供应商、模型与能力</sub>
     </td>
-    <td width="50%" valign="top">
-      <h3>一处管理 50 款 Agent</h3>
-      47 款支持一键配置；Cursor CLI、Copilot CLI、Devin 提供厂商原生模型管理。<a href="#agent-接入">查看完整列表</a>。
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>打通 4 类 API</h3>
-      在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间无损转换请求与流式响应，处理思考内容与工具调用。
-    </td>
-    <td width="50%" valign="top">
-      <h3>内置上下文压缩引擎，节省 Token</h3>
-      采用 Billion Context 压缩规则的 3 级上下文引擎，让模型压缩、检索和恢复归档原文。开启后在压缩历史的同时节省 Token。<a href="docs/context-engine.md">了解机制</a>。
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>用量缓存，尽在掌握</h3>
-      本地保留最近 100,000 次回复（每次查询最多返回 5,000 条），查看 Token、缓存命中、首字延迟与输出速度；菜单栏或托盘可以直接看供应商额度。
-    </td>
-    <td width="50%" valign="top">
-      <h3>极致性能</h3>
-      空闲时仅占用 76.8 MiB，40 条满载活动请求时为 113.5 MiB。<a href="#实测对比">见下文</a>。
-    </td>
-  </tr>
-</table>
-
----
-
-## 实测对比
-Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 同时连接本机受控 HTTP/SSE 上游。每请求携带 **1,000,000 文本 token + 2 张 1024 × 768 PNG**。每个主会话启动 4 个子会话，0 / 2 / 4 / 8 个主会话对应每款产品 0 / 10 / 20 / 40 路活动请求。
-
-| 测量项 | Codex Mixin | CC Switch | Magpie |
-| --- | ---: | ---: | ---: |
-| 空闲内存 | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| 10 路活动请求 | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| 20 路活动请求 | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| 40 路活动请求 | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| CPU 开销 · 40 路活动请求 | **1.047%** | 1.777% | 6.743% |
-
-<p align="center">
-  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png" width="1000" alt="0、10、20、40 路活动请求下的桌面物理内存与网关宿主 CPU 实测曲线"></a>
-</p>
----
-
-## 功能与界面
-
-### 模型、接入与用量，在控制台集中管理
-
-添加供应商、刷新模型列表，并探测 **Reasoning、Function Calling、Tool Search、Web Search** 能力。探测结果缓存后供目录和 Fusion 使用；探测会发送真实请求，可能消耗额度。
-
-在 Agent 页面接入已安装客户端；断开时恢复托管字段并保留无关配置。用量页展示每天与每次回复的 Token、缓存命中率、思考消耗、返回模型、首字延迟和输出速度。供应商额度支持圆环或条形显示，已用达到 90% 时标红。
-
-<table>
-  <tr>
     <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS Agent 接入页：已安装版本与接入操作"></a><br>
       <sub><b>Agent 接入</b> · 安装版本、接入状态与恢复入口</sub>
     </td>
+  </tr>
+  <tr>
     <td width="50%" align="center">
       <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS 用量明细页：每日统计与逐次回复数据"></a><br>
       <sub><b>用量明细</b> · 每次回复的 Token、缓存与速度</sub>
     </td>
-  </tr>
-</table>
-
-### 压缩历史，保留可恢复的原文
-
-启用上下文引擎后，模型可在支持的请求路径中压缩较早历史，再从本地归档检索或恢复原文。最近消息与工具调用对受到保护；控制台展示会话数、压缩次数、节省 Token 和缓存命中。详见 [适用路径与配置](docs/context-engine.md)。
-
-<table>
-  <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS 上下文引擎设置与会话统计"></a><br>
-      <sub><b>上下文引擎</b> · 启用开关与会话统计</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/context-engine-comparison.svg"><img src="docs/assets/context-engine-comparison.svg" alt="内置压缩与归档式分层上下文管理的机制对比"></a><br>
-      <sub><b>压缩与归档</b> · 机制示意图</sub>
-    </td>
-  </tr>
-</table>
-
-### Windows 原生控制台与托盘
-
-WinUI 3 控制台管理模型、Agent、用量和上下文，托盘随时查看网关状态与额度。macOS 提供原生菜单栏与控制台；Linux 使用 CLI 和 Web 面板。
-
-<table>
-  <tr>
-    <td width="65%" align="center">
       <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows 原生模型与服务控制台"></a><br>
       <sub><b>Windows 控制台</b> · 模型与服务</sub>
     </td>
-    <td width="35%" align="center">
-      <a href="docs/assets/Windows-Tray.png"><img src="docs/assets/Windows-Tray.png" width="360" alt="Windows 托盘：网关状态与额度圆环"></a><br>
-      <sub><b>系统托盘</b> · 网关状态与供应商额度</sub>
-    </td>
   </tr>
 </table>
 
-界面说明见 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。截图中的模型和统计值反映采集时状态。
-
-### 更多网关能力
-
-- **模型融合（Fusion）：** 一个模型标识可调度主模型和辅助模型，由 Judge 模型评审结果；也可按时间段路由到不同供应商。
-- **配置备份：** 在高级菜单导出或导入供应商、模型与 Fusion 配置。备份包含 API Key，**Base64 是编码，不是加密**，请按凭据妥善保管。
-- **官方 GPT 的 ECH 连接（实验性）：** 先测试 DNS 与 TLS，再通过 DoH 与 ECH 访问 OpenAI 官方端点。详见 [ECH GPT](docs/ech-gpt.md)。
-- **可选客户端鉴权：** 默认构建不校验入站 Key；以 `--features client-auth` 构建时要求客户端携带密钥。
+更多界面见 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。
 
 ---
 
 ## 供应商
 
-在界面中添加供应商时可选择以下预设，其余兼容端点选择「自定义」。
+添加供应商时可选择以下预设，其余兼容端点选择「自定义」。添加后可测试连接、刷新模型列表并探测 Reasoning、Function Calling、Tool Search、Web Search 能力；探测会发送真实请求，可能消耗额度。
 
 | 预设 | 供应商 | 上游协议 | 鉴权 |
 | --- | --- | --- | --- |
@@ -247,19 +206,13 @@ WinUI 3 控制台管理模型、Agent、用量和上下文，托盘随时查看�
 | `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API Key 或 AWS 访问密钥 |
 | `custom` | 任意兼容端点 | OpenAI Responses（默认） | 自定义 Header 与 Key |
 
-添加后可在界面中测试连接、刷新模型列表，并从模型操作菜单重新探测能力；探测会发送真实请求，可能消耗额度。
-
-### Claude Code 订阅
-
-Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／ConPTY 桥接运行官方交互式 `claude`，支持流式输出、MCP 工具往返和进程内会话复用。无需安装 Magpie；不会自动退回 `claude -p`。此路径需要安装 Claude Code，流式采集依赖其 Bun 运行时；运行时不兼容时会明确报错。
+Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行官方交互式 `claude`，支持流式输出、MCP 工具往返和进程内会话复用。此路径需要安装 Claude Code，流式采集依赖其 Bun 运行时；运行时不兼容时会明确报错。
 
 ---
 
 ## Agent 接入
 
-50 款 Agent 均提供接入或原生模型管理。47 款支持网关配置或原生应用接入，断开时恢复托管字段并保留无关配置。Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型，不经过自定义模型网关。
-
-### 已支持 Agent（50 款）
+支持 50 款 Agent。其中 47 款经网关使用自定义模型，断开时恢复托管字段并保留无关配置；Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型。各客户端的接入前提见 [接入契约](docs/agent-integration-contracts.md)。
 
 <details>
 <summary>展开 50 款 Agent 列表</summary>
@@ -493,25 +446,25 @@ Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／Con
 
 ## 文档
 
-仓库内文档：
+使用教程在 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
 
-- [架构与模块边界](docs/architecture.md)
-- [Agent 接入契约](docs/agent-integration-contracts.md)
-- [Google Antigravity](docs/antigravity.md)
-- [官方 GPT 的 ECH 直连](docs/ech-gpt.md)
-- [浏览器跨域白名单](docs/cors.md)
-- [长上下文引擎](docs/context-engine.md)
-
-使用教程见 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
-
-- [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
 - [安装](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速上手](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [用量与额度](https://github.com/Edward-lyz/codex-mixin/wiki/Usage-and-Quota)
-- [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [供应商与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
 - [客户端接入](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
+- [用量与额度](https://github.com/Edward-lyz/codex-mixin/wiki/Usage-and-Quota)
+- [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
 - [故障排查](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+
+设计与机制文档在仓库内：
+
+- [架构与模块边界](docs/architecture.md)
+- [模型路由](docs/model-routing.md)
+- [长上下文引擎](docs/context-engine.md)
+- [Agent 接入契约](docs/agent-integration-contracts.md)
+- [Google Antigravity](docs/antigravity.md)
+- [官方 GPT 的 ECH 直连（实验性）](docs/ech-gpt.md)
+- [浏览器跨域白名单](docs/cors.md)
 
 版本变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
@@ -529,7 +482,7 @@ Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／Con
 <details>
 <summary>50 款 Agent 都能使用自定义网关模型吗？</summary>
 
-47 款支持网关配置或原生应用接入；Cursor CLI、Copilot CLI、Devin 通过厂商账号管理厂商原生模型。原生应用和终端启动各有前提，见 <a href="#agent-接入">Agent 接入</a> 中的说明及 [接入契约](docs/agent-integration-contracts.md)。
+47 款支持网关配置或原生应用接入；Cursor CLI、Copilot CLI、Devin 通过厂商账号管理厂商原生模型。原生应用和终端启动各有前提，见 [接入契约](docs/agent-integration-contracts.md)。
 
 </details>
 
@@ -553,12 +506,6 @@ Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／Con
 没有。备份包含 API Key，使用 Base64 编码，请按凭据妥善保管。详见 [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)。
 
 </details>
-
----
-
-## Star History
-
-[![Star History](https://api.star-history.com/svg?repos=Edward-lyz/codex-mixin&type=Date)](https://www.star-history.com/#Edward-lyz/codex-mixin&Date)
 
 ---
 
