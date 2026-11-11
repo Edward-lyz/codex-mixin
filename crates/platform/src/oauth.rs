@@ -307,7 +307,12 @@ pub fn claude_code_setup_token() -> Option<String> {
             })
             .filter(|path| path.is_absolute() && path.is_file());
         shell.and_then(|shell| {
+            use std::os::unix::process::CommandExt;
             let mut command = std::process::Command::new(shell);
+            // An interactive shell touches the controlling terminal and is
+            // stopped by SIGTTIN/SIGTTOU when it is not the foreground group.
+            // Its own process group keeps that stop from freezing this process.
+            command.process_group(0);
             command.args([
                 "-lic",
                 r#"printf '\036MIXIN_CLAUDE_TOKEN=%s\037' "$CLAUDE_CODE_OAUTH_TOKEN""#,
