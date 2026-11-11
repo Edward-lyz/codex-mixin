@@ -20,6 +20,8 @@ use reqwest::Client;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+use codex_mixin::ducx_auth_carrier::UPDATE_GUARDS;
+
 use super::ducx_session::is_logged_in;
 
 const DOWNLOAD_BASE_URL: &str = "https://baidu-cc-client.bj.bcebos.com/baidu-cx";
@@ -272,8 +274,7 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
         let status = command
             .arg("login")
             .env("CODEX_HOME", &codex_home)
-            .env("DISABLE_DUCX_CLI_UPDATE", "1")
-            .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
+            .envs(UPDATE_GUARDS.map(|name| (name, "1")))
             .stdin(Stdio::inherit())
             .stdout(if login_stdio {
                 Stdio::from(std::io::stderr())
@@ -288,15 +289,13 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
         ensure!(status.success(), "DUCX login failed with {status}");
     } else {
         let update_guard = Path::new("1");
+        let mut environment = vec![("CODEX_HOME", codex_home.as_path())];
+        environment.extend(UPDATE_GUARDS.map(|name| (name, update_guard)));
         let launcher = open_terminal_window(&TerminalCommand {
             title: "百度 DUCX 登录",
             script_directory: home,
             home: Some(home),
-            environment: &[
-                ("CODEX_HOME", &codex_home),
-                ("DISABLE_DUCX_CLI_UPDATE", update_guard),
-                ("DISABLE_BAIDU_CLAUDE_UPDATE", update_guard),
-            ],
+            environment: &environment,
             program: executable,
             arguments: &["login"],
         })
