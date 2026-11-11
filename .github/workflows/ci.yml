@@ -83,6 +83,15 @@ jobs:
         if: runner.os == 'Linux'
         run: ./scripts/e2e_multi_provider.sh
 
+  supply-chain:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources
+
   client-auth:
     name: Client auth
     runs-on: ubuntu-latest

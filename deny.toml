@@ -1,0 +1,23 @@
+# cargo-deny policy; CI runs `advisories bans sources` (licenses are not checked).
+
+[advisories]
+version = 2
+ignore = [
+  # pin-utils is unmaintained; it arrives through aws-smithy and has no replacement upstream yet.
+  "RUSTSEC-2026-0441",
+  # unsafe-libyaml is unmaintained; it arrives through serde_yaml.
+  "RUSTSEC-2024-0449",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+  "https://github.com/openai-oss-forks/tokio-tungstenite",
+  "https://github.com/openai-oss-forks/tungstenite-rs",
+]

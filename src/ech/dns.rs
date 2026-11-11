@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use base64::Engine;
-use hickory_proto::op::{Message, MessageType, Query, ResponseCode};
+use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use reqwest::Client;
@@ -30,26 +30,26 @@ pub(super) async fn resolve(host: &str) -> anyhow::Result<Resolution> {
     let (services, service_ttl) = query(&client, host, RecordType::HTTPS).await?;
     let record = services
         .iter()
-        .filter(|record| matches!(record.data(), RData::HTTPS(https) if https.svc_priority() > 0))
-        .min_by_key(|record| match record.data() {
-            RData::HTTPS(https) => https.svc_priority(),
+        .filter(|record| matches!(&record.data, RData::HTTPS(https) if https.svc_priority > 0))
+        .min_by_key(|record| match &record.data {
+            RData::HTTPS(https) => https.svc_priority,
             _ => u16::MAX,
         })
         .context("DoH returned no HTTPS ServiceMode record")?;
-    let RData::HTTPS(service) = record.data() else {
+    let RData::HTTPS(service) = &record.data else {
         bail!("invalid HTTPS record")
     };
-    let (ech, alpn) = service_parameters(service.svc_params())?;
-    let target = if service.target_name().is_root() {
-        record.name().to_utf8()
+    let (ech, alpn) = service_parameters(&service.svc_params)?;
+    let target = if service.target_name.is_root() {
+        record.name.to_utf8()
     } else {
-        service.target_name().to_utf8()
+        service.target_name.to_utf8()
     };
     // The advertised /plus relay is IPv4-only. Do not bypass it via CDN IPv6.
     let (records, address_ttl) = query(&client, &target, RecordType::A).await?;
     let mut addresses = Vec::new();
     for record in records {
-        if let RData::A(address) = record.data() {
+        if let RData::A(address) = &record.data {
             let ip = address.0;
             ensure!(is_public_v4(ip), "DoH returned a non-public IPv4 address");
             let socket = SocketAddr::new(IpAddr::V4(ip), 443);
@@ -162,10 +162,9 @@ async fn query(
         ensure!(!visited.contains(&name), "DNS alias loop");
         visited.push(name.clone());
         let question = Query::query(name.clone(), kind);
-        let mut message = Message::new();
-        message
-            .set_recursion_desired(true)
-            .add_query(question.clone());
+        let mut message = Message::new(0, MessageType::Query, OpCode::Query);
+        message.metadata.recursion_desired = true;
+        message.add_query(question.clone());
         let wire = message.to_vec()?;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wire);
         let mut response = client
@@ -196,24 +195,24 @@ async fn query(
         // Only follow records reachable from the question, never unrelated answers.
         for _ in 0..MAX_ALIAS_HOPS {
             let records = response
-                .answers()
+                .answers
                 .iter()
-                .filter(|record| record.name() == &name)
+                .filter(|record| record.name == name)
                 .collect::<Vec<_>>();
             let mut matching = Vec::new();
             let mut alias = None;
             for record in records {
-                ttl = ttl.min(record.ttl());
-                match record.data() {
+                ttl = ttl.min(record.ttl);
+                match &record.data {
                     RData::CNAME(target) => alias = Some(target.0.clone()),
                     RData::HTTPS(service)
-                        if kind == RecordType::HTTPS && service.svc_priority() == 0 =>
+                        if kind == RecordType::HTTPS && service.svc_priority == 0 =>
                     {
                         ensure!(
-                            !service.target_name().is_root(),
+                            !service.target_name.is_root(),
                             "invalid HTTPS AliasMode target"
                         );
-                        alias = Some(service.target_name().clone());
+                        alias = Some(service.target_name.clone());
                     }
                     _ if record.record_type() == kind => matching.push(record.clone()),
                     _ => {}
@@ -241,24 +240,24 @@ async fn query(
 fn parse_response(bytes: &[u8], question: &Query) -> anyhow::Result<Message> {
     let response = Message::from_vec(bytes).context("parse DoH DNS message")?;
     ensure!(
-        response.message_type() == MessageType::Response && response.id() == 0,
+        response.metadata.message_type == MessageType::Response && response.metadata.id == 0,
         "invalid DoH response header"
     );
     ensure!(
-        !response.truncated(),
+        !response.metadata.truncation,
         "DoH returned a truncated DNS message"
     );
     ensure!(
-        response.response_code() == ResponseCode::NoError,
+        response.metadata.response_code == ResponseCode::NoError,
         "DoH returned DNS error {}",
-        response.response_code()
+        response.metadata.response_code
     );
     let mut expected = question.clone();
     let mut name = expected.name().clone();
     name.set_fqdn(true);
     expected.set_name(name);
     ensure!(
-        response.queries() == [expected],
+        response.queries == [expected],
         "DoH response does not match the question"
     );
     Ok(response)
