@@ -43,17 +43,24 @@ pub(super) async fn check_gateway_auth(
     if !cfg!(feature = "client-auth") && !public_peer {
         return Ok(());
     }
-    let Some(expected) = &state.config.gateway_api_key else {
+    let config = &state.config;
+    if config.gateway_api_key.is_none() && config.gateway_api_keys.is_empty() {
         return if public_peer {
             Err(GatewayError::Unauthorized)
         } else {
             Ok(())
         };
-    };
+    }
     let Some(actual) = bearer_token(headers) else {
         return Err(GatewayError::Unauthorized);
     };
-    if bool::from(actual.as_bytes().ct_eq(expected.as_bytes()))
+    let matches_key = |expected: &str| bool::from(actual.as_bytes().ct_eq(expected.as_bytes()));
+    let key_matches = config.gateway_api_key.as_deref().is_some_and(matches_key)
+        || config
+            .gateway_api_keys
+            .iter()
+            .any(|entry| matches_key(&entry.key));
+    if key_matches
         || matches!(
             state.config.gateway_client_keys.authenticate(headers),
             Some(

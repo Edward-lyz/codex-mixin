@@ -22,7 +22,7 @@ pub(crate) fn is_trusted_peer(ip: std::net::IpAddr) -> bool {
 }
 
 /// `sk-` prefixed key required from public peers when listening beyond loopback.
-pub(crate) fn generate_gateway_api_key() -> anyhow::Result<String> {
+pub fn generate_gateway_api_key() -> anyhow::Result<String> {
     let mut bytes = [0_u8; 24];
     rand::SecureRandom::fill(&rand::SystemRandom::new(), &mut bytes)
         .map_err(|_| anyhow::anyhow!("generate gateway API key"))?;
@@ -77,6 +77,15 @@ impl GatewayClient {
             Self::Framework(id) => id,
         }
     }
+}
+
+/// A named `sk-` key accepted from any caller, managed with `config keys`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GatewayApiKey {
+    pub id: String,
+    pub name: String,
+    pub key: String,
+    pub created_at: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

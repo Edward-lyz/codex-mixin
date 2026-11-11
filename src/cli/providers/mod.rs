@@ -155,7 +155,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             serde_json::to_string_pretty(&json!({
                 "config_version": config.config_version,
                 "gateway_bind": config.gateway_bind,
-                "gateway_auth_configured": config.gateway_api_key.is_some(),
+                "gateway_auth_configured": config.gateway_api_key.is_some() || !config.gateway_api_keys.is_empty(),
                 "codex_install_mode": codex_install_mode,
                 "fusion_profile": config.fusion_profiles.first(),
                 "providers": providers,

@@ -308,11 +308,19 @@ struct ProviderModelRefreshTarget {
 /// Without a reload it keeps rejecting the key it just handed the client, and
 /// every request from that client fails `401 unauthorized` until the gateway is
 /// restarted.
-type ClientCredentials = (Option<String>, GatewayClientKeys);
+type ClientCredentials = (
+    Option<String>,
+    Vec<codex_mixin::gateway_access::GatewayApiKey>,
+    GatewayClientKeys,
+);
 
 fn stored_client_credentials() -> anyhow::Result<ClientCredentials> {
     let stored = load_stored_config()?.unwrap_or_default();
-    Ok((stored.gateway_api_key, stored.gateway_client_keys))
+    Ok((
+        stored.gateway_api_key,
+        stored.gateway_api_keys,
+        stored.gateway_client_keys,
+    ))
 }
 
 /// Reload the gateway when the stored client credentials no longer match the
@@ -723,6 +731,7 @@ pub(super) async fn start(
         config.bind = bind;
     }
     if !config.bind.ip().to_canonical().is_loopback()
+        && config.gateway_api_keys.is_empty()
         && let Some(key) = codex_mixin::config::ensure_gateway_api_key()?
     {
         eprintln!(
@@ -775,6 +784,7 @@ pub(super) async fn start(
     let (reload_sender, mut reload_receiver) = tokio::sync::watch::channel(0_u64);
     let served_credentials = (
         config.gateway_api_key.clone(),
+        config.gateway_api_keys.clone(),
         config.gateway_client_keys.clone(),
     );
     let stop_client_credential_watch = Arc::new(AtomicBool::new(false));

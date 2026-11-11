@@ -18,6 +18,7 @@ fn config() -> GatewayConfig {
         official_ech_fallback_reason: None,
         codex_auth_path: std::path::PathBuf::from("/nonexistent/cors-test-auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
+        gateway_api_keys: Vec::new(),
         cors_allowed_origins: vec![ORIGIN.to_owned()],
         gateway_client_keys: Default::default(),
         accept_codex_oauth: false,
