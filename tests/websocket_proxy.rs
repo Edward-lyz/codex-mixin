@@ -213,6 +213,7 @@ fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> Gate
         official_responses_url,
         codex_auth_path,
         gateway_api_key: Some("gateway-key".to_owned()),
+        gateway_api_keys: Vec::new(),
         cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
             .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),

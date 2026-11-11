@@ -342,6 +342,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
+            gateway_api_keys: Vec::new(),
             cors_allowed_origins: StoredGatewayConfig::default().cors_allowed_origins,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
@@ -464,6 +465,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
+            gateway_api_keys: Vec::new(),
             cors_allowed_origins: StoredGatewayConfig::default().cors_allowed_origins,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
@@ -545,6 +547,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         config_version: CONFIG_VERSION,
         gateway_bind: None,
         gateway_api_key: Some("gateway-key".to_owned()),
+        gateway_api_keys: Vec::new(),
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some(key.to_owned()),
             ..Default::default()

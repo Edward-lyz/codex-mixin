@@ -15,6 +15,7 @@ const PAGES = [
   { id: "speed", title: "测速" },
   { id: "routing", title: "模型路由" },
   { id: "apps", title: "Agent" },
+  { id: "keys", title: "访问密钥" },
   { id: "advanced", title: "高级" },
   { id: "system", title: "系统" },
   { id: "logs", title: "日志" },
@@ -2394,7 +2395,7 @@ const MAX_SLOTS = 24;
 const ROUTE_KINDS = {
   fusion: { title: "融合", badge: "\u2a01", description: "每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。" },
   schedule: { title: "定时", badge: "\u25f7", description: "按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。" },
-  failover: { title: "故障转移", badge: "\u21a9", description: "原模型返回 429、5xx、连接失败或超时且尚未输出内容时，按顺序改用备用模型；备用模型失败时不会再触发它自己的故障转移。" },
+  failover: { title: "故障转移", badge: "\u21a9", description: "原模型在输出内容前报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，它的错误会直接返回。" },
 };
 const routing = { data: null, loading: false, error: null, selected: null, draft: null };
 let routingRequest = 0;
@@ -3106,6 +3107,73 @@ function importBackup(button) {
   document.body.append(picker);
   picker.click();
 }
+
+const keysPage = { data: null, loading: false, error: null, created: null };
+
+async function loadKeys() {
+  keysPage.loading = true;
+  keysPage.error = null;
+  try {
+    keysPage.data = await api("/api/keys");
+  } catch (error) {
+    keysPage.error = error.message;
+  } finally {
+    keysPage.loading = false;
+    if (state.page === "keys") render({ animate: false });
+  }
+}
+
+RENDERERS.keys = () => {
+  if (!keysPage.data && !keysPage.loading && !keysPage.error) queueMicrotask(loadKeys);
+  const name = textInput("name", "", { placeholder: "例如：笔记本、同事 A", maxlength: "64", "aria-label": "密钥名称" });
+  const create = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", text: "生成密钥" });
+  create.addEventListener("click", async () => {
+    const value = name.value.trim();
+    if (!value) {
+      toast("bad", "请填写名称", "名称用来区分密钥的用途。");
+      name.focus();
+      return;
+    }
+    const result = await runAction(create, "key_create", { name: value }, { ok: "已生成访问密钥" });
+    if (result?.json?.key) keysPage.created = result.json;
+    await loadKeys();
+  });
+  const createCard = card(
+    "生成访问密钥",
+    "公网来源调用网关时须携带其中任一密钥（Authorization: Bearer 或 x-api-key）。本机与局域网设备无需密钥。修改后运行中的网关会自动生效。",
+    h("div", { class: "form" }, field("名称", name), keysPage.created
+      ? h("div", { class: "notice", role: "status" },
+        h("div", null,
+          h("strong", { text: `新密钥「${keysPage.created.name}」只显示这一次` }),
+          h("div", { class: "row-sub mono", text: keysPage.created.key })),
+        h("button", { class: "btn btn-sm", type: "button", text: "复制", onclick: () => copyText(keysPage.created.key) }))
+      : null),
+    create,
+  );
+  let body;
+  if (keysPage.error) body = h("p", { class: "issue", text: keysPage.error });
+  else if (!keysPage.data) body = h("div", { class: "skeleton" });
+  else if (!keysPage.data.keys.length) body = emptyState("还没有访问密钥", "生成后即可从公网访问网关。");
+  else body = h("div", { class: "table-wrap" }, h("table", { class: "table" },
+    h("thead", null, h("tr", null, ...["名称", "密钥", "创建时间", ""].map((text) => h("th", { scope: "col", text })))),
+    h("tbody", null, ...keysPage.data.keys.map((key) => {
+      const revoke = h("button", { class: "btn btn-sm btn-danger", type: "button", "data-action": "", text: "吊销", "aria-label": `吊销 ${key.name}` });
+      revoke.addEventListener("click", async () => {
+        const result = await runAction(revoke, "key_revoke", { id: key.id }, {
+          ok: "已吊销",
+          confirm: ["吊销访问密钥", `使用「${key.name}」的客户端会立即收到 401。`, "吊销"],
+        });
+        if (result && keysPage.created?.id === key.id) keysPage.created = null;
+        await loadKeys();
+      });
+      return h("tr", null,
+        h("td", { text: key.name }),
+        h("td", { class: "mono", text: key.masked_key }),
+        h("td", { text: key.created_at ? new Date(key.created_at).toLocaleString() : "早期版本生成" }),
+        h("td", { class: "r" }, revoke));
+    }))));
+  return [createCard, card("已有密钥", null, body)];
+};
 
 RENDERERS.advanced = () => {
   if (!advanced.ech) loadEch();

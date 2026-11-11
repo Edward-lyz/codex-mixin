@@ -86,6 +86,12 @@ pub(super) enum PanelAction {
     RouteDelete {
         model: String,
     },
+    KeyCreate {
+        name: String,
+    },
+    KeyRevoke {
+        id: String,
+    },
     RouteEnable {
         model: String,
     },
@@ -356,7 +362,7 @@ impl PanelAction {
     pub(super) fn prints_json(&self) -> bool {
         matches!(
             self,
-            Self::ProviderTest { .. } | Self::EchTest | Self::ReportReplay
+            Self::ProviderTest { .. } | Self::EchTest | Self::ReportReplay | Self::KeyCreate { .. }
         )
     }
 
@@ -535,6 +541,18 @@ impl PanelAction {
                 Ok(invocation)
             }
             Self::RouteDelete { model } => route_model_command("delete", model),
+            Self::KeyCreate { name } => {
+                let mut invocation = CliInvocation::fixed(&["config", "keys", "create"]);
+                invocation.push_value("name", name.trim())?;
+                invocation.push("--json");
+                Ok(invocation)
+            }
+            Self::KeyRevoke { id } => {
+                let mut invocation = CliInvocation::fixed(&["config", "keys", "revoke"]);
+                invocation.push_id("key id", id)?;
+                invocation.push("--json");
+                Ok(invocation)
+            }
             Self::RouteEnable { model } => route_model_command("enable", model),
             Self::RouteDisable { model } => route_model_command("disable", model),
             Self::AgentConnect { id, mode } => {

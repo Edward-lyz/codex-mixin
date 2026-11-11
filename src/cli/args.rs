@@ -459,6 +459,33 @@ pub(super) enum ConfigCommand {
         #[command(subcommand)]
         command: CorsCommand,
     },
+    /// Create, list, or revoke named gateway API keys (applied live).
+    Keys {
+        #[command(subcommand)]
+        command: KeysCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum KeysCommand {
+    /// List gateway API keys with masked values.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a named key; the full value is printed once.
+    Create {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Revoke a key by id.
+    Revoke {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

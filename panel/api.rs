@@ -114,6 +114,7 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/snapshot", get(snapshot))
         .route("/api/usage", get(usage_details))
         .route("/api/routes", get(routes))
+        .route("/api/keys", get(keys))
         .route("/api/quota", get(quota))
         .route("/api/doctor", get(doctor))
         .route("/api/logs", get(logs))
@@ -447,6 +448,10 @@ async fn routes() -> Result<Json<Value>, ApiError> {
         "routes": routes.get("routes").cloned().unwrap_or(json!([])),
         "models": models.get("models").cloned().unwrap_or(json!([])),
     })))
+}
+
+async fn keys() -> Result<Json<Value>, ApiError> {
+    Ok(Json(run_json(&["config", "keys", "list", "--json"]).await?))
 }
 
 async fn quota() -> Result<Json<Value>, ApiError> {

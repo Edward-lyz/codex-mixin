@@ -215,6 +215,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
+        gateway_api_keys: Vec::new(),
         cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
             .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),

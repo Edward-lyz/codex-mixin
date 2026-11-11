@@ -41,6 +41,7 @@ fn cors_cli_default_replace_disable() {
 
     let stored = StoredGatewayConfig {
         gateway_api_key: Some("retained-key".to_owned()),
+        gateway_api_keys: Vec::new(),
         ..Default::default()
     };
     save_stored_config_to_path(&path, &stored).unwrap();

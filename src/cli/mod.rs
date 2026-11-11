@@ -40,6 +40,7 @@ mod ducx_setup;
 mod ech;
 mod fusion_config;
 mod interface;
+mod keys;
 mod maintenance;
 mod metadata;
 mod official_models;
@@ -784,6 +785,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         } => match (command, export) {
             (Some(ConfigCommand::Apply), None) => config_apply::run().await,
             (Some(ConfigCommand::Cors { command }), None) => cors::run(command),
+            (Some(ConfigCommand::Keys { command }), None) => keys::run(command),
             (Some(ConfigCommand::Export { path }), None) => export_config(&path),
             (Some(ConfigCommand::Import { path }), None) => import_config(&path),
             (None, Some(path)) => export_config(&path),

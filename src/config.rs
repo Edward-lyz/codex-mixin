@@ -71,6 +71,7 @@ pub struct GatewayConfig {
     pub official_ech_fallback_reason: Option<String>,
     pub codex_auth_path: PathBuf,
     pub gateway_api_key: Option<String>,
+    pub gateway_api_keys: Vec<crate::gateway_access::GatewayApiKey>,
     pub cors_allowed_origins: Vec<String>,
     pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
     pub accept_codex_oauth: bool,
@@ -158,6 +159,7 @@ impl GatewayConfig {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: default_codex_auth_path(),
             gateway_api_key: stored_config.gateway_api_key,
+            gateway_api_keys: stored_config.gateway_api_keys,
             cors_allowed_origins: stored_config.cors_allowed_origins,
             gateway_client_keys: stored_config.gateway_client_keys,
             accept_codex_oauth: true,
@@ -280,6 +282,8 @@ pub struct StoredGatewayConfig {
     pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_api_keys: Vec<crate::gateway_access::GatewayApiKey>,
     #[serde(default = "cors::default_cors_origins")]
     pub cors_allowed_origins: Vec<String>,
     #[serde(default, skip_serializing_if = "gateway_client_keys_are_empty")]
@@ -322,6 +326,7 @@ impl Default for StoredGatewayConfig {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: None,
+            gateway_api_keys: Vec::new(),
             cors_allowed_origins: cors::default_cors_origins(),
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
