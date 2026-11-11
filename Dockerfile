@@ -10,6 +10,8 @@ USER codex
 ENV HOME=/data
 WORKDIR /data
 VOLUME ["/data"]
-EXPOSE 8317
-ENTRYPOINT ["codex-mixin"]
-CMD ["service", "start", "--foreground", "--bind", "0.0.0.0:8317"]
+# 8317: gateway API. 8318: web control panel (its token is printed to the logs).
+EXPOSE 8317 8318
+# The gateway runs as a daemon; the panel stays in the foreground so the
+# container lives as long as the panel and `docker logs` shows the panel URL.
+CMD ["sh", "-c", "codex-mixin service start --bind 0.0.0.0:8317 && exec codex-mixin panel --bind 0.0.0.0:8318"]

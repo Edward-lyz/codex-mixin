@@ -65,8 +65,8 @@ brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # 或 brew install --cask codex-mixin
 # Windows：winget
 winget install EdwardLyz.CodexMixin
-# Docker：配置保存在 codex-mixin 卷里
-docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
+# Docker：8317 是网关，8318 是控制面板；面板地址和 token 用 docker logs codex-mixin 查看
+docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```
 
 ### 2. 配置模型并接入 Agent

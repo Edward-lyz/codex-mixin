@@ -65,8 +65,8 @@ brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # or: brew install --cask codex-mixin
 # Windows: winget
 winget install EdwardLyz.CodexMixin
-# Docker: configuration lives in the codex-mixin volume
-docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
+# Docker: 8317 is the gateway, 8318 the control panel; get the panel URL and token from docker logs codex-mixin
+docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```
 
 ### 2. Configure models and connect an Agent
