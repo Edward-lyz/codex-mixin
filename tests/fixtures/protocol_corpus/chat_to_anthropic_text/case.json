@@ -1,0 +1,19 @@
+{
+  "endpoint": "/v1/chat/completions",
+  "protocol": "anthropic_messages",
+  "api_path": "/v1/messages",
+  "request": {
+    "model": "DeepSeek-V4-Flash-custom",
+    "stream": true,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are terse."
+      },
+      {
+        "role": "user",
+        "content": "say hi"
+      }
+    ]
+  }
+}

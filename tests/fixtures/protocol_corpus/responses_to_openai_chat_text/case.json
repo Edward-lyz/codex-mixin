@@ -1,0 +1,37 @@
+{
+  "endpoint": "/v1/responses",
+  "protocol": "open_ai_chat",
+  "api_path": "/v1/chat/completions",
+  "request": {
+    "model": "DeepSeek-V4-Flash-custom",
+    "stream": true,
+    "instructions": "You are Codex.",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "say hi"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "name": "exec_command",
+        "description": "run shell",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
