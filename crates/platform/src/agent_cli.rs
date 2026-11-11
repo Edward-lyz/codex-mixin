@@ -310,10 +310,14 @@ pub fn run_command_with_input(
     {
         Some(status) => status,
         None => {
-            // Do not join the readers here: a descendant that outlives the
-            // killed child can hold the pipes open, and the timeout must
-            // still return. The readers end when the pipes close.
-            let _ = child.kill();
+            // A child that leads its own process group (see
+            // `isolate_process_group`) is ended together with everything it
+            // started, such as the profile hooks of a login shell; any other
+            // child is killed alone. Do not join the readers here: a
+            // descendant that outlives the killed child can hold the pipes
+            // open, and the timeout must still return. The readers end when
+            // the pipes close.
+            let _ = super::process::terminate_isolated_child(&mut child);
             let _ = child.wait();
             anyhow::bail!("{what} timed out after {}s", timeout.as_secs());
         }
