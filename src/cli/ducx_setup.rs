@@ -45,27 +45,33 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
     let executable = install_home
         .join(".baidu-cx/baidu-cx/bin")
         .join(executable_file_name("ducx"));
+    let client = download_client()?;
     if !executable.is_file() {
         super::progress_step("Preparing DUCX authentication");
-        install_package(&ducx_root, &install_home, &executable).await?;
+        let version = latest_version(&client).await?;
+        install_package(&client, &version, &ducx_root, &install_home, &executable).await?;
+    } else if let Err(error) =
+        upgrade_if_outdated(&client, &ducx_root, &install_home, &executable).await
+    {
+        // An outdated DUCX still works; keep it and retry on the next login.
+        eprintln!("warning: DUCX upgrade skipped: {error:#}");
     }
+    remove_update_leftovers(&install_home.join(".baidu-cx"));
     ensure_logged_in(&executable, &install_home).await?;
     Ok(executable)
 }
 
-async fn install_package(
-    ducx_root: &Path,
-    install_home: &Path,
-    executable: &Path,
-) -> anyhow::Result<()> {
-    let target = package_target().context("managed DUCX is not available on this system")?;
-    let client = Client::builder()
+fn download_client() -> anyhow::Result<Client> {
+    Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .read_timeout(Duration::from_secs(60))
         .build()
-        .context("create DUCX download client")?;
+        .context("create DUCX download client")
+}
+
+async fn latest_version(client: &Client) -> anyhow::Result<String> {
     let version_url = format!("{DOWNLOAD_BASE_URL}/baidu_cx_latest_version.txt");
-    let version = download_text(&client, &version_url, "DUCX version")
+    let version = download_text(client, &version_url, "DUCX version")
         .await?
         .trim()
         .to_owned();
@@ -76,6 +82,58 @@ async fn install_package(
                 .all(|value| value.is_ascii_alphanumeric() || value == '.' || value == '-'),
         "DUCX version response is invalid"
     );
+    Ok(version)
+}
+
+/// DUCX self-updates are switched off (see `UPDATE_GUARDS`), so codex-mixin
+/// upgrades the managed copy itself at login time, when no DUCX process of
+/// ours is running and the active directory can be replaced.
+async fn upgrade_if_outdated(
+    client: &Client,
+    ducx_root: &Path,
+    install_home: &Path,
+    executable: &Path,
+) -> anyhow::Result<()> {
+    let latest = latest_version(client).await?;
+    let installed = tokio::fs::read_to_string(install_home.join(".baidu-cx/baidu-cx/version"))
+        .await
+        .unwrap_or_default();
+    if installed.trim() == latest {
+        return Ok(());
+    }
+    super::progress_step("Updating DUCX authentication package");
+    install_package(client, &latest, ducx_root, install_home, executable).await
+}
+
+/// Remove what a DUCX self-update leaves behind: the previous version, the
+/// unpacked new version, and half-downloaded versions under `tmp`. A stale
+/// copy there can receive a fresh `auth.json` that the active install never
+/// reads.
+fn remove_update_leftovers(root: &Path) {
+    let leftovers = [root.to_path_buf(), root.join("tmp")]
+        .into_iter()
+        .filter_map(|directory| fs::read_dir(directory).ok())
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "baidu-cx.old" || name.starts_with("baidu-cx-"))
+        });
+    for path in leftovers {
+        let _ = fs::remove_dir_all(&path);
+    }
+}
+
+async fn install_package(
+    client: &Client,
+    version: &str,
+    ducx_root: &Path,
+    install_home: &Path,
+    executable: &Path,
+) -> anyhow::Result<()> {
+    let target = package_target().context("managed DUCX is not available on this system")?;
     let archive_name = format!("baidu-cx-{}-{}-{version}.tar.bz2", target.os, target.arch);
     let download_dir = ducx_root.join("downloads");
     tokio::fs::create_dir_all(&download_dir).await?;
@@ -83,7 +141,7 @@ async fn install_package(
     let archive = download_dir.join(&archive_name);
     super::progress_step("Downloading DUCX authentication package");
     download_archive(
-        &client,
+        client,
         &format!("{DOWNLOAD_BASE_URL}/{archive_name}"),
         &archive,
     )
@@ -147,7 +205,21 @@ fn unpack_and_activate(archive: &Path, staging: &Path, active: &Path) -> anyhow:
         let _ = fs::remove_file(staging.join(name));
     }
     match fs::symlink_metadata(active) {
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(active)?,
+        Ok(metadata) if metadata.is_dir() => {
+            // Move the old version aside first: on Windows the rename fails
+            // while a DUCX process still runs from it, which leaves the
+            // working install untouched instead of half deleted.
+            let previous =
+                active.with_file_name(format!(".baidu-cx-previous-{}", std::process::id()));
+            fs::rename(active, &previous)
+                .context("move the current DUCX installation aside; is DUCX still running?")?;
+            if let Err(error) = fs::rename(staging, active) {
+                let _ = fs::rename(&previous, active);
+                return Err(error).context("activate the managed DUCX installation");
+            }
+            let _ = fs::remove_dir_all(&previous);
+            return Ok(());
+        }
         // Earlier releases activated a versioned directory through a link.
         Ok(_) => fs::remove_file(active)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
