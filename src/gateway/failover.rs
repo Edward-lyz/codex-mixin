@@ -1,11 +1,14 @@
 //! Explicit model failover. A configured `FailoverRoute` retries a request
-//! that failed before producing any output (429, 5xx, connection or timeout)
-//! against each fallback in order. Every switch is logged and announced to the
+//! against the next model when the current one fails before producing any
+//! output, including errors reported inside an already started stream, or
+//! when no output arrives within `FIRST_OUTPUT_TIMEOUT`. The last model gets
+//! no timeout and its errors pass through. Every switch is logged and announced to the
 //! client as a reasoning summary event; fallbacks never cascade.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::{LazyLock, Mutex, PoisonError};
+use std::time::Duration;
 
 use axum::http::HeaderMap;
 use bytes::Bytes;
@@ -19,7 +22,10 @@ use crate::config::{
 };
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
-use crate::protocol::sse::encode_event;
+use crate::protocol::sse::{SseDecoder, encode_event};
+
+/// How long a non-final model may take to produce its first output.
+const FIRST_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 const STATUS_ITEM_ID: &str = "failover_status";
 
@@ -72,16 +78,63 @@ pub(super) fn official_route_configured(routes: &[FailoverRoute], body: &Value) 
         })
 }
 
-/// Errors that trigger a switch: rate limits, upstream server errors and
-/// transport failures. Everything else (bad request, auth, config) fails fast.
-pub(super) fn is_transient(error: &GatewayError) -> bool {
-    match error {
-        GatewayError::UpstreamStatus { status, .. } => {
-            status.as_u16() == 429 || status.is_server_error()
-        }
-        GatewayError::Http(error) => error.is_connect() || error.is_timeout(),
-        _ => false,
+/// Settle one attempt. The last model passes through as is; earlier models
+/// must produce output (or finish) within `FIRST_OUTPUT_TIMEOUT` without an
+/// error, otherwise the attempt fails so the next model is tried.
+pub(super) async fn settle(
+    attempt: Result<(ResponseStream, Value), GatewayError>,
+    last: bool,
+) -> Result<(ResponseStream, Value), GatewayError> {
+    let (stream, body) = attempt?;
+    if last {
+        return Ok((stream, body));
     }
+    Ok((first_output(stream).await?, body))
+}
+
+/// Wait for the first output delta, a terminal event, or a stream failure,
+/// then replay the buffered bytes ahead of the rest of the stream.
+async fn first_output(mut stream: ResponseStream) -> Result<ResponseStream, GatewayError> {
+    let mut seen: Vec<Bytes> = Vec::new();
+    let wait = async {
+        let mut decoder = SseDecoder::default();
+        while let Some(item) = stream.next().await {
+            let chunk = match item {
+                Ok(chunk) => chunk,
+                Err(never) => match never {},
+            };
+            let events = decoder.push(&chunk);
+            seen.push(chunk);
+            for event in events {
+                let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
+                    continue;
+                };
+                if let Some(message) = super::cache_shape::stream_failure(&value) {
+                    return Err(GatewayError::Upstream(message));
+                }
+                let terminal = matches!(
+                    value.get("type").and_then(Value::as_str),
+                    Some("response.completed" | "response.incomplete")
+                );
+                if terminal || super::cache_shape::contains_output_delta(&value) {
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    };
+    match tokio::time::timeout(FIRST_OUTPUT_TIMEOUT, wait).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error),
+        Err(_) => {
+            return Err(GatewayError::Upstream(format!(
+                "no output within {}s",
+                FIRST_OUTPUT_TIMEOUT.as_secs()
+            )));
+        }
+    }
+    let buffered = futures_util::stream::iter(seen.into_iter().map(Ok::<Bytes, Infallible>));
+    Ok(buffered.chain(stream).boxed())
 }
 
 static ACTIVITY: LazyLock<Mutex<BTreeMap<String, FailoverActivity>>> = LazyLock::new(|| {

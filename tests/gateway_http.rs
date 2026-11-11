@@ -3176,8 +3176,32 @@ async fn fails_over_to_the_next_model_after_an_upstream_server_error() {
 }
 
 #[tokio::test]
-async fn does_not_fail_over_on_a_client_error() {
-    let (upstream_url, requests) = spawn_failover_upstream(StatusCode::BAD_REQUEST).await;
+async fn fails_over_when_the_stream_reports_an_error_before_output() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let requests_for_route = requests.clone();
+    let upstream = Router::new().route(
+        "/v1/messages",
+        post(move |body: Body| {
+            let requests = requests_for_route.clone();
+            async move {
+                let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+                let body = serde_json::from_slice::<Value>(&body).unwrap();
+                let primary = body["model"] == "DeepSeek-V4-Flash";
+                requests.lock().unwrap().push(body);
+                let sse = if primary {
+                    "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"usage limit reached\"}}\n\n".to_owned()
+                } else {
+                    text_sse()
+                };
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(sse))
+                    .unwrap()
+            }
+        }),
+    );
+    let upstream_url = spawn_router(upstream).await;
     let gateway_url = spawn_gateway_with_config(failover_config(upstream_url)).await;
 
     let response = reqwest::Client::new()
@@ -3188,8 +3212,11 @@ async fn does_not_fail_over_on_a_client_error() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("answering with panel-a-custom"));
+    assert!(body.contains("response.completed"));
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

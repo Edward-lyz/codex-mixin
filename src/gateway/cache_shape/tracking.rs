@@ -543,7 +543,7 @@ impl UpstreamCacheObserver {
 /// Error events that end a stream without a usable reply: Responses
 /// `error`/`response.failed`, Anthropic `error`, and Chat Completions chunks
 /// that carry an `error` object.
-fn stream_failure(value: &Value) -> Option<String> {
+pub(crate) fn stream_failure(value: &Value) -> Option<String> {
     let message = |error: &Value| {
         error
             .get("message")
@@ -640,7 +640,7 @@ impl Drop for UpstreamCacheObserver {
     }
 }
 
-fn contains_output_delta(value: &Value) -> bool {
+pub(crate) fn contains_output_delta(value: &Value) -> bool {
     if value
         .get("delta")
         .and_then(Value::as_str)
