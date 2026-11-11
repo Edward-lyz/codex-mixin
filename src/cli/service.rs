@@ -722,6 +722,16 @@ pub(super) async fn start(
     if let Some(bind) = bind {
         config.bind = bind;
     }
+    if !config.bind.ip().to_canonical().is_loopback()
+        && let Some(key) = codex_mixin::config::ensure_gateway_api_key()?
+    {
+        eprintln!(
+            "Gateway listens on {}. Loopback and private LAN peers need no key; other peers must send this gateway API key (Authorization: Bearer or x-api-key):\n  {key}\nSaved as gateway_api_key in {}.",
+            config.bind,
+            codex_mixin::config::stored_config_path().display()
+        );
+        config.gateway_api_key = Some(key);
+    }
     log_gateway_configuration(&config);
     if daemon {
         return start_daemon(bind, log_file, &config, false);
@@ -740,9 +750,8 @@ pub(super) async fn start(
     let listener = bind_gateway_listener(config.bind, automatic_bind).await?;
     let actual_bind = listener.local_addr()?;
     config.bind = actual_bind;
-    if automatic_bind {
-        persist_gateway_bind(actual_bind)?;
-    }
+    // Persist explicit binds too, so a wider `--bind` survives service restarts.
+    persist_gateway_bind(actual_bind)?;
     let config_path = resolve_codex_config_path(None)?;
     sync_managed_codex_gateway_base_url(&config_path, actual_bind)?;
     // Service start is an explicit client-integration point: push the current

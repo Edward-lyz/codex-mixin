@@ -7,6 +7,28 @@ use subtle::ConstantTimeEq;
 pub const CODEX_CLIENT_KEY_HEADER: &str = "x-codex-mixin-client-key";
 // Set only by the inbound adapter after stripping client-supplied copies.
 pub(crate) const LOOPBACK_PEER_HEADER: &str = "x-codex-mixin-internal-loopback-peer";
+// Set only by the inbound adapter for peers outside loopback and private LAN
+// ranges; those requests must carry the gateway API key.
+pub(crate) const PUBLIC_PEER_HEADER: &str = "x-codex-mixin-internal-public-peer";
+
+/// Loopback and private-LAN peers may use the gateway without a key.
+pub(crate) fn is_trusted_peer(ip: std::net::IpAddr) -> bool {
+    match ip.to_canonical() {
+        std::net::IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local()
+        }
+    }
+}
+
+/// `sk-` prefixed key required from public peers when listening beyond loopback.
+pub(crate) fn generate_gateway_api_key() -> anyhow::Result<String> {
+    let mut bytes = [0_u8; 24];
+    rand::SecureRandom::fill(&rand::SystemRandom::new(), &mut bytes)
+        .map_err(|_| anyhow::anyhow!("generate gateway API key"))?;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!("sk-{hex}"))
+}
 
 pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers

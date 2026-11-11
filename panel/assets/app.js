@@ -865,11 +865,14 @@ function exposureNotice() {
   const open = bind.startsWith("0.0.0.0") || bind.startsWith("[::]");
   const enforced = state.snapshot.panel?.client_auth_build && state.snapshot.gateway_auth_configured;
   if (!open || enforced) return null;
+  const notice = state.snapshot.gateway_auth_configured
+    ? { dot: "is-warn", strong: "网关对局域网开放", note: "本机与局域网设备可直接使用你的 Provider 额度；公网来源须携带访问密钥。只监听本机可用 --bind 127.0.0.1:PORT。" }
+    : { dot: "is-bad", strong: "网关对外监听，但尚未生成访问密钥", note: "公网来源的请求会被拒绝。重启网关会自动生成 sk- 开头的访问密钥。" };
   return h(
     "div",
     { class: "notice", role: "note" },
-    h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }),
-    h("div", null, h("strong", { text: "网关对局域网开放且不校验访问密钥" }), h("div", { class: "card-note", text: "同一网络中的其他设备可以直接使用你的 Provider 额度。需要限制时，使用 client-auth 构建并设置网关密钥，或用 --bind 127.0.0.1:PORT 只监听本机。" })),
+    h("span", { class: `dot ${notice.dot} notice-mark`, "aria-hidden": "true" }),
+    h("div", null, h("strong", { text: notice.strong }), h("div", { class: "card-note", text: notice.note })),
   );
 }
 
@@ -3004,7 +3007,7 @@ RENDERERS.system = () => {
           ["网关版本", status.gateway_version],
           ["网关监听", status.bind || state.snapshot.gateway_bind],
           ["网关访问密钥", state.snapshot.gateway_auth_configured ? "已设置" : "未设置"],
-          ["入站鉴权", panel.client_auth_build ? "client-auth 构建，按密钥校验" : "默认构建，不校验"],
+          ["入站鉴权", panel.client_auth_build ? "所有来源按密钥校验" : "本机与局域网免密钥，公网来源按密钥校验"],
           ["已安装命令", panel.installed_cli_path],
           ["日志文件", status.log],
         ].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value) })]),

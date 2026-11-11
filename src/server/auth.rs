@@ -4,21 +4,28 @@ use super::*;
 /// peer is loopback. Inbound copies are always stripped, so clients cannot
 /// forge it; requests served without connection info never carry it.
 pub(super) use crate::gateway_access::LOOPBACK_PEER_HEADER;
-use crate::gateway_access::bearer_token;
+use crate::gateway_access::{PUBLIC_PEER_HEADER, bearer_token, is_trusted_peer};
 
 pub(super) async fn mark_loopback_peer(
     mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let loopback = request
+    let peer = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .is_some_and(|axum::extract::ConnectInfo(peer)| peer.ip().to_canonical().is_loopback());
+        .map(|axum::extract::ConnectInfo(peer)| peer.ip());
     let headers = request.headers_mut();
     headers.remove(LOOPBACK_PEER_HEADER);
-    if loopback {
+    headers.remove(PUBLIC_PEER_HEADER);
+    if peer.is_some_and(|ip| ip.to_canonical().is_loopback()) {
         headers.insert(
             LOOPBACK_PEER_HEADER,
+            axum::http::HeaderValue::from_static("1"),
+        );
+    }
+    if peer.is_some_and(|ip| !is_trusted_peer(ip)) {
+        headers.insert(
+            PUBLIC_PEER_HEADER,
             axum::http::HeaderValue::from_static("1"),
         );
     }
@@ -31,11 +38,17 @@ pub(super) async fn check_gateway_auth(
 ) -> Result<(), GatewayError> {
     use subtle::ConstantTimeEq;
 
-    if !cfg!(feature = "client-auth") {
+    // Public peers always need a key; client-auth builds also check local ones.
+    let public_peer = headers.contains_key(PUBLIC_PEER_HEADER);
+    if !cfg!(feature = "client-auth") && !public_peer {
         return Ok(());
     }
     let Some(expected) = &state.config.gateway_api_key else {
-        return Ok(());
+        return if public_peer {
+            Err(GatewayError::Unauthorized)
+        } else {
+            Ok(())
+        };
     };
     let Some(actual) = bearer_token(headers) else {
         return Err(GatewayError::Unauthorized);

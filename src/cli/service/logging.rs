@@ -104,10 +104,10 @@ pub(super) fn log_gateway_configuration(config: &GatewayConfig) {
         config_path = %codex_mixin::config::stored_config_path().display(),
         bind = %config.bind,
         provider_count = config.providers.len(),
-        gateway_auth = if cfg!(feature = "client-auth") && config.gateway_api_key.is_some() {
-            "configured"
-        } else {
-            "disabled"
+        gateway_auth = match (config.gateway_api_key.is_some(), cfg!(feature = "client-auth")) {
+            (false, _) => "disabled",
+            (true, true) => "all-peers",
+            (true, false) => "public-peers",
         },
         client_auth = cfg!(feature = "client-auth"),
         "gateway configuration loaded from stored config; runtime environment overrides are disabled"

@@ -42,6 +42,20 @@ pub fn ensure_compaction_secret() -> anyhow::Result<String> {
     secret.ok_or_else(|| anyhow!("compaction secret was not persisted"))
 }
 
+/// Returns the key only when this call generated and persisted it.
+pub fn ensure_gateway_api_key() -> anyhow::Result<Option<String>> {
+    let mut generated = None;
+    mutate_stored_config(|config| {
+        if config.gateway_api_key.is_none() {
+            let key = crate::gateway_access::generate_gateway_api_key()?;
+            config.gateway_api_key = Some(key.clone());
+            generated = Some(key);
+        }
+        Ok(())
+    })?;
+    Ok(generated)
+}
+
 pub fn ensure_gateway_client_key(
     client: crate::gateway_access::GatewayClient,
 ) -> anyhow::Result<String> {

@@ -43,6 +43,41 @@
 
 ---
 
+## 快速开始
+
+### 1. 下载并打开
+
+从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 选择对应平台和架构的发布包，无需安装 Rust 或从源码编译。
+
+| 平台 | 下载与运行 | 图形入口 |
+| --- | --- | --- |
+| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」后启动 | 点击菜单栏图标 →「打开控制台…」 |
+| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
+| Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
+
+Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
+
+### 2. 配置模型并接入 Agent
+
+1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
+2. 刷新模型列表，选择要使用的模型并保存，确认网关已启动。
+3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
+4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
+
+### 3. 查看状态与用量
+
+菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
+
+Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+
+### 网络访问与访问密钥
+
+网关默认只监听本机 `127.0.0.1`。需要让其他设备访问时，用 `codex-mixin service start --bind 0.0.0.0:PORT` 启动（PORT 换成实际端口），监听地址会被保存，重启后保持。
+
+监听本机以外的地址时，网关首次启动会生成一个 `sk-` 开头的访问密钥，打印在终端并保存在配置文件的 `gateway_api_key`。本机和局域网（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16、fc00::/7、fe80::/10）的请求不需要密钥；其他来源必须在 `Authorization: Bearer <key>` 或 `x-api-key` 头里携带密钥，否则返回 401。
+
+---
+
 ## 为什么选 Codex Mixin
 
 Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anthropic 和 Gemini 兼容接口，把请求路由到你配置的供应商。CLI、原生桌面应用和 Web 面板共用同一套核心能力。
@@ -51,7 +86,7 @@ Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anth
   <tr>
     <td width="50%" valign="top">
       <h3>官方生态无缝接入</h3>
-      自定义模型与官方 GPT 并列显示。ChatGPT 登录、历史会话和移动端远程任务照常可用,语音, dots 全都保留
+      自定义模型与官方 GPT 并列显示。ChatGPT 登录、历史会话和移动端远程任务照常可用，语音、dots 全部保留。
     </td>
     <td width="50%" valign="top">
       <h3>一处管理 50 款 Agent</h3>
@@ -64,14 +99,14 @@ Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anth
       在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间无损转换请求与流式响应，处理思考内容与工具调用。
     </td>
     <td width="50%" valign="top">
-      <h3>内置上下文压缩引擎,节省 Token</h3>
-      采用 Billion Context 压缩规则的 3 级上下文引擎，让模型压缩、检索和恢复归档原文。打开后即可节省 Token 的同时。<a href="docs/context-engine.md">了解机制</a>。
+      <h3>内置上下文压缩引擎，节省 Token</h3>
+      采用 Billion Context 压缩规则的 3 级上下文引擎，让模型压缩、检索和恢复归档原文。开启后在压缩历史的同时节省 Token。<a href="docs/context-engine.md">了解机制</a>。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>用量缓存,尽在掌握</h3>
-      本地保留最近 5,000 条回复，查看 Token、缓存命中、首字延迟与输出速度；菜单栏或托盘可以直接看供应商额度。
+      <h3>用量缓存，尽在掌握</h3>
+      本地保留最近 100,000 次回复（每次查询最多返回 5,000 条），查看 Token、缓存命中、首字延迟与输出速度；菜单栏或托盘可以直接看供应商额度。
     </td>
     <td width="50%" valign="top">
       <h3>极致性能</h3>
@@ -82,7 +117,7 @@ Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anth
 
 ---
 
-## 实测对比 [NEW]
+## 实测对比
 Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 同时连接本机受控 HTTP/SSE 上游。每请求携带 **1,000,000 文本 token + 2 张 1024 × 768 PNG**。每个主会话启动 4 个子会话，0 / 2 / 4 / 8 个主会话对应每款产品 0 / 10 / 20 / 40 路活动请求。
 
 | 测量项 | Codex Mixin | CC Switch | Magpie |
@@ -171,25 +206,33 @@ WinUI 3 控制台管理模型、Agent、用量和上下文，托盘随时查看�
 | 预设 | 供应商 | 上游协议 | 鉴权 |
 | --- | --- | --- | --- |
 | `openai` | OpenAI 官方 | OpenAI Responses | ChatGPT OAuth |
+| `claude-code` | Claude Code | Anthropic Messages | 复用本机 Claude Code 登录，经内置 PTY／ConPTY 桥接调用官方 `claude` |
 | `baidu-oneapi` | Baidu OneAPI | Anthropic Messages；GPT 系列走 OpenAI Responses | API Key |
 | `openrouter` | OpenRouter | OpenAI Chat Completions | API Key |
 | `deepseek` | DeepSeek | OpenAI Responses | API Key |
 | `agy` | Google Antigravity | Gemini | Google OAuth |
+| `agy-business` | Antigravity Business | Gemini | Google OAuth 或 GCP ADC 凭据，需填项目与区域 |
+| `kiro` | Kiro | Anthropic Messages | 复用本机 Kiro / `kiro-cli` 登录 |
 | `opencode-go` | OpenCode Go | OpenAI Responses | API Key，自动附加会话亲和 Header |
 | `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API Key 或 AWS 访问密钥 |
 | `custom` | 任意兼容端点 | OpenAI Responses（默认） | 自定义 Header 与 Key |
 
 添加后可在界面中测试连接、刷新模型列表，并从模型操作菜单重新探测能力；探测会发送真实请求，可能消耗额度。
 
----
+### Claude Code 订阅
 
 Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／ConPTY 桥接运行官方交互式 `claude`，支持流式输出、MCP 工具往返和进程内会话复用。无需安装 Magpie；不会自动退回 `claude -p`。此路径需要安装 Claude Code，流式采集依赖其 Bun 运行时；运行时不兼容时会明确报错。
+
+---
 
 ## Agent 接入
 
 50 款 Agent 均提供接入或原生模型管理。47 款支持网关配置或原生应用接入，断开时恢复托管字段并保留无关配置。Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型，不经过自定义模型网关。
 
 ### 已支持 Agent（50 款）
+
+<details>
+<summary>展开 50 款 Agent 列表</summary>
 
 <table>
   <tr>
@@ -414,34 +457,7 @@ Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／Con
   </tr>
 </table>
 
----
-
-## 快速开始
-
-### 1. 下载并打开
-
-从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 选择对应平台和架构的发布包，无需安装 Rust 或从源码编译。
-
-| 平台 | 下载与运行 | 图形入口 |
-| --- | --- | --- |
-| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」后启动 | 点击菜单栏图标 →「打开控制台…」 |
-| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
-| Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
-
-Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
-
-### 2. 配置模型并接入 Agent
-
-1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
-2. 刷新模型列表，选择要使用的模型并保存，确认网关已启动。
-3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
-4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
-
-### 3. 查看状态与用量
-
-菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
-
-Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+</details>
 
 ---
 
@@ -518,4 +534,4 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
 
 ## 许可证
 
-本项目采用 [Codex Mixin Source Code Viewing License 1.0](LICENSE)，第三方声明见 [NOTICE](NOTICE)。
+本项目以 [CC BY-NC 4.0](LICENSE) 授权：可以自由使用、修改和再分发，需署名，不得用于商业目的。商业授权请联系作者。第三方声明见 [NOTICE](NOTICE)。
