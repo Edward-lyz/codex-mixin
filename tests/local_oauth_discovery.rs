@@ -110,3 +110,74 @@ fn desktop_discovers_claude_setup_token_from_login_shell() {
     );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("fixture-setup-token"));
 }
+
+/// A profile hook that never returns (a tool blocked on the OS) must not
+/// outlive the bounded login-shell read: the timeout ends the shell's whole
+/// process group, not only the shell.
+#[cfg(unix)]
+#[test]
+fn hung_login_shell_leaves_no_helper_process_behind() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    struct Helper(String);
+    impl Helper {
+        fn running(&self) -> bool {
+            // A zombie still answers `kill -0`; only a live state counts.
+            Command::new("ps")
+                .args(["-o", "stat=", "-p", &self.0])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+                .is_ok_and(|state| !state.is_empty() && !state.starts_with('Z'))
+        }
+    }
+    impl Drop for Helper {
+        fn drop(&mut self) {
+            if self.running() {
+                let _ = Command::new("kill").args(["-9", &self.0]).status();
+            }
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let pid_file = root.path().join("helper.pid");
+    // The "shell" starts a helper like a hook in the user's profile, records
+    // its PID and waits for it forever.
+    let shell = root.path().join("hung-shell");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nsleep 600 &\necho $! > '{}'\nwait\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let output = common::cli(root.path())
+        .env("SHELL", &shell)
+        .args(["--no-tui", "providers", "list", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let helper = Helper(
+        std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .to_owned(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while helper.running() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !helper.running(),
+        "the timed-out login shell left its helper process running"
+    );
+}
