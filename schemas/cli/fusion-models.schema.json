@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/fusion-models.schema.json",
+  "title": "codex-mixin fusion models --json",
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "provider_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "models"
+  ]
+}

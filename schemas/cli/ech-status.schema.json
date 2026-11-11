@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/ech-status.schema.json",
+  "title": "codex-mixin ech status --json",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean"
+    },
+    "fallback_reason": {
+      "type": "null"
+    },
+    "doh_url": {
+      "type": "string"
+    },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "doh_url",
+    "enabled",
+    "fallback_reason",
+    "hosts"
+  ]
+}

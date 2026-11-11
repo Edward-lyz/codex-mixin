@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/config-keys-list.schema.json",
+  "title": "codex-mixin config keys list --json",
+  "type": "object",
+  "properties": {
+    "keys": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "keys"
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/doctor.schema.json",
+  "title": "codex-mixin doctor --quick --json",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "generated_at_ms": {
+      "type": "integer"
+    },
+    "config_path": {
+      "type": "string"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "fix_hint": {
+            "type": "string"
+          },
+          "auto_fixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "selected_model_count": {
+            "type": "integer"
+          },
+          "routable_model_count": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "paid_inference_performed": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "integer"
+        },
+        "errors": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "required": [
+    "checks",
+    "config_path",
+    "generated_at_ms",
+    "ok",
+    "providers",
+    "summary"
+  ]
+}

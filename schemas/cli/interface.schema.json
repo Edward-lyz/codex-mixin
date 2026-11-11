@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/interface.schema.json",
+  "title": "codex-mixin interface --json",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "agent_management": {
+          "type": "boolean"
+        },
+        "agent_versions": {
+          "type": "boolean"
+        },
+        "claude_desktop_routing": {
+          "type": "boolean"
+        },
+        "cli_update": {
+          "type": "boolean"
+        },
+        "codex_lifecycle": {
+          "type": "boolean"
+        },
+        "config_apply": {
+          "type": "boolean"
+        },
+        "context_compact_export": {
+          "type": "boolean"
+        },
+        "context_management": {
+          "type": "boolean"
+        },
+        "cors_configuration": {
+          "type": "boolean"
+        },
+        "fusion_model_options": {
+          "type": "boolean"
+        },
+        "gateway_autostart": {
+          "type": "boolean"
+        },
+        "login_stdio": {
+          "type": "boolean"
+        },
+        "model_ordering": {
+          "type": "boolean"
+        },
+        "model_routes": {
+          "type": "boolean"
+        },
+        "official_ech_proxy": {
+          "type": "boolean"
+        },
+        "provider_oauth_login": {
+          "type": "boolean"
+        },
+        "service_lifecycle": {
+          "type": "boolean"
+        },
+        "structured_errors": {
+          "type": "boolean"
+        }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "codex_models_cache": {
+          "type": "string"
+        },
+        "config": {
+          "type": "string"
+        },
+        "context_db": {
+          "type": "string"
+        },
+        "gateway_log": {
+          "type": "string"
+        },
+        "report_log": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      }
+    },
+    "protocol_version": {
+      "type": "integer"
+    },
+    "provider_catalog": {
+      "type": "object",
+      "properties": {
+        "default_aws_region": {
+          "type": "string"
+        },
+        "default_preset": {
+          "type": "string"
+        },
+        "default_protocol": {
+          "type": "string"
+        },
+        "oauth_timeout_seconds": {
+          "type": "integer"
+        },
+        "presets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "allow_multiple": {
+                "type": "boolean"
+              },
+              "api_key_required": {
+                "type": "boolean"
+              },
+              "auth_mode": {
+                "type": "string"
+              },
+              "credential_url": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "custom_endpoint": {
+                "type": "boolean"
+              },
+              "default_id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "protocol": {
+                "type": "string"
+              },
+              "quota_credentials_required": {
+                "type": "boolean"
+              },
+              "quota_username_required": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "protocols": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "api_path": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capabilities",
+    "paths",
+    "protocol_version",
+    "provider_catalog",
+    "version"
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/context-config-get.schema.json",
+  "title": "codex-mixin context config get --json",
+  "type": "object",
+  "properties": {
+    "config_path": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "context_window_tokens": {
+          "type": "null"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "growth_threshold_tokens": {
+          "type": "integer"
+        },
+        "guidance_only": {
+          "type": "boolean"
+        },
+        "max_internal_rounds": {
+          "type": "integer"
+        },
+        "max_tier": {
+          "type": "integer"
+        },
+        "pressure_ratio": {
+          "type": "number"
+        },
+        "protected_messages": {
+          "type": "integer"
+        },
+        "protected_tokens": {
+          "type": "integer"
+        },
+        "urgent_ratio": {
+          "type": "number"
+        }
+      }
+    },
+    "database_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "config_path",
+    "context",
+    "database_path"
+  ]
+}

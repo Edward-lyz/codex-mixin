@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/codex-status.schema.json",
+  "title": "codex-mixin codex-status --json",
+  "type": "object",
+  "properties": {
+    "integration": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "gateway_required": {
+      "type": "boolean"
+    },
+    "restore_mode": {
+      "type": "null"
+    }
+  },
+  "required": [
+    "gateway_required",
+    "integration",
+    "mode",
+    "restore_mode"
+  ]
+}

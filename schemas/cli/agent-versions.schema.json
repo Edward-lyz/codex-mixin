@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/agent-versions.schema.json",
+  "title": "codex-mixin agent versions --json",
+  "type": "object",
+  "properties": {
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cli": {
+            "type": "object",
+            "properties": {
+              "app_path": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "app_version": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "command": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "error": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "latest": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "path": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "update": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "via": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            }
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "agents"
+  ]
+}
