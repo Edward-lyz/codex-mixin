@@ -62,6 +62,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; st
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
+const I18N_JS: &str = include_str!("assets/i18n.js");
 const LOGO_PNG: &[u8] = include_bytes!("assets/logo.png");
 const MONO_FONT: &[u8] = include_bytes!("assets/fonts/GitLabMono.woff2");
 /// Immutable binary assets (logo, font, agent icons) may be cached.
@@ -140,6 +141,10 @@ pub(super) fn router(state: Shared) -> Router {
         .route(
             "/app.css",
             get(|| async { asset("text/css; charset=utf-8", APP_CSS) }),
+        )
+        .route(
+            "/i18n.js",
+            get(|| async { asset("text/javascript; charset=utf-8", I18N_JS) }),
         )
         .route(
             "/app.js",
