@@ -34,6 +34,7 @@ pub(super) async fn compact(
     if let Some(response) = context_checkpoint_response(&state, &headers, &body).await? {
         return Ok(response);
     }
+    let body = expand_archived_checkpoints(&state, &headers, body).await?;
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -141,6 +142,41 @@ pub(super) async fn context_checkpoint_response(
         .await?
         .map(|response| compaction_http_response(response, stream))
         .transpose()
+}
+
+/// With context management off, a session that still holds checkpoints is
+/// restored from its archive before compaction, the same way an ordinary turn
+/// is, so the new summary keeps the archived history.
+async fn expand_archived_checkpoints(
+    state: &AppState,
+    headers: &HeaderMap,
+    mut body: Value,
+) -> Result<Value, GatewayError> {
+    let Some(engine) = state.gateway.context_engine() else {
+        return Ok(body);
+    };
+    let has_checkpoint = body
+        .get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(checkpoint::is_checkpoint_item));
+    if !has_checkpoint {
+        return Ok(body);
+    }
+    let Some(session) = crate::gateway::context_session(state.gateway.as_ref(), headers, &body)?
+    else {
+        return Ok(body);
+    };
+    let _lease = engine
+        .acquire_lease(&session)
+        .await
+        .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
+    let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
+    let view = crate::gateway::context_input(&engine, &session, &body, window_tokens).await?;
+    body["input"] = Value::Array(view.items);
+    if let Some(object) = body.as_object_mut() {
+        object.remove("previous_response_id");
+    }
+    Ok(body)
 }
 
 pub(super) async fn context_checkpoint(

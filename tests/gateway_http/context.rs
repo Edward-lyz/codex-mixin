@@ -1167,7 +1167,7 @@ async fn context_chained_request_continues_after_expired_compressed_bodies() {
     );
 }
 
-async fn request_context_checkpoint(gateway_url: &str, session: &str) -> String {
+pub(crate) async fn request_context_checkpoint(gateway_url: &str, session: &str) -> String {
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses/compact"))
         .bearer_auth("gateway-key")
