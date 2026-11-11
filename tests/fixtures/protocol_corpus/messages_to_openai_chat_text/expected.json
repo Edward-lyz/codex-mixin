@@ -1,0 +1,89 @@
+{
+  "client_events": [
+    {
+      "message": {
+        "content": [],
+        "id": "<volatile>",
+        "model": "DeepSeek-V4-Flash-custom",
+        "role": "assistant",
+        "stop_reason": null,
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      },
+      "type": "message_start"
+    },
+    {
+      "content_block": {
+        "text": "",
+        "type": "text"
+      },
+      "index": 0,
+      "type": "content_block_start"
+    },
+    {
+      "delta": {
+        "text": "hello",
+        "type": "text_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "delta": {
+        "text": " openai",
+        "type": "text_delta"
+      },
+      "index": 0,
+      "type": "content_block_delta"
+    },
+    {
+      "index": 0,
+      "type": "content_block_stop"
+    },
+    {
+      "delta": {
+        "stop_reason": "end_turn",
+        "stop_sequence": null
+      },
+      "type": "message_delta",
+      "usage": {
+        "output_tokens": 2
+      }
+    },
+    {
+      "type": "message_stop"
+    }
+  ],
+  "upstream_requests": [
+    {
+      "body": {
+        "max_tokens": 256,
+        "messages": [
+          {
+            "content": "You are terse.",
+            "role": "system"
+          },
+          {
+            "content": [
+              {
+                "text": "say hi",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "model": "DeepSeek-V4-Flash",
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "path": "/v1/chat/completions"
+    }
+  ]
+}

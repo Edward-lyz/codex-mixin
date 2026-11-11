@@ -1,6 +1,6 @@
 # Tests whose behavior changes when the client-auth feature is enabled.
 # scope|source|fully qualified test name
 cors|tests/cors.rs|cors_covers_success_and_errors
-gateway_http|tests/gateway_http.rs|claude_desktop_auth_obeys_build_feature
-gateway_http|tests/gateway_http.rs|responses_auth_obeys_build_feature
+gateway_http|tests/gateway_http/auth.rs|auth::claude_desktop_auth_obeys_build_feature
+gateway_http|tests/gateway_http/auth.rs|auth::responses_auth_obeys_build_feature
 gateway_startup|tests/gateway_startup.rs|running_gateway_serves_a_rotated_client_key

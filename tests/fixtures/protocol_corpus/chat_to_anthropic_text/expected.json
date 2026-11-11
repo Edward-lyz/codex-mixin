@@ -1,0 +1,90 @@
+{
+  "client_events": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "",
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<volatile>",
+      "id": "<volatile>",
+      "model": "DeepSeek-V4-Flash-custom",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<volatile>",
+      "id": "<volatile>",
+      "model": "DeepSeek-V4-Flash-custom",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " codex"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<volatile>",
+      "id": "<volatile>",
+      "model": "DeepSeek-V4-Flash-custom",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<volatile>",
+      "id": "<volatile>",
+      "model": "DeepSeek-V4-Flash-custom",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "upstream_requests": [
+    {
+      "body": {
+        "max_tokens": 8192,
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "say hi",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "model": "DeepSeek-V4-Flash",
+        "stream": true,
+        "system": [
+          {
+            "text": "You are terse.",
+            "type": "text"
+          }
+        ]
+      },
+      "path": "/v1/messages"
+    }
+  ]
+}

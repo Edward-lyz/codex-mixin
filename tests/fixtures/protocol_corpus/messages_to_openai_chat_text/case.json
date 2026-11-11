@@ -1,0 +1,17 @@
+{
+  "endpoint": "/v1/messages",
+  "protocol": "open_ai_chat",
+  "api_path": "/v1/chat/completions",
+  "request": {
+    "model": "DeepSeek-V4-Flash-custom",
+    "stream": true,
+    "max_tokens": 256,
+    "system": "You are terse.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "say hi"
+      }
+    ]
+  }
+}

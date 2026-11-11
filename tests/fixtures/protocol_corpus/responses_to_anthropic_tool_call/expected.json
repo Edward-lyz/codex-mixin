@@ -1,0 +1,226 @@
+{
+  "client_events": [
+    {
+      "response": {
+        "created_at": "<volatile>",
+        "error": null,
+        "id": "<volatile>",
+        "incomplete_details": null,
+        "instructions": "You are Codex.",
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "DeepSeek-V4-Flash-custom",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": null,
+        "status": "in_progress",
+        "store": false,
+        "temperature": null,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "description": "run shell",
+            "name": "exec_command",
+            "parameters": {
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "function"
+          }
+        ],
+        "top_p": null,
+        "truncation": null,
+        "usage": null,
+        "user": null
+      },
+      "type": "response.created"
+    },
+    {
+      "response": {
+        "created_at": "<volatile>",
+        "error": null,
+        "id": "<volatile>",
+        "incomplete_details": null,
+        "instructions": "You are Codex.",
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "DeepSeek-V4-Flash-custom",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": null,
+        "status": "in_progress",
+        "store": false,
+        "temperature": null,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "description": "run shell",
+            "name": "exec_command",
+            "parameters": {
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "function"
+          }
+        ],
+        "top_p": null,
+        "truncation": null,
+        "usage": null,
+        "user": null
+      },
+      "type": "response.in_progress"
+    },
+    {
+      "item": {
+        "arguments": "{\"cmd\":\"ls\"}",
+        "call_id": "toolu_1",
+        "id": "<volatile>",
+        "name": "exec_command",
+        "status": "completed",
+        "type": "function_call"
+      },
+      "output_index": 0,
+      "type": "response.output_item.added"
+    },
+    {
+      "item": {
+        "arguments": "{\"cmd\":\"ls\"}",
+        "call_id": "toolu_1",
+        "id": "<volatile>",
+        "name": "exec_command",
+        "status": "completed",
+        "type": "function_call"
+      },
+      "output_index": 0,
+      "type": "response.output_item.done"
+    },
+    {
+      "response": {
+        "created_at": "<volatile>",
+        "error": null,
+        "id": "<volatile>",
+        "incomplete_details": null,
+        "instructions": "You are Codex.",
+        "max_output_tokens": null,
+        "metadata": {},
+        "model": "DeepSeek-V4-Flash-custom",
+        "object": "response",
+        "output": [
+          {
+            "arguments": "{\"cmd\":\"ls\"}",
+            "call_id": "toolu_1",
+            "id": "<volatile>",
+            "name": "exec_command",
+            "status": "completed",
+            "type": "function_call"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "previous_response_id": null,
+        "reasoning": null,
+        "status": "completed",
+        "store": false,
+        "temperature": null,
+        "text": {
+          "format": {
+            "type": "text"
+          }
+        },
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "description": "run shell",
+            "name": "exec_command",
+            "parameters": {
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "function"
+          }
+        ],
+        "top_p": null,
+        "truncation": null,
+        "usage": {
+          "input_tokens": 10,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 5,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 15
+        },
+        "user": null
+      },
+      "type": "response.completed"
+    }
+  ],
+  "upstream_requests": [
+    {
+      "body": {
+        "max_tokens": 8192,
+        "messages": [
+          {
+            "content": [
+              {
+                "text": "say hi",
+                "type": "text"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "model": "DeepSeek-V4-Flash",
+        "stream": true,
+        "system": [
+          {
+            "text": "You are Codex.",
+            "type": "text"
+          }
+        ],
+        "tools": [
+          {
+            "description": "run shell",
+            "input_schema": {
+              "properties": {
+                "cmd": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "name": "exec_command"
+          }
+        ]
+      },
+      "path": "/v1/messages"
+    }
+  ]
+}

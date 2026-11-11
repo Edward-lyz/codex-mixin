@@ -1,0 +1,6 @@
+data: {"id": "chatcmpl_2", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "exec_command", "arguments": ""}}]}, "finish_reason": null}]}
+
+data: {"id": "chatcmpl_2", "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"cmd\":\"ls\"}"}}]}, "finish_reason": "tool_calls"}], "usage": {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9}}
+
+data: [DONE]
+
