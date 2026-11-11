@@ -1,11 +1,11 @@
 cask "codex-mixin" do
   arch arm: "aarch64", intel: "x86_64"
 
-  version "0.8.0"
-  sha256 arm:   "044fb47644c04b41e06bfc93baeab49efe0b35268996c116d61ae34d9e1ac55c",
-         intel: "94ee344067c985a7253596eb5c4cbefad9814a09e1d1765b1f72403b220eaa8b"
+  version "0.8.1"
+  sha256 arm:   "a9f56ff175ce2461af869ed54ed73b938df0826cebd25873b9b66f237613073a",
+         intel: "000d54f786090746ea76390197679527af47e87201bfbcfb7975de116d21879f"
 
-  url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.0/codex-mixin-#{version}-#{arch}-apple-darwin.dmg"
+  url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.1/codex-mixin-#{version}-#{arch}-apple-darwin.dmg"
   name "Codex Mixin"
   desc "Menu bar app for the Codex Mixin model gateway"
   homepage "https://github.com/Edward-lyz/codex-mixin"
