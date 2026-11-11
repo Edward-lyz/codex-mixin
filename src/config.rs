@@ -36,9 +36,10 @@ pub use storage::{
 
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
 
-/// Default listener: loopback only, with an automatically chosen port.
-/// Binding wider generates a gateway API key that public peers must send.
-pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:0";
+/// Default listener: loopback only on port 8317, falling back to a free port
+/// in 8000-9000 when it is taken. Binding wider generates a gateway API key
+/// that public peers must send.
+pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:8317";
 
 /// Address clients should dial for a gateway listening on `bind`.
 ///

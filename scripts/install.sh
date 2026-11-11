@@ -53,6 +53,25 @@ trap 'rm -rf "$work"' EXIT INT TERM
 echo "Downloading Codex Mixin $version ($target)"
 curl -fL --progress-bar -o "$work/$archive" "$REPO_URL/releases/download/v$version/$archive" \
   || fail "download failed: $REPO_URL/releases/download/v$version/$archive"
+
+# Verify the archive against the release's SHA256SUMS. Releases published before
+# checksums existed have no such file; warn and continue for those.
+if curl -fsSL -o "$work/SHA256SUMS" "$REPO_URL/releases/download/v$version/SHA256SUMS" 2>/dev/null; then
+  expected="$(awk -v f="$archive" '$2 == f || $2 == "*" f { print $1; exit }' "$work/SHA256SUMS")"
+  [ -n "$expected" ] || fail "SHA256SUMS has no entry for $archive"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$work/$archive" | awk '{ print $1 }')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$work/$archive" | awk '{ print $1 }')"
+  else
+    fail "sha256sum or shasum is required to verify the download"
+  fi
+  [ "$actual" = "$expected" ] || fail "checksum mismatch for $archive (expected $expected, got $actual); aborting"
+  echo "Checksum verified"
+else
+  echo "Warning: this release has no SHA256SUMS; skipping checksum verification" >&2
+fi
+
 tar -xzf "$work/$archive" -C "$work"
 binary="$work/codex-mixin-cli-$version-$target/codex-mixin"
 [ -f "$binary" ] || fail "archive has no codex-mixin executable"

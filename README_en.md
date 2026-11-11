@@ -64,15 +64,25 @@ The Linux archive contains a ready-to-run binary. Run it from the extracted dire
 3. Open the Agents page and connect an installed client. For Codex, choose Official Account mode to keep official GPT models and ChatGPT sign-in.
 4. Restart the client or open a new session, then select a custom model.
 
+### 30-second CLI path
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
+codex-mixin provider add --preset deepseek --key sk-...   # discovers models automatically
+codex-mixin connect codex
+codex-mixin service start
+curl http://127.0.0.1:8317/v1/models                      # a model list means it works
+```
+
 ### 3. Check status and usage
 
 Use the menu bar or tray for gateway status and provider quota. Open Usage in the console for daily and per-reply Tokens, cache results, and speed. Disconnect an Agent to restore its original configuration.
 
-The Web panel listens on all interfaces on a random port from 8000 to 9000 and requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
+The Web panel listens on all interfaces on port 8318 (falling back to a free port in 8000–9000 if 8318 is taken) and still requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
 
 ### Network access and gateway key
 
-The gateway listens only on `127.0.0.1` by default. To let other devices connect, start it with `codex-mixin service start --bind 0.0.0.0:PORT` (replace PORT with the actual port); the listen address is saved and kept across restarts.
+The gateway listens on `127.0.0.1:8317` by default (falling back to a free port in 8000–9000 if 8317 is taken). The gateway listens only on `127.0.0.1` by default. To let other devices connect, start it with `codex-mixin service start --bind 0.0.0.0:PORT` (replace PORT with the actual port); the listen address is saved and kept across restarts.
 
 When the gateway listens beyond localhost, the first start generates an `sk-` access key, prints it to the terminal, and saves it as `gateway_api_key` in the configuration file. Requests from the local machine and private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10) need no key; any other source must send the key in the `Authorization: Bearer <key>` or `x-api-key` header, or the gateway returns 401.
 
@@ -81,6 +91,16 @@ When the gateway listens beyond localhost, the first start generates an `sk-` ac
 ## Why Codex Mixin
 
 Codex Mixin is a local gateway with a Rust core. It routes requests to your configured providers through OpenAI-, Anthropic-, and Gemini-compatible interfaces. The CLI, native desktop apps, and Web panel share the same core.
+
+```mermaid
+flowchart LR
+  A["Agents / clients<br/>Codex · Claude Code · OpenCode …"] --> M
+  subgraph M["Codex Mixin"]
+    direction TB
+    P["Protocol conversion"] --- R["Routing & failover"] --- C["Context engine"]
+  end
+  M --> V["Providers<br/>DeepSeek · OpenRouter · official APIs …"]
+```
 
 <table>
   <tr>
@@ -507,7 +527,7 @@ Yes. Connect Codex in Official Account mode. Custom models join the official mod
 <details>
 <summary>How do I use the panel on a remote Linux machine?</summary>
 
-Extract the release archive and run `./codex-mixin panel`. Keep the process running and open the printed address using a reachable host address. The panel listens on all interfaces on a random port from 8000 to 9000 and requires the token generated at startup. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) and [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security).
+Extract the release archive and run `./codex-mixin panel`. Keep the process running and open the printed address using a reachable host address. The panel listens on all interfaces on port 8318 (falling back to a free port in 8000–9000 if taken) and requires the token generated at startup. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) and [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security).
 
 </details>
 

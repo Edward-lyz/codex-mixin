@@ -253,11 +253,11 @@ pub(super) enum Command {
         )]
         no_client_sync: bool,
     },
-    /// Open the web control panel (random port in 8000-9000 on all interfaces).
+    /// Open the web control panel (all interfaces, port 8318 or a free port in 8000-9000).
     Panel {
         #[arg(
             long,
-            help = "Listen address; defaults to all interfaces on a random port in 8000-9000"
+            help = "Listen address; defaults to all interfaces on port 8318, or a free port in 8000-9000 when taken"
         )]
         bind: Option<SocketAddr>,
     },

@@ -12,9 +12,10 @@ use std::sync::Arc;
 
 use anyhow::Context;
 
-/// Default panel listener: all interfaces so remote machines can manage
-/// a headless host. Every API call still needs the per-start token.
-const DEFAULT_PANEL_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
+/// Default panel listener: all interfaces on port 8318 so remote machines can
+/// manage a headless host; a taken port falls back to a free one in 8000-9000.
+/// Every API call still needs the per-start token.
+const DEFAULT_PANEL_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8318);
 /// Only used to learn the primary LAN address; no packet is sent.
 const ROUTE_PROBE_TARGET: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 0, 2, 1), 9);
 

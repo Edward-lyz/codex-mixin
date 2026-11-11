@@ -64,15 +64,25 @@ Linux 压缩包内含可直接运行的二进制；进入解压后的目录执�
 3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
 4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
 
+### 命令行 30 秒上手
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Edward-lyz/codex-mixin/main/scripts/install.sh | sh
+codex-mixin provider add --preset deepseek --key sk-...   # 自动发现模型
+codex-mixin connect codex
+codex-mixin service start
+curl http://127.0.0.1:8317/v1/models                      # 返回模型列表即成功
+```
+
 ### 3. 查看状态与用量
 
 菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
 
-Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+Web 面板默认监听所有网卡的 8318 端口（端口被占用时回退到 8000–9000 的空闲端口），访问仍需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
 
 ### 网络访问与访问密钥
 
-网关默认只监听本机 `127.0.0.1`。需要让其他设备访问时，用 `codex-mixin service start --bind 0.0.0.0:PORT` 启动（PORT 换成实际端口），监听地址会被保存，重启后保持。
+网关默认只监听本机 `127.0.0.1:8317`（端口被占用时回退到 8000–9000 的空闲端口）。需要让其他设备访问时，用 `codex-mixin service start --bind 0.0.0.0:PORT` 启动（PORT 换成实际端口），监听地址会被保存，重启后保持。
 
 监听本机以外的地址时，网关首次启动会生成一个 `sk-` 开头的访问密钥，打印在终端并保存在配置文件的 `gateway_api_key`。本机和局域网（10.0.0.0/8、172.16.0.0/12、192.168.0.0/16、169.254.0.0/16、fc00::/7、fe80::/10）的请求不需要密钥；其他来源必须在 `Authorization: Bearer <key>` 或 `x-api-key` 头里携带密钥，否则返回 401。
 
@@ -81,6 +91,16 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
 ## 为什么选 Codex Mixin
 
 Codex Mixin 是 Rust 为核心编写的本地模型网关，通过 OpenAI、Anthropic 和 Gemini 兼容接口，把请求路由到你配置的供应商。CLI、原生桌面应用和 Web 面板共用同一套核心能力。
+
+```mermaid
+flowchart LR
+  A["Agent / 客户端<br/>Codex · Claude Code · OpenCode …"] --> M
+  subgraph M["Codex Mixin"]
+    direction TB
+    P["协议转换"] --- R["路由与故障转移"] --- C["上下文引擎"]
+  end
+  M --> V["供应商<br/>DeepSeek · OpenRouter · 官方 API …"]
+```
 
 <table>
   <tr>
@@ -506,7 +526,7 @@ Claude Code 订阅会自动复用本机登录，通过 mixin 内置的 PTY／Con
 <details>
 <summary>远程 Linux 开发机怎么打开面板？</summary>
 
-解压发布包后运行 `./codex-mixin panel`，保持进程运行，使用可访问的主机地址打开终端打印的面板地址。面板默认监听所有网卡的 8000–9000 随机端口，需要本次启动生成的 Token。详见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 和 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+解压发布包后运行 `./codex-mixin panel`，保持进程运行，使用可访问的主机地址打开终端打印的面板地址。面板默认监听所有网卡的 8318 端口（被占用时回退到 8000–9000 的空闲端口），需要本次启动生成的 Token。详见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 和 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
 
 </details>
 

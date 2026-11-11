@@ -15,7 +15,7 @@ pub(super) async fn bind(address: SocketAddr, automatic: bool) -> anyhow::Result
             .await
             .with_context(|| format!("bind listener on {address}"));
     }
-    // Keep a saved in-range endpoint stable so managed clients need no rewrite.
+    // Prefer the saved or default in-range port so managed clients need no rewrite.
     if (FIRST_PORT..=LAST_PORT).contains(&address.port()) {
         match TcpListener::bind(address).await {
             Ok(listener) => return Ok(listener),
