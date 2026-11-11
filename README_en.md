@@ -63,8 +63,6 @@ You can also install with a package manager or a container:
 # macOS / Linux: Homebrew (CLI; use --cask for the desktop app)
 brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # or: brew install --cask codex-mixin
-# Windows: winget
-winget install EdwardLyz.CodexMixin
 # Docker: 8317 is the gateway, 8318 the control panel; get the panel URL and token from docker logs codex-mixin
 docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Write Homebrew and winget manifests for a published release.
+# Write Homebrew formula and cask for a published release.
 # usage: package-managers.sh <version> <release-dir> <out-dir>
 set -euo pipefail
 
@@ -29,9 +29,8 @@ cli_linux_arm="codex-mixin-cli-$VERSION-aarch64-unknown-linux-musl.tar.gz"
 cli_linux_x64="codex-mixin-cli-$VERSION-x86_64-unknown-linux-musl.tar.gz"
 dmg_arm="codex-mixin-$VERSION-aarch64-apple-darwin.dmg"
 dmg_x64="codex-mixin-$VERSION-x86_64-apple-darwin.dmg"
-setup="codex-mixin-$VERSION-windows-x86_64-setup.exe"
 
-mkdir -p "$OUT_DIR/Formula" "$OUT_DIR/Casks" "$OUT_DIR/winget"
+mkdir -p "$OUT_DIR/Formula" "$OUT_DIR/Casks"
 
 cat >"$OUT_DIR/Formula/codex-mixin.rb" <<EOF
 class CodexMixin < Formula
@@ -102,44 +101,3 @@ cask "codex-mixin" do
 end
 EOF
 
-# winget multi-file manifest (schema 1.6) for the NSIS installer.
-id="EdwardLyz.CodexMixin"
-winget_dir="$OUT_DIR/winget/manifests/e/EdwardLyz/CodexMixin/$VERSION"
-mkdir -p "$winget_dir"
-cat >"$winget_dir/$id.yaml" <<EOF
-PackageIdentifier: $id
-PackageVersion: $VERSION
-DefaultLocale: en-US
-ManifestType: version
-ManifestVersion: 1.6.0
-EOF
-cat >"$winget_dir/$id.installer.yaml" <<EOF
-PackageIdentifier: $id
-PackageVersion: $VERSION
-InstallerType: nullsoft
-Scope: machine
-ElevationRequirement: elevatesSelf
-UpgradeBehavior: install
-ProductCode: CodexMixin
-Installers:
-  - Architecture: x64
-    InstallerUrl: $BASE_URL/$setup
-    InstallerSha256: $(sha "$setup" | tr '[:lower:]' '[:upper:]')
-ManifestType: installer
-ManifestVersion: 1.6.0
-EOF
-cat >"$winget_dir/$id.locale.en-US.yaml" <<EOF
-PackageIdentifier: $id
-PackageVersion: $VERSION
-PackageLocale: en-US
-Publisher: Edward-lyz
-PublisherUrl: https://github.com/Edward-lyz
-PackageName: Codex Mixin
-PackageUrl: https://github.com/$REPO
-License: CC-BY-NC-4.0
-LicenseUrl: https://github.com/$REPO/blob/main/LICENSE
-ShortDescription: Local gateway that lets Codex, Claude Code and other agents use any model.
-ReleaseNotesUrl: https://github.com/$REPO/releases/tag/v$VERSION
-ManifestType: defaultLocale
-ManifestVersion: 1.6.0
-EOF

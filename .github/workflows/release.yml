@@ -190,7 +190,6 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/package-managers.sh "${{ needs.version.outputs.version }}" dist/release "$RUNNER_TEMP/pm"
-          tar -C "$RUNNER_TEMP/pm" -czf "dist/release/codex-mixin-${{ needs.version.outputs.version }}-winget-manifests.tar.gz" winget
           cp -R "$RUNNER_TEMP/pm/Formula" "$RUNNER_TEMP/pm/Casks" .
       - name: Write SHA256SUMS
         shell: bash
@@ -262,20 +261,3 @@ jobs:
           tags: |
             ghcr.io/edward-lyz/codex-mixin:${{ needs.version.outputs.version }}
             ghcr.io/edward-lyz/codex-mixin:latest
-
-  winget:
-    name: Submit winget update
-    needs: [version, publish]
-    runs-on: windows-latest
-    env:
-      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-    steps:
-      - name: Submit to microsoft/winget-pkgs
-        if: env.WINGET_TOKEN != ''
-        uses: vedantmgoyal9/winget-releaser@v2
-        with:
-          identifier: EdwardLyz.CodexMixin
-          version: ${{ needs.version.outputs.version }}
-          release-tag: ${{ needs.version.outputs.tag }}
-          installers-regex: 'windows-x86_64-setup\.exe$'
-          token: ${{ secrets.WINGET_TOKEN }}

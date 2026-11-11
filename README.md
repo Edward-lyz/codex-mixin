@@ -63,8 +63,6 @@ Linux 压缩包内含可直接运行的二进制；进入解压后的目录执�
 # macOS / Linux：Homebrew（命令行版；桌面 App 用 --cask）
 brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
 brew install codex-mixin            # 或 brew install --cask codex-mixin
-# Windows：winget
-winget install EdwardLyz.CodexMixin
 # Docker：8317 是网关，8318 是控制面板；面板地址和 token 用 docker logs codex-mixin 查看
 docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
 ```
