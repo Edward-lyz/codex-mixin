@@ -318,6 +318,12 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.1
+
+### BUG 修復
+
+- 修復在背景行程群組（如遠端拉起）中啟動控制面板後，面板與其子行程被系統暫停、連接埠無回應的問題。讀取 Claude 登入權杖的 shell 現在獨佔行程群組，不再連帶凍結面板。
+
 ## v0.8.0
 
 ### 新增功能
@@ -631,6 +637,12 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.1
+
+### Bug fixes
+
+- Fixed the control panel freezing, with its port unresponsive, when started in a background process group (for example launched remotely). The shell that reads the Claude login token now runs in its own process group, so it can no longer stop the panel.
+
 ## v0.8.0
 
 ### New features
