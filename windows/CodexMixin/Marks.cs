@@ -13,7 +13,7 @@ internal static class Marks
     internal static FrameworkElement Agent(string id)
     {
         if (id.Length == 0 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
-            throw new InvalidOperationException("CLI 返回了无效 Agent ID。");
+            throw new InvalidOperationException(Localized.Get("CLI 返回了无效 Agent ID。"));
         foreach (var extension in new[] { "png", "svg" })
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Assets", "agents", $"{id}.{extension}");

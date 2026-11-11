@@ -25,11 +25,11 @@ internal sealed class NativeShell : IDisposable
         procedure = WindowProc;
         taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         icon = LoadImage(0, Path.Combine(AppContext.BaseDirectory, "Assets", "tray_icon.ico"), 1, 0, 0, 0x10);
-        if (icon == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "无法加载托盘图标，请生成 Windows assets。");
+        if (icon == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), Localized.Get("无法加载托盘图标，请生成 Windows assets。"));
         if (!SetWindowSubclass(window, procedure, 1, 0))
         {
             DestroyIcon(icon);
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法安装原生窗口事件。");
+            throw new Win32Exception(Marshal.GetLastWin32Error(), Localized.Get("无法安装原生窗口事件。"));
         }
         try { AddIcon(); }
         catch { RemoveWindowSubclass(window, procedure, 1); DestroyIcon(icon); throw; }
@@ -53,13 +53,13 @@ internal sealed class NativeShell : IDisposable
     {
         var value = IconData();
         if (!ShellNotifyIcon(0, ref value))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建系统托盘图标。");
+            throw new Win32Exception(Marshal.GetLastWin32Error(), Localized.Get("无法创建系统托盘图标。"));
         value.Version = NotifyIconVersion;
         if (!ShellNotifyIcon(4, ref value)) // NIM_SETVERSION after every NIM_ADD.
         {
             var error = Marshal.GetLastWin32Error();
             ShellNotifyIcon(2, ref value);
-            throw new Win32Exception(error, "无法启用系统托盘交互协议。");
+            throw new Win32Exception(error, Localized.Get("无法启用系统托盘交互协议。"));
         }
     }
 
@@ -74,8 +74,8 @@ internal sealed class NativeShell : IDisposable
     {
         var notification = IconData();
         notification.Flags = 0x10 | 0x20; // NIF_INFO
-        notification.InfoTitle = "Codex Mixin 有可用更新";
-        notification.Info = $"发现 {version}，单击查看版本并下载完整应用包。";
+        notification.InfoTitle = Localized.Get("Codex Mixin 有可用更新");
+        notification.Info = Localized.Format("发现 {0}，单击查看版本并下载完整应用包。", version);
         notification.InfoFlags = 1;
         return ShellNotifyIcon(1, ref notification);
     }
@@ -203,17 +203,17 @@ internal sealed class NativeShell : IDisposable
         if (menu == 0) { command("tray-error"); return; }
         try
         {
-            AppendMenu(menu, 0, 1, "打开控制台…");
-            AppendMenu(menu, 0, 2, "启动网关");
-            AppendMenu(menu, 0, 3, "停止网关");
+            AppendMenu(menu, 0, 1, Localized.Get("打开控制台…"));
+            AppendMenu(menu, 0, 2, Localized.Get("启动网关"));
+            AppendMenu(menu, 0, 3, Localized.Get("停止网关"));
             AppendMenu(menu, 0x800, 0, "");
-            AppendMenu(menu, 0, 4, "设置");
-            AppendMenu(menu, 0, 9, "检查更新…");
-            AppendMenu(menu, 0, 7, "模型路由…");
-            AppendMenu(menu, 0, 8, "上下文设置…");
+            AppendMenu(menu, 0, 4, Localized.Get("设置"));
+            AppendMenu(menu, 0, 9, Localized.Get("检查更新…"));
+            AppendMenu(menu, 0, 7, Localized.Get("模型路由…"));
+            AppendMenu(menu, 0, 8, Localized.Get("上下文设置…"));
             AppendMenu(menu, 0x800, 0, "");
-            AppendMenu(menu, 0, 10, "轻量模式");
-            AppendMenu(menu, 0, 5, "彻底退出 Mixin");
+            AppendMenu(menu, 0, 10, Localized.Get("轻量模式"));
+            AppendMenu(menu, 0, 5, Localized.Get("彻底退出 Mixin"));
             var position = new Point
             {
                 X = unchecked((short)(coordinates & 0xffff)),
@@ -259,8 +259,8 @@ internal sealed class NativeShell : IDisposable
     {
         using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
         if (!enabled) { run.DeleteValue("CodexMixin", false); return; }
-        if (StartupBlocked()) throw new InvalidOperationException("启动项已被 Windows 禁用，请在系统「启动应用」中启用。");
-        var path = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位应用程序。");
+        if (StartupBlocked()) throw new InvalidOperationException(Localized.Get("启动项已被 Windows 禁用，请在系统「启动应用」中启用。"));
+        var path = Environment.ProcessPath ?? throw new InvalidOperationException(Localized.Get("无法定位应用程序。"));
         run.SetValue("CodexMixin", $"\"{path}\" --background");
     }
 

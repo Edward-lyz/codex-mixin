@@ -1,5 +1,8 @@
 using CodexMixin;
 
+// Assertions below compare against the Chinese interface text.
+Environment.SetEnvironmentVariable("CODEX_MIXIN_LANG", "zh");
+
 // End-to-end contract check: the Windows adapter parses the real Rust CLI.
 if (args is not [var cliArgument])
 {

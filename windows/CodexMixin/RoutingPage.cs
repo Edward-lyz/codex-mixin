@@ -22,15 +22,15 @@ public sealed partial class MainWindow
 
     private static (string Title, string Glyph, string Description) RouteKind(string kind) => kind switch
     {
-        "fusion" => ("融合", "\uE8F1", "每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。"),
-        "schedule" => ("定时", "\uE823", "按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。"),
-        _ => ("故障转移", "\uE8AB", "原模型返回 429、5xx、连接失败或超时且尚未输出内容时，按顺序改用备用模型；备用模型失败时不会再触发它自己的故障转移。")
+        "fusion" => (Localized.Get("融合"), "\uE8F1", Localized.Get("每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。")),
+        "schedule" => (Localized.Get("定时"), "\uE823", Localized.Get("按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。")),
+        _ => (Localized.Get("故障转移"), "\uE8AB", Localized.Get("原模型报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，报错直接透传。"))
     };
 
     private string ModelName(string id) => routeModels.TryGetValue(id, out var model) ? model.Name : id;
     private string ModelProvider(string id) => routeModels.TryGetValue(id, out var model) ? model.Provider : "";
     private string ProviderName(string id) =>
-        routeProviders.TryGetValue(id, out var provider) ? Json.OptionalText(provider, "display_name") ?? id : id.Length == 0 ? "其他" : id;
+        routeProviders.TryGetValue(id, out var provider) ? Json.OptionalText(provider, "display_name") ?? id : id.Length == 0 ? Localized.Get("其他") : id;
 
     private static string[] OptionalStrings(JsonElement row, string key) =>
         row.ValueKind == JsonValueKind.Object && row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Array ? Json.Strings(value) : [];
@@ -66,8 +66,8 @@ public sealed partial class MainWindow
 
     private string RouteSummary(JsonElement route) => Json.Text(route, "kind") switch
     {
-        "fusion" => $"{OptionalStrings(route, "panel_models").Length} 个 Panel → Judge {ModelName(Json.Text(route, "judge_model"))} → Final {ModelName(Json.Text(route, "final_model"))}",
-        "schedule" => $"当前 {ModelName(ActiveScheduleModel(route))} · {Json.Rows(Json.Field(route, "time_routes")).Length} 个时段",
+        "fusion" => Localized.Format("{0} 个 Panel → Judge {1} → Final {2}", OptionalStrings(route, "panel_models").Length, ModelName(Json.Text(route, "judge_model")), ModelName(Json.Text(route, "final_model"))),
+        "schedule" => Localized.Format("当前 {0} · {1} 个时段", ModelName(ActiveScheduleModel(route)), Json.Rows(Json.Field(route, "time_routes")).Length),
         _ => $"{ModelName(Json.Text(route, "source"))} → " + string.Join(" → ", OptionalStrings(route, "fallbacks").Select(ModelName))
     };
 
@@ -119,10 +119,10 @@ public sealed partial class MainWindow
         routeModels = options.GroupBy(row => Json.Text(row, "id")).ToDictionary(group => group.Key,
             group => (Json.OptionalText(group.First(), "display_name") ?? group.Key, Json.OptionalText(group.First(), "provider_id") ?? ""));
         routeProviders = Json.Rows(Json.Field(snapshots[2], "providers")).GroupBy(row => Json.Text(row, "id")).ToDictionary(group => group.Key, group => group.First());
-        ApplyChanges.Content = "保存并重启网关";
+        ApplyChanges.Content = Localized.Get("保存并重启网关");
         if (ids.Length == 0)
         {
-            PageBody.Children.Add(Card("暂无可用模型", "先在「模型与服务」中添加供应商并选择模型，再配置模型路由。"));
+            PageBody.Children.Add(Card(Localized.Get("暂无可用模型"), Localized.Get("先在「模型与服务」中添加供应商并选择模型，再配置模型路由。")));
             return;
         }
         var models = routes.Select(route => Json.Text(route, "model")).ToArray();
@@ -156,17 +156,17 @@ public sealed partial class MainWindow
         {
             try
             {
-                if (!await ConfirmDiscardAsync("新建路由")) return;
+                if (!await ConfirmDiscardAsync(Localized.Get("新建路由"))) return;
                 Select(null);
                 ShowRouteEditor(editor, template, false, kind, ids, models);
                 MarkDirty();
             }
-            catch (Exception error) { ShowNotice("新建路由失败", error.Message, InfoBarSeverity.Error); }
+            catch (Exception error) { ShowNotice(Localized.Get("新建路由失败"), error.Message, InfoBarSeverity.Error); }
         }
         list.SelectionChanged += async (_, _) =>
         {
             if (selecting || list.SelectedItem is not ListViewItem item || ReferenceEquals(item, current)) return;
-            if (!await ConfirmDiscardAsync("切换路由")) { Select(current); return; }
+            if (!await ConfirmDiscardAsync(Localized.Get("切换路由"))) { Select(current); return; }
             current = item;
             Open(item);
         };
@@ -175,28 +175,28 @@ public sealed partial class MainWindow
         foreach (var kind in new[] { "fusion", "schedule", "failover" })
         {
             var (title, _, description) = RouteKind(kind);
-            var item = new MenuFlyoutItem { Text = $"新建{title}" };
+            var item = new MenuFlyoutItem { Text = Localized.Format("新建{0}", title) };
             AutomationProperties.SetAutomationId(item, $"route-new-{kind}");
             ToolTipService.SetToolTip(item, description);
             item.Click += async (_, _) => await Draft(kind, null);
             newMenu.Items.Add(item);
         }
-        var create = new DropDownButton { Content = IconLabel("\uE710", "新建"), Flyout = newMenu };
+        var create = new DropDownButton { Content = IconLabel("\uE710", Localized.Get("新建")), Flyout = newMenu };
         AutomationProperties.SetAutomationId(create, "route-new");
-        AutomationProperties.SetName(create, "新建路由");
+        AutomationProperties.SetName(create, Localized.Get("新建路由"));
         var sideHeader = new Grid();
-        sideHeader.Children.Add(new TextBlock { Text = "路由", Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, VerticalAlignment = VerticalAlignment.Center });
+        sideHeader.Children.Add(new TextBlock { Text = Localized.Get("路由"), Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, VerticalAlignment = VerticalAlignment.Center });
         create.HorizontalAlignment = HorizontalAlignment.Right;
         sideHeader.Children.Add(create);
         var side = new StackPanel { Spacing = 8 };
         side.Children.Add(sideHeader);
-        side.Children.Add(routes.Length == 0 ? new TextBlock { Text = "还没有模型路由。", Style = Themed("SecondaryText") } : list);
+        side.Children.Add(routes.Length == 0 ? new TextBlock { Text = Localized.Get("还没有模型路由。"), Style = Themed("SecondaryText") } : list);
 
         // Suggestions are not running until saved, so each stays one quiet line.
         var suggestions = RouteSuggestions(ids, routes);
         if (suggestions.Length > 0)
         {
-            side.Children.Add(new TextBlock { Text = "推荐路由", Style = Themed("ColumnHeader"), Margin = new Thickness(4, 12, 0, 0) });
+            side.Children.Add(new TextBlock { Text = Localized.Get("推荐路由"), Style = Themed("ColumnHeader"), Margin = new Thickness(4, 12, 0, 0) });
             foreach (var suggestion in suggestions)
             {
                 var kind = Json.Text(suggestion, "kind");
@@ -210,8 +210,8 @@ public sealed partial class MainWindow
                 var name = new TextBlock { Text = VirtualRoutePrefix + Json.Text(suggestion, "id"), Style = Themed("Caption"), FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
                 ToolTipService.SetToolTip(name, $"{RouteKind(kind).Title} · {RouteSummary(suggestion)}");
                 Grid.SetColumn(name, 1); row.Children.Add(name);
-                var enable = new Button { Content = "启用", Padding = new Thickness(10, 3, 10, 4), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
-                AutomationProperties.SetName(enable, $"启用 {name.Text}");
+                var enable = new Button { Content = Localized.Get("启用"), Padding = new Thickness(10, 3, 10, 4), FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+                AutomationProperties.SetName(enable, Localized.Format("启用 {0}", name.Text));
                 enable.Click += async (_, _) => await Draft(kind, suggestion);
                 Grid.SetColumn(enable, 2); row.Children.Add(enable);
                 side.Children.Add(row);
@@ -227,7 +227,7 @@ public sealed partial class MainWindow
         PageBody.Children.Add(layout);
         var initial = list.Items.Cast<ListViewItem>().FirstOrDefault(item => (string)item.Tag == routeSelection)
             ?? list.Items.Cast<ListViewItem>().FirstOrDefault();
-        if (initial == null) editor.Content = Card("新建模型路由", "融合、定时与故障转移都在这里配置，保存后网关自动重启。");
+        if (initial == null) editor.Content = Card(Localized.Get("新建模型路由"), Localized.Get("融合、定时与故障转移都在这里配置，保存后网关自动重启。"));
         else { Select(initial); Open(initial); }
     }
 
@@ -282,7 +282,7 @@ public sealed partial class MainWindow
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(RouteIcon(kind, route is { } shown ? RoutePrecedence(shown) : []));
         var heading = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        heading.Children.Add(new TextBlock { Text = isSaved ? RouteTitle(saved) : $"新建{title}", Style = Themed("BodyStrongTextBlockStyle"), FontSize = 18, TextTrimming = TextTrimming.CharacterEllipsis });
+        heading.Children.Add(new TextBlock { Text = isSaved ? RouteTitle(saved) : Localized.Format("新建{0}", title), Style = Themed("BodyStrongTextBlockStyle"), FontSize = 18, TextTrimming = TextTrimming.CharacterEllipsis });
         var kindLabel = new TextBlock { Text = title, Style = Themed("Caption") };
         ToolTipService.SetToolTip(kindLabel, description);
         heading.Children.Add(kindLabel);
@@ -291,23 +291,23 @@ public sealed partial class MainWindow
         if (oldModel != null)
         {
             var menu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
-            var delete = new MenuFlyoutItem { Text = "删除路由…", Icon = new FontIcon { Glyph = "\uE74D" } };
+            var delete = new MenuFlyoutItem { Text = Localized.Get("删除路由…"), Icon = new FontIcon { Glyph = "\uE74D" } };
             AutomationProperties.SetAutomationId(delete, "route-delete");
             delete.Click += async (_, _) =>
             {
                 try
                 {
-                    if (!await ConfirmAsync("删除模型路由？", $"将删除 {oldModel}，保存后网关自动重启。此操作不可撤销。", "删除")) return;
+                    if (!await ConfirmAsync(Localized.Get("删除模型路由？"), Localized.Format("将删除 {0}，保存后网关自动重启。此操作不可撤销。", oldModel), Localized.Get("删除"))) return;
                     routeSelection = null;
-                    await ChangeAsync("删除模型路由", ["route", "delete", "--model", oldModel], apply: true);
+                    await ChangeAsync(Localized.Get("删除模型路由"), ["route", "delete", "--model", oldModel], apply: true);
                 }
-                catch (Exception error) { ShowNotice("删除模型路由失败", error.Message, InfoBarSeverity.Error); }
+                catch (Exception error) { ShowNotice(Localized.Get("删除模型路由失败"), error.Message, InfoBarSeverity.Error); }
             };
             menu.Items.Add(delete);
             var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = menu, Style = Themed("FlatButton"), VerticalAlignment = VerticalAlignment.Top };
             AutomationProperties.SetAutomationId(more, "route-more");
-            AutomationProperties.SetName(more, "更多");
-            ToolTipService.SetToolTip(more, "更多");
+            AutomationProperties.SetName(more, Localized.Get("更多"));
+            ToolTipService.SetToolTip(more, Localized.Get("更多"));
             Grid.SetColumn(more, 2);
             header.Children.Add(more);
         }
@@ -331,7 +331,7 @@ public sealed partial class MainWindow
             var arguments = new List<string> { "route", "set", "--route-json", JsonSerializer.Serialize(payload) };
             if (oldModel != null) arguments.AddRange(["--replace-model", oldModel]);
             routeSelection = payload.TryGetValue("id", out var id) && id is string name && name.Length > 0 ? VirtualRoutePrefix + name : (string?)payload["source"];
-            await ChangeAsync("保存模型路由", arguments.ToArray(), apply: true);
+            await ChangeAsync(Localized.Get("保存模型路由"), arguments.ToArray(), apply: true);
         };
         editor.Content = new Border { Style = Themed("Card"), Child = body };
     }
@@ -351,14 +351,14 @@ public sealed partial class MainWindow
     /// The name field and the model Codex selects for it.
     private TextBox RouteNameField(StackPanel form, string value, bool optional, Func<string> fallback)
     {
-        var name = Input("名称", value);
-        if (optional) name.PlaceholderText = "可选；留空则直接接管原模型";
+        var name = Input(Localized.Get("名称"), value);
+        if (optional) name.PlaceholderText = Localized.Get("可选；留空则直接接管原模型");
         AutomationProperties.SetAutomationId(name, "route-name");
         var entry = new TextBlock { Style = Themed("SecondaryText") };
         void ShowEntry()
         {
             var text = name.Text.Trim();
-            entry.Text = $"Codex 中选择的模型：{(text.Length == 0 && optional ? fallback() : VirtualRoutePrefix + text)}";
+            entry.Text = Localized.Format("Codex 中选择的模型：{0}", (text.Length == 0 && optional ? fallback() : VirtualRoutePrefix + text));
         }
         name.TextChanged += (_, _) => { ShowEntry(); MarkDirty(); };
         ShowEntry();
@@ -370,7 +370,7 @@ public sealed partial class MainWindow
     private static string RouteName(TextBox name)
     {
         var value = name.Text.Trim();
-        if (value.Length == 0 || value.Contains('/')) throw new InvalidOperationException("名称不能为空，也不能包含 /。");
+        if (value.Length == 0 || value.Contains('/')) throw new InvalidOperationException(Localized.Get("名称不能为空，也不能包含 /。"));
         return value;
     }
 
@@ -381,7 +381,7 @@ public sealed partial class MainWindow
     private static FontIcon FlowArrow(string glyph, bool active = false)
     {
         var arrow = new FontIcon { Glyph = glyph, Style = Themed(active ? "FlowArrowActive" : "FlowArrow"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        if (active) ToolTipService.SetToolTip(arrow, "当前时段");
+        if (active) ToolTipService.SetToolTip(arrow, Localized.Get("当前时段"));
         return arrow;
     }
 
@@ -395,7 +395,7 @@ public sealed partial class MainWindow
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = ModelName(id), TextTrimming = TextTrimming.CharacterEllipsis });
         var available = ids.Contains(id);
-        text.Children.Add(new TextBlock { Text = available ? ProviderName(ModelProvider(id)) : "模型不可用", Style = Themed(available ? "Caption" : "CriticalCaption") });
+        text.Children.Add(new TextBlock { Text = available ? ProviderName(ModelProvider(id)) : Localized.Get("模型不可用"), Style = Themed(available ? "Caption" : "CriticalCaption") });
         Grid.SetColumn(text, 1);
         content.Children.Add(text);
         var node = new Button
@@ -405,7 +405,7 @@ public sealed partial class MainWindow
         };
         AutomationProperties.SetName(node, ModelName(id));
         if (automationId != null) AutomationProperties.SetAutomationId(node, automationId);
-        ToolTipService.SetToolTip(node, $"{id}\n点击更换模型");
+        ToolTipService.SetToolTip(node, Localized.Format("{0}\n点击更换模型", id));
         node.Click += (_, _) => onClick(node);
         return node;
     }
@@ -437,15 +437,15 @@ public sealed partial class MainWindow
     {
         var chosen = selected.ToList();
         var flyout = new Flyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
-        var search = new AutoSuggestBox { PlaceholderText = "搜索模型", QueryIcon = new SymbolIcon(Symbol.Find) };
+        var search = new AutoSuggestBox { PlaceholderText = Localized.Get("搜索模型"), QueryIcon = new SymbolIcon(Symbol.Find) };
         AutomationProperties.SetAutomationId(search, "route-model-search");
-        AutomationProperties.SetName(search, "搜索模型");
+        AutomationProperties.SetName(search, Localized.Get("搜索模型"));
         var caption = new TextBlock { Style = Themed("Caption") };
         var items = new StackPanel { Spacing = 2 };
         var boxes = new List<(CheckBox Box, string Id)>();
         void Count()
         {
-            caption.Text = multi ? $"已选 {chosen.Count} / {MaxPanels}" : "";
+            caption.Text = multi ? Localized.Format("已选 {0} / {1}", chosen.Count, MaxPanels) : "";
             foreach (var (box, id) in boxes) box.IsEnabled = chosen.Contains(id) || chosen.Count < MaxPanels;
         }
         void Fill()
@@ -498,7 +498,7 @@ public sealed partial class MainWindow
                     }
                 }
             }
-            if (shown.Length == 0) items.Children.Add(new TextBlock { Text = "没有匹配的模型", Style = Themed("Caption"), Margin = new Thickness(4, 8, 0, 8) });
+            if (shown.Length == 0) items.Children.Add(new TextBlock { Text = Localized.Get("没有匹配的模型"), Style = Themed("Caption"), Margin = new Thickness(4, 8, 0, 8) });
             Count();
         }
         search.TextChanged += (_, _) => Fill();
@@ -534,24 +534,24 @@ public sealed partial class MainWindow
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             void Place(FrameworkElement element, int column, int row) { Grid.SetColumn(element, column); Grid.SetRow(element, row); grid.Children.Add(element); }
-            Place(StageHeader($"Panel · 并行（{panels.Count}）"), 0, 0);
-            Place(StageHeader("Judge · 评审"), 2, 0);
-            Place(StageHeader("Final · 作答"), 4, 0);
-            void EditPanels(Button anchor) => PickModels(anchor, "Panel 模型", ids, panels, true,
+            Place(StageHeader(Localized.Format("Panel · 并行（{0}）", panels.Count)), 0, 0);
+            Place(StageHeader(Localized.Get("Judge · 评审")), 2, 0);
+            Place(StageHeader(Localized.Get("Final · 作答")), 4, 0);
+            void EditPanels(Button anchor) => PickModels(anchor, Localized.Get("Panel 模型"), ids, panels, true,
                 picked => { panels = picked.ToList(); MarkDirty(); }, Render);
             var column = new StackPanel { Spacing = 6 };
             foreach (var panel in panels) column.Children.Add(ModelNode(panel, ids, EditPanels));
-            var add = AddNode(panels.Count == 0 ? "选择 Panel 模型" : "编辑 Panel 模型", EditPanels);
+            var add = AddNode(panels.Count == 0 ? Localized.Get("选择 Panel 模型") : Localized.Get("编辑 Panel 模型"), EditPanels);
             AutomationProperties.SetAutomationId(add, "route-panels");
             column.Children.Add(add);
             Place(column, 0, 1);
             Place(FlowArrow("\uE72A"), 1, 1);
-            var judgeNode = ModelNode(judge, ids, anchor => PickModels(anchor, "Judge 模型", ids, [judge], false,
+            var judgeNode = ModelNode(judge, ids, anchor => PickModels(anchor, Localized.Get("Judge 模型"), ids, [judge], false,
                 picked => { judge = picked[0]; MarkDirty(); }, Render), "route-judge");
             judgeNode.VerticalAlignment = VerticalAlignment.Center;
             Place(judgeNode, 2, 1);
             Place(FlowArrow("\uE72A"), 3, 1);
-            var finalNode = ModelNode(final, ids, anchor => PickModels(anchor, "Final 模型", ids, [final], false,
+            var finalNode = ModelNode(final, ids, anchor => PickModels(anchor, Localized.Get("Final 模型"), ids, [final], false,
                 picked => { final = picked[0]; MarkDirty(); }, Render), "route-final");
             finalNode.VerticalAlignment = VerticalAlignment.Center;
             Place(finalNode, 4, 1);
@@ -561,20 +561,20 @@ public sealed partial class MainWindow
         var name = RouteNameField(form, hasSource ? Json.OptionalText(saved, "id") ?? "fusion" : UniqueRouteName("fusion", models), false, () => "");
         if (hasSource && !isSaved && models.Contains(VirtualRoutePrefix + name.Text)) name.Text = UniqueRouteName(name.Text, models);
         var panelTools = hasSource && saved.TryGetProperty("panel_tools", out var tools) && tools.ValueKind == JsonValueKind.Object ? tools : default;
-        var minimum = new NumberBox { Header = "最少成功 Panel", Minimum = 1, Maximum = MaxPanels, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "min_successful", 1) };
-        var timeout = new NumberBox { Header = "单模型超时（秒）", Minimum = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "timeout_ms", 300_000) / 1000.0 };
-        var intermediate = new CheckBox { Content = "在回答中显示 Panel / Judge 中间结果", IsChecked = OptionalFlag(saved, "show_intermediate_results", true) };
-        var readOnlyTools = new CheckBox { Content = "允许 Panel 使用进程内只读工具", IsChecked = OptionalFlag(panelTools, "enabled", true) };
+        var minimum = new NumberBox { Header = Localized.Get("最少成功 Panel"), Minimum = 1, Maximum = MaxPanels, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "min_successful", 1) };
+        var timeout = new NumberBox { Header = Localized.Get("单模型超时（秒）"), Minimum = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "timeout_ms", 300_000) / 1000.0 };
+        var intermediate = new CheckBox { Content = Localized.Get("在回答中显示 Panel / Judge 中间结果"), IsChecked = OptionalFlag(saved, "show_intermediate_results", true) };
+        var readOnlyTools = new CheckBox { Content = Localized.Get("允许 Panel 使用进程内只读工具"), IsChecked = OptionalFlag(panelTools, "enabled", true) };
         var advanced = new StackPanel { Spacing = 12 };
         foreach (var element in new FrameworkElement[] { minimum, timeout, intermediate, readOnlyTools }) { advanced.Children.Add(element); TrackDraft(element); }
-        form.Children.Add(new Expander { Header = "高级选项", Content = advanced, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
+        form.Children.Add(new Expander { Header = Localized.Get("高级选项"), Content = advanced, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
         return () =>
         {
             var id = RouteName(name);
-            if (panels.Count is < 1 or > MaxPanels) throw new InvalidOperationException("请选择 1–8 个 Panel 模型。");
+            if (panels.Count is < 1 or > MaxPanels) throw new InvalidOperationException(Localized.Get("请选择 1–8 个 Panel 模型。"));
             if (!double.IsFinite(minimum.Value) || minimum.Value < 1 || minimum.Value > panels.Count || minimum.Value != Math.Truncate(minimum.Value))
-                throw new InvalidOperationException("最少成功 Panel 必须是 1 到 Panel 数量之间的整数。");
-            if (!double.IsFinite(timeout.Value) || timeout.Value <= 0) throw new InvalidOperationException("单模型超时必须大于 0。");
+                throw new InvalidOperationException(Localized.Get("最少成功 Panel 必须是 1 到 Panel 数量之间的整数。"));
+            if (!double.IsFinite(timeout.Value) || timeout.Value <= 0) throw new InvalidOperationException(Localized.Get("单模型超时必须大于 0。"));
             var payload = SavedFields(saved, hasSource);
             payload["id"] = id; payload["mode"] = "orchestration";
             payload["panel_models"] = panels.ToArray(); payload["judge_model"] = judge; payload["final_model"] = final;
@@ -606,8 +606,8 @@ public sealed partial class MainWindow
             var row = 0;
             void Place(FrameworkElement element, int column) { Grid.SetColumn(element, column); Grid.SetRow(element, row); grid.Children.Add(element); }
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            Place(StageHeader("时段（本机时间）"), 0);
-            Place(StageHeader("模型"), 4);
+            Place(StageHeader(Localized.Get("时段（本机时间）")), 0);
+            Place(StageHeader(Localized.Get("模型")), 4);
             var minute = LocalMinute();
             for (var index = 0; index < slots.Count; index++)
             {
@@ -617,7 +617,7 @@ public sealed partial class MainWindow
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                 var begin = new TimePicker { Time = TimeSpan.FromMinutes(slot.Start), ClockIdentifier = "24HourClock", MinWidth = 0 };
                 var finish = new TimePicker { Time = TimeSpan.FromMinutes(slot.End), ClockIdentifier = "24HourClock", MinWidth = 0 };
-                AutomationProperties.SetName(begin, $"时段 {index + 1} 开始"); AutomationProperties.SetName(finish, $"时段 {index + 1} 结束");
+                AutomationProperties.SetName(begin, Localized.Format("时段 {0} 开始", index + 1)); AutomationProperties.SetName(finish, Localized.Format("时段 {0} 结束", index + 1));
                 begin.TimeChanged += (_, args) => { slots[slotIndex] = slots[slotIndex] with { Start = (int)args.NewTime.TotalMinutes }; MarkDirty(); };
                 finish.TimeChanged += (_, args) => { slots[slotIndex] = slots[slotIndex] with { End = (int)args.NewTime.TotalMinutes }; MarkDirty(); };
                 Place(begin, 0);
@@ -625,13 +625,13 @@ public sealed partial class MainWindow
                 Place(finish, 2);
                 var active = slot.Start != slot.End && Covers(slot.Start, slot.End, minute);
                 Place(FlowArrow("\uE72A", active), 3);
-                Place(ModelNode(slot.Model, ids, anchor => PickModels(anchor, "时段模型", ids, [slots[slotIndex].Model], false,
+                Place(ModelNode(slot.Model, ids, anchor => PickModels(anchor, Localized.Get("时段模型"), ids, [slots[slotIndex].Model], false,
                     picked => { slots[slotIndex] = slots[slotIndex] with { Model = picked[0] }; MarkDirty(); }, Render)), 4);
-                Place(IconButton("\uE711", "移除此时段", () => { slots.RemoveAt(slotIndex); MarkDirty(); Render(); }), 5);
+                Place(IconButton("\uE711", Localized.Get("移除此时段"), () => { slots.RemoveAt(slotIndex); MarkDirty(); Render(); }), 5);
             }
             row++;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var add = AddNode("添加时段", _ =>
+            var add = AddNode(Localized.Get("添加时段"), _ =>
             {
                 var start = slots.Count == 0 ? 540 : slots[^1].End;
                 slots.Add((start, (start + 240) % 1440, ids[0]));
@@ -642,12 +642,12 @@ public sealed partial class MainWindow
             Place(add, 0);
             row++;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var others = new TextBlock { Text = "其余时间", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+            var others = new TextBlock { Text = Localized.Get("其余时间"), Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumnSpan(others, 3);
             Place(others, 0);
             var idle = !slots.Any(slot => slot.Start != slot.End && Covers(slot.Start, slot.End, minute));
             Place(FlowArrow("\uE72A", idle), 3);
-            Place(ModelNode(fallback, ids, anchor => PickModels(anchor, "默认模型", ids, [fallback], false,
+            Place(ModelNode(fallback, ids, anchor => PickModels(anchor, Localized.Get("默认模型"), ids, [fallback], false,
                 picked => { fallback = picked[0]; MarkDirty(); }, Render), "route-default-model"), 4);
             flow.Children.Add(grid);
         }
@@ -657,10 +657,10 @@ public sealed partial class MainWindow
         return () =>
         {
             var id = RouteName(name);
-            if (slots.Count is < 1 or > 24) throw new InvalidOperationException("请配置 1–24 个时段。");
-            if (slots.Any(range => range.Start == range.End)) throw new InvalidOperationException("时段的开始和结束时间不能相同。");
+            if (slots.Count is < 1 or > 24) throw new InvalidOperationException(Localized.Get("请配置 1–24 个时段。"));
+            if (slots.Any(range => range.Start == range.End)) throw new InvalidOperationException(Localized.Get("时段的开始和结束时间不能相同。"));
             if (Enumerable.Range(0, 1440).Any(minute => slots.Count(range => Covers(range.Start, range.End, minute)) > 1))
-                throw new InvalidOperationException("时段不能重叠。");
+                throw new InvalidOperationException(Localized.Get("时段不能重叠。"));
             var payload = SavedFields(saved, hasSource);
             payload["id"] = id; payload["mode"] = "time_rotation";
             payload["final_model"] = fallback;
@@ -685,21 +685,21 @@ public sealed partial class MainWindow
         }
         else
         {
-            if (ids.Distinct().Count() < 2) throw new InvalidOperationException("故障转移至少需要两个可用模型，请先在「模型与服务」中再添加一个模型。");
-            source = ids.FirstOrDefault(id => !models.Contains(id)) ?? throw new InvalidOperationException("所有模型都已配置故障转移。");
+            if (ids.Distinct().Count() < 2) throw new InvalidOperationException(Localized.Get("故障转移至少需要两个可用模型，请先在「模型与服务」中再添加一个模型。"));
+            source = ids.FirstOrDefault(id => !models.Contains(id)) ?? throw new InvalidOperationException(Localized.Get("所有模型都已配置故障转移。"));
             fallbacks = [ids.FirstOrDefault(id => id != source) ?? ids[0]];
         }
         void Render()
         {
             flow.Children.Clear();
-            flow.Children.Add(StageHeader("原模型"));
-            flow.Children.Add(ModelNode(source, ids, anchor => PickModels(anchor, "原模型", ids, [source], false,
+            flow.Children.Add(StageHeader(Localized.Get("原模型")));
+            flow.Children.Add(ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
                 picked => { source = picked[0]; MarkDirty(); }, Render), "route-source"));
             var arrow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(14, 0, 0, 0) };
             arrow.Children.Add(FlowArrow("\uE74B"));
-            arrow.Children.Add(new TextBlock { Text = "429 · 5xx · 连接失败 · 超时，且尚未输出", Style = Themed("Caption") });
+            arrow.Children.Add(new TextBlock { Text = Localized.Get("429 · 5xx · 连接失败 · 超时，且尚未输出"), Style = Themed("Caption") });
             flow.Children.Add(arrow);
-            flow.Children.Add(StageHeader("备用模型（按顺序）"));
+            flow.Children.Add(StageHeader(Localized.Get("备用模型（按顺序）")));
             for (var index = 0; index < fallbacks.Count; index++)
             {
                 var position = index;
@@ -708,19 +708,19 @@ public sealed partial class MainWindow
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 foreach (var _ in Enumerable.Range(0, 3)) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.Children.Add(new TextBlock { Text = $"{index + 1}", Style = Themed("Caption"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
-                var node = ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, $"备用模型 {position + 1}", ids, [fallbacks[position]], false,
+                var node = ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, Localized.Format("备用模型 {0}", position + 1), ids, [fallbacks[position]], false,
                     picked => { fallbacks[position] = picked[0]; MarkDirty(); }, Render));
                 Grid.SetColumn(node, 1); row.Children.Add(node);
                 void Move(int delta) { (fallbacks[position], fallbacks[position + delta]) = (fallbacks[position + delta], fallbacks[position]); MarkDirty(); Render(); }
-                var up = IconButton("\uE70E", $"上移备用模型 {index + 1}", () => Move(-1), index > 0);
-                var down = IconButton("\uE70D", $"下移备用模型 {index + 1}", () => Move(1), index < fallbacks.Count - 1);
-                var remove = IconButton("\uE711", $"移除备用模型 {index + 1}", () => { fallbacks.RemoveAt(position); MarkDirty(); Render(); });
+                var up = IconButton("\uE70E", Localized.Format("上移备用模型 {0}", index + 1), () => Move(-1), index > 0);
+                var down = IconButton("\uE70D", Localized.Format("下移备用模型 {0}", index + 1), () => Move(1), index < fallbacks.Count - 1);
+                var remove = IconButton("\uE711", Localized.Format("移除备用模型 {0}", index + 1), () => { fallbacks.RemoveAt(position); MarkDirty(); Render(); });
                 Grid.SetColumn(up, 2); Grid.SetColumn(down, 3); Grid.SetColumn(remove, 4);
                 row.Children.Add(up); row.Children.Add(down); row.Children.Add(remove);
                 flow.Children.Add(row);
             }
             if (fallbacks.Count < MaxFallbacks)
-                flow.Children.Add(AddNode("添加备用模型", _ =>
+                flow.Children.Add(AddNode(Localized.Get("添加备用模型"), _ =>
                 {
                     var used = fallbacks.Append(source).ToHashSet();
                     fallbacks.Add(ids.FirstOrDefault(id => !used.Contains(id)) ?? ids[0]);
@@ -733,11 +733,11 @@ public sealed partial class MainWindow
         return () =>
         {
             var id = name.Text.Trim();
-            if (id.Contains('/')) throw new InvalidOperationException("名称不能包含 /。");
-            if (fallbacks.Count is < 1 or > MaxFallbacks) throw new InvalidOperationException("请配置 1–4 个备用模型。");
+            if (id.Contains('/')) throw new InvalidOperationException(Localized.Get("名称不能包含 /。"));
+            if (fallbacks.Count is < 1 or > MaxFallbacks) throw new InvalidOperationException(Localized.Get("请配置 1–4 个备用模型。"));
             if (fallbacks.Contains(source) || fallbacks.Distinct().Count() != fallbacks.Count)
-                throw new InvalidOperationException("备用模型不能重复，也不能与原模型相同。");
-            if (id.Length == 0 && source != oldModel && models.Contains(source)) throw new InvalidOperationException($"{ModelName(source)} 已配置故障转移。");
+                throw new InvalidOperationException(Localized.Get("备用模型不能重复，也不能与原模型相同。"));
+            if (id.Length == 0 && source != oldModel && models.Contains(source)) throw new InvalidOperationException(Localized.Format("{0} 已配置故障转移。", ModelName(source)));
             var payload = SavedFields(saved, hasSource);
             payload["source"] = source;
             payload["fallbacks"] = fallbacks.ToArray();

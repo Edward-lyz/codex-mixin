@@ -53,7 +53,7 @@ internal static class ContextContract
 {
     internal static ContextArchive ParseArchive(JsonElement value)
     {
-        if (!Json.Flag(value, "compact")) throw new CliFailure("CLI 未返回轻量归档，请更新后重试。");
+        if (!Json.Flag(value, "compact")) throw new CliFailure(Localized.Get("CLI 未返回轻量归档，请更新后重试。"));
         try
         {
             return new(Json.Text(value, "session"),
@@ -72,7 +72,7 @@ internal static class ContextContract
         }
         catch (JsonException)
         {
-            throw new CliFailure("CLI contract 的压缩块引用不是有效 JSON。");
+            throw new CliFailure(Localized.Get("CLI contract 的压缩块引用不是有效 JSON。"));
         }
     }
 
@@ -157,7 +157,7 @@ internal static class ContextContract
         // The CLI reports an optional cache share for observable rounds.
         // A present value must remain within 0..100.
         return cache.HitPercent is null or (>= 0 and <= 100) ? cache
-            : throw new CliFailure("CLI contract 字段 hit_percent 必须在 0 到 100 之间。");
+            : throw new CliFailure(Localized.Get("CLI contract 字段 hit_percent 必须在 0 到 100 之间。"));
     }
 
     private static string Number(long value) => value.ToString(CultureInfo.InvariantCulture);

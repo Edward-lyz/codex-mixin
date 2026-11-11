@@ -39,7 +39,7 @@ internal sealed class CliClient(string executable)
             }
             break;
         }
-        throw new FileNotFoundException("找不到 codex-mixin.exe。请使用完整发布包，或先构建 Rust CLI。");
+        throw new FileNotFoundException(Localized.Get("找不到 codex-mixin.exe。请使用完整发布包，或先构建 Rust CLI。"));
     }
 
     internal async Task<JsonElement> QueryAsync(string[] args, CancellationToken cancellation, TimeSpan? timeout = null)
@@ -78,7 +78,7 @@ internal sealed class CliClient(string executable)
                 }
                 catch (JsonException error)
                 {
-                    throw new CliFailure($"{args[0]} 返回了无效 JSON：{error.Message}");
+                    throw new CliFailure(Localized.Format("{0} 返回了无效 JSON：{1}", args[0], error.Message));
                 }
             }, deadline.Token).ConfigureAwait(false);
             outcome = "ok";
@@ -88,7 +88,7 @@ internal sealed class CliClient(string executable)
             && error is OperationCanceledException or CliFailure)
         {
             outcome = "timeout";
-            throw new CliFailure($"{args[0]} 查询超时，请重试。");
+            throw new CliFailure(Localized.Format("{0} 查询超时，请重试。", args[0]));
         }
         catch (CliFailure error)
         {
@@ -144,7 +144,7 @@ internal sealed class CliClient(string executable)
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout ?? TimeSpan.FromMinutes(20));
         using var process = new Process { StartInfo = start };
-        if (!process.Start()) throw new CliFailure("无法启动 Rust CLI。");
+        if (!process.Start()) throw new CliFailure(Localized.Get("无法启动 Rust CLI。"));
         // GUI callers must never inherit a terminal input handle. DUCX uses
         // this distinction to open its visible QR login window.
         process.StandardInput.Close();
@@ -175,8 +175,8 @@ internal sealed class CliClient(string executable)
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();
             throw new CliFailure(cancellation.IsCancellationRequested
-                ? "操作已取消；已经保存的配置不会自动回滚，请刷新确认状态。"
-                : "CLI 超时或输出管道未关闭；配置可能已保存，请刷新确认状态。");
+                ? Localized.Get("操作已取消；已经保存的配置不会自动回滚，请刷新确认状态。")
+                : Localized.Get("CLI 超时或输出管道未关闭；配置可能已保存，请刷新确认状态。"));
         }
         finally
         {
@@ -205,7 +205,7 @@ internal sealed class CliClient(string executable)
             // Only the post-exit drain window ends a read successfully; timeouts and cancellation still fail.
             catch (OperationCanceledException) when (!deadline.IsCancellationRequested) { break; }
             if (count == 0) break;
-            if (output.Length + count > OutputLimit) throw new CliFailure("CLI 输出超过 8 MiB 限制。");
+            if (output.Length + count > OutputLimit) throw new CliFailure(Localized.Get("CLI 输出超过 8 MiB 限制。"));
             output.Append(buffer, 0, count);
             if (progress == null) continue;
             for (var index = 0; index < count; index++)
@@ -246,6 +246,6 @@ internal sealed class CliClient(string executable)
             }
             catch (JsonException) { /* Non-JSON diagnostic lines precede the structured error. */ }
         }
-        return new CliFailure($"CLI 退出码 {exitCode}：{(string.IsNullOrWhiteSpace(errors) ? output : errors).Trim()}", exitCode: exitCode);
+        return new CliFailure(Localized.Format("CLI 退出码 {0}：{1}", exitCode, (string.IsNullOrWhiteSpace(errors) ? output : errors).Trim()), exitCode: exitCode);
     }
 }

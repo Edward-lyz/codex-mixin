@@ -21,8 +21,8 @@ internal static class UsageView
     private const long CacheVerdictMinPrompt = 8_192;
     private const double CacheLowPercent = 50;
     private const int SeriesColors = 4;
-    internal const string SucceededSeries = "成功";
-    internal const string FailedSeries = "失败";
+    internal static readonly string SucceededSeries = Localized.Get("成功");
+    internal static readonly string FailedSeries = Localized.Get("失败");
 
     private static readonly Brush CachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x2B, 0xA8, 0x9C));
     private static readonly Brush UncachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x23, 0x83, 0xE2));
@@ -66,15 +66,15 @@ internal static class UsageView
         var hasPrevious = previous.Attempts > 0;
         var cards = new UIElement[]
         {
-            Kpi("请求次数", Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
-                slots.Select(slot => (double)slot.Total.Attempts).ToArray(), Detail(current.Errors > 0 ? $"其中失败 {Compact(current.Errors)}" : " ")),
+            Kpi(Localized.Get("请求次数"), Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
+                slots.Select(slot => (double)slot.Total.Attempts).ToArray(), Detail(current.Errors > 0 ? Localized.Format("其中失败 {0}", Compact(current.Errors)) : " ")),
             Kpi("Tokens", Compact(current.Tokens), hasPrevious ? RelativeDelta(current.Tokens, previous.Tokens) : null, Tone.Neutral,
                 slots.Select(slot => (double)slot.Total.Tokens).ToArray(), ShareBar(current)),
-            Kpi("缓存命中率", Percent(current.CacheHitPercent), hasPrevious ? PointDelta(current.CacheHitPercent, previous.CacheHitPercent) : null, Tone.HigherIsBetter,
+            Kpi(Localized.Get("缓存命中率"), Percent(current.CacheHitPercent), hasPrevious ? PointDelta(current.CacheHitPercent, previous.CacheHitPercent) : null, Tone.HigherIsBetter,
                 slots.Where(slot => slot.Total.CacheHitPercent != null).Select(slot => slot.Total.CacheHitPercent!.Value).ToArray(),
-                Detail(current.CacheHitPercent == null ? " " : $"命中 {Compact(current.HitRead)} tokens")),
-            Kpi("错误率", Percent(current.ErrorPercent), hasPrevious ? PointDelta(current.ErrorPercent, previous.ErrorPercent) : null, Tone.LowerIsBetter,
-                slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail($"{Compact(current.Errors)} / {Compact(current.Attempts)} 次失败"),
+                Detail(current.CacheHitPercent == null ? " " : Localized.Format("命中 {0} tokens", Compact(current.HitRead)))),
+            Kpi(Localized.Get("错误率"), Percent(current.ErrorPercent), hasPrevious ? PointDelta(current.ErrorPercent, previous.ErrorPercent) : null, Tone.LowerIsBetter,
+                slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail(Localized.Format("{0} / {1} 次失败", Compact(current.Errors), Compact(current.Attempts))),
                 warning: (current.ErrorPercent ?? 0) >= 5),
         };
         var grid = new Grid { ColumnSpacing = 12 };
@@ -108,8 +108,8 @@ internal static class UsageView
                 (Tone.HigherIsBetter, < 0) or (Tone.LowerIsBetter, > 0) => "CriticalCaption",
                 _ => "Caption"
             };
-            var text = new TextBlock { Text = $"环比 {change.Text}", Style = Themed(style), VerticalAlignment = VerticalAlignment.Center };
-            ToolTipService.SetToolTip(text, "与上一个等长时段相比");
+            var text = new TextBlock { Text = Localized.Format("环比 {0}", change.Text), Style = Themed(style), VerticalAlignment = VerticalAlignment.Center };
+            ToolTipService.SetToolTip(text, Localized.Get("与上一个等长时段相比"));
             number.Children.Add(text);
         }
         Grid.SetRow(number, 1);
@@ -145,7 +145,7 @@ internal static class UsageView
     private static UIElement ShareBar(UsageStats stats)
     {
         var bar = new Grid { Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 5, 0, 5) };
-        var parts = new (long Value, Brush Brush, string Name)[] { (stats.Cached, CachedBrush, "缓存输入"), (stats.Uncached, UncachedBrush, "未缓存输入"), (stats.Output, OutputBrush, "输出") };
+        var parts = new (long Value, Brush Brush, string Name)[] { (stats.Cached, CachedBrush, Localized.Get("缓存输入")), (stats.Uncached, UncachedBrush, Localized.Get("未缓存输入")), (stats.Output, OutputBrush, Localized.Get("输出")) };
         if (stats.Tokens == 0) { bar.Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongFillColorDisabledBrush"]; return bar; }
         foreach (var (value, brush, _) in parts.Where(part => part.Value > 0))
         {
@@ -184,7 +184,7 @@ internal static class UsageView
         }
         else
         {
-            series = ["缓存输入", "未缓存输入", "输出"];
+            series = [Localized.Get("缓存输入"), Localized.Get("未缓存输入"), Localized.Get("输出")];
             brushes = [CachedBrush, UncachedBrush, OutputBrush];
             values = slot => [slot.Total.Cached, slot.Total.Uncached, slot.Total.Output];
         }
@@ -219,8 +219,8 @@ internal static class UsageView
             var lines = new List<string> { SlotTitle(slot) };
             for (var seriesIndex = 0; seriesIndex < series.Length; seriesIndex++)
                 if (cells[index][seriesIndex] > 0) lines.Add($"{SeriesName(series[seriesIndex], providerNames)}  {Compact(cells[index][seriesIndex])}");
-            lines.Add($"请求 {Compact(slot.Total.Attempts)} · 失败 {Compact(slot.Total.Errors)} · 缓存命中 {Percent(slot.Total.CacheHitPercent)}");
-            lines.Add(selected?.Start == slot.Start ? "再次点击显示全部回复" : "点击只看这段时间的回复");
+            lines.Add(Localized.Format("请求 {0} · 失败 {1} · 缓存命中 {2}", Compact(slot.Total.Attempts), Compact(slot.Total.Errors), Percent(slot.Total.CacheHitPercent)));
+            lines.Add(selected?.Start == slot.Start ? Localized.Get("再次点击显示全部回复") : Localized.Get("点击只看这段时间的回复"));
             ToolTipService.SetToolTip(column, string.Join("\n", lines));
             column.Tapped += (_, _) => onSelect(selected?.Start == slot.Start ? null : slot);
             Grid.SetColumn(column, index);
@@ -228,7 +228,7 @@ internal static class UsageView
         }
         var total = cells.Sum(row => row.Sum());
         var header = new Grid();
-        header.Children.Add(new TextBlock { Text = $"{(requests ? "请求次数" : "Tokens")} · 合计 {Compact(total)}", Style = Themed("Caption") });
+        header.Children.Add(new TextBlock { Text = Localized.Format("{0} · 合计 {1}", (requests ? Localized.Get("请求次数") : "Tokens"), Compact(total)), Style = Themed("Caption") });
         var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, HorizontalAlignment = HorizontalAlignment.Right };
         for (var index = 0; index < series.Length; index++)
         {
@@ -250,7 +250,7 @@ internal static class UsageView
 
     internal static string SlotTitle(UsageSlot slot) => slot.Hourly
         ? $"{slot.Start.ToLocalTime():M/d HH:00}–{slot.End.ToLocalTime():HH:00}"
-        : $"{slot.Start.UtcDateTime:M/d}（UTC 日）";
+        : Localized.Format("{0:M/d}（UTC 日）", slot.Start.UtcDateTime);
 
     private static Brush SeriesBrush(int index) => index < SeriesColors
         ? QuotaView.RingBrush(index)
@@ -273,7 +273,7 @@ internal static class UsageView
         return rows.ToArray();
     }
 
-    private static readonly string[] Headers = ["时间", "状态", "会话", "模型", "未缓存", "命中缓存", "输出", "思考", "首字", "速度"];
+    private static readonly string[] Headers = [Localized.Get("时间"), Localized.Get("状态"), Localized.Get("会话"), Localized.Get("模型"), Localized.Get("未缓存"), Localized.Get("命中缓存"), Localized.Get("输出"), Localized.Get("思考"), Localized.Get("首字"), Localized.Get("速度")];
     private static readonly double[] ColumnWeights = [1.2, 0.7, 1.1, 2.2, 0.8, 1.1, 0.7, 0.7, 0.7, 0.8];
 
     internal static UIElement TableHeader() =>
@@ -306,10 +306,10 @@ internal static class UsageView
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         content.Children.Add(new FontIcon { Glyph = row.Expanded ? "\uE70D" : "\uE76C", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(new TextBlock { Text = row.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, MaxWidth = 360, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
-        var summary = $"{row.Count} 条 · {Compact(row.Stats.Tokens)} tokens · 缓存命中 {Percent(row.Stats.CacheHitPercent)}";
+        var summary = Localized.Format("{0} 条 · {1} tokens · 缓存命中 {2}", row.Count, Compact(row.Stats.Tokens), Percent(row.Stats.CacheHitPercent));
         content.Children.Add(new TextBlock { Text = summary, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
         if (row.Stats.Errors > 0)
-            content.Children.Add(new TextBlock { Text = $"{row.Stats.Errors} 失败", Style = Themed("CriticalCaption"), VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new TextBlock { Text = Localized.Format("{0} 失败", row.Stats.Errors), Style = Themed("CriticalCaption"), VerticalAlignment = VerticalAlignment.Center });
         var button = new Button
         {
             Style = Themed("MenuRow"), Content = content, Height = RowHeight, Padding = new Thickness(16, 0, 16, 0), CornerRadius = new CornerRadius(0)
@@ -330,14 +330,14 @@ internal static class UsageView
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         AutomationProperties.SetName(sessionButton, sessionTitle);
-        ToolTipService.SetToolTip(sessionButton, $"{sessionTitle}\n只看这个会话，再次点击显示全部");
+        ToolTipService.SetToolTip(sessionButton, Localized.Format("{0}\n只看这个会话，再次点击显示全部", sessionTitle));
         sessionButton.Click += (_, _) => onSession(session);
 
         var failed = UsageStats.IsFailed(turn);
         var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         status.Children.Add(new Ellipse { Style = Themed(failed ? "DotCritical" : "DotOn"), VerticalAlignment = VerticalAlignment.Center });
-        status.Children.Add(new TextBlock { Text = failed ? "失败" : "成功", Style = Themed(failed ? "CriticalCaption" : "Caption") });
-        if (failed) ToolTipService.SetToolTip(status, Json.OptionalText(turn, "error") ?? "上游请求失败");
+        status.Children.Add(new TextBlock { Text = failed ? Localized.Get("失败") : Localized.Get("成功"), Style = Themed(failed ? "CriticalCaption" : "Caption") });
+        if (failed) ToolTipService.SetToolTip(status, Json.OptionalText(turn, "error") ?? Localized.Get("上游请求失败"));
 
         var providerId = Json.Text(turn, "provider_id");
         var providerName = providerNames.GetValueOrDefault(providerId, providerId);
@@ -349,7 +349,7 @@ internal static class UsageView
         {
             var returned = Json.OptionalText(turn, "returned_model");
             model.Children.Add(new TextBlock { Text = $"→ {returned}", Style = Themed("CautionCaption"), VerticalAlignment = VerticalAlignment.Center });
-            tip += $"\n上游实际返回 {returned}";
+            tip += Localized.Format("\n上游实际返回 {0}", returned);
         }
         ToolTipService.SetToolTip(model, tip);
 
@@ -357,7 +357,7 @@ internal static class UsageView
         var hit = Number(turn, "cache_hit_percent");
         var lowCache = hit is < CacheLowPercent && promptTokens >= CacheVerdictMinPrompt;
         var reasoning = new TextBlock { Text = Number(turn, "reasoning_tokens") is { } reasoningTokens ? Compact(reasoningTokens) : "—" };
-        if (Count(turn, "reasoning_chars") is > 0 and var chars) ToolTipService.SetToolTip(reasoning, $"思考内容约 {Compact(chars)} 字");
+        if (Count(turn, "reasoning_chars") is > 0 and var chars) ToolTipService.SetToolTip(reasoning, Localized.Format("思考内容约 {0} 字", Compact(chars)));
         string Optional(string key) => Number(turn, key) is { } value ? Compact(value) : "—";
         var cells = new UIElement[]
         {

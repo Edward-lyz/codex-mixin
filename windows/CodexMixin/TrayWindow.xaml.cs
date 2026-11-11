@@ -46,9 +46,10 @@ public sealed partial class TrayWindow : Window
     public TrayWindow()
     {
         InitializeComponent();
+        XamlText.Translate(Content);
         GatewaySwitch.IsEnabled = false;
         Panel.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
-        Title = "Codex Mixin · 主面板";
+        Title = Localized.Get("Codex Mixin · 主面板");
         AppWindow.IsShownInSwitchers = false;
         var presenter = (OverlappedPresenter)AppWindow.Presenter;
         presenter.SetBorderAndTitleBar(false, false);
@@ -90,7 +91,7 @@ public sealed partial class TrayWindow : Window
             }
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
-        catch (Exception error) { PanelStatus.Text = $"上次额度缓存不可用：{error.Message}"; }
+        catch (Exception error) { PanelStatus.Text = Localized.Format("上次额度缓存不可用：{0}", error.Message); }
         if (exiting) return;
         preloadComplete = true;
         timer.Start();
@@ -139,7 +140,7 @@ public sealed partial class TrayWindow : Window
     {
         busy = true;
         GatewaySwitch.IsEnabled = false;
-        PanelStatus.Text = "正在刷新本地状态与额度…";
+        PanelStatus.Text = Localized.Get("正在刷新本地状态与额度…");
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         refreshCancellation = refresh;
         var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
@@ -156,7 +157,7 @@ public sealed partial class TrayWindow : Window
             if (refresh.IsCancellationRequested) return;
             var failures = errors.OfType<string>().ToArray();
             PanelStatus.Text = failures.Length == 0
-                ? $"{DateTime.Now:HH:mm:ss} · 配置已同步"
+                ? Localized.Format("{0:HH:mm:ss} · 配置已同步", DateTime.Now)
                 : string.Join("\n", failures);
             if (failures.Length == 0)
             {
@@ -182,8 +183,8 @@ public sealed partial class TrayWindow : Window
                 catch (Exception error)
                 {
                     if (refresh.IsCancellationRequested) return null;
-                    ProviderTitle.Text = "服务商读取失败 · 保留上次显示";
-                    return $"服务商读取失败：{error.Message}";
+                    ProviderTitle.Text = Localized.Get("服务商读取失败 · 保留上次显示");
+                    return Localized.Format("服务商读取失败：{0}", error.Message);
                 }
             }
 
@@ -193,7 +194,7 @@ public sealed partial class TrayWindow : Window
                 {
                     if (await providersTask != null)
                     {
-                        if (providerId != null) quotaFailures[providerId] = "服务商读取失败，未查询额度。请刷新重试。";
+                        if (providerId != null) quotaFailures[providerId] = Localized.Get("服务商读取失败，未查询额度。请刷新重试。");
                         return null;
                     }
                     var errors = new List<string>();
@@ -234,12 +235,12 @@ public sealed partial class TrayWindow : Window
                         RenderQuota();
                         FitToContent();
                     }
-                    return errors.Count == 0 ? null : $"额度刷新失败（保留上次数据）：{string.Join("；", errors)}";
+                    return errors.Count == 0 ? null : Localized.Format("额度刷新失败（保留上次数据）：{0}", string.Join("；", errors));
                 }
                 catch (Exception error)
                 {
                     if (refresh.IsCancellationRequested) return null;
-                    return $"额度读取失败：{error.Message}";
+                    return Localized.Format("额度读取失败：{0}", error.Message);
                 }
                 finally { quotaPending.Clear(); quotaProvider = null; RenderQuota(); }
             }
@@ -248,7 +249,7 @@ public sealed partial class TrayWindow : Window
         {
             RenderQuota();
             serviceKnown = false;
-            ServiceTitle.Text = "本地服务 · 状态未知";
+            ServiceTitle.Text = Localized.Get("本地服务 · 状态未知");
             ServiceDot.Style = Themed("DotWarn");
             PanelStatus.Text = error.Message;
         }
@@ -259,7 +260,7 @@ public sealed partial class TrayWindow : Window
                 if (!exiting && quotaUpdatedAt.Count > 0)
                     await QuotaDisplayCache.Create(providers, allQuotaRows, quotaUpdatedAt).SaveAsync(cachePath, lifetime.Token);
             }
-            catch (Exception error) when (!exiting) { PanelStatus.Text += $"\n额度展示缓存保存失败：{error.Message}"; }
+            catch (Exception error) when (!exiting) { PanelStatus.Text += Localized.Format("\n额度展示缓存保存失败：{0}", error.Message); }
             catch (OperationCanceledException) when (exiting) { }
             refreshCancellation = null;
             busy = false;
@@ -290,10 +291,10 @@ public sealed partial class TrayWindow : Window
         {
             var status = await ((App)Microsoft.UI.Xaml.Application.Current).Client.QueryAsync(["service", "status", "--json"], token, LocalReadTimeout);
             token.ThrowIfCancellationRequested();
-            ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
+            ServiceTitle.Text = Localized.Format("本地服务{0}", Json.Gateway(status));
             serviceKnown = true;
             var running = Json.OptionalText(status, "gateway") == "running";
-            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
+            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? Localized.Get("网关未启动") : Localized.Get("请先配置服务商"));
             ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
             settingState = true; GatewaySwitch.IsOn = running; settingState = false;
             GatewaySwitch.IsEnabled = !changing;
@@ -305,10 +306,10 @@ public sealed partial class TrayWindow : Window
             if (token.IsCancellationRequested) return null;
             serviceKnown = false;
             GatewaySwitch.IsEnabled = false;
-            ServiceTitle.Text = "本地服务 · 状态未知";
-            Endpoint.Text = "请重新打开面板重试";
+            ServiceTitle.Text = Localized.Get("本地服务 · 状态未知");
+            Endpoint.Text = Localized.Get("请重新打开面板重试");
             ServiceDot.Style = Themed("DotWarn");
-            return $"状态读取失败：{error.Message}";
+            return Localized.Format("状态读取失败：{0}", error.Message);
         }
     }
 
@@ -339,7 +340,7 @@ public sealed partial class TrayWindow : Window
         }
         var selected = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
         var hasProvider = selected.ValueKind == JsonValueKind.Object;
-        ProviderTitle.Text = hasProvider ? "额度" : "尚未配置服务商";
+        ProviderTitle.Text = hasProvider ? Localized.Get("额度") : Localized.Get("尚未配置服务商");
         quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
         RenderQuota();
         FitToContent();
@@ -383,7 +384,7 @@ public sealed partial class TrayWindow : Window
     {
         QuotaBody.Children.Clear();
         QuotaStamp.Text = providerId is { } id && quotaUpdatedAt.TryGetValue(id, out var updatedAt)
-            ? $"上次更新 {updatedAt.ToLocalTime():HH:mm:ss}{(quotaPending.Contains(id) ? " · 正在刷新" : "")}" : "";
+            ? Localized.Format("上次更新 {0:HH:mm:ss}{1}", updatedAt.ToLocalTime(), (quotaPending.Contains(id) ? Localized.Get(" · 正在刷新") : "")) : "";
         QuotaStyleHost.Child = quotaRows.Length == 0 ? null : QuotaView.StyleSwitch(quotaStyle, style =>
         {
             quotaStyle = style;
@@ -393,10 +394,10 @@ public sealed partial class TrayWindow : Window
         if (quotaRows.Length == 0 && providerId != null && quotaPending.Contains(providerId))
         {
             QuotaBody.Children.Add(new ProgressBar { IsIndeterminate = AppWindow.IsVisible, Height = 4 });
-            QuotaBody.Children.Add(new TextBlock { Text = quotaProvider == providerId ? "正在读取额度…" : "正在排队查询额度…", Style = Themed("Caption") });
+            QuotaBody.Children.Add(new TextBlock { Text = quotaProvider == providerId ? Localized.Get("正在读取额度…") : Localized.Get("正在排队查询额度…"), Style = Themed("Caption") });
         }
         else QuotaBody.Children.Add(quotaRows.Length == 0
-            ? new TextBlock { Text = providerId != null && quotaFailures.TryGetValue(providerId, out var error) ? $"额度读取失败：{error}" : "额度未知", TextWrapping = TextWrapping.Wrap, Style = Themed("Caption") }
+            ? new TextBlock { Text = providerId != null && quotaFailures.TryGetValue(providerId, out var error) ? Localized.Format("额度读取失败：{0}", error) : Localized.Get("额度未知"), TextWrapping = TextWrapping.Wrap, Style = Themed("Caption") }
             : QuotaView.Render(quotaRows, quotaStyle));
     }
 
@@ -422,21 +423,21 @@ public sealed partial class TrayWindow : Window
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
         => await ConfirmExitAsync(
-            "彻底退出 Mixin？",
-            "会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。",
-            "彻底退出",
+            Localized.Get("彻底退出 Mixin？"),
+            Localized.Get("会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。"),
+            Localized.Get("彻底退出"),
             app => app.QuitCompletelyAsync());
 
     private async void OnLightweight(object sender, RoutedEventArgs args)
         => await ConfirmExitAsync(
-            "进入轻量模式？",
-            "关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。",
-            "进入轻量模式",
+            Localized.Get("进入轻量模式？"),
+            Localized.Get("关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。"),
+            Localized.Get("进入轻量模式"),
             app => app.EnterLightweightModeAsync());
 
     private async Task ConfirmExitAsync(string title, string content, string primary, Func<App, Task> exit)
     {
-        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
+        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = Localized.Get("请等待当前操作完成后退出。"); return; }
         dialogOpen = true;
         try
         {
@@ -449,7 +450,7 @@ public sealed partial class TrayWindow : Window
             Title = title,
             Content = content,
             PrimaryButtonText = primary,
-            CloseButtonText = "取消",
+            CloseButtonText = Localized.Get("取消"),
             XamlRoot = Panel.XamlRoot,
             RequestedTheme = Panel.ActualTheme
         };
@@ -473,7 +474,7 @@ public sealed partial class TrayWindow : Window
         string? failure = null;
         try
         {
-            PanelStatus.Text = "正在执行网关操作…";
+            PanelStatus.Text = Localized.Get("正在执行网关操作…");
             FitToContent();
             PanelStatus.Text = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(args, lifetime.Token);
         }

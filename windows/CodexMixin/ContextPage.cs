@@ -30,7 +30,7 @@ public sealed partial class MainWindow
         }
         catch (CliFailure error)
         {
-            settings.Content = Card("上下文设置不可用", error.Message);
+            settings.Content = Card(Localized.Get("上下文设置不可用"), error.Message);
         }
         try
         {
@@ -39,7 +39,7 @@ public sealed partial class MainWindow
         }
         catch (CliFailure error)
         {
-            statistics.Content = Card("上下文统计不可用", error.Message);
+            statistics.Content = Card(Localized.Get("上下文统计不可用"), error.Message);
         }
     }
 
@@ -47,7 +47,7 @@ public sealed partial class MainWindow
     {
         var enabled = new CheckBox
         {
-            Content = "启用上下文引擎",
+            Content = Localized.Get("启用上下文引擎"),
             IsChecked = stored.Enabled
         };
         AutomationProperties.SetAutomationId(enabled, "context-enabled");
@@ -62,21 +62,21 @@ public sealed partial class MainWindow
             {
                 draftDirty = false;
                 ApplyChanges.IsEnabled = false;
-                ShowSummary("未修改");
-                ShowNotice("保存设置", "没有需要保存的更改。", InfoBarSeverity.Informational);
+                ShowSummary(Localized.Get("未修改"));
+                ShowNotice(Localized.Get("保存设置"), Localized.Get("没有需要保存的更改。"), InfoBarSeverity.Informational);
                 return;
             }
-            await ChangeAsync("保存并应用设置", arguments);
+            await ChangeAsync(Localized.Get("保存并应用设置"), arguments);
         }
 
         pendingApply = SaveAsync;
-        ApplyChanges.Content = "保存设置";
-        ToolTipService.SetToolTip(ApplyChanges, "保存更改后自动重启运行中的网关并生效。");
+        ApplyChanges.Content = Localized.Get("保存设置");
+        ToolTipService.SetToolTip(ApplyChanges, Localized.Get("保存更改后自动重启运行中的网关并生效。"));
         TrackDraft(enabled);
 
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(enabled);
-        return Card("上下文引擎", "", body);
+        return Card(Localized.Get("上下文引擎"), "", body);
     }
 
     private UIElement ContextStatsCards(ContextStats stats, CancellationToken token)
@@ -86,10 +86,10 @@ public sealed partial class MainWindow
         var tiles = new Grid { ColumnSpacing = 12 };
         var metrics = new (string Title, string Value, string Note)[]
         {
-            ("会话", UsageView.Compact(totals.Sessions), $"{UsageView.Compact(totals.Messages)} 条归档消息"),
-            ("压缩次数", UsageView.Compact(totals.Compressions), ""),
-            ("节省 tokens", UsageView.Compact(totals.SavedTokens), $"当前视图 {UsageView.Compact(totals.ViewTokens)}"),
-            ("缓存命中", cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
+            (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages))),
+            (Localized.Get("压缩次数"), UsageView.Compact(totals.Compressions), ""),
+            (Localized.Get("节省 tokens"), UsageView.Compact(totals.SavedTokens), Localized.Format("当前视图 {0}", UsageView.Compact(totals.ViewTokens))),
+            (Localized.Get("缓存命中"), cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
                 "")
         };
         for (var index = 0; index < metrics.Length; index++)
@@ -106,28 +106,28 @@ public sealed partial class MainWindow
         }
 
         var inspector = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
-        inspector.Content = Card("上下文详情", "选择一个会话，查看上下文增长，以及消息和工具如何合并成精简摘要。");
+        inspector.Content = Card(Localized.Get("上下文详情"), Localized.Get("选择一个会话，查看上下文增长，以及消息和工具如何合并成精简摘要。"));
         CancellationTokenSource? archiveQuery = null;
         async Task InspectAsync(ContextSession session)
         {
             archiveQuery?.Cancel();
             var request = CancellationTokenSource.CreateLinkedTokenSource(token);
             archiveQuery = request;
-            inspector.Content = Card(session.Display, "正在读取归档…", new ProgressRing { IsActive = true, Width = 24, Height = 24 });
+            inspector.Content = Card(session.Display, Localized.Get("正在读取归档…"), new ProgressRing { IsActive = true, Width = 24, Height = 24 });
             try
             {
                 var document = await Client.QueryAsync(["context", "export", "--compact", $"--session={session.Session}"], request.Token);
                 request.Token.ThrowIfCancellationRequested();
                 if (!ReferenceEquals(archiveQuery, request)) return;
                 var detail = ContextContract.ParseArchive(document);
-                if (detail.Session != session.Session) throw new CliFailure("CLI 返回了其他会话的归档。");
+                if (detail.Session != session.Session) throw new CliFailure(Localized.Get("CLI 返回了其他会话的归档。"));
                 inspector.Content = ContextArchiveView(session, detail);
             }
             catch (OperationCanceledException) { }
             catch (CliFailure error)
             {
                 if (ReferenceEquals(archiveQuery, request) && !request.IsCancellationRequested)
-                    inspector.Content = Card("归档读取失败", error.Message, Button("重试", () => InspectAsync(session)));
+                    inspector.Content = Card(Localized.Get("归档读取失败"), error.Message, Button(Localized.Get("重试"), () => InspectAsync(session)));
             }
             finally
             {
@@ -137,10 +137,10 @@ public sealed partial class MainWindow
         }
         inspector.Unloaded += (_, _) => { archiveQuery?.Cancel(); };
         var archive = new StackPanel { Spacing = 8 };
-        ToolTipService.SetToolTip(archive, $"归档库：{stats.DatabasePath}");
+        ToolTipService.SetToolTip(archive, Localized.Format("归档库：{0}", stats.DatabasePath));
         if (stats.Sessions.Length == 0)
         {
-            archive.Children.Add(Text("暂无会话。"));
+            archive.Children.Add(Text(Localized.Get("暂无会话。")));
         }
         else
         {
@@ -152,7 +152,7 @@ public sealed partial class MainWindow
         var workspace = new Grid { ColumnSpacing = 16 };
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
-        var sessionCard = Card("按会话统计", "", archive);
+        var sessionCard = Card(Localized.Get("按会话统计"), "", archive);
         workspace.Children.Add(sessionCard);
         Grid.SetColumn(inspector, 1); workspace.Children.Add(inspector);
         var narrowWorkspace = false;
@@ -173,7 +173,7 @@ public sealed partial class MainWindow
 
     private static ListView Sessions(ContextSession[] sessions, Action<ContextSession> select)
     {
-        var headers = new[] { "会话", "压缩", "节省" };
+        var headers = new[] { Localized.Get("会话"), Localized.Get("压缩"), Localized.Get("节省") };
         var list = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
@@ -197,8 +197,8 @@ public sealed partial class MainWindow
     private UIElement ContextArchiveView(ContextSession session, ContextArchive archive)
     {
         var body = new StackPanel { Spacing = 16 };
-        body.Children.Add(Text($"当前视图 {UsageView.Compact(session.ViewTokens)} token · 已节省 {UsageView.Compact(session.SavedTokens)} token"));
-        body.Children.Add(new TextBlock { Text = "上下文增长", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        body.Children.Add(Text(Localized.Format("当前视图 {0} token · 已节省 {1} token", UsageView.Compact(session.ViewTokens), UsageView.Compact(session.SavedTokens))));
+        body.Children.Add(new TextBlock { Text = Localized.Get("上下文增长"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         var messages = archive.History.ToDictionary(row => row.Reference);
         var blocks = archive.Blocks.ToDictionary(row => row.Id);
         var sizes = messages.ToDictionary(row => row.Key, row => row.Value.Bytes);
@@ -237,29 +237,29 @@ public sealed partial class MainWindow
             Canvas.SetLeft(label, 0); Canvas.SetTop(label, y - 8); chart.Children.Add(label);
         }
         chart.Children.Add(originalLine); chart.Children.Add(visibleLine);
-        foreach (var (x, text) in new[] { (40d, "0"), (260d, "消息顺序"), (510d, archive.History.Length.ToString()) })
+        foreach (var (x, text) in new[] { (40d, "0"), (260d, Localized.Get("消息顺序")), (510d, archive.History.Length.ToString()) })
         {
             var axis = new TextBlock { Text = text, FontSize = 11, Style = Themed("Caption") };
             Canvas.SetLeft(axis, x); Canvas.SetTop(axis, 174); chart.Children.Add(axis);
         }
-        AutomationProperties.SetName(chart, $"归档文本增长：原始 {original / 1024d:0.0} KiB，当前视图 {visible / 1024d:0.0} KiB");
-        body.Children.Add(Text("虚线：原始归档   实线：当前视图   单位：KiB"));
+        AutomationProperties.SetName(chart, Localized.Format("归档文本增长：原始 {0:0.0} KiB，当前视图 {1:0.0} KiB", original / 1024d, visible / 1024d));
+        body.Children.Add(Text(Localized.Get("虚线：原始归档   实线：当前视图   单位：KiB")));
         body.Children.Add(new Viewbox { Child = chart, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Stretch });
         body.Children.Add(new TextBlock
         {
-            Text = "按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。",
+            Text = Localized.Get("按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。"),
             Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap
         });
-        body.Children.Add(new TextBlock { Text = "压缩概览", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = Localized.Get("压缩概览"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         foreach (var block in archive.Blocks.Where(block => block.SupersededBy is null))
             body.Children.Add(ContextCompression(block, messages));
-        if (archive.Blocks.Length == 0) body.Children.Add(Text("此会话尚无压缩块。"));
+        if (archive.Blocks.Length == 0) body.Children.Add(Text(Localized.Get("此会话尚无压缩块。")));
         var remaining = archive.Segments.Count(segment => segment.Kind == "message");
-        if (remaining > 0) body.Children.Add(new TextBlock { Text = $"尚未压缩 · {remaining} 条内容", Style = Themed("Caption") });
+        if (remaining > 0) body.Children.Add(new TextBlock { Text = Localized.Format("尚未压缩 · {0} 条内容", remaining), Style = Themed("Caption") });
         var earlier = archive.Blocks.Where(block => block.SupersededBy is not null).ToArray();
         if (earlier.Length > 0)
         {
-            var history = new Expander { Header = $"历史压缩（{earlier.Length}）", HorizontalAlignment = HorizontalAlignment.Stretch };
+            var history = new Expander { Header = Localized.Format("历史压缩（{0}）", earlier.Length), HorizontalAlignment = HorizontalAlignment.Stretch };
             history.Expanding += (_, _) =>
             {
                 if (history.Content is not null) return;
@@ -284,8 +284,8 @@ public sealed partial class MainWindow
             var (kind, tool) = group.Key;
             var label = tool?.Split('.').Last().Split("__").Last() ?? kind switch
             {
-                "user" => "用户消息", "assistant" => "助手消息", "function_call" => "工具调用",
-                "function_call_output" => "工具结果", "reasoning" => "推理", _ => "其他"
+                "user" => Localized.Get("用户消息"), "assistant" => Localized.Get("助手消息"), "function_call" => Localized.Get("工具调用"),
+                "function_call_output" => Localized.Get("工具结果"), "reasoning" => Localized.Get("推理"), _ => Localized.Get("其他")
             };
             var symbol = kind switch { "user" => Symbol.Contact, "assistant" => Symbol.Message,
                 "function_call" => Symbol.Setting, "function_call_output" => Symbol.Document, _ => Symbol.More };
@@ -300,10 +300,10 @@ public sealed partial class MainWindow
             var count = new TextBlock { Text = $"×{group.Count()}", Style = Themed("Caption") };
             Grid.SetColumn(count, 2); chip.Children.Add(count);
             ToolTipService.SetToolTip(chip, tool ?? label);
-            AutomationProperties.SetName(chip, $"{label}，{group.Count()} 条");
+            AutomationProperties.SetName(chip, Localized.Format("{0}，{1} 条", label, group.Count()));
             sources.Children.Add(chip);
         }
-        if (groups.Length > 5) sources.Children.Add(new TextBlock { Text = $"其他 {groups.Skip(5).Sum(group => group.Count())} 条", Style = Themed("Caption") });
+        if (groups.Length > 5) sources.Children.Add(new TextBlock { Text = Localized.Format("其他 {0} 条", groups.Skip(5).Sum(group => group.Count())), Style = Themed("Caption") });
         var flow = new Grid { ColumnSpacing = 10 };
         flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(124) });
         flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
@@ -314,14 +314,14 @@ public sealed partial class MainWindow
         AutomationProperties.SetAccessibilityView(brace, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
         Grid.SetColumn(brace, 1); flow.Children.Add(brace);
         var output = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        output.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(block.Topic) ? "精简摘要" : block.Topic,
+        output.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(block.Topic) ? Localized.Get("精简摘要") : block.Topic,
             TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        output.Children.Add(new TextBlock { Text = $"{block.References.Length} 条内容 → 1 条摘要", Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap });
+        output.Children.Add(new TextBlock { Text = Localized.Format("{0} 条内容 → 1 条摘要", block.References.Length), Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap });
         output.Children.Add(new TextBlock { Text = block.Summary[..Math.Min(240, block.Summary.Length)],
             Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(output, 2); flow.Children.Add(output);
-        var detail = new Expander { Header = "查看摘要", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var detail = new Expander { Header = Localized.Get("查看摘要"), HorizontalAlignment = HorizontalAlignment.Stretch };
         detail.Expanding += (_, _) =>
         {
             if (detail.Content is not null) return;
@@ -335,10 +335,10 @@ public sealed partial class MainWindow
     private static Border Session(ContextSession session)
     {
         var display = new TextBlock { Text = session.Display.Trim(), TextTrimming = TextTrimming.CharacterEllipsis };
-        var updated = session.UpdatedAt <= 0 ? "未知"
+        var updated = session.UpdatedAt <= 0 ? Localized.Get("未知")
             : DateTimeOffset.FromUnixTimeSeconds(session.UpdatedAt).ToLocalTime().ToString("MM-dd HH:mm");
         var hit = session.Cache.HitPercent is null ? "—" : $"{session.Cache.HitPercent:0.0}%";
-        ToolTipService.SetToolTip(display, $"{session.Session}\nrevision {session.Revision}\n消息 {UsageView.Compact(session.Messages)} · 视图 {UsageView.Compact(session.ViewTokens)} · 命中 {hit}\n更新 {updated}");
+        ToolTipService.SetToolTip(display, Localized.Format("{0}\nrevision {1}\n消息 {2} · 视图 {3} · 命中 {4}\n更新 {5}", session.Session, session.Revision, UsageView.Compact(session.Messages), UsageView.Compact(session.ViewTokens), hit, updated));
         var cells = new UIElement[]
         {
             display,
