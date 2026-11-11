@@ -110,7 +110,7 @@ jobs:
         run: |
           $cargo = Get-Content Cargo.toml -Raw
           $version = [regex]::Match(
-            $cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"'
+            $cargo, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"'
           ).Groups[1].Value
           if (-not $version) { throw 'Cargo package version is missing' }
           $numericVersion = ($version -split '-', 2)[0]
@@ -199,7 +199,7 @@ jobs:
         run: |
           $cargo = Get-Content Cargo.toml -Raw
           $version = [regex]::Match(
-            $cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"'
+            $cargo, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"'
           ).Groups[1].Value
           if (-not $version) { throw 'Cargo package version is missing' }
           "value=$version" >> $env:GITHUB_OUTPUT
