@@ -27,8 +27,8 @@ pub use fusion::{
 mod migration;
 mod storage;
 pub use storage::{
-    ensure_compaction_secret, ensure_gateway_client_key, export_stored_config,
-    gateway_client_key_exists, import_stored_config, load_stored_config,
+    ensure_compaction_secret, ensure_gateway_api_key, ensure_gateway_client_key,
+    export_stored_config, gateway_client_key_exists, import_stored_config, load_stored_config,
     load_stored_config_from_path, load_stored_config_read_only, mutate_stored_config,
     mutate_stored_config_at_path, revoke_gateway_client_key, save_stored_config,
     save_stored_config_to_path, stored_config_path,
@@ -36,8 +36,9 @@ pub use storage::{
 
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
 
-/// Default listener: all interfaces with an automatically chosen port.
-pub const DEFAULT_GATEWAY_BIND: &str = "0.0.0.0:0";
+/// Default listener: loopback only, with an automatically chosen port.
+/// Binding wider generates a gateway API key that public peers must send.
+pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:0";
 
 /// Address clients should dial for a gateway listening on `bind`.
 ///

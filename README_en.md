@@ -32,7 +32,7 @@
 
 <p align="center">
   <a href="#why-codex-mixin">Why Mixin</a> ·
-  <a href="#benchmarks-new">Benchmarks</a> ·
+  <a href="#benchmarks">Benchmarks</a> ·
   <a href="#features-and-interface">Features</a> ·
   <a href="#providers">Providers</a> ·
   <a href="#agent-integrations">50 Agents</a> ·
@@ -40,6 +40,41 @@
   <a href="#documentation">Docs</a> ·
   <a href="#faq">FAQ</a>
 </p>
+
+---
+
+## Quick Start
+
+### 1. Download and open
+
+Choose your platform and architecture from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest). You do not need Rust or a source build.
+
+| Platform | Download and run | Graphical entry |
+| --- | --- | --- |
+| macOS | Download the Apple Silicon or Intel `.dmg`, drag the app to Applications, and launch it | Menu bar icon → Open Console |
+| Windows | Run `windows-x86_64-setup.exe`, or extract and launch the portable Zip | System tray icon → Open Console |
+| Linux | Download the x86_64 or ARM64 `unknown-linux-musl.tar.gz`, extract it, and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal in your browser |
+
+The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
+
+### 2. Configure models and connect an Agent
+
+1. In Models & Services, add a provider with an API key or OAuth sign-in.
+2. Refresh the model list, select models, save, and make sure the gateway is running.
+3. Open the Agents page and connect an installed client. For Codex, choose Official Account mode to keep official GPT models and ChatGPT sign-in.
+4. Restart the client or open a new session, then select a custom model.
+
+### 3. Check status and usage
+
+Use the menu bar or tray for gateway status and provider quota. Open Usage in the console for daily and per-reply Tokens, cache results, and speed. Disconnect an Agent to restore its original configuration.
+
+The Web panel listens on all interfaces on a random port from 8000 to 9000 and requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
+
+### Network access and gateway key
+
+The gateway listens only on `127.0.0.1` by default. To let other devices connect, start it with `codex-mixin service start --bind 0.0.0.0:PORT` (replace PORT with the actual port); the listen address is saved and kept across restarts.
+
+When the gateway listens beyond localhost, the first start generates an `sk-` access key, prints it to the terminal, and saves it as `gateway_api_key` in the configuration file. Requests from the local machine and private networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10) need no key; any other source must send the key in the `Authorization: Bearer <key>` or `x-api-key` header, or the gateway returns 401.
 
 ---
 
@@ -65,24 +100,24 @@ Codex Mixin is a local gateway with a Rust core. It routes requests to your conf
     </td>
     <td width="50%" valign="top">
       <h3>Built-in context compression engine saves tokens</h3>
-      A 3-tier context engine adopts Billion Context's compaction rules. Models can compress, search, and restore archived history. Turn it on to save tokens. <a href="docs/context-engine.md">How it works</a>.
+      A 3-tier context engine adopts Billion Context's compaction rules. Models can compress, search, and restore archived history. Turn it on to save tokens while compacting history. <a href="docs/context-engine.md">How it works</a>.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>Usage and cache, fully in view</h3>
-      Keep the latest 5,000 replies locally, with tokens, cache hits, first-token latency, and output speed. Check provider quota directly from the menu bar or tray.
+      Keep the latest 100,000 replies locally (a single query returns at most 5,000), with tokens, cache hits, first-token latency, and output speed. Check provider quota directly from the menu bar or tray.
     </td>
     <td width="50%" valign="top">
       <h3>Peak performance</h3>
-      Only 76.8 MiB at idle, and 113.5 MiB under 40 fully loaded active requests. <a href="#benchmarks-new">See below</a>.
+      Only 76.8 MiB at idle, and 113.5 MiB under 40 fully loaded active requests. <a href="#benchmarks">See below</a>.
     </td>
   </tr>
 </table>
 
 ---
 
-## Benchmarks [NEW]
+## Benchmarks
 Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 ran simultaneously against a controlled local HTTP/SSE upstream. Each request carried **1,000,000 text tokens + two 1024 × 768 PNGs**. Each main session started 4 child sessions: 0 / 2 / 4 / 8 main sessions produced 0 / 10 / 20 / 40 active requests per product.
 
 | Measurement | Codex Mixin | CC Switch | Magpie |
@@ -172,25 +207,33 @@ Choose one of these presets when adding a provider in the interface. Use Custom 
 | Preset | Provider | Upstream protocol | Authentication |
 | --- | --- | --- | --- |
 | `openai` | OpenAI | OpenAI Responses | ChatGPT OAuth |
+| `claude-code` | Claude Code | Anthropic Messages | Reuses the local Claude Code login and calls the official `claude` through the built-in PTY/ConPTY bridge |
 | `baidu-oneapi` | Baidu OneAPI | Anthropic Messages; GPT models use OpenAI Responses | API key |
 | `openrouter` | OpenRouter | OpenAI Chat Completions | API key |
 | `deepseek` | DeepSeek | OpenAI Responses | API key |
 | `agy` | Google Antigravity | Gemini | Google OAuth |
+| `agy-business` | Antigravity Business | Gemini | Google OAuth or GCP ADC credentials, with project and region required |
+| `kiro` | Kiro | Anthropic Messages | Reuses the local Kiro / `kiro-cli` login |
 | `opencode-go` | OpenCode Go | OpenAI Responses | API key, with a session affinity header |
 | `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API key or AWS access key |
 | `custom` | Any compatible endpoint | OpenAI Responses (default) | Custom headers and key |
 
 Test the connection and refresh models in the interface. Use the model action menu to probe capabilities again; probes send real requests and can consume quota.
 
----
+### Claude Code subscription
 
 Claude Code subscriptions reuse the local login through Mixin’s built-in PTY/ConPTY bridge to the official interactive `claude` executable, with streaming, MCP tool round trips, and live session reuse. Magpie is not required and there is no automatic `claude -p` fallback. Claude Code must be installed; streaming capture depends on its Bun runtime and fails explicitly when incompatible.
+
+---
 
 ## Agent Integrations
 
 All 50 catalog entries have a supported integration or native model manager. The 47 gateway/native-app integrations preserve unrelated settings and restore owned fields on disconnect. Cursor CLI, Copilot CLI, and Devin manage vendor-native models using the vendor account; they do not route arbitrary models through the gateway.
 
 ### Supported Agents (50)
+
+<details>
+<summary>Show all 50 agents</summary>
 
 <table>
   <tr>
@@ -415,34 +458,7 @@ All 50 catalog entries have a supported integration or native model manager. The
   </tr>
 </table>
 
----
-
-## Quick Start
-
-### 1. Download and open
-
-Choose your platform and architecture from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest). You do not need Rust or a source build.
-
-| Platform | Download and run | Graphical entry |
-| --- | --- | --- |
-| macOS | Download the Apple Silicon or Intel `.dmg`, drag the app to Applications, and launch it | Menu bar icon → Open Console |
-| Windows | Run `windows-x86_64-setup.exe`, or extract and launch the portable Zip | System tray icon → Open Console |
-| Linux | Download the x86_64 or ARM64 `unknown-linux-musl.tar.gz`, extract it, and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal in your browser |
-
-The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
-
-### 2. Configure models and connect an Agent
-
-1. In Models & Services, add a provider with an API key or OAuth sign-in.
-2. Refresh the model list, select models, save, and make sure the gateway is running.
-3. Open the Agents page and connect an installed client. For Codex, choose Official Account mode to keep official GPT models and ChatGPT sign-in.
-4. Restart the client or open a new session, then select a custom model.
-
-### 3. Check status and usage
-
-Use the menu bar or tray for gateway status and provider quota. Open Usage in the console for daily and per-reply Tokens, cache results, and speed. Disconnect an Agent to restore its original configuration.
-
-The Web panel listens on all interfaces on a random port from 8000 to 9000 and requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
+</details>
 
 ---
 
@@ -519,4 +535,4 @@ No. Backups contain API keys and use Base64 encoding. Treat them as credentials.
 
 ## License
 
-Released under the [Codex Mixin Source Code Viewing License 1.0](LICENSE). Third-party notices are in [NOTICE](NOTICE).
+Codex Mixin is licensed under [CC BY-NC 4.0](LICENSE): you may use, modify and redistribute it with attribution, but not for commercial purposes. Contact the author for commercial licensing. Third-party notices are in [NOTICE](NOTICE).
