@@ -1,8 +1,19 @@
-[package]
-name = "codex-mixin"
+[workspace]
+members = ["crates/platform"]
+
+[workspace.package]
 version = "0.7.7"
 edition = "2024"
 license = "CC-BY-NC-4.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[package]
+name = "codex-mixin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 # Tests live in tests/ and drive the real CLI and HTTP paths end to end, so the
 # library and binary have no unit-test harnesses.
@@ -19,14 +30,15 @@ test = false
 default = []
 client-auth = []
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true
 
 [profile.release]
 codegen-units = 1
 lto = "thin"
 
 [dependencies]
+codex-mixin-platform = { path = "crates/platform" }
 anyhow = "1.0"
 async-stream = "0.3"
 aws-credential-types = "1"

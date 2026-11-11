@@ -28,14 +28,14 @@
 
 ## 平台无关的核心
 
-`src/platform` 之外的生产代码（库、CLI、Web 面板）不含任何平台条件编译、平台
+`crates/platform` 之外的生产代码（库、CLI、Web 面板）不含任何平台条件编译、平台
 工具名、平台路径或平台环境变量。核心只表达意图，例如“把子进程放进独立进程
 组”“以当前用户私有权限写文件”“登录后自动启动网关”“显示一条桌面通知”
 “在终端窗口完成扫码登录”，由 `platform` 在 macOS（launchd、plutil、
 codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 （计划任务、taskkill、ACL、Windows Terminal）上分别实现。
 
-`scripts/check_arch.sh` 扫描 `src/` 与 `panel/` 中 `src/platform` 以外的代码，
+`scripts/check_arch.sh` 扫描 `src/` 与 `panel/` 中 `crates/platform` 以外的代码，
 发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、`launchctl`、
 `USERPROFILE`、`/usr/`、权限位等平台片段即失败。
 
@@ -104,5 +104,5 @@ clippy 与测试仍是权威检查。当前规则：
 - 底层模块不得引用 `FusionEngine` 或网关执行器。
 - `server` 不得引用 `crate::cli`。
 - core/CLI 不得引用具体 `panel` 壳；面板不得访问 CLI 私有实现。
-- `src/platform` 以外的代码不得出现平台条件编译、平台工具名、平台路径或平台
+- `crates/platform` 以外的代码不得出现平台条件编译、平台工具名、平台路径或平台
   环境变量。

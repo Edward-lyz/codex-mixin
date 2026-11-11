@@ -4,11 +4,11 @@
 //! Platform-specific process flags, paths, and permission tools stay here.
 
 mod agent_apps;
-pub(crate) mod claude_interactive;
+pub mod claude_interactive;
 mod codex_cli;
 mod desktop;
 mod files;
-pub(crate) mod oauth;
+pub mod oauth;
 mod package;
 mod paths;
 mod permissions;
@@ -58,13 +58,13 @@ pub mod update;
 
 pub mod agent_cli;
 pub mod agent_credentials;
-pub(crate) mod agent_startup;
+pub mod agent_startup;
 
 pub mod installation;
 
-pub(crate) use paths::{
+pub use paths::{
     copilot_config_root, crush_config_paths, framework_app_root, reasonix_home,
     vscodium_extensions_root,
 };
 #[cfg(windows)]
-pub(crate) use process::system_powershell;
+pub use process::system_powershell;

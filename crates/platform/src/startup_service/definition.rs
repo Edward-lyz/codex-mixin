@@ -275,18 +275,18 @@ pub(super) fn windows_task_arguments(spec: &StartupServiceSpec<'_>) -> anyhow::R
     for (name, value) in gateway_environment(spec)? {
         script.push_str(&format!(
             "$env:{name} = {}; ",
-            crate::platform::shell::powershell_quote(value)
+            crate::shell::powershell_quote(value)
         ));
     }
     script.push_str("& ");
     for argument in gateway_arguments(spec)? {
-        script.push_str(&crate::platform::shell::powershell_quote(argument));
+        script.push_str(&crate::shell::powershell_quote(argument));
         script.push(' ');
     }
     script.push_str("; exit $LASTEXITCODE");
     Ok(format!(
         "--headless {}",
-        crate::platform::shell::encoded_command(&script)
+        crate::shell::encoded_command(&script)
     ))
 }
 

@@ -43,8 +43,8 @@ pub use resolver::{
     MODELS_DEV_API_URL, MetadataResolver, ModelMetadata, default_metadata_cache_path,
 };
 pub use spec::{
-    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_RUNTIME_SERVICE,
-    CLAUDE_CODE_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec,
+    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_RUNTIME_SERVICE, AuthMode,
+    CLAUDE_CODE_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, QuotaLogin,
     aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url, aws_bedrock_runtime_base_url, spec_for,
 };
 pub use types::{

@@ -7,7 +7,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ProxyEnv {
+pub struct ProxyEnv {
     http_proxy: Option<String>,
     https_proxy: Option<String>,
     all_proxy: Option<String>,
@@ -15,7 +15,7 @@ pub(crate) struct ProxyEnv {
 }
 
 impl ProxyEnv {
-    pub(crate) fn from_lookup(env_lookup: &dyn Fn(&str) -> Option<String>) -> Self {
+    pub fn from_lookup(env_lookup: &dyn Fn(&str) -> Option<String>) -> Self {
         Self {
             http_proxy: first_env(env_lookup, &["HTTP_PROXY", "http_proxy"]),
             https_proxy: first_env(env_lookup, &["HTTPS_PROXY", "https_proxy"]),
@@ -34,7 +34,7 @@ fn first_env(env_lookup: &dyn Fn(&str) -> Option<String>, names: &[&str]) -> Opt
 
 /// Static proxy settings configured in the operating system.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct SystemProxy {
+pub struct SystemProxy {
     http: Option<String>,
     https: Option<String>,
     bypass: Vec<String>,
@@ -43,33 +43,33 @@ pub(crate) struct SystemProxy {
 impl SystemProxy {
     /// Reads the current OS settings; unsupported platforms and unreadable
     /// settings yield `None`, which means a direct connection.
-    pub(crate) fn current() -> Option<Self> {
+    pub fn current() -> Option<Self> {
         read_system_proxy().filter(|proxy| proxy.http.is_some() || proxy.https.is_some())
     }
 }
 
 /// Resolved proxy policy for one process lifetime.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ProxySelection {
+pub struct ProxySelection {
     env: ProxyEnv,
     system: Option<SystemProxy>,
 }
 
 impl ProxySelection {
-    pub(crate) fn from_lookup(env_lookup: &dyn Fn(&str) -> Option<String>) -> Self {
+    pub fn from_lookup(env_lookup: &dyn Fn(&str) -> Option<String>) -> Self {
         Self {
             env: ProxyEnv::from_lookup(env_lookup),
             system: SystemProxy::current(),
         }
     }
 
-    pub(crate) fn from_process() -> Self {
+    pub fn from_process() -> Self {
         Self::from_lookup(&|name| std::env::var(name).ok())
     }
 
     /// Returns the proxy URL to use, or `None` for a direct connection.
     /// `scheme` is the target scheme (`http`, `https`, `ws`, `wss`).
-    pub(crate) fn select(&self, scheme: &str, host: &str, port: u16) -> Option<String> {
+    pub fn select(&self, scheme: &str, host: &str, port: u16) -> Option<String> {
         let host = host.trim_start_matches('[').trim_end_matches(']');
         let secure = matches!(scheme, "https" | "wss");
         if let Some(no_proxy) = self.env.no_proxy.as_deref()
@@ -108,7 +108,7 @@ impl ProxySelection {
     /// Routes a `reqwest` client through this policy. The closure answers
     /// every request, so reqwest's own environment handling is never reached
     /// for a request that this policy resolves.
-    pub(crate) fn apply(self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    pub fn apply(self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         builder.proxy(reqwest::Proxy::custom(move |url| {
             let host = url.host_str()?;
             let port = url.port_or_known_default()?;

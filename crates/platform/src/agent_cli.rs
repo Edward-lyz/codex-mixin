@@ -17,7 +17,7 @@ use wait_timeout::ChildExt;
 const FAILURE_TAIL_LINES: usize = 3;
 
 /// Devin follows XDG on Unix and the native roaming configuration on Windows.
-pub(crate) fn devin_settings_path() -> anyhow::Result<PathBuf> {
+pub fn devin_settings_path() -> anyhow::Result<PathBuf> {
     let root = if cfg!(windows) {
         super::framework_app_root()?.join("devin")
     } else {
@@ -34,7 +34,7 @@ pub(crate) fn devin_settings_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Zed uses ~/.config on macOS rather than Application Support.
-pub(crate) fn zed_settings_path() -> anyhow::Result<PathBuf> {
+pub fn zed_settings_path() -> anyhow::Result<PathBuf> {
     let root = if cfg!(windows) {
         super::framework_app_root()?
     } else if cfg!(target_os = "macos") {
@@ -53,7 +53,7 @@ pub(crate) fn zed_settings_path() -> anyhow::Result<PathBuf> {
 
 /// A bounded Aside runtime call. The marker carries only a model selection;
 /// credentials stay in Aside's private provider file.
-pub(crate) fn aside_default_model(
+pub fn aside_default_model(
     account: &str,
     selection: Option<&serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -95,7 +95,7 @@ pub(crate) fn aside_default_model(
 
 /// Open a private handoff page instead of putting the key-bearing Cindy URI
 /// on a command line. Cindy performs its own final import confirmation.
-pub(crate) fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
+pub fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         page.is_absolute()
             && uri.starts_with("cindy://provider/import?v=1&data=")
@@ -125,7 +125,7 @@ pub(crate) fn open_cindy_import(page: &Path, uri: &str) -> anyhow::Result<()> {
 }
 
 pub use super::agent_apps::DesktopApp;
-pub(crate) use super::agent_apps::desktop_app_installation;
+pub use super::agent_apps::desktop_app_installation;
 
 /// What a finished command printed.
 #[derive(Debug)]

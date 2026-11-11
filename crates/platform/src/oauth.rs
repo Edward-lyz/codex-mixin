@@ -2,7 +2,7 @@
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn oauth_path(provider: &str) -> PathBuf {
+pub fn oauth_path(provider: &str) -> PathBuf {
     let config = std::env::var_os("CODEX_GATEWAY_CONFIG")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -12,14 +12,14 @@ pub(crate) fn oauth_path(provider: &str) -> PathBuf {
         .join(format!("{provider}.json"))
 }
 
-pub(crate) fn codex_auth_path() -> PathBuf {
+pub fn codex_auth_path() -> PathBuf {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| super::home_dir().join(".codex"))
         .join("auth.json")
 }
 
-pub(crate) fn official_auth_path() -> PathBuf {
+pub fn official_auth_path() -> PathBuf {
     let owned = oauth_path("official");
     if owned.is_file() {
         return owned;
@@ -33,7 +33,7 @@ fn agy_auth_paths() -> Vec<PathBuf> {
     paths
 }
 
-pub(crate) fn agy_external_token_paths() -> [PathBuf; 2] {
+pub fn agy_external_token_paths() -> [PathBuf; 2] {
     [
         super::home_dir().join(".gemini/jetski-standalone-oauth-token"),
         super::home_dir().join(".gemini/antigravity-cli/antigravity-oauth-token"),
@@ -43,7 +43,7 @@ pub(crate) fn agy_external_token_paths() -> [PathBuf; 2] {
 /// Files written by an interactive `claude /login`: the credential file
 /// (Linux/Windows; macOS keeps the secret in the Keychain) and the global
 /// state file that records the signed-in account on every OS.
-pub(crate) fn claude_code_login_paths() -> [PathBuf; 2] {
+pub fn claude_code_login_paths() -> [PathBuf; 2] {
     let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
@@ -57,14 +57,14 @@ pub(crate) fn claude_code_login_paths() -> [PathBuf; 2] {
     [credentials, state]
 }
 
-pub(crate) fn kiro_auth_path() -> PathBuf {
+pub fn kiro_auth_path() -> PathBuf {
     std::env::var_os("CODEX_MIXIN_KIRO_AUTH_FILE")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| super::home_dir().join(".aws/sso/cache/kiro-auth-token.json"))
 }
 
-pub(crate) fn kiro_cli_auth_path() -> Option<PathBuf> {
+pub fn kiro_cli_auth_path() -> Option<PathBuf> {
     if std::env::var_os("CODEX_MIXIN_KIRO_AUTH_FILE").is_some_and(|path| !path.is_empty()) {
         return None;
     }
@@ -83,7 +83,7 @@ pub(crate) fn kiro_cli_auth_path() -> Option<PathBuf> {
     Some(path)
 }
 
-pub(crate) fn refresh_kiro_cli() -> anyhow::Result<()> {
+pub fn refresh_kiro_cli() -> anyhow::Result<()> {
     let executable = super::agent_cli::find_command("kiro-cli")
         .context("kiro-cli is required to refresh its own login")?;
     let mut command = std::process::Command::new(executable);
@@ -97,11 +97,11 @@ pub(crate) fn refresh_kiro_cli() -> anyhow::Result<()> {
     .map_err(|_| anyhow::anyhow!("kiro-cli could not refresh its login; sign in again"))
 }
 
-pub(crate) fn agy_settings_path() -> PathBuf {
+pub fn agy_settings_path() -> PathBuf {
     super::home_dir().join(".gemini/antigravity-cli/settings.json")
 }
 
-pub(crate) fn google_adc_path() -> PathBuf {
+pub fn google_adc_path() -> PathBuf {
     std::env::var_os("GOOGLE_APPLICATION_CREDENTIALS")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -110,7 +110,7 @@ pub(crate) fn google_adc_path() -> PathBuf {
         })
 }
 
-pub(crate) fn agy_auth_path() -> Option<PathBuf> {
+pub fn agy_auth_path() -> Option<PathBuf> {
     let mut paths = agy_auth_paths();
     let owned = paths.remove(0);
     if owned.is_file() {
@@ -126,7 +126,7 @@ pub(crate) fn agy_auth_path() -> Option<PathBuf> {
         })
 }
 
-pub(crate) fn save_oauth(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub fn save_oauth(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -141,7 +141,7 @@ pub(crate) fn save_oauth(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
+pub fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
     use fs2::FileExt;
     use std::time::{Duration, Instant};
     let path = credentials.with_extension("lock");
@@ -171,7 +171,7 @@ pub(crate) fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
     }
 }
 
-pub(crate) fn open_oauth_url(url: &str) -> anyhow::Result<()> {
+pub fn open_oauth_url(url: &str) -> anyhow::Result<()> {
     let parsed = url::Url::parse(url)?;
     anyhow::ensure!(
         parsed.scheme() == "https",
@@ -203,7 +203,7 @@ pub(crate) fn open_oauth_url(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn codex_keyring(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+pub fn codex_keyring(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
     if path != codex_auth_path() {
         return Ok(None);
     }
@@ -277,7 +277,7 @@ pub(crate) fn codex_keyring(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
 /// Desktop launchers do not inherit shell exports. Read the user's login
 /// environment through their native shell, with bounded private stdout.
 /// The short cache avoids starting a shell while configuration is committed.
-pub(crate) fn claude_code_setup_token() -> Option<String> {
+pub fn claude_code_setup_token() -> Option<String> {
     const NAME: &str = "CLAUDE_CODE_OAUTH_TOKEN";
     if let Ok(token) = std::env::var(NAME)
         && !token.trim().is_empty()
