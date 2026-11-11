@@ -8,17 +8,17 @@ const TOAST_MS = 4200;
 const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const PAGES = [
-  { id: "home", title: "概览" },
-  { id: "providers", title: "模型与服务" },
-  { id: "usage", title: "用量" },
-  { id: "context", title: "上下文" },
-  { id: "speed", title: "测速" },
-  { id: "routing", title: "模型路由" },
+  { id: "home", title: t("概览") },
+  { id: "providers", title: t("模型与服务") },
+  { id: "usage", title: t("用量") },
+  { id: "context", title: t("上下文") },
+  { id: "speed", title: t("测速") },
+  { id: "routing", title: t("模型路由") },
   { id: "apps", title: "Agent" },
-  { id: "keys", title: "访问密钥" },
-  { id: "advanced", title: "高级" },
-  { id: "system", title: "系统" },
-  { id: "logs", title: "日志" },
+  { id: "keys", title: t("访问密钥") },
+  { id: "advanced", title: t("高级") },
+  { id: "system", title: t("系统") },
+  { id: "logs", title: t("日志") },
 ];
 
 const state = {
@@ -167,9 +167,9 @@ function fixed(value, digits = 1, suffix = "") {
 function timeAgo(ms) {
   if (!ms) return "\u2014";
   const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} 分钟前`;
-  if (seconds < 86400) return `${Math.round(seconds / 3600)} 小时前`;
+  if (seconds < 60) return t("{0} 秒前", seconds);
+  if (seconds < 3600) return t("{0} 分钟前", Math.round(seconds / 60));
+  if (seconds < 86400) return t("{0} 小时前", Math.round(seconds / 3600));
   return new Date(ms).toLocaleDateString("zh-CN");
 }
 
@@ -182,7 +182,7 @@ function str(value, fallback = "\u2014") {
 class ApiError extends Error {
   constructor(status, body) {
     const error = (body && body.error) || {};
-    super(error.message || `请求失败（HTTP ${status}）`);
+    super(error.message || t("请求失败（HTTP {0}）", status));
     this.status = status;
     this.code = error.code || "http_error";
     this.stage = error.stage ?? null;
@@ -210,7 +210,7 @@ async function api(path, options = {}) {
     body = { error: { message: text.trim() || `HTTP ${response.status}` } };
   }
   if (response.status === 401) {
-    showGate("令牌无效或已过期，请重新粘贴终端中的访问令牌。");
+    showGate(t("令牌无效或已过期，请重新粘贴终端中的访问令牌。"));
     throw new ApiError(401, body);
   }
   if (!response.ok) throw new ApiError(response.status, body);
@@ -237,11 +237,11 @@ function toast(kind, title, detail) {
 }
 
 function describeError(error) {
-  if (error.code === "busy") return ["有操作正在执行", "请等待当前操作完成后再试。"];
+  if (error.code === "busy") return [t("有操作正在执行"), t("请等待当前操作完成后再试。")];
   if (error.committed === true) {
-    return ["已保存，但后续步骤失败", `${error.stage ? `${error.stage}：` : ""}${error.message}`];
+    return [t("已保存，但后续步骤失败"), `${error.stage ? `${error.stage}：` : ""}${error.message}`];
   }
-  return ["操作失败", error.message];
+  return [t("操作失败"), error.message];
 }
 
 // ---------- Dialogs ----------
@@ -261,7 +261,7 @@ function closeDialog(dialog) {
   setTimeout(() => dialog.open && done(), 260);
 }
 
-function confirmAction(title, text, okLabel = "确认") {
+function confirmAction(title, text, okLabel = t("确认")) {
   const dialog = $("#confirm");
   $("#confirm-title").textContent = title;
   $("#confirm-text").textContent = text;
@@ -311,8 +311,8 @@ async function streamAction(action, params, onEvent) {
         if (event.type === "result") return event;
         onEvent(event);
       }
-      if (pending.length > 2 * 1024 * 1024) throw new Error("操作输出超出限制，请刷新确认配置状态。");
-      if (done) throw new Error("连接已断开，未收到完成结果。部分配置可能已保存，请刷新确认后再试。");
+      if (pending.length > 2 * 1024 * 1024) throw new Error(t("操作输出超出限制，请刷新确认配置状态。"));
+      if (done) throw new Error(t("连接已断开，未收到完成结果。部分配置可能已保存，请刷新确认后再试。"));
     }
   } finally {
     await reader.cancel().catch(() => {});
@@ -324,7 +324,7 @@ async function streamAction(action, params, onEvent) {
 // refreshes afterwards so the view reflects committed state.
 async function runAction(button, action, params, messages = {}) {
   if (state.busy) {
-    toast("bad", "有操作正在执行", "请等待当前操作完成后再试。");
+    toast("bad", t("有操作正在执行"), t("请等待当前操作完成后再试。"));
     return null;
   }
   if (messages.confirm) {
@@ -354,27 +354,27 @@ async function runAction(button, action, params, messages = {}) {
   let result = null;
   let running = true;
   dialog.dataset.state = "running";
-  $("#operation-title").textContent = "正在执行";
+  $("#operation-title").textContent = t("正在执行");
   badge.className = "badge";
-  badge.textContent = "进行中";
+  badge.textContent = t("进行中");
   steps.replaceChildren();
   $("#operation-history").hidden = true;
   resultSummary.hidden = true;
   resultSummary.textContent = "";
   details.open = true;
   output.textContent = "";
-  status.textContent = "正在启动，请稍候…";
-  connection.textContent = "正在连接…";
-  dismiss.textContent = "取消操作";
+  status.textContent = t("正在启动，请稍候…");
+  connection.textContent = t("正在连接…");
+  dismiss.textContent = t("取消操作");
   dismiss.disabled = false;
   const dismissOperation = async () => {
     if (!running) { dialog.close(); return; }
     dismiss.disabled = true;
-    status.textContent = "正在取消；已保存的配置会保留…";
+    status.textContent = t("正在取消；已保存的配置会保留…");
     try {
       await api("/api/actions/cancel", { method: "POST", signal: AbortSignal.timeout(10000) });
     } catch (error) {
-      status.textContent = `取消请求失败：${error.message}。可以重试。`;
+      status.textContent = t("取消请求失败：{0}。可以重试。", error.message);
       dismiss.disabled = false;
     }
   };
@@ -384,20 +384,20 @@ async function runAction(button, action, params, messages = {}) {
   dialog.showModal();
   try {
     result = await streamAction(action, params, (event) => {
-      connection.textContent = `连接正常 · 已用时 ${Math.round((performance.now() - started) / 1000)} 秒`;
+      connection.textContent = t("连接正常 · 已用时 {0} 秒", Math.round((performance.now() - started) / 1000));
       if (event.type === "step") {
         // A new CLI invocation starts only after the previous one succeeded.
         for (const row of steps.children) {
           if (row.dataset.state === "running" || row.dataset.state === "pending") {
             row.dataset.state = "success";
-            row.firstElementChild.textContent = "✓ 已完成";
+            row.firstElementChild.textContent = t("✓ 已完成");
           }
         }
         stepIndex = event.index;
-        status.textContent = `正在执行流程 ${event.index} / ${event.total}`;
+        status.textContent = t("正在执行流程 {0} / {1}", event.index, event.total);
         steps.append(h("li", { class: "operation-step operation-command", "data-state": "running", "data-kind": "command", "data-step": stepIndex },
-          h("span", { class: "operation-step-state", text: "● 进行中" }),
-          h("span", { class: "operation-step-label", text: `流程 ${event.index} / ${event.total}` })));
+          h("span", { class: "operation-step-state", text: t("● 进行中") }),
+          h("span", { class: "operation-step-label", text: t("流程 {0} / {1}", event.index, event.total) })));
       }
       if (event.type !== "output") return;
       // Render terminal text, never HTML. DUCX emits a plain block QR; remove
@@ -417,7 +417,7 @@ async function runAction(button, action, params, messages = {}) {
         for (const row of steps.children) {
           if (row.dataset.kind === "progress" && row.dataset.state === "running") {
             row.dataset.state = "pending";
-            row.firstElementChild.textContent = "○ 待确认";
+            row.firstElementChild.textContent = t("○ 待确认");
           }
         }
         let row = stage && [...steps.children].reverse().find((item) => item.dataset.kind === "stage" && item.dataset.step === String(stepIndex) && item.dataset.label === label);
@@ -427,53 +427,53 @@ async function runAction(button, action, params, messages = {}) {
           steps.append(row);
         }
         row.dataset.state = stage ? (stage[1] === "ok" ? "success" : "error") : "running";
-        row.firstElementChild.textContent = stage ? (stage[1] === "ok" ? "✓ 已完成" : "✕ 失败") : "● 进行中";
-        status.textContent = stage ? `${stage[1] === "ok" ? "已完成" : "失败"}：${label}` : label;
+        row.firstElementChild.textContent = stage ? (stage[1] === "ok" ? t("✓ 已完成") : t("✕ 失败")) : t("● 进行中");
+        status.textContent = stage ? `${stage[1] === "ok" ? t("已完成") : t("失败")}：${label}` : label;
       }
       while (steps.children.length > 128) {
         steps.firstElementChild.remove();
         $("#operation-history").hidden = false;
       }
       if (plain.startsWith("provider added:") || plain.startsWith("provider updated:")) {
-        status.textContent = "配置已保存，正在完成模型刷新等后续步骤…";
+        status.textContent = t("配置已保存，正在完成模型刷新等后续步骤…");
       }
     });
     dialog.dataset.state = "success";
-    $("#operation-title").textContent = "操作完成";
+    $("#operation-title").textContent = t("操作完成");
     badge.className = "badge badge-ok";
-    badge.textContent = "✓ 已完成";
-    status.textContent = messages.ok || "全部流程已完成";
+    badge.textContent = t("✓ 已完成");
+    status.textContent = messages.ok || t("全部流程已完成");
     for (const row of steps.children) {
       if (row.dataset.state === "running" || row.dataset.state === "pending") {
         row.dataset.state = "success";
-        row.firstElementChild.textContent = "✓ 已完成";
+        row.firstElementChild.textContent = t("✓ 已完成");
       }
     }
-    resultSummary.textContent = "执行已结束，无需继续等待。可以关闭此窗口继续操作。";
+    resultSummary.textContent = t("执行已结束，无需继续等待。可以关闭此窗口继续操作。");
     resultSummary.hidden = false;
     details.open = false;
-    toast("ok", messages.ok || "已完成", lastLine(result.stdout));
+    toast("ok", messages.ok || t("已完成"), lastLine(result.stdout));
   } catch (error) {
     const [title, detail] = describeError(error);
     dialog.dataset.state = error.code === "cancelled" ? "cancelled" : "error";
-    $("#operation-title").textContent = error.code === "cancelled" ? "操作已取消" : title;
+    $("#operation-title").textContent = error.code === "cancelled" ? t("操作已取消") : title;
     badge.className = error.code === "cancelled" ? "badge" : "badge badge-bad";
-    badge.textContent = error.code === "cancelled" ? "已取消" : "✕ 未完成";
+    badge.textContent = error.code === "cancelled" ? t("已取消") : t("✕ 未完成");
     status.textContent = detail;
     for (const row of steps.children) {
       if (row.dataset.state === "running" || row.dataset.state === "pending") {
         const failed = row.dataset.kind === "command" && error instanceof ApiError && error.status === 502
           && !["cancelled", "timeout", "disconnected", "output_failed", "output_limit", "panel_internal"].includes(error.code);
         row.dataset.state = failed ? "error" : "pending";
-        row.firstElementChild.textContent = failed ? "✕ 失败" : "○ 未确认";
+        row.firstElementChild.textContent = failed ? t("✕ 失败") : t("○ 未确认");
       }
     }
     resultSummary.textContent = error.committed === true
-      ? "配置已保存，后续流程未能全部完成。请根据错误详情处理，关闭窗口不会撤销保存。"
-      : "执行已结束。已确认完成的步骤保留成功标记，其余步骤的完成状态未确认；请刷新检查配置后再试。";
+      ? t("配置已保存，后续流程未能全部完成。请根据错误详情处理，关闭窗口不会撤销保存。")
+      : t("执行已结束。已确认完成的步骤保留成功标记，其余步骤的完成状态未确认；请刷新检查配置后再试。");
     resultSummary.hidden = false;
     if (error.code === "cancelled") {
-      toast("ok", "已取消等待", error.message);
+      toast("ok", t("已取消等待"), error.message);
     } else if (error.status !== 401) {
       toast("bad", title, detail);
     }
@@ -481,8 +481,8 @@ async function runAction(button, action, params, messages = {}) {
   } finally {
     running = false;
     dismiss.disabled = false;
-    dismiss.textContent = "关闭";
-    connection.textContent = `执行已结束 · 用时 ${Math.round((performance.now() - started) / 1000)} 秒`;
+    dismiss.textContent = t("关闭");
+    connection.textContent = t("执行已结束 · 用时 {0} 秒", Math.round((performance.now() - started) / 1000));
     if (dialog.open) dismiss.focus({ preventScroll: true });
     state.busy = false;
     controls.forEach(([node, disabled]) => { if (node.isConnected) node.disabled = disabled; });
@@ -685,12 +685,12 @@ function updateChrome() {
   dot.className = "dot";
   if (state.loadError) {
     dot.classList.add("is-bad");
-    text.textContent = "无法读取状态";
+    text.textContent = t("无法读取状态");
   } else if (gatewayRunning()) {
     dot.classList.add("is-ok", "is-live");
-    text.textContent = `网关运行中 · v${str(state.snapshot.status.gateway_version, "?")}`;
+    text.textContent = t("网关运行中 · v{0}", str(state.snapshot.status.gateway_version, "?"));
   } else {
-    text.textContent = configured() ? "网关未运行" : "尚未配置";
+    text.textContent = configured() ? t("网关未运行") : t("尚未配置");
   }
   const refreshed = state.snapshot?.refreshed_at_ms;
   $("#refreshed").textContent = refreshed ? new Date(refreshed).toLocaleTimeString("zh-CN", { hour12: false }) : "";
@@ -721,7 +721,7 @@ function errorCard(error) {
     "div",
     { class: "notice", role: "alert" },
     h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }),
-    h("div", null, h("strong", { text: "无法读取网关状态" }), h("div", { class: "card-note", text: error.message })),
+    h("div", null, h("strong", { text: t("无法读取网关状态") }), h("div", { class: "card-note", text: error.message })),
   );
 }
 
@@ -816,7 +816,7 @@ function submitButton(label) {
 RENDERERS.home = () => {
   const status = state.snapshot.status || {};
   if (!configured()) {
-    return card(null, null, emptyState("还没有可用的 Provider", "添加第一个 Provider 后，网关即可为 Codex 等 Agent 提供模型。", h("button", { class: "btn btn-primary", type: "button", text: "添加 Provider", onclick: () => { navigate("providers"); openAddProvider(); } })));
+    return card(null, null, emptyState(t("还没有可用的 Provider"), t("添加第一个 Provider 后，网关即可为 Codex 等 Agent 提供模型。"), h("button", { class: "btn btn-primary", type: "button", text: t("添加 Provider"), onclick: () => { navigate("providers"); openAddProvider(); } })));
   }
   const running = gatewayRunning();
   const counts = status.provider_counts || {};
@@ -824,36 +824,36 @@ RENDERERS.home = () => {
     exposureNotice(),
     h(
       "section",
-      { class: "card hero", "aria-label": "网关状态" },
+      { class: "card hero", "aria-label": t("网关状态") },
       h(
         "div",
         null,
-        h("div", { class: "hero-state" }, h("span", { class: `dot dot-lg ${running ? "is-ok is-live" : ""}`, "aria-hidden": "true" }), h("span", { class: "hero-label", text: running ? "网关运行中" : "网关已停止" })),
+        h("div", { class: "hero-state" }, h("span", { class: `dot dot-lg ${running ? "is-ok is-live" : ""}`, "aria-hidden": "true" }), h("span", { class: "hero-label", text: running ? t("网关运行中") : t("网关已停止") })),
         h(
           "div",
           { class: "hero-meta" },
-          h("span", null, "接口 ", h("b", { class: "mono", text: str(status.endpoint) })),
-          h("span", null, "监听 ", h("b", { class: "mono", text: str(status.bind) })),
+          h("span", null, t("接口 "), h("b", { class: "mono", text: str(status.endpoint) })),
+          h("span", null, t("监听 "), h("b", { class: "mono", text: str(status.bind) })),
           status.pid ? h("span", null, "PID ", h("b", { class: "mono", text: String(status.pid) })) : null,
-          status.gateway_version ? h("span", null, "版本 ", h("b", { class: "mono", text: status.gateway_version })) : null,
+          status.gateway_version ? h("span", null, t("版本 "), h("b", { class: "mono", text: status.gateway_version })) : null,
         ),
       ),
       h(
         "div",
         { class: "card-actions" },
-        running && status.endpoint ? h("button", { class: "btn btn-ghost", type: "button", text: "复制接口", onclick: () => copyText(status.endpoint) }) : null,
+        running && status.endpoint ? h("button", { class: "btn btn-ghost", type: "button", text: t("复制接口"), onclick: () => copyText(status.endpoint) }) : null,
         running
-          ? [actionButton("重启", "service_restart", null, { ok: "网关已重启" }), actionButton("停止", "service_stop", null, { ok: "网关已停止" }, "btn-danger")]
-          : actionButton("启动网关", "service_start", null, { ok: "网关已启动" }, "btn-primary"),
+          ? [actionButton(t("重启"), "service_restart", null, { ok: t("网关已重启") }), actionButton(t("停止"), "service_stop", null, { ok: t("网关已停止") }, "btn-danger")]
+          : actionButton(t("启动网关"), "service_start", null, { ok: t("网关已启动") }, "btn-primary"),
       ),
     ),
     stagger(
       h(
         "div",
         { class: "grid grid-3" },
-        metricCard("Providers", counts.total, `${str(counts.healthy, 0)} 健康 · ${str(counts.degraded, 0)} 降级 · ${str(counts.disabled, 0)} 停用`),
-        metricCard("可用模型", (state.snapshot.models || []).length),
-        metricCard("Codex 接入", codexModeLabel(state.snapshot.codex_install_mode)),
+        metricCard("Providers", counts.total, t("{0} 健康 · {1} 降级 · {2} 停用", str(counts.healthy, 0), str(counts.degraded, 0), str(counts.disabled, 0))),
+        metricCard(t("可用模型"), (state.snapshot.models || []).length),
+        metricCard(t("Codex 接入"), codexModeLabel(state.snapshot.codex_install_mode)),
       ),
     ),
     usageCard(),
@@ -867,8 +867,8 @@ function exposureNotice() {
   const enforced = state.snapshot.panel?.client_auth_build && state.snapshot.gateway_auth_configured;
   if (!open || enforced) return null;
   const notice = state.snapshot.gateway_auth_configured
-    ? { dot: "is-warn", strong: "网关对局域网开放", note: "本机与局域网设备可直接使用你的 Provider 额度；公网来源须携带访问密钥。只监听本机可用 --bind 127.0.0.1:PORT。" }
-    : { dot: "is-bad", strong: "网关对外监听，但尚未生成访问密钥", note: "公网来源的请求会被拒绝。重启网关会自动生成 sk- 开头的访问密钥。" };
+    ? { dot: "is-warn", strong: t("网关对局域网开放"), note: t("本机与局域网设备可直接使用你的 Provider 额度；公网来源须携带访问密钥。只监听本机可用 --bind 127.0.0.1:PORT。") }
+    : { dot: "is-bad", strong: t("网关对外监听，但尚未生成访问密钥"), note: t("公网来源的请求会被拒绝。重启网关会自动生成 sk- 开头的访问密钥。") };
   return h(
     "div",
     { class: "notice", role: "note" },
@@ -882,17 +882,17 @@ function metricCard(label, value, sub) {
 }
 
 function codexModeLabel(mode) {
-  if (mode === "codex_oauth_proxy" || mode === "oauth_proxy") return "官方账号 + 自定义";
-  if (mode === "custom_only") return "仅自定义";
-  return mode ? String(mode) : "未接入";
+  if (mode === "codex_oauth_proxy" || mode === "oauth_proxy") return t("官方账号 + 自定义");
+  if (mode === "custom_only") return t("仅自定义");
+  return mode ? String(mode) : t("未接入");
 }
 
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
-    toast("ok", "已复制", text);
+    toast("ok", t("已复制"), text);
   } catch {
-    toast("bad", "无法访问剪贴板", "浏览器只允许在安全上下文中写入剪贴板，请手动复制。");
+    toast("bad", t("无法访问剪贴板"), t("浏览器只允许在安全上下文中写入剪贴板，请手动复制。"));
   }
 }
 
@@ -902,17 +902,17 @@ const HOME_USAGE_ROWS = 5;
 function usageCard() {
   const rows = [...(state.snapshot.usage || [])].sort((a, b) => (b.request_count || 0) - (a.request_count || 0));
   const range = segmented(
-    [["1d", "1 天"], ["7d", "7 天"], ["30d", "30 天"], ["all", "全部"]],
+    [["1d", t("1 天")], ["7d", t("7 天")], ["30d", t("30 天")], ["all", t("全部")]],
     state.usage,
     (value) => {
       state.usage = value;
       refresh(true);
     },
-    "用量时间范围",
+    t("用量时间范围"),
   );
   let body;
-  if (!gatewayRunning()) body = emptyState("网关未运行", "启动网关后即可查看请求与 Token 用量。");
-  else if (!rows.length) body = emptyState("暂无用量", "所选时间范围内还没有经过网关的请求。");
+  if (!gatewayRunning()) body = emptyState(t("网关未运行"), t("启动网关后即可查看请求与 Token 用量。"));
+  else if (!rows.length) body = emptyState(t("暂无用量"), t("所选时间范围内还没有经过网关的请求。"));
   else {
     const total = (key) => rows.reduce((sum, row) => sum + (row[key] || 0), 0);
     body = h(
@@ -921,7 +921,7 @@ function usageCard() {
       h(
         "table",
         { class: "table" },
-        h("thead", null, h("tr", null, ...["Provider / 模型", "请求", "输入", "缓存命中", "输出", "首字延迟", "输出速度"].map((text, index) => h("th", { class: index ? "r" : null, scope: "col", text })))),
+        h("thead", null, h("tr", null, ...[t("Provider / 模型"), t("请求"), t("输入"), t("缓存命中"), t("输出"), t("首字延迟"), t("输出速度")].map((text, index) => h("th", { class: index ? "r" : null, scope: "col", text })))),
         h(
           "tbody",
           null,
@@ -939,12 +939,12 @@ function usageCard() {
             ),
           ),
         ),
-        h("tfoot", null, h("tr", null, h("td", { text: "合计" }), h("td", { class: "r", text: compact(total("request_count")) }), h("td", { class: "r", text: compact(total("input_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r", text: compact(total("output_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r muted", text: "" }))),
+        h("tfoot", null, h("tr", null, h("td", { text: t("合计") }), h("td", { class: "r", text: compact(total("request_count")) }), h("td", { class: "r", text: compact(total("input_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r", text: compact(total("output_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r muted", text: "" }))),
       ),
     );
   }
-  const details = h("button", { class: "btn btn-ghost btn-sm", type: "button", text: "查看明细", onclick: () => navigate("usage") });
-  return card("用量", rows.length > HOME_USAGE_ROWS ? `用量最高的 ${HOME_USAGE_ROWS} 个模型` : null, body, [range, details], "card-flush");
+  const details = h("button", { class: "btn btn-ghost btn-sm", type: "button", text: t("查看明细"), onclick: () => navigate("usage") });
+  return card(t("用量"), rows.length > HOME_USAGE_ROWS ? t("用量最高的 {0} 个模型", HOME_USAGE_ROWS) : null, body, [range, details], "card-flush");
 }
 
 // ---------- Usage ----------
@@ -958,7 +958,7 @@ const usagePage = {
   session: "", slot: null, slotTurns: null, slotLoading: false, shown: 100,
   data: null, loading: false, error: null,
 };
-const USAGE_DAYS = [["1", "1 天"], ["7", "7 天"], ["30", "30 天"]];
+const USAGE_DAYS = [["1", t("1 天")], ["7", t("7 天")], ["30", t("30 天")]];
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 // Prompts smaller than this are too short for provider caches to act on, so
@@ -969,8 +969,8 @@ const SERIES_COLORS = 4;
 // Rows rendered per step; the rest wait behind "show more" so a 500-row
 // ledger never builds thousands of cells at once.
 const TURN_PAGE = 100;
-const TOKEN_PARTS = [["cached", "缓存输入", "ring-1"], ["uncached", "未缓存输入", "ring-2"], ["output", "输出", "ring-3"]];
-const REQUEST_PARTS = [["requests", "成功", "ring-1"], ["errors", "失败", "is-alert"]];
+const TOKEN_PARTS = [["cached", t("缓存输入"), "ring-1"], ["uncached", t("未缓存输入"), "ring-2"], ["output", t("输出"), "ring-3"]];
+const REQUEST_PARTS = [["requests", t("成功"), "ring-1"], ["errors", t("失败"), "is-alert"]];
 
 // Each load gets a sequence number; a response for a superseded range is
 // dropped, so a fast range switch never renders old data on the new axis.
@@ -1009,7 +1009,7 @@ async function selectUsageSlot(slot) {
     const data = await api(`/api/usage?days=${usagePage.days}&since_ms=${slot.start}&until_ms=${slot.end}`);
     if (request === slotRequest) usagePage.slotTurns = data.turns || [];
   } catch (error) {
-    if (request === slotRequest) toast("bad", "读取所选时段失败", error.message);
+    if (request === slotRequest) toast("bad", t("读取所选时段失败"), error.message);
   } finally {
     if (request === slotRequest) {
       usagePage.slotLoading = false;
@@ -1104,11 +1104,11 @@ function deltaText(current, previous, points) {
   if (typeof current !== "number" || typeof previous !== "number") return null;
   if (points) {
     const change = current - previous;
-    return `环比 ${change >= 0 ? "+" : ""}${change.toFixed(1)} pt`;
+    return t("环比 {0}{1} pt", change >= 0 ? "+" : "", change.toFixed(1));
   }
-  if (!previous) return current ? "上一周期无数据" : null;
+  if (!previous) return current ? t("上一周期无数据") : null;
   const change = ((current - previous) / previous) * 100;
-  return `环比 ${change >= 0 ? "+" : ""}${change.toFixed(0)}%`;
+  return t("环比 {0}{1}%", change >= 0 ? "+" : "", change.toFixed(0));
 }
 
 function kpiCard(label, value, sub, delta, spark, extra) {
@@ -1129,13 +1129,13 @@ function tokenShare(stats) {
 function usageCards(current, previous, slots) {
   const total = tokensOf(current);
   return h("div", { class: "grid grid-4" },
-    kpiCard("请求次数", compact(attempts(current)), current.errors ? `失败 ${compact(current.errors)}` : "含失败请求",
+    kpiCard(t("请求次数"), compact(attempts(current)), current.errors ? t("失败 {0}", compact(current.errors)) : t("含失败请求"),
       deltaText(attempts(current), attempts(previous)), sparkline(slots.map((slot) => attempts(slot.total)))),
-    kpiCard("Tokens", compact(total), `输出 ${compact(current.output)}`,
+    kpiCard("Tokens", compact(total), t("输出 {0}", compact(current.output)),
       deltaText(total, tokensOf(previous)), sparkline(slots.map((slot) => tokensOf(slot.total))), tokenShare(current)),
-    kpiCard("缓存命中率", fixed(hitPercent(current), 1, "%"), `命中 ${compact(current.hitRead)}`,
+    kpiCard(t("缓存命中率"), fixed(hitPercent(current), 1, "%"), t("命中 {0}", compact(current.hitRead)),
       deltaText(hitPercent(current), hitPercent(previous), true), sparkline(slots.map((slot) => hitPercent(slot.total)))),
-    kpiCard("错误率", fixed(errorPercent(current), 1, "%"), `${compact(current.errors)} / ${compact(attempts(current))} 次`,
+    kpiCard(t("错误率"), fixed(errorPercent(current), 1, "%"), t("{0} / {1} 次", compact(current.errors), compact(attempts(current))),
       deltaText(errorPercent(current), errorPercent(previous), true), sparkline(slots.map((slot) => errorPercent(slot.total)))));
 }
 
@@ -1155,8 +1155,8 @@ function usageChart(slots, keys) {
     const selected = usagePage.slot?.start === slot.start;
     return h("button", {
       class: `uchart-col ${selected ? "is-selected" : ""}`.trim(), type: "button",
-      title: `${slot.label} · 合计 ${compact(valueOf(slot.total))}\n${detail}`,
-      "aria-label": `${slot.label}，合计 ${compact(valueOf(slot.total))}`, "aria-pressed": String(selected),
+      title: t("{0} · 合计 {1}\n{2}", slot.label, compact(valueOf(slot.total)), detail),
+      "aria-label": t("{0}，合计 {1}", slot.label, compact(valueOf(slot.total))), "aria-pressed": String(selected),
       onclick: () => selectUsageSlot(slot),
     },
     h("span", { class: "uchart-stack" }, parts.map(([key, , color]) => {
@@ -1188,30 +1188,30 @@ function turnRow(turn) {
   return h("tr", { class: failed ? "is-failed" : null },
     h("td", { class: "mono nowrap", text: turnTime(turn.at_ms) }),
     h("td", null, failed
-      ? h("span", { class: "badge badge-bad", title: turn.error || "请求失败", text: "失败" })
-      : h("span", { class: "status-ok", text: "成功" })),
+      ? h("span", { class: "badge badge-bad", title: turn.error || t("请求失败"), text: t("失败") })
+      : h("span", { class: "status-ok", text: t("成功") })),
     h("td", null, h("button", {
       class: "chip-btn mono", type: "button", text: turn.session_display || turn.session,
-      title: usagePage.session ? "显示全部会话" : "只看这个会话",
+      title: usagePage.session ? t("显示全部会话") : t("只看这个会话"),
       onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
     })),
     h("td", { class: "turn-model" },
       h("span", { text: turn.upstream_model_id }),
       h("span", { class: "row-sub", text: ` · ${providerName(turn.provider_id)}` }),
-      substituted ? h("span", { class: "substituted", title: "上游实际返回的模型与请求不同", text: ` → ${turn.returned_model}` }) : null),
+      substituted ? h("span", { class: "substituted", title: t("上游实际返回的模型与请求不同"), text: ` → ${turn.returned_model}` }) : null),
     h("td", { class: "r", text: compact(turn.input_tokens) }),
-    h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? "长提示的缓存命中低于 50%" : null },
+    h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? t("长提示的缓存命中低于 50%") : null },
       compact(turn.cache_read_tokens), h("span", { class: "row-sub", text: ` ${fixed(turn.cache_hit_percent, 0, "%")}` })),
     h("td", { class: "r", text: compact(turn.output_tokens) }),
-    h("td", { class: "r", text: reasoning, title: turn.reasoning_chars ? `思考文本 ${compact(turn.reasoning_chars)} 字` : null }),
+    h("td", { class: "r", text: reasoning, title: turn.reasoning_chars ? t("思考文本 {0} 字", compact(turn.reasoning_chars)) : null }),
     h("td", { class: "r", text: fixed(turn.ttft_ms, 0, " ms") }),
     h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }));
 }
 
-const TURN_COLUMNS = ["时间", "状态", "会话", "模型", "未缓存输入", "命中缓存", "输出", "思考 Token", "首字", "速度"];
+const TURN_COLUMNS = [t("时间"), t("状态"), t("会话"), t("模型"), t("未缓存输入"), t("命中缓存"), t("输出"), t("思考 Token"), t("首字"), t("速度")];
 
 function turnsTable(turns) {
-  if (!turns.length) return emptyState("没有匹配的回复", "调整上方筛选，或选择其他时间范围。");
+  if (!turns.length) return emptyState(t("没有匹配的回复"), t("调整上方筛选，或选择其他时间范围。"));
   const body = h("tbody");
   if (usagePage.grouped) {
     const groups = new Map();
@@ -1229,7 +1229,7 @@ function turnsTable(turns) {
         },
         h("span", { class: "group-caret", "aria-hidden": "true", text: open ? "\u25be" : "\u25b8" }),
         h("span", { class: "mono", text: rows[0].session_display || session }),
-        h("span", { class: "row-sub", text: `${rows.length} 次 · ${compact(tokensOf(stats))} tokens${stats.errors ? ` · 失败 ${stats.errors}` : ""}` })))));
+        h("span", { class: "row-sub", text: t("{0} 次 · {1} tokens{2}", rows.length, compact(tokensOf(stats)), stats.errors ? t(" · 失败 {0}", stats.errors) : "") })))));
       if (open) for (const turn of rows) body.append(turnRow(turn));
     }
   } else {
@@ -1241,7 +1241,7 @@ function turnsTable(turns) {
       h("thead", null, h("tr", null, ...TURN_COLUMNS.map((text, index) => h("th", { class: index > 3 ? "r" : null, scope: "col", text })))),
       body)),
     rest > 0 ? h("div", { class: "turns-more" }, h("button", {
-      class: "btn btn-ghost btn-sm", type: "button", text: `显示更多（还有 ${rest} 条）`,
+      class: "btn btn-ghost btn-sm", type: "button", text: t("显示更多（还有 {0} 条）", rest),
       onclick: () => { usagePage.shown += TURN_PAGE; render({ animate: false }); },
     })) : null);
 }
@@ -1253,20 +1253,20 @@ function usageFilters(turns, substitutions) {
   const rerender = (patch) => { Object.assign(usagePage, patch, { shown: TURN_PAGE }); render({ animate: false }); };
   const toggle = (label, key) => h("label", { class: "chip" },
     h("input", { type: "checkbox", checked: usagePage[key], onchange: (event) => rerender({ [key]: event.target.checked }) }), label);
-  const chip = (text, clear) => h("button", { class: "chip-btn", type: "button", "aria-label": `清除筛选：${text}`, text: `${text} \u00d7`, onclick: clear });
+  const chip = (text, clear) => h("button", { class: "chip-btn", type: "button", "aria-label": t("清除筛选：{0}", text), text: `${text} \u00d7`, onclick: clear });
   return h("div", { class: "usage-toolbar usage-filters" },
-    segmented([["all", "全部"], ["ok", "成功"], ["failed", "失败"]], usagePage.status, (status) => rerender({ status }), "状态"),
-    h("select", { class: "select select-sm", "aria-label": "模型", onchange: (event) => rerender({ model: event.target.value }) },
-      h("option", { value: "", text: "全部模型", selected: !usagePage.model }),
+    segmented([["all", t("全部")], ["ok", t("成功")], ["failed", t("失败")]], usagePage.status, (status) => rerender({ status }), t("状态")),
+    h("select", { class: "select select-sm", "aria-label": t("模型"), onchange: (event) => rerender({ model: event.target.value }) },
+      h("option", { value: "", text: t("全部模型"), selected: !usagePage.model }),
       models.map((id) => h("option", { value: id, text: id, selected: usagePage.model === id }))),
-    substitutions ? toggle(`仅看模型替换（${substitutions}）`, "substitutions") : null,
-    toggle("按会话分组", "grouped"),
+    substitutions ? toggle(t("仅看模型替换（{0}）", substitutions), "substitutions") : null,
+    toggle(t("按会话分组"), "grouped"),
     usagePage.slot ? chip(usagePage.slot.label, () => selectUsageSlot(usagePage.slot)) : null,
-    usagePage.session ? chip(`会话 ${turns.find((turn) => turn.session === usagePage.session)?.session_display || usagePage.session}`, () => rerender({ session: "" })) : null);
+    usagePage.session ? chip(t("会话 {0}", turns.find((turn) => turn.session === usagePage.session)?.session_display || usagePage.session), () => rerender({ session: "" })) : null);
 }
 
 RENDERERS.usage = () => {
-  if (!gatewayRunning()) return card(null, null, emptyState("网关未运行", "启动网关后即可查看用量明细。"));
+  if (!gatewayRunning()) return card(null, null, emptyState(t("网关未运行"), t("启动网关后即可查看用量明细。")));
   if (!usagePage.data && !usagePage.loading && !usagePage.error) queueMicrotask(loadUsageDetails);
   const reload = (patch) => { Object.assign(usagePage, patch, { slot: null, slotTurns: null, shown: TURN_PAGE }); loadUsageDetails(); };
   const daily = usagePage.data?.daily || [];
@@ -1276,11 +1276,11 @@ RENDERERS.usage = () => {
   const byProvider = (row) => !usagePage.provider || row.provider_id === usagePage.provider;
 
   const toolbar = h("div", { class: "usage-toolbar" },
-    segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), "统计范围"),
+    segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), t("统计范围")),
     h("select", { class: "select select-sm", "aria-label": "Provider", onchange: (event) => { Object.assign(usagePage, { provider: event.target.value, session: "" }); render({ animate: false }); } },
-      h("option", { value: "", text: "全部 Provider", selected: !usagePage.provider }),
+      h("option", { value: "", text: t("全部 Provider"), selected: !usagePage.provider }),
       providers.map((id) => h("option", { value: id, text: providerName(id), selected: usagePage.provider === id }))),
-    h("button", { class: `btn btn-ghost btn-sm ${usagePage.loading ? "is-busy" : ""}`.trim(), type: "button", text: "刷新", disabled: usagePage.loading, onclick: () => reload({}) }));
+    h("button", { class: `btn btn-ghost btn-sm ${usagePage.loading ? "is-busy" : ""}`.trim(), type: "button", text: t("刷新"), disabled: usagePage.loading, onclick: () => reload({}) }));
 
   if (usagePage.error) return [toolbar, card(null, null, h("p", { class: "issue", text: usagePage.error }))];
   if (!usagePage.data) return [toolbar, h("div", { class: "skeleton" })];
@@ -1304,15 +1304,15 @@ RENDERERS.usage = () => {
     .filter((turn) => !usagePage.model || turn.upstream_model_id === usagePage.model)
     .filter((turn) => !usagePage.substitutions || turnSubstituted(turn));
   const chartControls = h("div", { class: "usage-toolbar" },
-    segmented([["tokens", "Tokens"], ["requests", "请求"]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, "图表指标"),
-    segmented([["merge", "构成"], ["split", "按 Provider"]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, "图表分组"));
-  const tableNote = usagePage.slotLoading ? "正在读取所选时段…"
-    : `${turns.length} 条${usagePage.slot ? `（${usagePage.slot.label}）` : `，最近 ${allTurns.length} 条以内`}；点击柱子只看该时段`;
+    segmented([["tokens", "Tokens"], ["requests", t("请求")]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, t("图表指标")),
+    segmented([["merge", t("构成")], ["split", t("按 Provider")]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, t("图表分组")));
+  const tableNote = usagePage.slotLoading ? t("正在读取所选时段…")
+    : t("{0} 条{1}；点击柱子只看该时段", turns.length, usagePage.slot ? `（${usagePage.slot.label}）` : t("，最近 {0} 条以内", allTurns.length));
   return [
     toolbar,
     stagger(usageCards(current, previous, slots)),
-    card(days === 1 ? "每小时用量" : "每日用量", "悬停查看明细，点击柱子筛选下方回复", usageChart(slots, keys), chartControls),
-    card("回复明细", tableNote, h("div", null, usageFilters(source, substitutions), turnsTable(turns)), null, "card-flush"),
+    card(days === 1 ? t("每小时用量") : t("每日用量"), t("悬停查看明细，点击柱子筛选下方回复"), usageChart(slots, keys), chartControls),
+    card(t("回复明细"), tableNote, h("div", null, usageFilters(source, substitutions), turnsTable(turns)), null, "card-flush"),
   ];
 };
 
@@ -1321,7 +1321,7 @@ RENDERERS.usage = () => {
 // provider. Bars keep the classic linear view. Both read the same CLI rows.
 
 const QUOTA_VIEW_KEY = "codex-mixin-quota-view";
-const QUOTA_VIEWS = [["ring", "圆环"], ["bar", "条形"]];
+const QUOTA_VIEWS = [["ring", t("圆环")], ["bar", t("条形")]];
 const QUOTA_WARN_RATIO = 0.9;
 // Ring geometry in SVG user units; more than four rings stop being legible.
 const RING_SIZE = 120;
@@ -1331,7 +1331,7 @@ const RING_STROKE_MAX = 11;
 const RING_BAND = 30;
 const RING_GAP = 3;
 const RING_MAX = 4;
-const QUOTA_LABELS = { five_hour: "5 小时", weekly: "每周", monthly: "每月", balance: "余额", quota: "额度" };
+const QUOTA_LABELS = { five_hour: t("5 小时"), weekly: t("每周"), monthly: t("每月"), balance: t("余额"), quota: t("额度") };
 const SVG_NS = "http://www.w3.org/2000/svg";
 const amountFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
 
@@ -1359,13 +1359,13 @@ function quotaEntry(row) {
   const id = row.quota_id || "quota";
   const label = QUOTA_LABELS[id] || row.label || row.display_name || id;
   const currency = percent ? "" : str(row.currency, "");
-  let value = "额度未知";
-  if (row.error) value = "查询失败";
-  else if (percent && used !== null) value = `剩余 ${amountFormat.format(Math.max(100 - used, 0))}%`;
+  let value = t("额度未知");
+  if (row.error) value = t("查询失败");
+  else if (percent && used !== null) value = t("剩余 {0}%", amountFormat.format(Math.max(100 - used, 0)));
   else if (used !== null && limit) value = `${amountFormat.format(used)} / ${amountFormat.format(limit)} ${currency}`.trim();
-  else if (remaining !== null) value = `余额 ${amountFormat.format(remaining)} ${currency}`.trim();
-  else if (used !== null) value = `已用 ${amountFormat.format(used)} ${currency}`.trim();
-  const detail = !row.error && !percent && remaining !== null && limit ? `剩余 ${amountFormat.format(remaining)} ${currency}`.trim() : "";
+  else if (remaining !== null) value = t("余额 {0} {1}", amountFormat.format(remaining), currency).trim();
+  else if (used !== null) value = t("已用 {0} {1}", amountFormat.format(used), currency).trim();
+  const detail = !row.error && !percent && remaining !== null && limit ? t("剩余 {0} {1}", amountFormat.format(remaining), currency).trim() : "";
   const reset = row.reset_at ? new Date(row.reset_at) : null;
   return {
     label,
@@ -1373,7 +1373,7 @@ function quotaEntry(row) {
     detail,
     error: row.error ? String(row.error) : "",
     ratio: ratio === null || !Number.isFinite(ratio) ? null : Math.max(ratio, 0),
-    reset: reset && !Number.isNaN(reset.getTime()) ? `${reset.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 重置` : "",
+    reset: reset && !Number.isNaN(reset.getTime()) ? t("{0} 重置", reset.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })) : "",
   };
 }
 
@@ -1428,7 +1428,7 @@ function quotaLegend(entries, view) {
     const tone = entry.error ? "is-bad" : entry.ratio !== null && entry.ratio >= QUOTA_WARN_RATIO ? "is-warn" : "";
     const swatch = view === "ring" ? h("span", { class: `quota-swatch ${index < RING_MAX ? `ring-${index + 1}` : "is-extra"}`, "aria-hidden": "true" }) : null;
     const bar = view === "bar" && entry.ratio !== null && !entry.error
-      ? h("div", { class: "progress quota-bar", role: "progressbar", "aria-label": `${entry.label}已用`, "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(Math.min(entry.ratio, 1) * 100)) },
+      ? h("div", { class: "progress quota-bar", role: "progressbar", "aria-label": t("{0}已用", entry.label), "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(Math.min(entry.ratio, 1) * 100)) },
         h("div", { class: `progress-bar ${tone}`.trim(), style: { transform: `scaleX(${Math.min(entry.ratio, 1)})` } }))
       : null;
     return h("li", { class: `quota-entry ${tone}`.trim(), title: entry.error || null },
@@ -1447,7 +1447,7 @@ function quotaTile(group, view, animate) {
   // The center shows the tightest window, the one that runs out first.
   const ringed = group.entries.filter((entry) => !entry.error && entry.ratio !== null);
   const primary = ringed.reduce((top, entry) => (!top || entry.ratio > top.ratio ? entry : top), null);
-  const label = group.entries.map((entry) => `${entry.label} ${entry.error ? "查询失败" : `${entry.value}${entry.ratio === null ? "" : `，已用 ${percentText(entry.ratio)}`}`}`).join("；");
+  const label = group.entries.map((entry) => `${entry.label} ${entry.error ? t("查询失败") : `${entry.value}${entry.ratio === null ? "" : t("，已用 {0}", percentText(entry.ratio))}`}`).join("；");
   const visual = view === "ring"
     ? h("div", { class: "quota-visual" }, quotaRings(group.entries, animate),
       h("div", { class: "quota-center" }, h("strong", { class: `num ${primary && primary.ratio >= QUOTA_WARN_RATIO ? "is-warn" : ""}`.trim(), text: primary ? percentText(primary.ratio) : "\u2014" })))
@@ -1467,7 +1467,7 @@ async function loadQuota() {
     state.quotaFresh = true;
   } catch (error) {
     state.quotaError = error.message;
-    if (error.status !== 401) toast("bad", "额度查询失败", error.message);
+    if (error.status !== 401) toast("bad", t("额度查询失败"), error.message);
   } finally {
     state.quotaLoading = false;
     if (state.page === "home") render({ animate: false });
@@ -1482,24 +1482,24 @@ function quotaCard() {
     try { localStorage.setItem(QUOTA_VIEW_KEY, value); } catch { /* private mode keeps the default */ }
     state.quotaFresh = true;
     render({ animate: false });
-  }, "额度展示方式");
-  const reload = h("button", { class: `btn btn-ghost btn-sm ${state.quotaLoading ? "is-busy" : ""}`.trim(), type: "button", text: state.quota ? "重新查询" : "查询额度", disabled: state.quotaLoading, onclick: loadQuota });
+  }, t("额度展示方式"));
+  const reload = h("button", { class: `btn btn-ghost btn-sm ${state.quotaLoading ? "is-busy" : ""}`.trim(), type: "button", text: state.quota ? t("重新查询") : t("查询额度"), disabled: state.quotaLoading, onclick: loadQuota });
   let body;
-  if (state.quotaLoading && !state.quota) body = h("p", { class: "card-note", text: "正在向 Provider 查询额度…" });
-  else if (!state.quota) body = h("p", { class: state.quotaError ? "issue" : "card-note", text: state.quotaError || "向支持额度接口的 Provider 查询额度用量。" });
-  else if (!state.quota.length) body = h("p", { class: "card-note", text: "没有已启用的 Provider 提供额度接口。" });
+  if (state.quotaLoading && !state.quota) body = h("p", { class: "card-note", text: t("正在向 Provider 查询额度…") });
+  else if (!state.quota) body = h("p", { class: state.quotaError ? "issue" : "card-note", text: state.quotaError || t("向支持额度接口的 Provider 查询额度用量。") });
+  else if (!state.quota.length) body = h("p", { class: "card-note", text: t("没有已启用的 Provider 提供额度接口。") });
   else {
     const animate = state.quotaFresh && !reduceMotion.matches;
     state.quotaFresh = false;
     body = h("div", { class: `quota-grid quota-grid-${view}` }, quotaGroups(state.quota).map((group) => quotaTile(group, view, animate)));
   }
-  return card("额度", null, body, [toggle, reload]);
+  return card(t("额度"), null, body, [toggle, reload]);
 }
 
 // Generic, read-only rendering of CLI JSON whose shape varies by provider.
 function valueView(value, depth = 0) {
   if (Array.isArray(value)) {
-    if (!value.length) return h("span", { class: "card-note", text: "无" });
+    if (!value.length) return h("span", { class: "card-note", text: t("无") });
     return h("div", { class: "grid", style: { gap: "12px" } }, ...value.map((item) => valueView(item, depth + 1)));
   }
   if (value && typeof value === "object") {
@@ -1539,10 +1539,10 @@ function providerDefinition(id) {
   return definition;
 }
 const ISSUE_LABELS = {
-  credentials_missing: "缺少凭据",
-  no_routable_models: "没有可路由模型",
-  selected_models_unavailable: "所选模型不可用",
-  model_refresh_failed: "模型刷新失败",
+  credentials_missing: t("缺少凭据"),
+  no_routable_models: t("没有可路由模型"),
+  selected_models_unavailable: t("所选模型不可用"),
+  model_refresh_failed: t("模型刷新失败"),
 };
 const CONTEXT_UNIT = 1000;
 
@@ -1580,9 +1580,9 @@ function providerIcon(provider, size = 28) {
 }
 
 function providerHealth(provider) {
-  if (!provider.enabled) return { tone: "", text: "停用" };
-  if (provider.readiness === "degraded") return { tone: "is-bad", text: "需要处理" };
-  return { tone: "is-ok", text: "正常" };
+  if (!provider.enabled) return { tone: "", text: t("停用") };
+  if (provider.readiness === "degraded") return { tone: "is-bad", text: t("需要处理") };
+  return { tone: "is-ok", text: t("正常") };
 }
 
 function draftFor(provider) {
@@ -1675,12 +1675,12 @@ function popoverMenu(label, items, buttonClass = "btn btn-ghost btn-icon") {
 
 function serviceList(providers, selected) {
   const order = configuredProviders().map((provider) => provider.id);
-  const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": "服务商" });
+  const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": t("服务商") });
   let dragged = null;
   const reorder = (id, target) => {
     const next = order.filter((item) => item !== id);
     next.splice(Math.max(0, Math.min(next.length, target)), 0, id);
-    if (next.join() !== order.join()) runAction(null, "provider_reorder", { ids: next }, { ok: "顺序已更新" });
+    if (next.join() !== order.join()) runAction(null, "provider_reorder", { ids: next }, { ok: t("顺序已更新") });
   };
   for (const provider of providers) {
     const health = providerHealth(provider);
@@ -1693,14 +1693,14 @@ function serviceList(providers, selected) {
         tabindex: "0",
         "aria-selected": String(provider.id === selected.id),
         draggable: configured ? "true" : null,
-        title: configured ? "拖动排序；Alt + ↑/↓ 也可调整顺序" : null,
+        title: configured ? t("拖动排序；Alt + ↑/↓ 也可调整顺序") : null,
       },
       providerIcon(provider),
       h(
         "div",
         { class: "svc-row-main" },
         h("div", { class: "svc-row-name", text: providerName(provider) }),
-        h("div", { class: "svc-row-sub" }, h("span", { class: `dot ${health.tone}`, "aria-hidden": "true" }), `${health.text} · ${(provider.selected_models || []).length}/${(provider.cached_models || []).length} 个模型`),
+        h("div", { class: "svc-row-sub" }, h("span", { class: `dot ${health.tone}`, "aria-hidden": "true" }), t("{0} · {1}/{2} 个模型", health.text, (provider.selected_models || []).length, (provider.cached_models || []).length)),
       ),
       configured ? h("span", { class: "svc-grip", "aria-hidden": "true" }) : null,
     );
@@ -1741,32 +1741,32 @@ function serviceList(providers, selected) {
     }
     list.append(row);
   }
-  const remove = h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "删除服务商", text: "\u2212", disabled: selected.kind !== "configured" || state.busy, "data-action": "" });
-  remove.addEventListener("click", () => runAction(remove, "provider_remove", { id: selected.id }, { ok: "服务商已删除", confirm: [`删除 ${providerName(selected)}？`, "这会移除该服务商的配置与模型选择，操作无法撤销。", "删除"] }));
+  const remove = h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": t("删除服务商"), text: "\u2212", disabled: selected.kind !== "configured" || state.busy, "data-action": "" });
+  remove.addEventListener("click", () => runAction(remove, "provider_remove", { id: selected.id }, { ok: t("服务商已删除"), confirm: [t("删除 {0}？", providerName(selected)), t("这会移除该服务商的配置与模型选择，操作无法撤销。"), t("删除")] }));
   return h(
     "aside",
     { class: "svc-list" },
-    h("header", { class: "svc-list-head" }, h("span", { text: "服务商" }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "新增服务商", text: "+", onclick: openAddProvider }), remove)),
+    h("header", { class: "svc-list-head" }, h("span", { text: t("服务商") }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": t("新增服务商"), text: "+", onclick: openAddProvider }), remove)),
     list,
   );
 }
 function serviceHeader(provider) {
   const official = provider.kind === "official";
   const health = providerHealth(provider);
-  const badge = official ? h("span", { class: "badge badge-ok", text: "官方" }) : provider.enabled ? h("span", { class: `badge ${health.tone === "is-bad" ? "badge-bad" : "badge-ok"}`, text: health.tone === "is-bad" ? "需要处理" : "配置就绪" }) : h("span", { class: "badge", text: "停用" });
-  const refreshed = provider.models_refreshed_at_ms ? `上次刷新 ${new Date(provider.models_refreshed_at_ms).toLocaleString("zh-CN", { hour12: false })}` : "尚未刷新";
-  const sub = [official ? "官方服务商 · 只读" : provider.id, `已加入 ${(provider.selected_models || []).length} / 可选 ${(provider.cached_models || []).length}`, refreshed].join(" · ");
-  const tabs = segmented([["models", "模型"], ["connection", "连接设置"]], svc.tab, (value) => {
+  const badge = official ? h("span", { class: "badge badge-ok", text: t("官方") }) : provider.enabled ? h("span", { class: `badge ${health.tone === "is-bad" ? "badge-bad" : "badge-ok"}`, text: health.tone === "is-bad" ? t("需要处理") : t("配置就绪") }) : h("span", { class: "badge", text: t("停用") });
+  const refreshed = provider.models_refreshed_at_ms ? t("上次刷新 {0}", new Date(provider.models_refreshed_at_ms).toLocaleString("zh-CN", { hour12: false })) : t("尚未刷新");
+  const sub = [official ? t("官方服务商 · 只读") : provider.id, t("已加入 {0} / 可选 {1}", (provider.selected_models || []).length, (provider.cached_models || []).length), refreshed].join(" · ");
+  const tabs = segmented([["models", t("模型")], ["connection", t("连接设置")]], svc.tab, (value) => {
     svc.tab = value;
     render({ animate: false });
-  }, "详情页面");
+  }, t("详情页面"));
   const items = official
-    ? [{ label: "刷新模型列表", run: () => runAction(null, "refresh_codex_catalog", null, { ok: "官方模型目录已刷新" }) }]
+    ? [{ label: t("刷新模型列表"), run: () => runAction(null, "refresh_codex_catalog", null, { ok: t("官方模型目录已刷新") }) }]
     : [
-        { label: "检查模型接口", run: () => testProvider(provider) },
-        { label: "刷新模型列表", run: () => runAction(null, "provider_discover", { id: provider.id }, { ok: "模型列表已刷新" }) },
+        { label: t("检查模型接口"), run: () => testProvider(provider) },
+        { label: t("刷新模型列表"), run: () => runAction(null, "provider_discover", { id: provider.id }, { ok: t("模型列表已刷新") }) },
         "-",
-        { label: provider.enabled ? "停用服务商" : "启用服务商", run: () => runAction(null, provider.enabled ? "provider_disable" : "provider_enable", { id: provider.id }, { ok: provider.enabled ? "已停用" : "已启用" }) },
+        { label: provider.enabled ? t("停用服务商") : t("启用服务商"), run: () => runAction(null, provider.enabled ? "provider_disable" : "provider_enable", { id: provider.id }, { ok: provider.enabled ? t("已停用") : t("已启用") }) },
       ];
   return h(
     "header",
@@ -1774,13 +1774,13 @@ function serviceHeader(provider) {
     providerIcon(provider, 36),
     h("div", { class: "svc-head-main", title: sub }, h("div", { class: "svc-head-title" }, h("span", { text: providerName(provider) }), badge)),
     tabs,
-    h("div", { class: "svc-head-actions" }, popoverMenu("更多服务商操作", items)),
+    h("div", { class: "svc-head-actions" }, popoverMenu(t("更多服务商操作"), items)),
   );
 }
 
 async function testProvider(provider) {
-  const result = await runAction(null, "provider_test", { id: provider.id }, { ok: "模型接口检查完成" });
-  if (result?.json) openSheet(`${providerName(provider)} · 接口检查`, h("div", { class: "form" }, valueView(result.json)));
+  const result = await runAction(null, "provider_test", { id: provider.id }, { ok: t("模型接口检查完成") });
+  if (result?.json) openSheet(t("{0} · 接口检查", providerName(provider)), h("div", { class: "form" }, valueView(result.json)));
 }
 
 function benchmarkFor(provider) {
@@ -1791,7 +1791,7 @@ function benchmarkFor(provider) {
 }
 
 const CAPABILITIES = [
-  ["supports_image", "图片输入", "M3 5h14v10H3z M3 12l4-4 4 4 2-2 4 4 M13 8.5a1 1 0 1 0 0.01 0"],
+  ["supports_image", t("图片输入"), "M3 5h14v10H3z M3 12l4-4 4 4 2-2 4 4 M13 8.5a1 1 0 1 0 0.01 0"],
   ["supports_thinking", "Thinking", "M10 3a5 5 0 0 0-3 9v3h6v-3a5 5 0 0 0-3-9z M8 17h4"],
   ["supports_function_tools", "Function Tools", "M12.5 4.5a3 3 0 0 0-4 4L4 13l3 3 4.5-4.5a3 3 0 0 0 4-4l-2 2-2-1-1-2z"],
   ["supports_tool_search", "Tool Search", "M9 4a5 5 0 1 0 0 10A5 5 0 0 0 9 4z M13 13l4 4"],
@@ -1802,7 +1802,7 @@ function capabilityIcons(model) {
   const wrap = h("span", { class: "caps" });
   for (const [key, title, path] of CAPABILITIES) {
     const supported = model[key];
-    const label = `${title}：${supported === true ? "支持" : supported === false ? "不支持" : "未知"}${model.capability_probe_error ? `。能力探测：${model.capability_probe_error}` : ""}`;
+    const label = `${title}：${supported === true ? t("支持") : supported === false ? t("不支持") : t("未知")}${model.capability_probe_error ? t("。能力探测：{0}", model.capability_probe_error) : ""}`;
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 20 20");
     svg.setAttribute("class", `cap ${supported === true ? "is-on" : supported === false ? "is-off" : "is-unknown"}`);
@@ -1847,8 +1847,8 @@ function modelRows(provider) {
     });
   };
   for (const model of provider.cached_models || []) push(typeof model === "string" ? { id: model } : model, {});
-  for (const id of unavailable) push({ id, description: "该已选模型不在当前模型列表中" }, { unavailable: true });
-  for (const id of draft.manual) push({ id, manually_added: true, description: "用户手动指定；能力将由后台自动补齐" }, { manual: true });
+  for (const id of unavailable) push({ id, description: t("该已选模型不在当前模型列表中") }, { unavailable: true });
+  for (const id of draft.manual) push({ id, manually_added: true, description: t("用户手动指定；能力将由后台自动补齐") }, { manual: true });
   return rows;
 }
 
@@ -1890,15 +1890,15 @@ function contextCell(provider, row) {
     inputmode: "numeric",
     value: row.context ? String(Math.round(row.context / CONTEXT_UNIT)) : "",
     placeholder: "—",
-    "aria-label": `${row.model.id} 上下文（K）`,
-    title: "模型上下文，单位 K；修改后保存",
+    "aria-label": t("{0} 上下文（K）", row.model.id),
+    title: t("模型上下文，单位 K；修改后保存"),
   });
   input.addEventListener("change", () => {
     const value = Number(input.value.trim());
     if (!input.value.trim()) draft.contexts[row.model.id] = null;
     else if (Number.isFinite(value) && value > 0) draft.contexts[row.model.id] = Math.round(value * CONTEXT_UNIT);
     else {
-      toast("bad", "上下文无效", "请输入以 K 为单位的正数。");
+      toast("bad", t("上下文无效"), t("请输入以 K 为单位的正数。"));
       return;
     }
     render({ animate: false });
@@ -1907,8 +1907,8 @@ function contextCell(provider, row) {
     ? h("button", {
         class: "ctx-revert",
         type: "button",
-        title: "还原为自动发现的上下文；保存后生效",
-        "aria-label": `还原 ${row.model.id} 的上下文`,
+        title: t("还原为自动发现的上下文；保存后生效"),
+        "aria-label": t("还原 {0} 的上下文", row.model.id),
         text: "\u21ba",
         onclick: () => {
           draft.contexts[row.model.id] = null;
@@ -1927,7 +1927,7 @@ function modelsTab(provider) {
   const changes = modelChanges(provider);
   const appliedCount = (provider.selected_models || []).length;
 
-  const search = textInput("svc-query", svc.query, { type: "search", placeholder: "搜索当前服务商的模型", "aria-label": "搜索当前服务商的模型" });
+  const search = textInput("svc-query", svc.query, { type: "search", placeholder: t("搜索当前服务商的模型"), "aria-label": t("搜索当前服务商的模型") });
   search.addEventListener("input", () => {
     svc.query = search.value;
     const body = $(".svc-table tbody");
@@ -1935,46 +1935,46 @@ function modelsTab(provider) {
     const keep = new Set(all.filter(rowMatches).map((row) => row.model.id));
     for (const tr of body.children) tr.hidden = !keep.has(tr.dataset.model);
   });
-  const filterLabels = { all: "全部", selected: "已加入", new: "新增", attention: "需处理" };
-  const filter = popoverMenu("筛选", [
-    ["all", "全部模型"],
-    ["selected", "已加入 Codex"],
-    ["new", "新增"],
-    ["attention", "需要处理"],
+  const filterLabels = { all: t("全部"), selected: t("已加入"), new: t("新增"), attention: t("需处理") };
+  const filter = popoverMenu(t("筛选"), [
+    ["all", t("全部模型")],
+    ["selected", t("已加入 Codex")],
+    ["new", t("新增")],
+    ["attention", t("需要处理")],
   ].map(([value, label]) => ({ label, checked: svc.filter === value, run: () => { svc.filter = value; render({ animate: false }); } })), "btn btn-ghost btn-sm");
   filter.querySelector("button").textContent = `${filterLabels[svc.filter]} \u25be`;
   const visibleIds = rows.map((row) => row.model.id);
-  const more = popoverMenu("更多模型操作", [
-    { heading: "测速内容" },
-    { label: "仅测试延迟（TTFT）", checked: svc.benchMode === 1, run: () => { svc.benchMode = 1; render({ animate: false }); } },
-    { label: "测试延迟与吞吐", checked: svc.benchMode === 100, run: () => { svc.benchMode = 100; render({ animate: false }); } },
-    { heading: "请求超时" },
-    ...[15, 30, 60, 120].map((seconds) => ({ label: `${seconds} 秒`, checked: svc.benchTimeout === seconds, run: () => { svc.benchTimeout = seconds; render({ animate: false }); } })),
+  const more = popoverMenu(t("更多模型操作"), [
+    { heading: t("测速内容") },
+    { label: t("仅测试延迟（TTFT）"), checked: svc.benchMode === 1, run: () => { svc.benchMode = 1; render({ animate: false }); } },
+    { label: t("测试延迟与吞吐"), checked: svc.benchMode === 100, run: () => { svc.benchMode = 100; render({ animate: false }); } },
+    { heading: t("请求超时") },
+    ...[15, 30, 60, 120].map((seconds) => ({ label: t("{0} 秒", seconds), checked: svc.benchTimeout === seconds, run: () => { svc.benchTimeout = seconds; render({ animate: false }); } })),
     "-",
-    ...(provider.kind === "official" ? [] : [{ label: "重新探测已加入模型的能力", disabled: state.busy || changes > 0 || appliedCount === 0, run: () => runAction(null, "provider_probe", { id: provider.id }, { ok: "能力探测完成，请查看能力列" }) }, "-"]),
-    { label: "全选当前结果", run: () => { visibleIds.forEach((id) => draft.models.add(id)); render({ animate: false }); } },
-    { label: "取消选择当前结果", run: () => { visibleIds.forEach((id) => draft.models.delete(id)); render({ animate: false }); } },
-    { label: "手动添加模型…", run: () => { svc.manualOpen = true; render({ animate: false }); $("#svc-manual")?.focus(); } },
+    ...(provider.kind === "official" ? [] : [{ label: t("重新探测已加入模型的能力"), disabled: state.busy || changes > 0 || appliedCount === 0, run: () => runAction(null, "provider_probe", { id: provider.id }, { ok: t("能力探测完成，请查看能力列") }) }, "-"]),
+    { label: t("全选当前结果"), run: () => { visibleIds.forEach((id) => draft.models.add(id)); render({ animate: false }); } },
+    { label: t("取消选择当前结果"), run: () => { visibleIds.forEach((id) => draft.models.delete(id)); render({ animate: false }); } },
+    { label: t("手动添加模型…"), run: () => { svc.manualOpen = true; render({ animate: false }); $("#svc-manual")?.focus(); } },
     "-",
   ], "btn btn-ghost btn-sm");
   more.querySelector("button").textContent = "\u22ef \u25be";
 
-  const order = popoverMenu("模型排序", [
-    ...[["family", "家族与版本"], ["manual", "手动排序"]].map(([value, label]) => ({
+  const order = popoverMenu(t("模型排序"), [
+    ...[["family", t("家族与版本")], ["manual", t("手动排序")]].map(([value, label]) => ({
       label, checked: draft.order === value, disabled: state.busy,
       run: () => { const ids = selectedModelIds(provider); draft.order = value; draft.models = new Set(ids); svc.sort = { key: "selected", reversed: false }; render({ animate: false }); },
     })),
   ], "btn btn-ghost btn-sm");
   order.querySelector("button").textContent = "↕";
-  const bench = actionButton(`测试已加入的 ${appliedCount} 个模型`, "benchmark_start", () => ({ timeout_seconds: svc.benchTimeout, target_output_tokens: svc.benchMode, providers: [provider.id] }), { ok: "测速已开始，结果会实时更新" }, "btn-sm");
+  const bench = actionButton(t("测试已加入的 {0} 个模型", appliedCount), "benchmark_start", () => ({ timeout_seconds: svc.benchTimeout, target_output_tokens: svc.benchMode, providers: [provider.id] }), { ok: t("测速已开始，结果会实时更新") }, "btn-sm");
   bench.disabled = state.busy || changes > 0 || appliedCount === 0 || !gatewayRunning() || provider.kind === "official";
-  bench.title = changes > 0 ? "先应用更改，再测试。测速不会自动保存选择。" : !gatewayRunning() ? "网关未运行" : "";
-  const save = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", disabled: state.busy || changes === 0, text: changes ? `保存模型选择（${changes}）` : "保存模型选择" });
+  bench.title = changes > 0 ? t("先应用更改，再测试。测速不会自动保存选择。") : !gatewayRunning() ? t("网关未运行") : "";
+  const save = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", disabled: state.busy || changes === 0, text: changes ? t("保存模型选择（{0}）", changes) : t("保存模型选择") });
   save.addEventListener("click", () => saveModels(provider, save));
 
   const manual = svc.manualOpen
     ? (() => {
-        const input = h("input", { class: "input mono", id: "svc-manual", placeholder: "手动输入模型 ID（可不在 /v1/models 中）", spellcheck: "false", autocomplete: "off" });
+        const input = h("input", { class: "input mono", id: "svc-manual", placeholder: t("手动输入模型 ID（可不在 /v1/models 中）"), spellcheck: "false", autocomplete: "off" });
         const add = () => {
           const id = input.value.trim();
           if (!id || id.startsWith("-")) return;
@@ -1983,11 +1983,11 @@ function modelsTab(provider) {
           render({ animate: false });
         };
         input.addEventListener("keydown", (event) => event.key === "Enter" && add());
-        return h("div", { class: "svc-manual" }, input, h("button", { class: "btn btn-sm", type: "button", text: "添加并选中", onclick: add }), h("span", { class: "card-note", text: "能力将由后台自动补齐" }), h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "收起手动添加", text: "\u00d7", onclick: () => { svc.manualOpen = false; render({ animate: false }); } }));
+        return h("div", { class: "svc-manual" }, input, h("button", { class: "btn btn-sm", type: "button", text: t("添加并选中"), onclick: add }), h("span", { class: "card-note", text: t("能力将由后台自动补齐") }), h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": t("收起手动添加"), text: "\u00d7", onclick: () => { svc.manualOpen = false; render({ animate: false }); } }));
       })()
     : null;
 
-  const columns = [["selected", "是否加入"], ["order", "顺序"], ["model", "模型"], ["ttft", "首 Token"], ["tps", "生成速度"], ["context", "上下文"], ...(showRatio ? [["ratio", "倍率"]] : []), ["caps", "能力"]];
+  const columns = [["selected", t("是否加入")], ["order", t("顺序")], ["model", t("模型")], ["ttft", t("首 Token")], ["tps", t("生成速度")], ["context", t("上下文")], ...(showRatio ? [["ratio", t("倍率")]] : []), ["caps", t("能力")]];
   const head = h("tr", null, ...columns.map(([key, label]) => {
     if (key === "caps" || key === "order") return h("th", { scope: "col", text: label });
     const active = svc.sort.key === key;
@@ -1997,26 +1997,26 @@ function modelsTab(provider) {
   const ordered = selectedModelIds(provider);
   let dragged = null;
   const body = h("tbody", null, ...rows.map((row) => {
-    const check = h("input", { class: "check", type: "checkbox", checked: row.selected, "aria-label": `将 ${row.model.id} 加入 Codex` });
+    const check = h("input", { class: "check", type: "checkbox", checked: row.selected, "aria-label": t("将 {0} 加入 Codex", row.model.id) });
     check.addEventListener("change", () => {
       if (check.checked) draft.models.add(row.model.id);
       else draft.models.delete(row.model.id);
       render({ animate: false });
     });
     const tags = [];
-    if (row.isNew) tags.push(h("span", { class: "badge badge-ok", text: "新增" }));
-    if (row.unavailable) tags.push(h("span", { class: "badge badge-bad", text: "不可用" }));
-    if (row.selected !== row.savedSelected) tags.push(h("span", { class: "badge", text: row.selected ? "待加入" : "待移除" }));
+    if (row.isNew) tags.push(h("span", { class: "badge badge-ok", text: t("新增") }));
+    if (row.unavailable) tags.push(h("span", { class: "badge badge-bad", text: t("不可用") }));
+    if (row.selected !== row.savedSelected) tags.push(h("span", { class: "badge", text: row.selected ? t("待加入") : t("待移除") }));
     const position = ordered.indexOf(row.model.id);
-    const moves = row.selected ? popoverMenu(`调整 ${row.model.id} 的顺序`, [
-      { label: "上移", disabled: state.busy || position <= 0, run: () => moveModel(provider, row.model.id, position - 1) },
-      { label: "下移", disabled: state.busy || position >= ordered.length - 1, run: () => moveModel(provider, row.model.id, position + 1) },
+    const moves = row.selected ? popoverMenu(t("调整 {0} 的顺序", row.model.id), [
+      { label: t("上移"), disabled: state.busy || position <= 0, run: () => moveModel(provider, row.model.id, position - 1) },
+      { label: t("下移"), disabled: state.busy || position >= ordered.length - 1, run: () => moveModel(provider, row.model.id, position + 1) },
     ], "btn btn-ghost btn-icon btn-sm") : null;
     if (moves) moves.querySelector("button").textContent = "⋯";
     const controls = row.selected ? h("span", { class: "model-order-controls" },
       h("span", { class: "model-rank", text: position + 1 }),
       h("span", { class: "svc-grip", "aria-hidden": "true", draggable: !state.busy ? "true" : null,
-        title: "拖动排序；Alt + ↑/↓ 也可调整顺序" }), moves) : null;
+        title: t("拖动排序；Alt + ↑/↓ 也可调整顺序") }), moves) : null;
     const tr = h("tr", { "data-model": row.model.id, class: row.selected ? "is-selected" : null, title: row.model.description || null },
       h("td", { class: "c-check" }, check),
       h("td", { class: "c-order" }, controls),
@@ -2064,7 +2064,7 @@ function modelsTab(provider) {
     manual,
     rows.length
       ? h("div", { class: "table-wrap svc-table-wrap" }, h("table", { class: "table svc-table" }, h("thead", null, head), body))
-      : emptyState(all.length ? "没有匹配的模型" : "当前服务商没有模型", all.length ? "调整搜索或筛选条件。" : "从更多操作中刷新模型列表，或手动添加模型。"),
+      : emptyState(all.length ? t("没有匹配的模型") : t("当前服务商没有模型"), all.length ? t("调整搜索或筛选条件。") : t("从更多操作中刷新模型列表，或手动添加模型。")),
   ];
 }
 
@@ -2077,10 +2077,10 @@ async function saveModels(provider, button) {
     } else params.model_contexts[model] = tokens;
   }
   if (!params.models.length) {
-    toast("bad", "至少选择一个模型", "客户端需要至少一个可路由模型。");
+    toast("bad", t("至少选择一个模型"), t("客户端需要至少一个可路由模型。"));
     return;
   }
-  const result = await runAction(button, "provider_select", params, { ok: "模型选择已保存，Codex 模型目录已更新" });
+  const result = await runAction(button, "provider_select", params, { ok: t("模型选择已保存，Codex 模型目录已更新") });
   if (!result) return;
   delete svc.drafts[provider.id];
   render({ animate: false });
@@ -2099,28 +2099,28 @@ function inlineInput(name, value, props = {}) {
 }
 
 function inlineSecret(name, configured) {
-  return h("input", { class: "input input-inline mono", name, type: "password", autocomplete: "new-password", spellcheck: "false", placeholder: configured ? "已配置；留空保留" : "未配置" });
+  return h("input", { class: "input input-inline mono", name, type: "password", autocomplete: "new-password", spellcheck: "false", placeholder: configured ? t("已配置；留空保留") : t("未配置") });
 }
 
 function clearButton(label, provider, options, okText) {
-  return actionButton(label, "provider_update", { id: provider.id, options }, { ok: okText, confirm: [`${label}？`, "保存的凭据会被删除，之后需要重新填写。", label] }, "btn-sm");
+  return actionButton(label, "provider_update", { id: provider.id, options }, { ok: okText, confirm: [`${label}？`, t("保存的凭据会被删除，之后需要重新填写。"), label] }, "btn-sm");
 }
 
 function connectionTab(provider) {
   if (provider.kind === "official") {
-    return h("div", { class: "notice notice-quiet" }, h("span", { class: "dot notice-mark", "aria-hidden": "true" }), h("div", { text: "此服务商由 Codex 官方 OAuth 登录管理，不能在这里修改连接参数。" }));
+    return h("div", { class: "notice notice-quiet" }, h("span", { class: "dot notice-mark", "aria-hidden": "true" }), h("div", { text: t("此服务商由 Codex 官方 OAuth 登录管理，不能在这里修改连接参数。") }));
   }
   const preset = provider.preset_id || "custom";
   const definition = providerDefinition(preset);
   const aws = definition.auth_mode === "aws_sigv4";
   const form = h("form", { class: "svc-form", autocomplete: "off" });
-  const connection = [formRow("服务商 ID", h("span", { class: "mono muted", text: provider.id }))];
+  const connection = [formRow(t("服务商 ID"), h("span", { class: "mono muted", text: provider.id }))];
   if (definition.custom_endpoint) {
     connection.push(
-      formRow("站点名称", inlineInput("display_name", provider.display_name)),
-      formRow("API 地址", inlineInput("base_url", provider.base_url, { placeholder: "https://api.example.com/v1", inputmode: "url" }), "填写到版本前缀，例如 /v1"),
-      formRow("API 端点", selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), provider.protocol || providerCatalog().default_protocol)),
-      formRow("官网地址", inlineInput("website_url", provider.website_url, { inputmode: "url" })),
+      formRow(t("站点名称"), inlineInput("display_name", provider.display_name)),
+      formRow(t("API 地址"), inlineInput("base_url", provider.base_url, { placeholder: "https://api.example.com/v1", inputmode: "url" }), t("填写到版本前缀，例如 /v1")),
+      formRow(t("API 端点"), selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), provider.protocol || providerCatalog().default_protocol)),
+      formRow(t("官网地址"), inlineInput("website_url", provider.website_url, { inputmode: "url" })),
     );
   }
   if (aws) {
@@ -2128,24 +2128,24 @@ function connectionTab(provider) {
       formRow("AWS Region", inlineInput("aws_region", provider.aws_region, { placeholder: providerCatalog().default_aws_region })),
       formRow("Access Key ID", inlineSecret("aws_access_key_id", provider.aws_sigv4_configured)),
       formRow("Secret Access Key", inlineSecret("aws_secret_access_key", provider.aws_sigv4_configured)),
-      formRow("Session Token", h("div", { class: "card-actions" }, inlineSecret("aws_session_token", provider.aws_session_token_configured), provider.aws_session_token_configured ? clearButton("清除 Session Token", provider, { clear_aws_session_token: true }, "Session Token 已清除") : null)),
+      formRow("Session Token", h("div", { class: "card-actions" }, inlineSecret("aws_session_token", provider.aws_session_token_configured), provider.aws_session_token_configured ? clearButton(t("清除 Session Token"), provider, { clear_aws_session_token: true }, t("Session Token 已清除")) : null)),
     );
-    if (provider.aws_sigv4_configured) connection.push(formRow("已保存的 AWS 凭据", clearButton("清除 AWS 凭据", provider, { clear_aws_credentials: true }, "AWS 凭据已清除")));
+    if (provider.aws_sigv4_configured) connection.push(formRow(t("已保存的 AWS 凭据"), clearButton(t("清除 AWS 凭据"), provider, { clear_aws_credentials: true }, t("AWS 凭据已清除"))));
   } else {
-    connection.push(formRow("API 密钥", h("div", { class: "card-actions" }, inlineSecret("key", provider.api_key_configured), provider.api_key_configured ? clearButton("清除密钥", provider, { clear_key: true }, "密钥已清除") : null)));
+    connection.push(formRow(t("API 密钥"), h("div", { class: "card-actions" }, inlineSecret("key", provider.api_key_configured), provider.api_key_configured ? clearButton(t("清除密钥"), provider, { clear_key: true }, t("密钥已清除")) : null)));
   }
-  const groups = [formGroup("连接配置", ...connection)];
-  if (definition.quota_username_required) groups.push(formGroup("百度额度", formRow("额度用户名", inlineInput("quota_username", provider.quota_username, { placeholder: "Baidu OneAPI 额度接口必填" }))));
+  const groups = [formGroup(t("连接配置"), ...connection)];
+  if (definition.quota_username_required) groups.push(formGroup(t("百度额度"), formRow(t("额度用户名"), inlineInput("quota_username", provider.quota_username, { placeholder: t("Baidu OneAPI 额度接口必填") }))));
   if (definition.quota_credentials_required) {
     groups.push(formGroup("OpenCode Go",
-      formRow("工作区 ID", inlineInput("quota_workspace_id", provider.quota_workspace_id, { placeholder: "例如：wrk_abc123" })),
-      formRow("Auth Cookie", h("div", { class: "card-actions" }, inlineSecret("quota_auth_cookie", provider.quota_auth_cookie_configured), provider.quota_auth_cookie_configured ? clearButton("清除额度凭据", provider, { clear_quota_workspace_id: true, clear_quota_auth_cookie: true }, "额度凭据已清除") : null)),
+      formRow(t("工作区 ID"), inlineInput("quota_workspace_id", provider.quota_workspace_id, { placeholder: t("例如：wrk_abc123") })),
+      formRow("Auth Cookie", h("div", { class: "card-actions" }, inlineSecret("quota_auth_cookie", provider.quota_auth_cookie_configured), provider.quota_auth_cookie_configured ? clearButton(t("清除额度凭据"), provider, { clear_quota_workspace_id: true, clear_quota_auth_cookie: true }, t("额度凭据已清除")) : null)),
     ));
   }
   const modelOptions = (provider.selected_models || []).map((id) => [id, id]);
-  const reviewEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "review_override", checked: Boolean(provider.auto_review_model), disabled: !modelOptions.length, "aria-label": "Codex 审查模型覆盖" });
+  const reviewEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "review_override", checked: Boolean(provider.auto_review_model), disabled: !modelOptions.length, "aria-label": t("Codex 审查模型覆盖") });
   const review = selectControl("auto_review_model", modelOptions, provider.auto_review_model || modelOptions[0]?.[0]);
-  const titleEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "title_override", checked: Boolean(provider.codex_thread_title_model), disabled: !modelOptions.length, "aria-label": "Codex 会话命名模型覆盖" });
+  const titleEnabled = h("input", { class: "switch", type: "checkbox", role: "switch", name: "title_override", checked: Boolean(provider.codex_thread_title_model), disabled: !modelOptions.length, "aria-label": t("Codex 会话命名模型覆盖") });
   const title = selectControl("codex_thread_title_model", modelOptions, provider.codex_thread_title_model || modelOptions[0]?.[0]);
   const syncOverrides = () => {
     review.hidden = !reviewEnabled.checked;
@@ -2157,29 +2157,29 @@ function connectionTab(provider) {
   const advanced = [];
   if (definition.quota_username_required) {
     advanced.push(
-      formRow("认证桥接", selectControl("baidu_auth_bridge", [["disabled", "关闭（默认）"], ["ducx_loopback", "DUCX 核心（loopback）"]], provider.baidu_auth_bridge || "disabled")),
-      formRow("上报 AI 代码使用数据", h("input", { class: "switch", type: "checkbox", role: "switch", name: "baidu_code_report", checked: Boolean(provider.baidu_code_report), "aria-label": "上报 AI 代码使用数据" })),
+      formRow(t("认证桥接"), selectControl("baidu_auth_bridge", [["disabled", t("关闭（默认）")], ["ducx_loopback", t("DUCX 核心（loopback）")]], provider.baidu_auth_bridge || "disabled")),
+      formRow(t("上报 AI 代码使用数据"), h("input", { class: "switch", type: "checkbox", role: "switch", name: "baidu_code_report", checked: Boolean(provider.baidu_code_report), "aria-label": t("上报 AI 代码使用数据") })),
     );
   }
   advanced.push(
-    formRow("绘图接口路径", inlineInput("image_generation_path", provider.image_generation_path, { placeholder: "/v1/images/generations" })),
-    formRow("Codex 审查模型覆盖", h("div", { class: "form" }, reviewEnabled, review), "关闭时使用默认审查路由"),
-    formRow("Codex 会话命名模型覆盖", h("div", { class: "form" }, titleEnabled, title), "仅覆盖会话命名请求，普通对话保留原模型"),
+    formRow(t("绘图接口路径"), inlineInput("image_generation_path", provider.image_generation_path, { placeholder: "/v1/images/generations" })),
+    formRow(t("Codex 审查模型覆盖"), h("div", { class: "form" }, reviewEnabled, review), t("关闭时使用默认审查路由")),
+    formRow(t("Codex 会话命名模型覆盖"), h("div", { class: "form" }, titleEnabled, title), t("仅覆盖会话命名请求，普通对话保留原模型")),
   );
-  groups.push(h("details", { class: "fgroup fgroup-details", open: true }, h("summary", { class: "fgroup-title", text: "高级选项" }), h("div", { class: "fgroup-body" }, ...advanced)));
+  groups.push(h("details", { class: "fgroup fgroup-details", open: true }, h("summary", { class: "fgroup-title", text: t("高级选项") }), h("div", { class: "fgroup-body" }, ...advanced)));
 
-  const apply = submitButton("应用更改");
-  const reset = h("button", { class: "btn btn-ghost", type: "button", text: "放弃更改", onclick: () => render({ animate: false }) });
+  const apply = submitButton(t("应用更改"));
+  const reset = h("button", { class: "btn btn-ghost", type: "button", text: t("放弃更改"), onclick: () => render({ animate: false }) });
   append(form, [groups, h("div", { class: "form-actions svc-form-actions" }, reset, apply)]);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const options = connectionChanges(provider, formValues(form));
     if (options === null) return;
     if (!Object.keys(options).length) {
-      toast("ok", "没有需要应用的更改");
+      toast("ok", t("没有需要应用的更改"));
       return;
     }
-    runAction(event.submitter, "provider_update", { id: provider.id, options }, { ok: "连接设置已应用" });
+    runAction(event.submitter, "provider_update", { id: provider.id, options }, { ok: t("连接设置已应用") });
   });
   return form;
 }
@@ -2193,7 +2193,7 @@ function connectionChanges(provider, values) {
   };
   if ((provider.preset_id || "custom") === "custom") {
     if (!values.display_name || !values.base_url) {
-      toast("bad", "缺少站点信息", "站点名称和 API 地址不能为空。");
+      toast("bad", t("缺少站点信息"), t("站点名称和 API 地址不能为空。"));
       return null;
     }
     text("display_name", provider.display_name);
@@ -2208,7 +2208,7 @@ function connectionChanges(provider, values) {
   text("aws_region", provider.aws_region);
   if (provider.preset_id === "baidu-oneapi") {
     if (!values.quota_username) {
-      toast("bad", "缺少额度用户名", "Baidu OneAPI 查询额度必须填写用户名。");
+      toast("bad", t("缺少额度用户名"), t("Baidu OneAPI 查询额度必须填写用户名。"));
       return null;
     }
     text("quota_username", provider.quota_username);
@@ -2237,23 +2237,23 @@ function openAddProvider() {
   const catalog = providerCatalog();
   const preset = selectControl("preset", catalog.presets.map((entry) => [entry.id, entry.display_name]), catalog.default_preset);
   const rows = {
-    id: formRow("服务商 ID", inlineInput("id", "", { placeholder: "可选，默认按预设生成" })),
-    key: formRow("API 密钥", inlineSecret("key", false)),
-    display: formRow("站点名称", inlineInput("display_name", "")),
-    base: formRow("API 地址", inlineInput("base_url", "", { placeholder: "https://api.example.com/v1", inputmode: "url" })),
-    protocol: formRow("API 端点", selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), catalog.default_protocol)),
-    website: formRow("官网地址", inlineInput("website_url", "", { inputmode: "url" })),
-    quota: formRow("额度用户名", inlineInput("quota_username", "", { placeholder: "Baidu OneAPI 额度接口必填" })),
-    workspace: formRow("工作区 ID", inlineInput("quota_workspace_id", "", { placeholder: "例如：wrk_abc123" })),
+    id: formRow(t("服务商 ID"), inlineInput("id", "", { placeholder: t("可选，默认按预设生成") })),
+    key: formRow(t("API 密钥"), inlineSecret("key", false)),
+    display: formRow(t("站点名称"), inlineInput("display_name", "")),
+    base: formRow(t("API 地址"), inlineInput("base_url", "", { placeholder: "https://api.example.com/v1", inputmode: "url" })),
+    protocol: formRow(t("API 端点"), selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), catalog.default_protocol)),
+    website: formRow(t("官网地址"), inlineInput("website_url", "", { inputmode: "url" })),
+    quota: formRow(t("额度用户名"), inlineInput("quota_username", "", { placeholder: t("Baidu OneAPI 额度接口必填") })),
+    workspace: formRow(t("工作区 ID"), inlineInput("quota_workspace_id", "", { placeholder: t("例如：wrk_abc123") })),
     cookie: formRow("Auth Cookie", inlineSecret("quota_auth_cookie", false)),
     region: formRow("AWS Region", inlineInput("aws_region", catalog.default_aws_region)),
     awsId: formRow("Access Key ID", inlineSecret("aws_access_key_id", false)),
     awsSecret: formRow("Secret Access Key", inlineSecret("aws_secret_access_key", false)),
     awsToken: formRow("Session Token", inlineSecret("aws_session_token", false)),
-    timeout: formRow("OAuth 授权超时（秒）", inlineInput("oauth_timeout_seconds", catalog.oauth_timeout_seconds ?? "", { inputmode: "numeric" })),
+    timeout: formRow(t("OAuth 授权超时（秒）"), inlineInput("oauth_timeout_seconds", catalog.oauth_timeout_seconds ?? "", { inputmode: "numeric" })),
   };
   let pending = false;
-  const hint = h("p", { class: "muted", hidden: true, text: "点击新增后将在浏览器授权。关闭网页不会回传取消，可在此取消等待；超过时限会自动结束。" });
+  const hint = h("p", { class: "muted", hidden: true, text: t("点击新增后将在浏览器授权。关闭网页不会回传取消，可在此取消等待；超过时限会自动结束。") });
   const sync = () => {
     const definition = providerDefinition(preset.querySelector("select").value);
     const show = new Set(definition.allow_multiple === false ? [] : ["id"]);
@@ -2278,7 +2278,7 @@ function openAddProvider() {
   };
   preset.querySelector("select").addEventListener("change", sync);
   sync();
-  const form = h("form", { class: "svc-form", autocomplete: "off" }, formGroup(null, formRow("预设", preset), hint, ...Object.values(rows)), h("div", { class: "form-actions" }, h("button", { class: "btn btn-ghost", type: "button", text: "取消", onclick: closeSheet }), submitButton("新增服务商")));
+  const form = h("form", { class: "svc-form", autocomplete: "off" }, formGroup(null, formRow(t("预设"), preset), hint, ...Object.values(rows)), h("div", { class: "form-actions" }, h("button", { class: "btn btn-ghost", type: "button", text: t("取消"), onclick: closeSheet }), submitButton(t("新增服务商"))));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(form);
@@ -2289,21 +2289,21 @@ function openAddProvider() {
     }
     if (options.protocol) options.api_path = providerProtocols().find(([id]) => id === options.protocol)?.[2];
     pending = true;
-    const result = await runAction(event.submitter, "provider_add", { preset: values.preset, options }, { ok: "服务商已添加，模型列表已刷新" });
+    const result = await runAction(event.submitter, "provider_add", { preset: values.preset, options }, { ok: t("服务商已添加，模型列表已刷新") });
     pending = false;
     if (!result) return;
     closeSheet();
     svc.selected = options.id || providerDefinition(values.preset).default_id || values.preset;
   });
-  openSheet("新增服务商", form);
+  openSheet(t("新增服务商"), form);
   $("#sheet").addEventListener("close", () => {
-    if (pending) api("/api/actions/cancel", { method: "POST" }).catch(error => toast("bad", "取消失败", error.message));
+    if (pending) api("/api/actions/cancel", { method: "POST" }).catch(error => toast("bad", t("取消失败"), error.message));
   }, { once: true });
 }
 
 RENDERERS.providers = () => {
   const providers = state.snapshot.providers || [];
-  if (!providers.length) return card(null, null, emptyState("还没有服务商", "通过新增服务商选择 OAuth 登录或兼容 API 预设。", h("button", { class: "btn btn-primary", type: "button", text: "新增服务商", onclick: openAddProvider })));
+  if (!providers.length) return card(null, null, emptyState(t("还没有服务商"), t("通过新增服务商选择 OAuth 登录或兼容 API 预设。"), h("button", { class: "btn btn-primary", type: "button", text: t("新增服务商"), onclick: openAddProvider })));
   const selected = providers.find((provider) => provider.id === svc.selected) || providers[0];
   svc.selected = selected.id;
   const issue = (selected.readiness_issues || []).map((id) => ISSUE_LABELS[id] || id);
@@ -2326,44 +2326,44 @@ RENDERERS.providers = () => {
 // ---------- Speed ----------
 
 RENDERERS.speed = () => {
-  if (!gatewayRunning()) return card(null, null, emptyState("网关未运行", "测速通过运行中的网关发起请求。", actionButton("启动网关", "service_start", null, { ok: "网关已启动" }, "btn-primary")));
+  if (!gatewayRunning()) return card(null, null, emptyState(t("网关未运行"), t("测速通过运行中的网关发起请求。"), actionButton(t("启动网关"), "service_start", null, { ok: t("网关已启动") }, "btn-primary")));
   const snapshot = state.snapshot.benchmark;
   const providers = configuredProviders().filter((provider) => provider.enabled);
   const form = h(
     "form",
     { class: "form" },
-    field("Provider", h("div", { class: "chips" }, ...providers.map((provider) => h("label", { class: "chip" }, h("input", { type: "checkbox", name: "providers", value: provider.id, "data-list": "1" }), providerName(provider)))), "不选则测试全部已启用 Provider"),
-    h("div", { class: "form-row" }, field("单模型超时（秒）", textInput("timeout_seconds", "60", { type: "number", min: "1", max: "3600", inputmode: "numeric" }))),
-    h("div", { class: "form-actions" }, submitButton(snapshot?.status === "running" ? "测速进行中" : "开始测速")),
+    field("Provider", h("div", { class: "chips" }, ...providers.map((provider) => h("label", { class: "chip" }, h("input", { type: "checkbox", name: "providers", value: provider.id, "data-list": "1" }), providerName(provider)))), t("不选则测试全部已启用 Provider")),
+    h("div", { class: "form-row" }, field(t("单模型超时（秒）"), textInput("timeout_seconds", "60", { type: "number", min: "1", max: "3600", inputmode: "numeric" }))),
+    h("div", { class: "form-actions" }, submitButton(snapshot?.status === "running" ? t("测速进行中") : t("开始测速"))),
   );
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const values = formValues(form);
     const timeout = Number(values.timeout_seconds);
     if (!Number.isInteger(timeout) || timeout < 1 || timeout > 3600) {
-      toast("bad", "超时无效", "请输入 1 到 3600 之间的整数秒数。");
+      toast("bad", t("超时无效"), t("请输入 1 到 3600 之间的整数秒数。"));
       return;
     }
-    runAction(event.submitter, "benchmark_start", { timeout_seconds: timeout, providers: values.providers || [] }, { ok: "测速已开始" });
+    runAction(event.submitter, "benchmark_start", { timeout_seconds: timeout, providers: values.providers || [] }, { ok: t("测速已开始") });
   });
-  return [card("发起测速", null, form), benchmarkResults(snapshot)];
+  return [card(t("发起测速"), null, form), benchmarkResults(snapshot)];
 };
 
 function benchmarkResults(snapshot) {
-  if (!snapshot) return card("结果", null, emptyState("尚无测速记录", "开始一次测速后，结果会在这里实时更新。"));
+  if (!snapshot) return card(t("结果"), null, emptyState(t("尚无测速记录"), t("开始一次测速后，结果会在这里实时更新。")));
   const results = [...(snapshot.results || [])].sort((a, b) => (b.tps || 0) - (a.tps || 0));
   const best = Math.max(1, ...results.map((result) => result.tps || 0));
   const done = results.length;
   const total = snapshot.total_models || done || 1;
   const progress = h("div", { class: "progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(total), "aria-valuenow": String(done) }, h("div", { class: "progress-bar", style: { transform: `scaleX(${Math.min(1, done / total)})` } }));
-  const note = snapshot.status === "running" ? `进行中 · ${done}/${total}${snapshot.current_model ? ` · ${snapshot.current_model}` : ""}` : `${str(snapshot.status)} · ${done}/${total}${snapshot.estimated_cost ? ` · 预估花费 ${snapshot.estimated_cost.toFixed(4)} ${snapshot.cost_currency || ""}` : ""}`;
+  const note = snapshot.status === "running" ? t("进行中 · {0}/{1}{2}", done, total, snapshot.current_model ? ` · ${snapshot.current_model}` : "") : `${str(snapshot.status)} · ${done}/${total}${snapshot.estimated_cost ? t(" · 预估花费 {0} {1}", snapshot.estimated_cost.toFixed(4), snapshot.cost_currency || "") : ""}`;
   const table = h(
     "div",
     { class: "table-wrap" },
     h(
       "table",
       { class: "table" },
-      h("thead", null, h("tr", null, ...["模型", "首字延迟", "输出速度", "", "状态"].map((text, index) => h("th", { class: index && index < 3 ? "r" : null, scope: "col", text })))),
+      h("thead", null, h("tr", null, ...[t("模型"), t("首字延迟"), t("输出速度"), "", t("状态")].map((text, index) => h("th", { class: index && index < 3 ? "r" : null, scope: "col", text })))),
       h(
         "tbody",
         null,
@@ -2375,13 +2375,13 @@ function benchmarkResults(snapshot) {
             h("td", { class: "r", text: fixed(result.ttft_ms, 0, " ms") }),
             h("td", { class: "r", text: fixed(result.tps, 1, " t/s") }),
             h("td", { style: { width: "28%" } }, result.tps ? h("div", { class: `bar ${index === 0 ? "is-best" : ""}`, style: { width: `${Math.max(2, (result.tps / best) * 100)}%` } }) : null),
-            h("td", null, result.error ? h("span", { class: "badge badge-bad", title: result.error, text: "失败" }) : h("span", { class: "badge badge-ok", text: "完成" })),
+            h("td", null, result.error ? h("span", { class: "badge badge-bad", title: result.error, text: t("失败") }) : h("span", { class: "badge badge-ok", text: t("完成") })),
           ),
         ),
       ),
     ),
   );
-  return card("结果", note, h("div", null, h("div", { style: { padding: "0 20px 14px" } }, progress), results.length ? table : null, snapshot.error ? h("p", { class: "issue", style: { padding: "0 20px 16px" }, text: snapshot.error }) : null), null, "card-flush");
+  return card(t("结果"), note, h("div", null, h("div", { style: { padding: "0 20px 14px" } }, progress), results.length ? table : null, snapshot.error ? h("p", { class: "issue", style: { padding: "0 20px 16px" }, text: snapshot.error }) : null), null, "card-flush");
 }
 
 // ---------- Model routing ----------
@@ -2393,9 +2393,9 @@ const MAX_PANELS = 8;
 const MAX_FALLBACKS = 4;
 const MAX_SLOTS = 24;
 const ROUTE_KINDS = {
-  fusion: { title: "融合", badge: "\u2a01", description: "每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。" },
-  schedule: { title: "定时", badge: "\u25f7", description: "按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。" },
-  failover: { title: "故障转移", badge: "\u21a9", description: "原模型在输出内容前报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，它的错误会直接返回。" },
+  fusion: { title: t("融合"), badge: "\u2a01", description: t("每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。") },
+  schedule: { title: t("定时"), badge: "\u25f7", description: t("按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。") },
+  failover: { title: t("故障转移"), badge: "\u21a9", description: t("原模型在输出内容前报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，它的错误会直接返回。") },
 };
 const routing = { data: null, loading: false, error: null, selected: null, draft: null };
 let routingRequest = 0;
@@ -2441,8 +2441,8 @@ function routePrecedence(route) {
 }
 
 function routeSummary(route) {
-  if (route.kind === "fusion") return `${(route.panel_models || []).length} 个 Panel → Judge ${routeModelName(route.judge_model)} → Final ${routeModelName(route.final_model)}`;
-  if (route.kind === "schedule") return `当前 ${routeModelName(activeScheduleModel(route))} · ${(route.time_routes || []).length} 个时段`;
+  if (route.kind === "fusion") return t("{0} 个 Panel → Judge {1} → Final {2}", (route.panel_models || []).length, routeModelName(route.judge_model), routeModelName(route.final_model));
+  if (route.kind === "schedule") return t("当前 {0} · {1} 个时段", routeModelName(activeScheduleModel(route)), (route.time_routes || []).length);
   return [route.source, ...(route.fallbacks || [])].map(routeModelName).join(" → ");
 }
 
@@ -2512,7 +2512,7 @@ function newDraft(kind, template, ids, models) {
     route.id = uniqueRouteName(route.id || "schedule", models);
   } else {
     route.source ||= ids.find((id) => !models.includes(id));
-    if (!route.source) throw new Error("所有模型都已配置故障转移。");
+    if (!route.source) throw new Error(t("所有模型都已配置故障转移。"));
     route.fallbacks ||= [ids.find((id) => id !== route.source) || ids[0]];
     if (route.id && models.includes(ROUTE_PREFIX + route.id)) route.id = uniqueRouteName(route.id, models);
   }
@@ -2520,7 +2520,7 @@ function newDraft(kind, template, ids, models) {
 }
 
 async function confirmDiscard() {
-  return !routing.draft?.dirty || confirmAction("放弃未保存的修改？", "当前路由的修改尚未保存。", "放弃");
+  return !routing.draft?.dirty || confirmAction(t("放弃未保存的修改？"), t("当前路由的修改尚未保存。"), t("放弃"));
 }
 
 async function openRoute(model) {
@@ -2541,7 +2541,7 @@ async function startDraft(kind, template) {
     routing.selected = null;
     render({ animate: false });
   } catch (error) {
-    toast("bad", "新建路由失败", error.message);
+    toast("bad", t("新建路由失败"), error.message);
   }
 }
 
@@ -2556,10 +2556,10 @@ function changeDraft(mutate) {
 function pickModels(title, current, multiple, onDone) {
   const options = routeModelOptions();
   const picked = new Set(current);
-  const search = h("input", { class: "input", type: "search", placeholder: "搜索模型", "aria-label": "搜索模型", spellcheck: "false", autocomplete: "off" });
+  const search = h("input", { class: "input", type: "search", placeholder: t("搜索模型"), "aria-label": t("搜索模型"), spellcheck: "false", autocomplete: "off" });
   const list = h("div", { class: "picker-list", role: multiple ? "group" : "listbox", "aria-label": title });
   const count = h("span", { class: "field-hint" });
-  const done = h("button", { class: "btn btn-primary", type: "button", text: "完成", onclick: () => { closeSheet(); onDone([...picked]); } });
+  const done = h("button", { class: "btn btn-primary", type: "button", text: t("完成"), onclick: () => { closeSheet(); onDone([...picked]); } });
   const draw = () => {
     const query = search.value.trim().toLowerCase();
     const groups = new Map();
@@ -2569,7 +2569,7 @@ function pickModels(title, current, multiple, onDone) {
       groups.get(model.provider_id).push(model);
     }
     list.replaceChildren(...[...groups].map(([provider, models]) => h("div", { class: "picker-group" },
-      h("div", { class: "picker-head" }, providerLogo(provider, 16), h("span", { text: providerName(provider) || "其他" })),
+      h("div", { class: "picker-head" }, providerLogo(provider, 16), h("span", { text: providerName(provider) || t("其他") })),
       models.map((model) => multiple
         ? h("label", { class: "picker-item" },
           h("input", {
@@ -2581,8 +2581,8 @@ function pickModels(title, current, multiple, onDone) {
           class: `picker-item ${picked.has(model.id) ? "is-current" : ""}`.trim(), type: "button", role: "option", "aria-selected": String(picked.has(model.id)),
           onclick: () => { closeSheet(); onDone([model.id]); },
         }, h("span", { class: "picker-name", text: model.display_name || model.id }), h("span", { class: "row-sub", text: model.id }))))));
-    if (!groups.size) list.append(emptyState("没有匹配的模型", null));
-    count.textContent = multiple ? `已选 ${picked.size} / ${MAX_PANELS}` : "";
+    if (!groups.size) list.append(emptyState(t("没有匹配的模型"), null));
+    count.textContent = multiple ? t("已选 {0} / {1}", picked.size, MAX_PANELS) : "";
     done.disabled = multiple && picked.size === 0;
   };
   search.addEventListener("input", draw);
@@ -2593,33 +2593,33 @@ function pickModels(title, current, multiple, onDone) {
 function modelNode(id, title, onPick, label) {
   const available = Boolean(routeModel(id));
   return h("button", {
-    class: `route-node ${available ? "" : "is-missing"}`.trim(), type: "button", title: `${id}\n点击更换模型`,
-    "aria-label": `${label || title}：${routeModelName(id)}，点击更换`, onclick: () => pickModels(title, [id], false, ([next]) => onPick(next)),
+    class: `route-node ${available ? "" : "is-missing"}`.trim(), type: "button", title: t("{0}\n点击更换模型", id),
+    "aria-label": t("{0}：{1}，点击更换", label || title, routeModelName(id)), onclick: () => pickModels(title, [id], false, ([next]) => onPick(next)),
   },
   providerLogo(routeModelProvider(id), 20),
   h("span", { class: "route-node-text" },
     h("span", { class: "route-node-name", text: routeModelName(id) }),
-    h("span", { class: "row-sub", text: available ? providerName(routeModelProvider(id)) : "模型不可用" })));
+    h("span", { class: "row-sub", text: available ? providerName(routeModelProvider(id)) : t("模型不可用") })));
 }
 
 const addNode = (label, onclick, disabled = false) => h("button", { class: "route-add", type: "button", text: `+ ${label}`, onclick, disabled });
 const stageHead = (text) => h("div", { class: "route-stage", text });
-const flowArrow = (glyph, active = false) => h("span", { class: `route-arrow ${active ? "is-active" : ""}`.trim(), title: active ? "当前时段" : null, "aria-hidden": "true", text: glyph });
+const flowArrow = (glyph, active = false) => h("span", { class: `route-arrow ${active ? "is-active" : ""}`.trim(), title: active ? t("当前时段") : null, "aria-hidden": "true", text: glyph });
 const iconButton = (text, label, onclick, disabled = false) => h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", text, "aria-label": label, title: label, onclick, disabled });
 
 function fusionFlow(route) {
   const panels = route.panel_models || [];
-  const editPanels = () => pickModels("Panel 模型", panels, true, (next) => changeDraft((draft) => { draft.panel_models = next; }));
+  const editPanels = () => pickModels(t("Panel 模型"), panels, true, (next) => changeDraft((draft) => { draft.panel_models = next; }));
   return h("div", { class: "route-flow route-flow-fusion" },
-    h("div", { class: "route-column" }, stageHead(`Panel · 并行（${panels.length}）`),
-      panels.map((id, index) => modelNode(id, `Panel 模型 ${index + 1}`, (next) => changeDraft((draft) => {
+    h("div", { class: "route-column" }, stageHead(t("Panel · 并行（{0}）", panels.length)),
+      panels.map((id, index) => modelNode(id, t("Panel 模型 {0}", index + 1), (next) => changeDraft((draft) => {
         draft.panel_models = draft.panel_models.map((model, position) => (position === index ? next : model)).filter((model, position, all) => all.indexOf(model) === position);
       }))),
-      addNode(panels.length ? "编辑 Panel 模型" : "选择 Panel 模型", editPanels)),
+      addNode(panels.length ? t("编辑 Panel 模型") : t("选择 Panel 模型"), editPanels)),
     flowArrow("\u2192"),
-    h("div", { class: "route-column" }, stageHead("Judge · 评审"), modelNode(route.judge_model, "Judge 模型", (next) => changeDraft((draft) => { draft.judge_model = next; }))),
+    h("div", { class: "route-column" }, stageHead(t("Judge · 评审")), modelNode(route.judge_model, t("Judge 模型"), (next) => changeDraft((draft) => { draft.judge_model = next; }))),
     flowArrow("\u2192"),
-    h("div", { class: "route-column" }, stageHead("Final · 作答"), modelNode(route.final_model, "Final 模型", (next) => changeDraft((draft) => { draft.final_model = next; }))));
+    h("div", { class: "route-column" }, stageHead(t("Final · 作答")), modelNode(route.final_model, t("Final 模型"), (next) => changeDraft((draft) => { draft.final_model = next; }))));
 }
 
 const timeText = (minute) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
@@ -2634,20 +2634,20 @@ function scheduleFlow(route) {
     onchange: (event) => { if (event.target.value) changeDraft(() => { slot[key] = parseTime(event.target.value); }); },
   });
   return h("div", { class: "route-flow route-flow-schedule" },
-    stageHead("时段（本机时间）"), h("span"), stageHead("模型"), h("span"),
+    stageHead(t("时段（本机时间）")), h("span"), stageHead(t("模型")), h("span"),
     slots.map((slot, index) => [
-      h("div", { class: "route-times" }, timeInput(slot, "start_minute", `时段 ${index + 1} 开始`), "–", timeInput(slot, "end_minute", `时段 ${index + 1} 结束`)),
+      h("div", { class: "route-times" }, timeInput(slot, "start_minute", t("时段 {0} 开始", index + 1)), "–", timeInput(slot, "end_minute", t("时段 {0} 结束", index + 1))),
       flowArrow("\u2192", slot.start_minute !== slot.end_minute && covers(slot.start_minute, slot.end_minute, minute)),
-      modelNode(slot.model, `时段 ${index + 1} 模型`, (next) => changeDraft(() => { slot.model = next; })),
-      iconButton("\u00d7", "移除此时段", () => changeDraft((draft) => { draft.time_routes.splice(index, 1); })),
+      modelNode(slot.model, t("时段 {0} 模型", index + 1), (next) => changeDraft(() => { slot.model = next; })),
+      iconButton("\u00d7", t("移除此时段"), () => changeDraft((draft) => { draft.time_routes.splice(index, 1); })),
     ]),
-    h("div", { class: "route-span" }, addNode("添加时段", () => changeDraft((draft) => {
+    h("div", { class: "route-span" }, addNode(t("添加时段"), () => changeDraft((draft) => {
       const start = slots.length ? slots[slots.length - 1].end_minute : 540;
       draft.time_routes = [...slots, { start_minute: start, end_minute: (start + 240) % 1440, model: routeModelOptions()[0].id }];
     }), slots.length >= MAX_SLOTS)),
-    h("span", { class: "route-other", text: "其余时间" }),
+    h("span", { class: "route-other", text: t("其余时间") }),
     flowArrow("\u2192", !anyActive),
-    modelNode(route.final_model, "默认模型", (next) => changeDraft((draft) => { draft.final_model = next; })),
+    modelNode(route.final_model, t("默认模型"), (next) => changeDraft((draft) => { draft.final_model = next; })),
     h("span"));
 }
 
@@ -2657,17 +2657,17 @@ function failoverFlow(route) {
     [draft.fallbacks[index], draft.fallbacks[index + delta]] = [draft.fallbacks[index + delta], draft.fallbacks[index]];
   });
   return h("div", { class: "route-flow route-flow-failover" },
-    stageHead("原模型"),
-    modelNode(route.source, "原模型", (next) => changeDraft((draft) => { draft.source = next; })),
-    h("div", { class: "route-condition" }, flowArrow("\u2193"), h("span", { class: "row-sub", text: "429 · 5xx · 连接失败 · 超时，且尚未输出" })),
-    stageHead("备用模型（按顺序）"),
+    stageHead(t("原模型")),
+    modelNode(route.source, t("原模型"), (next) => changeDraft((draft) => { draft.source = next; })),
+    h("div", { class: "route-condition" }, flowArrow("\u2193"), h("span", { class: "row-sub", text: t("任何错误，或 30 秒内没有输出") })),
+    stageHead(t("备用模型（按顺序）")),
     fallbacks.map((id, index) => h("div", { class: "route-fallback" },
       h("span", { class: "route-index", text: String(index + 1) }),
-      modelNode(id, `备用模型 ${index + 1}`, (next) => changeDraft((draft) => { draft.fallbacks[index] = next; })),
-      iconButton("\u2191", `上移备用模型 ${index + 1}`, () => move(index, -1), index === 0),
-      iconButton("\u2193", `下移备用模型 ${index + 1}`, () => move(index, 1), index === fallbacks.length - 1),
-      iconButton("\u00d7", `移除备用模型 ${index + 1}`, () => changeDraft((draft) => { draft.fallbacks.splice(index, 1); })))),
-    fallbacks.length < MAX_FALLBACKS ? addNode("添加备用模型", () => changeDraft((draft) => {
+      modelNode(id, t("备用模型 {0}", index + 1), (next) => changeDraft((draft) => { draft.fallbacks[index] = next; })),
+      iconButton("\u2191", t("上移备用模型 {0}", index + 1), () => move(index, -1), index === 0),
+      iconButton("\u2193", t("下移备用模型 {0}", index + 1), () => move(index, 1), index === fallbacks.length - 1),
+      iconButton("\u00d7", t("移除备用模型 {0}", index + 1), () => changeDraft((draft) => { draft.fallbacks.splice(index, 1); })))),
+    fallbacks.length < MAX_FALLBACKS ? addNode(t("添加备用模型"), () => changeDraft((draft) => {
       const used = new Set([...fallbacks, route.source]);
       const ids = routeModelOptions().map((model) => model.id);
       draft.fallbacks = [...fallbacks, ids.find((id) => !used.has(id)) || ids[0]];
@@ -2679,24 +2679,24 @@ function routeNameField(route, optional) {
   const entry = h("span", { class: "field-hint" });
   const show = () => {
     const name = (route.id || "").trim();
-    entry.textContent = `Codex 中选择的模型：${!name && optional ? route.source : ROUTE_PREFIX + name}`;
+    entry.textContent = t("Codex 中选择的模型：{0}", !name && optional ? route.source : ROUTE_PREFIX + name);
   };
   show();
-  const input = textInput("route_name", route.id || "", { placeholder: optional ? "可选；留空则直接接管原模型" : "" });
+  const input = textInput("route_name", route.id || "", { placeholder: optional ? t("可选；留空则直接接管原模型") : "" });
   input.addEventListener("input", () => { route.id = input.value; routing.draft.dirty = true; show(); });
-  return h("label", { class: "field" }, h("span", { class: "field-label", text: "名称" }), input, entry);
+  return h("label", { class: "field" }, h("span", { class: "field-label", text: t("名称") }), input, entry);
 }
 
 function fusionAdvanced(route) {
   const number = (key, label, value, props, apply) => field(label, textInput(key, String(value), { type: "number", ...props, oninput: (event) => { apply(event.target.value); routing.draft.dirty = true; } }));
   const check = (label, checked, apply) => h("label", { class: "route-check" },
     h("input", { class: "check", type: "checkbox", checked, onchange: (event) => { apply(event.target.checked); routing.draft.dirty = true; } }), label);
-  return h("details", { class: "route-advanced" }, h("summary", { text: "高级选项" }),
+  return h("details", { class: "route-advanced" }, h("summary", { text: t("高级选项") }),
     h("div", { class: "form-row" },
-      number("min_successful", "最少成功 Panel", route.min_successful ?? 1, { min: "1", max: String(MAX_PANELS), step: "1" }, (value) => { route.min_successful = Number(value); }),
-      number("timeout", "单模型超时（秒）", (route.timeout_ms ?? 300000) / 1000, { min: "1", step: "1" }, (value) => { route.timeout_ms = Math.round(Number(value) * 1000); })),
-    check("在回答中显示 Panel / Judge 中间结果", route.show_intermediate_results !== false, (value) => { route.show_intermediate_results = value; }),
-    check("允许 Panel 使用进程内只读工具", route.panel_tools?.enabled !== false, (value) => { route.panel_tools = { max_rounds: 16, max_calls_per_model: 64, ...route.panel_tools, enabled: value }; }));
+      number("min_successful", t("最少成功 Panel"), route.min_successful ?? 1, { min: "1", max: String(MAX_PANELS), step: "1" }, (value) => { route.min_successful = Number(value); }),
+      number("timeout", t("单模型超时（秒）"), (route.timeout_ms ?? 300000) / 1000, { min: "1", step: "1" }, (value) => { route.timeout_ms = Math.round(Number(value) * 1000); })),
+    check(t("在回答中显示 Panel / Judge 中间结果"), route.show_intermediate_results !== false, (value) => { route.show_intermediate_results = value; }),
+    check(t("允许 Panel 使用进程内只读工具"), route.panel_tools?.enabled !== false, (value) => { route.panel_tools = { max_rounds: 16, max_calls_per_model: 64, ...route.panel_tools, enabled: value }; }));
 }
 
 // Same checks as the native shells; the CLI validates again on save.
@@ -2706,14 +2706,14 @@ function routePayload(draft, models) {
   delete route.activity;
   route.kind = draft.kind;
   const name = String(route.id || "").trim();
-  if (name.includes("/")) throw new Error("名称不能包含 /。");
-  if (draft.kind !== "failover" && !name) throw new Error("名称不能为空。");
+  if (name.includes("/")) throw new Error(t("名称不能包含 /。"));
+  if (draft.kind !== "failover" && !name) throw new Error(t("名称不能为空。"));
   if (name) route.id = name; else delete route.id;
   if (draft.kind === "fusion") {
     const panels = route.panel_models || [];
-    if (panels.length < 1 || panels.length > MAX_PANELS) throw new Error("请选择 1–8 个 Panel 模型。");
+    if (panels.length < 1 || panels.length > MAX_PANELS) throw new Error(t("请选择 1–8 个 Panel 模型。"));
     const minimum = route.min_successful ?? 1;
-    if (!Number.isInteger(minimum) || minimum < 1 || minimum > panels.length) throw new Error("最少成功 Panel 必须是 1 到 Panel 数量之间的整数。");
+    if (!Number.isInteger(minimum) || minimum < 1 || minimum > panels.length) throw new Error(t("最少成功 Panel 必须是 1 到 Panel 数量之间的整数。"));
     if (!(route.timeout_ms > 0)) route.timeout_ms = 300000;
     route.mode = "orchestration";
     route.min_successful = minimum;
@@ -2721,19 +2721,19 @@ function routePayload(draft, models) {
     route.panel_tools = { max_rounds: 16, max_calls_per_model: 64, enabled: true, ...route.panel_tools };
   } else if (draft.kind === "schedule") {
     const slots = route.time_routes || [];
-    if (slots.length < 1 || slots.length > MAX_SLOTS) throw new Error("请配置 1–24 个时段。");
-    if (slots.some((slot) => slot.start_minute === slot.end_minute)) throw new Error("时段的开始和结束时间不能相同。");
+    if (slots.length < 1 || slots.length > MAX_SLOTS) throw new Error(t("请配置 1–24 个时段。"));
+    if (slots.some((slot) => slot.start_minute === slot.end_minute)) throw new Error(t("时段的开始和结束时间不能相同。"));
     for (let minute = 0; minute < 1440; minute += 1) {
-      if (slots.filter((slot) => covers(slot.start_minute, slot.end_minute, minute)).length > 1) throw new Error("时段不能重叠。");
+      if (slots.filter((slot) => covers(slot.start_minute, slot.end_minute, minute)).length > 1) throw new Error(t("时段不能重叠。"));
     }
     route.mode = "time_rotation";
     route.panel_models ||= [];
     route.judge_model ||= route.final_model;
   } else {
     const fallbacks = route.fallbacks || [];
-    if (fallbacks.length < 1 || fallbacks.length > MAX_FALLBACKS) throw new Error("请配置 1–4 个备用模型。");
-    if (fallbacks.includes(route.source) || new Set(fallbacks).size !== fallbacks.length) throw new Error("备用模型不能重复，也不能与原模型相同。");
-    if (!name && route.source !== draft.oldModel && models.includes(route.source)) throw new Error(`${routeModelName(route.source)} 已配置故障转移。`);
+    if (fallbacks.length < 1 || fallbacks.length > MAX_FALLBACKS) throw new Error(t("请配置 1–4 个备用模型。"));
+    if (fallbacks.includes(route.source) || new Set(fallbacks).size !== fallbacks.length) throw new Error(t("备用模型不能重复，也不能与原模型相同。"));
+    if (!name && route.source !== draft.oldModel && models.includes(route.source)) throw new Error(t("{0} 已配置故障转移。", routeModelName(route.source)));
   }
   return route;
 }
@@ -2744,12 +2744,12 @@ async function saveRoute(button) {
   try {
     route = routePayload(draft, (routing.data?.routes || []).map((row) => row.model));
   } catch (error) {
-    toast("bad", "无法保存", error.message);
+    toast("bad", t("无法保存"), error.message);
     return;
   }
   const params = { route };
   if (draft.oldModel) params.replace_model = draft.oldModel;
-  const result = await runAction(button, "route_set", params, { ok: "模型路由已保存并应用" });
+  const result = await runAction(button, "route_set", params, { ok: t("模型路由已保存并应用") });
   if (!result) return;
   routing.selected = route.id ? ROUTE_PREFIX + route.id : route.source;
   routing.draft = null;
@@ -2775,27 +2775,27 @@ function routeEditor(draft) {
   const kind = ROUTE_KINDS[draft.kind];
   const route = draft.route;
   const saved = (routing.data?.routes || []).find((row) => row.model === draft.oldModel);
-  const more = saved ? popoverMenu("更多", [
-    { label: saved.enabled === false ? "启用路由" : "停用路由", run: () => routeAction(saved.enabled === false ? "route_enable" : "route_disable", saved.model, { ok: saved.enabled === false ? "路由已启用" : "路由已停用" }) },
+  const more = saved ? popoverMenu(t("更多"), [
+    { label: saved.enabled === false ? t("启用路由") : t("停用路由"), run: () => routeAction(saved.enabled === false ? "route_enable" : "route_disable", saved.model, { ok: saved.enabled === false ? t("路由已启用") : t("路由已停用") }) },
     "-",
-    { label: "删除路由…", run: () => routeAction("route_delete", saved.model, { ok: "模型路由已删除", confirm: ["删除模型路由？", `将删除 ${saved.model}，并立即应用到网关。此操作不可撤销。`, "删除"] }) },
+    { label: t("删除路由…"), run: () => routeAction("route_delete", saved.model, { ok: t("模型路由已删除"), confirm: [t("删除模型路由？"), t("将删除 {0}，并立即应用到网关。此操作不可撤销。", saved.model), t("删除")] }) },
   ]) : null;
   const flow = draft.kind === "fusion" ? fusionFlow(route) : draft.kind === "schedule" ? scheduleFlow(route) : failoverFlow(route);
-  const save = h("button", { class: "btn btn-primary", type: "button", "data-action": "", text: "保存并应用", disabled: state.busy || !draft.dirty });
+  const save = h("button", { class: "btn btn-primary", type: "button", "data-action": "", text: t("保存并应用"), disabled: state.busy || !draft.dirty });
   save.addEventListener("click", () => saveRoute(save));
   // Typing marks the draft dirty without re-rendering, so enable Save here.
-  const editor = h("section", { class: "route-detail", "aria-label": saved ? routeTitle(saved) : `新建${kind.title}` },
+  const editor = h("section", { class: "route-detail", "aria-label": saved ? routeTitle(saved) : t("新建{0}", kind.title) },
     h("header", { class: "route-head" },
       routeIcon(draft.kind, routePrecedence(route)),
       h("div", { class: "route-head-main" },
-        h("h2", { class: "card-title", text: saved ? routeTitle(saved) : `新建${kind.title}` }),
-        h("span", { class: "row-sub", title: kind.description, text: `${kind.title}${saved?.enabled === false ? " · 已停用" : ""}` })),
+        h("h2", { class: "card-title", text: saved ? routeTitle(saved) : t("新建{0}", kind.title) }),
+        h("span", { class: "row-sub", title: kind.description, text: `${kind.title}${saved?.enabled === false ? t(" · 已停用") : ""}` })),
       more),
     flow,
     h("div", { class: "form route-form" },
       routeNameField(route, draft.kind === "failover"),
       draft.kind === "fusion" ? fusionAdvanced(route) : null,
-      h("div", { class: "form-actions" }, draft.oldModel ? null : h("button", { class: "btn btn-ghost", type: "button", text: "放弃", onclick: () => { routing.draft = null; render({ animate: false }); } }), save)));
+      h("div", { class: "form-actions" }, draft.oldModel ? null : h("button", { class: "btn btn-ghost", type: "button", text: t("放弃"), onclick: () => { routing.draft = null; render({ animate: false }); } }), save)));
   editor.addEventListener("input", () => { save.disabled = state.busy; });
   editor.addEventListener("change", () => { save.disabled = state.busy; });
   return editor;
@@ -2807,14 +2807,14 @@ RENDERERS.routing = () => {
   if (!routing.data) return h("div", { class: "skeleton" });
   const options = routeModelOptions();
   const ids = options.map((model) => model.id);
-  if (!ids.length) return card(null, null, emptyState("暂无可用模型", "先在「模型与服务」中添加供应商并选择模型，再配置模型路由。"));
+  if (!ids.length) return card(null, null, emptyState(t("暂无可用模型"), t("先在「模型与服务」中添加供应商并选择模型，再配置模型路由。")));
   const routes = routing.data.routes || [];
   if (!routing.draft && routes.length) {
     const initial = routes.find((route) => route.model === routing.selected) || routes[0];
     routing.selected = initial.model;
     routing.draft = { kind: initial.kind, route: structuredClone(initial), oldModel: initial.model, dirty: false };
   }
-  const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": "模型路由" }, routes.map((route) => {
+  const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": t("模型路由") }, routes.map((route) => {
     const selected = routing.draft?.oldModel === route.model;
     const row = h("div", {
       class: `svc-row ${selected ? "is-selected" : ""} ${route.enabled === false ? "is-disabled" : ""}`.replace(/\s+/g, " ").trim(),
@@ -2827,19 +2827,19 @@ RENDERERS.routing = () => {
     return row;
   }));
   const suggestions = routeSuggestions(ids, routes);
-  const create = popoverMenu("新建路由", Object.entries(ROUTE_KINDS).map(([kind, meta]) => ({ label: `新建${meta.title}`, run: () => startDraft(kind, null) })), "btn btn-ghost btn-icon btn-sm");
+  const create = popoverMenu(t("新建路由"), Object.entries(ROUTE_KINDS).map(([kind, meta]) => ({ label: t("新建{0}", meta.title), run: () => startDraft(kind, null) })), "btn btn-ghost btn-icon btn-sm");
   create.querySelector("button").textContent = "+";
   const side = h("aside", { class: "svc-list" },
-    h("header", { class: "svc-list-head" }, h("span", { text: "路由" }), create),
-    routes.length ? list : h("p", { class: "route-empty", text: "还没有模型路由。" }),
+    h("header", { class: "svc-list-head" }, h("span", { text: t("路由") }), create),
+    routes.length ? list : h("p", { class: "route-empty", text: t("还没有模型路由。") }),
     suggestions.length ? h("div", { class: "route-suggestions" },
-      h("div", { class: "svc-list-head", text: "推荐路由" }),
+      h("div", { class: "svc-list-head", text: t("推荐路由") }),
       suggestions.map((suggestion) => h("div", { class: "route-suggestion", title: `${ROUTE_KINDS[suggestion.kind].title} · ${routeSummary(suggestion)}` },
         routeIcon(suggestion.kind, routePrecedence(suggestion)),
         h("span", { class: "route-suggestion-name", text: ROUTE_PREFIX + suggestion.id }),
-        h("button", { class: "btn btn-sm", type: "button", text: "启用", "aria-label": `启用 ${ROUTE_PREFIX}${suggestion.id}`, onclick: () => startDraft(suggestion.kind, suggestion) })))) : null);
+        h("button", { class: "btn btn-sm", type: "button", text: t("启用"), "aria-label": t("启用 {0}{1}", ROUTE_PREFIX, suggestion.id), onclick: () => startDraft(suggestion.kind, suggestion) })))) : null);
   const detail = routing.draft ? routeEditor(routing.draft)
-    : h("section", { class: "route-detail" }, emptyState("新建模型路由", "融合、定时与故障转移都在这里配置，保存后立即应用到网关。"));
+    : h("section", { class: "route-detail" }, emptyState(t("新建模型路由"), t("融合、定时与故障转移都在这里配置，保存后立即应用到网关。")));
   return h("div", { class: "svc card card-flush" }, side, detail);
 };
 
@@ -2865,9 +2865,9 @@ async function checkAgentVersions(button) {
   try {
     const result = await api("/api/agents/versions");
     for (const entry of result.agents || []) if (entry && entry.id) agentView.versions[entry.id] = entry.cli || entry;
-    toast("ok", "版本检查完成");
+    toast("ok", t("版本检查完成"));
   } catch (error) {
-    if (error.status !== 401) toast("bad", "版本检查失败", error.message);
+    if (error.status !== 401) toast("bad", t("版本检查失败"), error.message);
   } finally {
     button.classList.remove("is-busy");
   }
@@ -2877,25 +2877,25 @@ async function checkAgentVersions(button) {
 function agentStatus(agent) {
   const integration = agent.integration || {};
   const mode = ({
-    custom_only: "仅自定义模式", codex_oauth_proxy: "官方账号模式", official_account: "官方账号模式",
-    native_models: "厂商原生模型管理", native_credentials: "原生凭据存储",
-    native_runtime: "原生运行时", native_app: "原生应用 API", confirmed_import: "应用内确认导入",
+    custom_only: t("仅自定义模式"), codex_oauth_proxy: t("官方账号模式"), official_account: t("官方账号模式"),
+    native_models: t("厂商原生模型管理"), native_credentials: t("原生凭据存储"),
+    native_runtime: t("原生运行时"), native_app: t("原生应用 API"), confirmed_import: t("应用内确认导入"),
   })[integration.mode] || integration.mode || null;
   switch (integration.state) {
     case "managed":
-      return { tone: "is-ok", text: [integration.mode === "native_models" ? "原生模型已托管" : "已接入", mode].filter(Boolean).join(" · "), on: true };
+      return { tone: "is-ok", text: [integration.mode === "native_models" ? t("原生模型已托管") : t("已接入"), mode].filter(Boolean).join(" · "), on: true };
     case "unmanaged":
-      return { tone: "", text: ["未接入", mode].filter(Boolean).join(" · "), on: false };
+      return { tone: "", text: [t("未接入"), mode].filter(Boolean).join(" · "), on: false };
     case "pending":
-      return { tone: "", text: "等待原生应用确认", on: true, hint: integration.detail };
+      return { tone: "", text: t("等待原生应用确认"), on: true, hint: integration.detail };
     case "pending_removal":
-      return { tone: "", text: "等待原生应用移除", on: true, hint: integration.detail };
+      return { tone: "", text: t("等待原生应用移除"), on: true, hint: integration.detail };
     case "drift":
-      return { tone: "is-bad", text: "配置已改变：" + (integration.error || integration.detail), on: true };
+      return { tone: "is-bad", text: t("配置已改变：") + (integration.error || integration.detail), on: true };
     case "unsupported":
-      return { tone: "", text: "暂不支持", on: false, locked: true, hint: integration.detail };
+      return { tone: "", text: t("暂不支持"), on: false, locked: true, hint: integration.detail };
     default:
-      return { tone: "is-bad", text: `状态异常：${integration.error || "未知错误"}`, on: false };
+      return { tone: "is-bad", text: t("状态异常：{0}", integration.error || t("未知错误")), on: false };
   }
 }
 
@@ -2905,17 +2905,17 @@ function agentRow(agent, templates) {
   const versions = [cli.version ? (cli.app_version ? `CLI ${cli.version}` : cli.version) : null, cli.app_version ? `App ${cli.app_version}` : null].filter(Boolean).join("  ");
   const icon = h("img", { class: `agent-icon ${templates.has(agent.id) ? "is-template" : ""}`.trim(), src: `/agent-icons/${encodeURIComponent(agent.id)}`, alt: "", width: "32", height: "32", loading: "lazy" });
   icon.addEventListener("error", () => icon.replaceWith(h("span", { class: "agent-icon agent-icon-fallback", "aria-hidden": "true", text: agent.name.slice(0, 1) })), { once: true });
-  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: status.on, disabled: status.locked || state.busy, "aria-label": `${status.on ? "断开" : "接入"} ${agent.name}`, "data-action": "", title: status.hint || null });
+  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: status.on, disabled: status.locked || state.busy, "aria-label": `${status.on ? t("断开") : t("接入")} ${agent.name}`, "data-action": "", title: status.hint || null });
   toggle.addEventListener("change", async () => {
     const connecting = toggle.checked;
     toggle.checked = !connecting; // reflect real state until the CLI confirms
     const params = { id: agent.id };
     if (connecting && agent.id === "codex") params.mode = "official_account";
-    if (connecting) await runAction(null, "agent_connect", params, { ok: `${agent.name} 已接入` });
-    else await runAction(null, "agent_disconnect", params, { ok: `${agent.name} 已断开`, confirm: [`断开 ${agent.name}？`, agent.integration?.detail || "将恢复该 Agent 的原始配置。", "断开"] });
+    if (connecting) await runAction(null, "agent_connect", params, { ok: t("{0} 已接入", agent.name) });
+    else await runAction(null, "agent_disconnect", params, { ok: t("{0} 已断开", agent.name), confirm: [t("断开 {0}？", agent.name), agent.integration?.detail || t("将恢复该 Agent 的原始配置。"), t("断开")] });
   });
   const detailParts = [status.text];
-  if (cli.error && agent.detected) detailParts.push(`版本检查失败：${cli.error}`);
+  if (cli.error && agent.detected) detailParts.push(t("版本检查失败：{0}", cli.error));
   return h(
     "div",
     { class: "agent-row", role: "listitem", "data-search": `${agent.id} ${agent.name}`.toLowerCase() },
@@ -2927,12 +2927,12 @@ function agentRow(agent, templates) {
       status.locked ? null : h("div", { class: "agent-status", title: detailParts.join(" · ") }, h("span", { class: `dot ${status.tone}`, "aria-hidden": "true" }), h("span", { class: "agent-status-text", text: status.text })),
     ),
     agent.id === "codex" && status.on
-      ? segmented([["official_account", "官方账号"], ["custom_only", "仅自定义"]], agent.integration.mode === "custom_only" ? "custom_only" : "official_account", async (mode) => {
-          await runAction(null, "agent_connect", { id: "codex", mode }, { ok: "Codex 接入模式已切换" });
-        }, "Codex 接入模式")
+      ? segmented([["official_account", t("官方账号")], ["custom_only", t("仅自定义")]], agent.integration.mode === "custom_only" ? "custom_only" : "official_account", async (mode) => {
+          await runAction(null, "agent_connect", { id: "codex", mode }, { ok: t("Codex 接入模式已切换") });
+        }, t("Codex 接入模式"))
       : null,
     cli.update && cli.latest
-      ? actionButton(`更新到 ${cli.latest}`, "agent_upgrade", { id: agent.id }, { ok: `${agent.name} 已更新` }, "btn-sm")
+      ? actionButton(t("更新到 {0}", cli.latest), "agent_upgrade", { id: agent.id }, { ok: t("{0} 已更新", agent.name) }, "btn-sm")
       : null,
     toggle,
   );
@@ -2950,7 +2950,7 @@ RENDERERS.apps = () => {
   const missing = agents.filter((agent) => !agent.detected);
   const connected = agents.filter((agent) => agent.integration?.state === "managed").length;
 
-  const search = textInput("agent-query", agentView.query, { type: "search", placeholder: `搜索 ${agents.length} 个 Agent`, "aria-label": "搜索 Agent" });
+  const search = textInput("agent-query", agentView.query, { type: "search", placeholder: t("搜索 {0} 个 Agent", agents.length), "aria-label": t("搜索 Agent") });
   const lists = [];
   const applyFilter = () => {
     agentView.query = search.value;
@@ -2965,9 +2965,9 @@ RENDERERS.apps = () => {
     }
   };
   search.addEventListener("input", applyFilter);
-  const check = h("button", { class: "btn btn-ghost", type: "button", text: "检查更新" });
+  const check = h("button", { class: "btn btn-ghost", type: "button", text: t("检查更新") });
   check.addEventListener("click", () => checkAgentVersions(check));
-  const reload = h("button", { class: "btn btn-ghost btn-icon", type: "button", "aria-label": "重新检测", onclick: loadAgents }, h("span", { class: "icon icon-refresh", "aria-hidden": "true" }));
+  const reload = h("button", { class: "btn btn-ghost btn-icon", type: "button", "aria-label": t("重新检测"), onclick: loadAgents }, h("span", { class: "icon icon-refresh", "aria-hidden": "true" }));
 
   const group = (title, items, collapsed) => {
     const list = h("div", { class: "agent-list", role: "list" }, ...items.map((agent) => agentRow(agent, templates)));
@@ -2977,9 +2977,9 @@ RENDERERS.apps = () => {
   };
   requestAnimationFrame(applyFilter);
   return [
-    h("div", { class: "toolbar" }, h("div", { class: "toolbar-search" }, search), h("span", { class: "card-note", text: `${connected} 个已接入 · ${installed.length} 个已安装` }), h("div", { class: "card-actions" }, check, reload)),
-    installed.length ? group("已安装", installed, false) : null,
-    missing.length ? group("未检测到", missing, true) : null,
+    h("div", { class: "toolbar" }, h("div", { class: "toolbar-search" }, search), h("span", { class: "card-note", text: t("{0} 个已接入 · {1} 个已安装", connected, installed.length) }), h("div", { class: "card-actions" }, check, reload)),
+    installed.length ? group(t("已安装"), installed, false) : null,
+    missing.length ? group(t("未检测到"), missing, true) : null,
   ];
 };
 
@@ -2989,28 +2989,30 @@ RENDERERS.system = () => {
   const panel = state.snapshot.panel || {};
   const status = state.snapshot.status || {};
   const maintenance = [
-    ["检查更新", "下载并安装最新版本的 Codex Mixin", actionButton("更新", "update", null, { ok: "更新完成" })],
-    ["快速修复", "运行诊断并自动修复可修复的问题", actionButton("修复", "doctor_fix", null, { ok: "修复完成" })],
-    ["刷新 Codex 模型目录", "重新生成 Codex 可见的模型列表", actionButton("刷新", "refresh_codex_catalog", null, { ok: "模型目录已刷新" })],
-    ["停止并恢复客户端", "停止网关，并把已接入的客户端恢复为原始配置", actionButton("停止并恢复", "service_stop_restore_clients", null, { ok: "已停止并恢复", confirm: ["停止网关并恢复客户端？", "所有客户端将不再经过 Codex Mixin，需要时可重新接入。", "停止并恢复"] }, "btn-danger")],
+    [t("检查更新"), t("下载并安装最新版本的 Codex Mixin"), actionButton(t("更新"), "update", null, { ok: t("更新完成") })],
+    [t("快速修复"), t("运行诊断并自动修复可修复的问题"), actionButton(t("修复"), "doctor_fix", null, { ok: t("修复完成") })],
+    [t("刷新 Codex 模型目录"), t("重新生成 Codex 可见的模型列表"), actionButton(t("刷新"), "refresh_codex_catalog", null, { ok: t("模型目录已刷新") })],
+    [t("停止并恢复客户端"), t("停止网关，并把已接入的客户端恢复为原始配置"), actionButton(t("停止并恢复"), "service_stop_restore_clients", null, { ok: t("已停止并恢复"), confirm: [t("停止网关并恢复客户端？"), t("所有客户端将不再经过 Codex Mixin，需要时可重新接入。"), t("停止并恢复")] }, "btn-danger")],
+    [t("语言"), t("界面显示语言"), h("div", { class: "select-wrap" }, h("select", { class: "select select-sm", "aria-label": t("语言"), onchange: (event) => setLang(event.target.value) },
+      ...[["auto", t("跟随浏览器")], ["zh", "中文"], ["en", "English"]].map(([value, text]) => h("option", { value, text, selected: value === savedLang() }))))],
   ];
   return [
     exposureNotice(),
-    card("维护", null, h("div", { class: "rows", style: { margin: "0 -22px -20px" } }, ...maintenance.map(([title, text, button]) => h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: title }), h("div", { class: "row-sub", text })), button)))),
+    card(t("维护"), null, h("div", { class: "rows", style: { margin: "0 -22px -20px" } }, ...maintenance.map(([title, text, button]) => h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: title }), h("div", { class: "row-sub", text })), button)))),
     card(
-      "环境",
+      t("环境"),
       null,
       h(
         "dl",
         { class: "kv" },
         ...[
-          ["面板版本", panel.version],
-          ["网关版本", status.gateway_version],
-          ["网关监听", status.bind || state.snapshot.gateway_bind],
-          ["网关访问密钥", state.snapshot.gateway_auth_configured ? "已设置" : "未设置"],
-          ["入站鉴权", panel.client_auth_build ? "所有来源按密钥校验" : "本机与局域网免密钥，公网来源按密钥校验"],
-          ["已安装命令", panel.installed_cli_path],
-          ["日志文件", status.log],
+          [t("面板版本"), panel.version],
+          [t("网关版本"), status.gateway_version],
+          [t("网关监听"), status.bind || state.snapshot.gateway_bind],
+          [t("网关访问密钥"), state.snapshot.gateway_auth_configured ? t("已设置") : t("未设置")],
+          [t("入站鉴权"), panel.client_auth_build ? t("所有来源按密钥校验") : t("本机与局域网免密钥，公网来源按密钥校验")],
+          [t("已安装命令"), panel.installed_cli_path],
+          [t("日志文件"), status.log],
         ].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value) })]),
       ),
     ),
@@ -3030,14 +3032,14 @@ async function loadEch() {
   if (state.page === "advanced") render({ animate: false });
 }
 
-const DUCX_EVENTS = { "user-prompt-submit": "用户请求", "pre-tool-use": "代码生成", "post-tool-use": "技能使用", stop: "Session 文件" };
+const DUCX_EVENTS = { "user-prompt-submit": t("用户请求"), "pre-tool-use": t("代码生成"), "post-tool-use": t("技能使用"), stop: t("Session 文件") };
 
 function replayReportView(report) {
   const line = (item, label) => h("div", { class: "row" }, h("span", { class: `badge ${label === "OK" ? "badge-ok" : "badge-bad"}`, text: label }), h("div", { class: "row-main" }, h("div", { class: "row-title", text: `${DUCX_EVENTS[item.event] || item.event} · ${item.provider_id}` }), h("div", { class: "row-sub mono", text: item.error ? `${item.session_id} · ${item.error}` : item.session_id })));
   return h(
     "div",
     { class: "form" },
-    h("dl", { class: "kv" }, ...[["本地 Session 新加入队列", report.queued_from_local_sessions], ["上传成功", report.delivered?.length], ["上传失败，等待最后一次重试", report.retained?.length], ["超过重试次数并丢弃", report.discarded?.length]].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value, "0") })])),
+    h("dl", { class: "kv" }, ...[[t("本地 Session 新加入队列"), report.queued_from_local_sessions], [t("上传成功"), report.delivered?.length], [t("上传失败，等待最后一次重试"), report.retained?.length], [t("超过重试次数并丢弃"), report.discarded?.length]].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value, "0") })])),
     h("div", { class: "rows card card-flush" }, ...(report.delivered || []).map((item) => line(item, "OK")), ...(report.retained || []).map((item) => line(item, "ERROR")), ...(report.discarded || []).map((item) => line(item, "DROP"))),
   );
 }
@@ -3048,20 +3050,20 @@ async function manualReport(button) {
   try {
     estimate = await api("/api/report/estimate");
   } catch (error) {
-    if (error.status !== 401) toast("bad", "手动上报预估失败", error.message);
+    if (error.status !== 401) toast("bad", t("手动上报预估失败"), error.message);
     return;
   } finally {
     button.classList.remove("is-busy");
   }
   const result = await runAction(button, "report_replay", null, {
-    ok: "本地 Session 上报已处理",
-    confirm: ["手动上报全部本地 Session？", `预计上报 ${estimate.estimated_sessions} 个会话，共 ${estimate.estimated_reports} 次。此功能仅用于自动上报数据异常时的修复，确认异常确实需要修复后再继续。`, "开始上报"],
+    ok: t("本地 Session 上报已处理"),
+    confirm: [t("手动上报全部本地 Session？"), t("预计上报 {0} 个会话，共 {1} 次。此功能仅用于自动上报数据异常时的修复，确认异常确实需要修复后再继续。", estimate.estimated_sessions, estimate.estimated_reports), t("开始上报")],
   });
-  if (result?.json) openSheet("DUCX 手动上报结果", replayReportView(result.json));
+  if (result?.json) openSheet(t("DUCX 手动上报结果"), replayReportView(result.json));
 }
 
 async function exportBackup(button) {
-  const ok = await confirmAction("导出配置备份？", "备份使用 Base64 编码但未加密，包含 API Key、AWS 凭据和本地访问密钥，请妥善保管，勿公开分享。", "导出");
+  const ok = await confirmAction(t("导出配置备份？"), t("备份使用 Base64 编码但未加密，包含 API Key、AWS 凭据和本地访问密钥，请妥善保管，勿公开分享。"), t("导出"));
   if (!ok) return;
   button.classList.add("is-busy");
   try {
@@ -3073,10 +3075,10 @@ async function exportBackup(button) {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast("ok", "配置备份已导出", "Base64 不是加密，请勿公开分享。");
+    toast("ok", t("配置备份已导出"), t("Base64 不是加密，请勿公开分享。"));
   } catch (error) {
     const [title, detail] = describeError(error);
-    toast("bad", title === "操作失败" ? "导出配置备份失败" : title, detail);
+    toast("bad", title === t("操作失败") ? t("导出配置备份失败") : title, detail);
   } finally {
     button.classList.remove("is-busy");
   }
@@ -3088,17 +3090,17 @@ function importBackup(button) {
     const file = picker.files?.[0];
     picker.remove();
     if (!file) return;
-    const ok = await confirmAction("导入配置备份？", `将用「${file.name}」替换当前 Provider、模型选择、Fusion 和凭据配置，然后重启本地网关。`, "导入并重启");
+    const ok = await confirmAction(t("导入配置备份？"), t("将用「{0}」替换当前 Provider、模型选择、Fusion 和凭据配置，然后重启本地网关。", file.name), t("导入并重启"));
     if (!ok) return;
     button.classList.add("is-busy");
     try {
       const response = await fetch("/api/config/import", { method: "POST", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/octet-stream" }, body: file });
       if (!response.ok) throw new ApiError(response.status, await response.json().catch(() => null));
-      toast("ok", "配置备份已导入", "配置已安全写入并应用，本地网关已重启。");
+      toast("ok", t("配置备份已导入"), t("配置已安全写入并应用，本地网关已重启。"));
       svc.drafts = {};
     } catch (error) {
       const [title, detail] = describeError(error);
-      toast("bad", title === "操作失败" ? "导入配置备份失败" : title, detail);
+      toast("bad", title === t("操作失败") ? t("导入配置备份失败") : title, detail);
     } finally {
       button.classList.remove("is-busy");
       refresh(true);
@@ -3125,43 +3127,43 @@ async function loadKeys() {
 
 RENDERERS.keys = () => {
   if (!keysPage.data && !keysPage.loading && !keysPage.error) queueMicrotask(loadKeys);
-  const name = textInput("name", "", { placeholder: "例如：笔记本、同事 A", maxlength: "64", "aria-label": "密钥名称" });
-  const create = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", text: "生成密钥" });
+  const name = textInput("name", "", { placeholder: t("例如：笔记本、同事 A"), maxlength: "64", "aria-label": t("密钥名称") });
+  const create = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", text: t("生成密钥") });
   create.addEventListener("click", async () => {
     const value = name.value.trim();
     if (!value) {
-      toast("bad", "请填写名称", "名称用来区分密钥的用途。");
+      toast("bad", t("请填写名称"), t("名称用来区分密钥的用途。"));
       name.focus();
       return;
     }
-    const result = await runAction(create, "key_create", { name: value }, { ok: "已生成访问密钥" });
+    const result = await runAction(create, "key_create", { name: value }, { ok: t("已生成访问密钥") });
     if (result?.json?.key) keysPage.created = result.json;
     await loadKeys();
   });
   const createCard = card(
-    "生成访问密钥",
-    "公网来源调用网关时须携带其中任一密钥（Authorization: Bearer 或 x-api-key）。本机与局域网设备无需密钥。修改后运行中的网关会自动生效。",
-    h("div", { class: "form" }, field("名称", name), keysPage.created
+    t("生成访问密钥"),
+    t("公网来源调用网关时须携带其中任一密钥（Authorization: Bearer 或 x-api-key）。本机与局域网设备无需密钥。修改后运行中的网关会自动生效。"),
+    h("div", { class: "form" }, field(t("名称"), name), keysPage.created
       ? h("div", { class: "notice", role: "status" },
         h("div", null,
-          h("strong", { text: `新密钥「${keysPage.created.name}」只显示这一次` }),
+          h("strong", { text: t("新密钥「{0}」只显示这一次", keysPage.created.name) }),
           h("div", { class: "row-sub mono", text: keysPage.created.key })),
-        h("button", { class: "btn btn-sm", type: "button", text: "复制", onclick: () => copyText(keysPage.created.key) }))
+        h("button", { class: "btn btn-sm", type: "button", text: t("复制"), onclick: () => copyText(keysPage.created.key) }))
       : null),
     create,
   );
   let body;
   if (keysPage.error) body = h("p", { class: "issue", text: keysPage.error });
   else if (!keysPage.data) body = h("div", { class: "skeleton" });
-  else if (!keysPage.data.keys.length) body = emptyState("还没有访问密钥", "生成后即可从公网访问网关。");
+  else if (!keysPage.data.keys.length) body = emptyState(t("还没有访问密钥"), t("生成后即可从公网访问网关。"));
   else body = h("div", { class: "table-wrap" }, h("table", { class: "table" },
-    h("thead", null, h("tr", null, ...["名称", "密钥", "创建时间", ""].map((text) => h("th", { scope: "col", text })))),
+    h("thead", null, h("tr", null, ...[t("名称"), t("密钥"), t("创建时间"), ""].map((text) => h("th", { scope: "col", text })))),
     h("tbody", null, ...keysPage.data.keys.map((key) => {
-      const revoke = h("button", { class: "btn btn-sm btn-danger", type: "button", "data-action": "", text: "吊销", "aria-label": `吊销 ${key.name}` });
+      const revoke = h("button", { class: "btn btn-sm btn-danger", type: "button", "data-action": "", text: t("吊销"), "aria-label": t("吊销 {0}", key.name) });
       revoke.addEventListener("click", async () => {
         const result = await runAction(revoke, "key_revoke", { id: key.id }, {
-          ok: "已吊销",
-          confirm: ["吊销访问密钥", `使用「${key.name}」的客户端会立即收到 401。`, "吊销"],
+          ok: t("已吊销"),
+          confirm: [t("吊销访问密钥"), t("使用「{0}」的客户端会立即收到 401。", key.name), t("吊销")],
         });
         if (result && keysPage.created?.id === key.id) keysPage.created = null;
         await loadKeys();
@@ -3169,59 +3171,59 @@ RENDERERS.keys = () => {
       return h("tr", null,
         h("td", { text: key.name }),
         h("td", { class: "mono", text: key.masked_key }),
-        h("td", { text: key.created_at ? new Date(key.created_at).toLocaleString() : "早期版本生成" }),
+        h("td", { text: key.created_at ? new Date(key.created_at).toLocaleString() : t("早期版本生成") }),
         h("td", { class: "r" }, revoke));
     }))));
-  return [createCard, card("已有密钥", null, body)];
+  return [createCard, card(t("已有密钥"), null, body)];
 };
 
 RENDERERS.advanced = () => {
   if (!advanced.ech) loadEch();
   const ech = advanced.ech || {};
   const echOn = Boolean(ech.enabled);
-  const echToggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: echOn, disabled: state.busy || !advanced.ech || ech.error, "aria-label": "ECH 代理访问 GPT", "data-action": "" });
+  const echToggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: echOn, disabled: state.busy || !advanced.ech || ech.error, "aria-label": t("ECH 代理访问 GPT"), "data-action": "" });
   echToggle.addEventListener("change", async () => {
     const enabling = echToggle.checked;
     echToggle.checked = !enabling;
-    await runAction(null, enabling ? "ech_enable" : "ech_disable", null, { ok: enabling ? "ECH 已启用，网关已重启" : "ECH 已关闭，已恢复普通网络设置" });
+    await runAction(null, enabling ? "ech_enable" : "ech_disable", null, { ok: enabling ? t("ECH 已启用，网关已重启") : t("ECH 已关闭，已恢复普通网络设置") });
     loadEch();
   });
-  const echTest = h("button", { class: "btn btn-sm", type: "button", "data-action": "", text: "仅测试连接" });
+  const echTest = h("button", { class: "btn btn-sm", type: "button", "data-action": "", text: t("仅测试连接") });
   echTest.addEventListener("click", async () => {
-    const result = await runAction(echTest, "ech_test", null, { ok: "ECH 连接测试完成" });
+    const result = await runAction(echTest, "ech_test", null, { ok: t("ECH 连接测试完成") });
     if (result) {
       advanced.echTest = result.json || result.stdout;
       render({ animate: false });
     }
   });
-  const echStatus = ech.error ? `无法读取：${ech.error}` : !advanced.ech ? "读取中…" : echOn ? "已启用" : ech.fallback_reason ? `已自动关闭，恢复普通网络设置：${ech.fallback_reason}` : "未启用";
+  const echStatus = ech.error ? t("无法读取：{0}", ech.error) : !advanced.ech ? t("读取中…") : echOn ? t("已启用") : ech.fallback_reason ? t("已自动关闭，恢复普通网络设置：{0}", ech.fallback_reason) : t("未启用");
   const echCard = card(
-    "ECH 代理访问 GPT",
-    "仅接管本地网关的官方 GPT 请求，保留端到端 TLS；连接失败会自动关闭并恢复普通网络设置（环境变量代理、系统静态代理，否则直连）。",
+    t("ECH 代理访问 GPT"),
+    t("仅接管本地网关的官方 GPT 请求，保留端到端 TLS；连接失败会自动关闭并恢复普通网络设置（环境变量代理、系统静态代理，否则直连）。"),
     h(
       "div",
       { class: "svc-form" },
       formGroup(null,
-        formRow("启用 ECH", echToggle, "启用前会先测试连接，再保存设置并重启网关"),
-        formRow("当前状态", h("span", { class: ech.fallback_reason && !echOn ? "issue" : "muted", text: echStatus })),
+        formRow(t("启用 ECH"), echToggle, t("启用前会先测试连接，再保存设置并重启网关")),
+        formRow(t("当前状态"), h("span", { class: ech.fallback_reason && !echOn ? "issue" : "muted", text: echStatus })),
         formRow("DoH", h("span", { class: "mono muted", text: str(ech.doh_url) })),
-        formRow("接管的域名", h("span", { class: "mono muted", text: (ech.hosts || []).join("、") || "—" })),
-        formRow("连接测试", echTest, "不发送凭据或模型请求"),
+        formRow(t("接管的域名"), h("span", { class: "mono muted", text: (ech.hosts || []).join("、") || "—" })),
+        formRow(t("连接测试"), echTest, t("不发送凭据或模型请求")),
       ),
       advanced.echTest ? h("div", { class: "output-wrap" }, typeof advanced.echTest === "string" ? h("pre", { class: "output", text: advanced.echTest }) : valueView(advanced.echTest)) : null,
-      h("p", { class: "card-note", text: "ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。" }),
+      h("p", { class: "card-note", text: t("ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。") }),
     ),
   );
-  const report = h("button", { class: "btn", type: "button", "data-action": "", text: "手动触发上报…" });
+  const report = h("button", { class: "btn", type: "button", "data-action": "", text: t("手动触发上报…") });
   report.addEventListener("click", () => manualReport(report));
-  const exportButton = h("button", { class: "btn", type: "button", text: "导出配置备份…" });
+  const exportButton = h("button", { class: "btn", type: "button", text: t("导出配置备份…") });
   exportButton.addEventListener("click", () => exportBackup(exportButton));
-  const importButton = h("button", { class: "btn", type: "button", "data-action": "", text: "导入配置备份…" });
+  const importButton = h("button", { class: "btn", type: "button", "data-action": "", text: t("导入配置备份…") });
   importButton.addEventListener("click", () => importBackup(importButton));
   return [
     echCard,
-    card("手动上报", "清除旧上报凭据、执行 DUCX warmup，再扫描并重放全部本地 Session。仅在自动上报数据异常时使用。", h("div", { class: "card-actions" }, report)),
-    card("配置备份", "备份包含 Provider、模型选择、Fusion 与凭据；使用 Base64 编码但未加密，导入会替换当前配置并重启网关。", h("div", { class: "card-actions" }, exportButton, importButton)),
+    card(t("手动上报"), t("清除旧上报凭据、执行 DUCX warmup，再扫描并重放全部本地 Session。仅在自动上报数据异常时使用。"), h("div", { class: "card-actions" }, report)),
+    card(t("配置备份"), t("备份包含 Provider、模型选择、Fusion 与凭据；使用 Base64 编码但未加密，导入会替换当前配置并重启网关。"), h("div", { class: "card-actions" }, exportButton, importButton)),
   ];
 };
 
@@ -3235,7 +3237,7 @@ async function loadLogs() {
     state.logs = result.text || "";
   } catch (error) {
     if (error.status === 401) return;
-    state.logs = `无法读取日志：${error.message}`;
+    state.logs = t("无法读取日志：{0}", error.message);
   }
   if (state.page === "logs") render({ animate: false });
 }
@@ -3245,7 +3247,7 @@ async function loadDoctor(button) {
   try {
     state.doctor = await api("/api/doctor");
   } catch (error) {
-    if (error.status !== 401) toast("bad", "诊断失败", error.message);
+    if (error.status !== 401) toast("bad", t("诊断失败"), error.message);
   } finally {
     button?.classList.remove("is-busy");
   }
@@ -3253,25 +3255,25 @@ async function loadDoctor(button) {
 }
 
 RENDERERS.logs = () => {
-  const tabs = segmented([["service", "服务日志"], ["doctor", "诊断"]], logTab, (value) => {
+  const tabs = segmented([["service", t("服务日志")], ["doctor", t("诊断")]], logTab, (value) => {
     logTab = value;
     if (value === "doctor" && !state.doctor) loadDoctor();
     render({ animate: true });
-  }, "日志类型");
+  }, t("日志类型"));
   if (logTab === "doctor") return [h("div", null, tabs), doctorCard()];
-  const lines = selectControl("lines", [["200", "最近 200 行"], ["500", "最近 500 行"], ["2000", "最近 2000 行"]], String(state.logLines));
+  const lines = selectControl("lines", [["200", t("最近 200 行")], ["500", t("最近 500 行")], ["2000", t("最近 2000 行")]], String(state.logLines));
   lines.querySelector("select").addEventListener("change", (event) => {
     state.logLines = Number(event.target.value);
     loadLogs();
   });
-  const reload = h("button", { class: "btn btn-ghost", type: "button", text: "刷新", onclick: loadLogs });
-  const pre = h("pre", { class: "log", tabindex: "0", "aria-label": "服务日志", text: state.logs ?? "读取中…" });
+  const reload = h("button", { class: "btn btn-ghost", type: "button", text: t("刷新"), onclick: loadLogs });
+  const pre = h("pre", { class: "log", tabindex: "0", "aria-label": t("服务日志"), text: state.logs ?? t("读取中…") });
   requestAnimationFrame(() => (pre.scrollTop = pre.scrollHeight));
-  return [h("div", null, tabs), card("服务日志", null, pre, [lines, reload], "card-flush")];
+  return [h("div", null, tabs), card(t("服务日志"), null, pre, [lines, reload], "card-flush")];
 };
 
 function doctorCard() {
-  const rerun = h("button", { class: "btn btn-ghost", type: "button", text: "重新诊断" });
+  const rerun = h("button", { class: "btn btn-ghost", type: "button", text: t("重新诊断") });
   rerun.addEventListener("click", () => loadDoctor(rerun));
   const checks = state.doctor?.checks || [];
   const body = !state.doctor
@@ -3288,7 +3290,7 @@ function doctorCard() {
           ),
         ),
       );
-  return card("诊断报告", null, body, [rerun, actionButton("自动修复", "doctor_fix", null, { ok: "修复完成" }, "btn-primary")], "card-flush");
+  return card(t("诊断报告"), null, body, [rerun, actionButton(t("自动修复"), "doctor_fix", null, { ok: t("修复完成") }, "btn-primary")], "card-flush");
 }
 
 // ---------- Context ----------
@@ -3306,16 +3308,16 @@ async function loadContextArchive(session) {
     const data = await api(`/api/context?session=${encodeURIComponent(session)}`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]) });
     if (request !== contextArchive.request) return;
     if (data.compact !== true || data.session !== session || !Array.isArray(data.history) || !Array.isArray(data.blocks) || !Array.isArray(data.segments)) {
-      throw new Error("归档数据不完整，请更新 CLI 后重试。");
+      throw new Error(t("归档数据不完整，请更新 CLI 后重试。"));
     }
     for (const row of data.history) {
       if (!Number.isSafeInteger(row.bytes) || row.bytes < 0 || typeof row.kind !== "string" ||
-          (row.tool != null && typeof row.tool !== "string")) throw new Error("消息元数据格式无效。");
+          (row.tool != null && typeof row.tool !== "string")) throw new Error(t("消息元数据格式无效。"));
     }
     // Parse references once; malformed data is a visible error, not an empty archive.
     for (const block of data.blocks) {
       block.refs = JSON.parse(block.full_refs);
-      if (!Array.isArray(block.refs) || block.refs.some((ref) => typeof ref !== "string")) throw new Error("压缩块引用格式无效。");
+      if (!Array.isArray(block.refs) || block.refs.some((ref) => typeof ref !== "string")) throw new Error(t("压缩块引用格式无效。"));
     }
     contextArchive.data = data;
   } catch (error) {
@@ -3352,7 +3354,7 @@ function contextGrowth(archive) {
   const width = 600, height = 200, left = 50, right = 584, top = 12, bottom = 166;
   const x = (index) => left + index / Math.max(1, archive.history.length) * (right - left);
   const y = (value) => bottom - value / max * (bottom - top);
-  const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, class: "ctx-growth", role: "img", "aria-label": `归档文本增长：原始 ${(original / 1024).toFixed(1)} KiB，当前视图 ${(visible / 1024).toFixed(1)} KiB` });
+  const svg = svgNode("svg", { viewBox: `0 0 ${width} ${height}`, class: "ctx-growth", role: "img", "aria-label": t("归档文本增长：原始 {0} KiB，当前视图 {1} KiB", (original / 1024).toFixed(1), (visible / 1024).toFixed(1)) });
   for (let step = 0; step <= 3; step++) {
     const value = max * step / 3;
     svg.append(svgNode("line", { x1: left, x2: right, y1: y(value), y2: y(value), class: "ctx-grid-line" }));
@@ -3365,17 +3367,17 @@ function contextGrowth(archive) {
   }
   for (const index of [0, archive.history.length]) {
     const label = svgNode("text", { x: x(index), y: bottom + 22, "text-anchor": index ? "end" : "start", class: "ctx-axis" });
-    label.textContent = `${index} 条消息`;
+    label.textContent = t("{0} 条消息", index);
     svg.append(label);
   }
   return h("div", { class: "ctx-chart" }, h("div", { class: "ctx-legend" },
-    h("span", { class: "ctx-original-key", text: "原始归档" }), h("span", { class: "ctx-visible-key", text: "当前视图" }), h("span", { class: "muted", text: "KiB" })), svg,
-    h("p", { class: "card-note", text: "按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。" }));
+    h("span", { class: "ctx-original-key", text: t("原始归档") }), h("span", { class: "ctx-visible-key", text: t("当前视图") }), h("span", { class: "muted", text: "KiB" })), svg,
+    h("p", { class: "card-note", text: t("按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。") }));
 }
 
 function contextCompressionBlock(block, messages) {
   const groups = new Map();
-  const labels = { user: "用户消息", assistant: "助手消息", function_call: "工具调用", function_call_output: "工具结果", reasoning: "推理", other: "其他" };
+  const labels = { user: t("用户消息"), assistant: t("助手消息"), function_call: t("工具调用"), function_call_output: t("工具结果"), reasoning: t("推理"), other: t("其他") };
   const paths = {
     user: "M20 21v-2a6 6 0 0 0-12 0v2M14 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z",
     assistant: "M21 11a8 8 0 0 1-8 8H7l-5 3V11a9 9 0 0 1 19 0Z",
@@ -3391,7 +3393,7 @@ function contextCompressionBlock(block, messages) {
     else groups.set(key, { kind: row.kind, tool: row.tool, count: 1 });
   }
   const sorted = [...groups.values()].sort((a, b) => b.count - a.count || `${a.kind}:${a.tool || ""}`.localeCompare(`${b.kind}:${b.tool || ""}`));
-  const sources = h("div", { class: "ctx-compression-sources", "aria-label": "被压缩的内容" });
+  const sources = h("div", { class: "ctx-compression-sources", "aria-label": t("被压缩的内容") });
   for (const group of sorted.slice(0, 5)) {
     const label = group.tool ? group.tool.split(".").pop().split("__").pop() : labels[group.kind] || labels.other;
     const icon = svgNode("svg", { viewBox: "0 0 24 24", class: "ctx-source-icon", "aria-hidden": "true" });
@@ -3399,44 +3401,44 @@ function contextCompressionBlock(block, messages) {
     sources.append(h("div", { class: "ctx-source-chip", title: group.tool || label }, icon,
       h("span", { class: "ctx-source-label", text: label }), h("span", { class: "ctx-source-count", text: `×${group.count}` })));
   }
-  if (sorted.length > 5) sources.append(h("span", { class: "card-note", text: `其他 ${sorted.slice(5).reduce((sum, group) => sum + group.count, 0)} 条` }));
-  const details = h("details", { class: "ctx-summary" }, h("summary", { text: "查看摘要" }));
+  if (sorted.length > 5) sources.append(h("span", { class: "card-note", text: t("其他 {0} 条", sorted.slice(5).reduce((sum, group) => sum + group.count, 0)) }));
+  const details = h("details", { class: "ctx-summary" }, h("summary", { text: t("查看摘要") }));
   details.addEventListener("toggle", () => {
     if (details.open && details.children.length === 1) details.append(h("div", { class: "ctx-summary-text", text: block.summary }));
   });
   return h("div", { class: "ctx-compression" },
     h("div", { class: "ctx-compression-flow" }, sources, h("span", { class: "ctx-brace", "aria-hidden": "true", text: "}" }),
-      h("div", { class: "ctx-compression-output" }, h("div", { class: "row-title", text: block.topic || "精简摘要" }),
-        h("p", { class: "card-note", text: `${block.refs.length} 条内容 → 1 条摘要` }),
+      h("div", { class: "ctx-compression-output" }, h("div", { class: "row-title", text: block.topic || t("精简摘要") }),
+        h("p", { class: "card-note", text: t("{0} 条内容 → 1 条摘要", block.refs.length) }),
         h("p", { class: "ctx-summary-preview", text: block.summary.slice(0, 240) }))), details);
 }
 
 function contextArchiveCard(sessions, reload) {
   const selected = sessions.find((row) => row.session === contextArchive.session);
   let body;
-  if (contextArchive.loading) body = h("div", { class: "empty", role: "status", text: "正在读取归档…" });
+  if (contextArchive.loading) body = h("div", { class: "empty", role: "status", text: t("正在读取归档…") });
   else if (contextArchive.error) body = h("div", { class: "notice", role: "alert" },
-    h("p", { text: contextArchive.error }), h("button", { class: "btn", type: "button", text: "重试", onclick: () => loadContextArchive(contextArchive.session) }));
-  else if (!contextArchive.data) body = emptyState("选择一个会话", "查看上下文增长，以及消息和工具如何合并成精简摘要。");
+    h("p", { text: contextArchive.error }), h("button", { class: "btn", type: "button", text: t("重试"), onclick: () => loadContextArchive(contextArchive.session) }));
+  else if (!contextArchive.data) body = emptyState(t("选择一个会话"), t("查看上下文增长，以及消息和工具如何合并成精简摘要。"));
   else {
     const archive = contextArchive.data;
     const messages = new Map(archive.history.map((row) => [row.reference, row]));
     const active = archive.blocks.filter((block) => !block.superseded_by);
     const earlier = archive.blocks.filter((block) => block.superseded_by);
-    const history = h("details", { class: "ctx-history" }, h("summary", { text: `历史压缩（${earlier.length}）` }));
+    const history = h("details", { class: "ctx-history" }, h("summary", { text: t("历史压缩（{0}）", earlier.length) }));
     history.addEventListener("toggle", () => {
       if (history.open && history.children.length === 1) history.append(h("div", { class: "ctx-inspector-body" }, ...earlier.map((block) => contextCompressionBlock(block, messages))));
     });
     const remaining = archive.segments.filter((segment) => segment.kind === "message").length;
     body = h("div", { class: "ctx-inspector-body" },
-      selected ? h("p", { class: "card-note", text: `当前视图 ${compact(selected.view_tokens)} token · 已节省 ${compact(selected.saved_tokens)} token` }) : null,
-      contextGrowth(archive), h("h4", { text: "压缩概览" }),
+      selected ? h("p", { class: "card-note", text: t("当前视图 {0} token · 已节省 {1} token", compact(selected.view_tokens), compact(selected.saved_tokens)) }) : null,
+      contextGrowth(archive), h("h4", { text: t("压缩概览") }),
       ...active.map((block) => contextCompressionBlock(block, messages)),
-      !archive.blocks.length ? h("p", { class: "card-note", text: "此会话尚无压缩块。" }) : null,
-      remaining ? h("p", { class: "card-note", text: `尚未压缩 · ${remaining} 条内容` }) : null,
+      !archive.blocks.length ? h("p", { class: "card-note", text: t("此会话尚无压缩块。") }) : null,
+      remaining ? h("p", { class: "card-note", text: t("尚未压缩 · {0} 条内容", remaining) }) : null,
       earlier.length ? history : null);
   }
-  return card(selected?.display || "上下文详情", null, body, [reload], "ctx-inspector");
+  return card(selected?.display || t("上下文详情"), null, body, [reload], "ctx-inspector");
 }
 
 async function loadContext() {
@@ -3455,8 +3457,8 @@ async function loadContext() {
 
 function contextSettingsCard(context) {
   const settings = context.settings || {};
-  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: Boolean(settings.enabled), disabled: state.busy, "aria-label": "启用上下文引擎", "data-action": "" });
-  const save = h("button", { class: "btn btn-primary", type: "submit", text: "保存设置", disabled: state.busy });
+  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: Boolean(settings.enabled), disabled: state.busy, "aria-label": t("启用上下文引擎"), "data-action": "" });
+  const save = h("button", { class: "btn btn-primary", type: "submit", text: t("保存设置"), disabled: state.busy });
   const body = h(
     "form",
     { class: "rows" },
@@ -3466,19 +3468,19 @@ function contextSettingsCard(context) {
       h(
         "div",
         { class: "row-main" },
-        h("div", { class: "row-title", text: "启用上下文引擎", title: "保存更改后自动重启运行中的网关并生效" }),
+        h("div", { class: "row-title", text: t("启用上下文引擎"), title: t("保存更改后自动重启运行中的网关并生效") }),
       ),
       toggle,
     ),
-    h("div", { class: "row" }, h("span", { class: "row-sub", text: "保存后自动应用到运行中的网关。" }), save),
+    h("div", { class: "row" }, h("span", { class: "row-sub", text: t("保存后自动应用到运行中的网关。") }), save),
   );
   body.addEventListener("submit", async (event) => {
     event.preventDefault();
     const params = { enabled: toggle.checked };
-    await runAction(save, "context_configure", params, { ok: "上下文设置已保存" });
+    await runAction(save, "context_configure", params, { ok: t("上下文设置已保存") });
     await loadContext();
   });
-  return card("上下文引擎", null, body);
+  return card(t("上下文引擎"), null, body);
 }
 
 function contextMetrics(totals) {
@@ -3486,19 +3488,19 @@ function contextMetrics(totals) {
   return h(
     "div",
     { class: "grid grid-4" },
-    metricCard("会话", totals.sessions || 0),
-    metricCard("压缩次数", totals.compressions || 0),
-    metricCard("节省 token", totals.saved_tokens || 0),
-    metricCard("缓存命中", fixed(cache.hit_percent, 1, "%")),
+    metricCard(t("会话"), totals.sessions || 0),
+    metricCard(t("压缩次数"), totals.compressions || 0),
+    metricCard(t("节省 token"), totals.saved_tokens || 0),
+    metricCard(t("缓存命中"), fixed(cache.hit_percent, 1, "%")),
   );
 }
 
 function contextSessionsCard(sessions, totals) {
   if (!sessions.length) {
-    return card("会话", null, emptyState("暂无会话", ""));
+    return card(t("会话"), null, emptyState(t("暂无会话"), ""));
   }
   const maxSaved = Math.max(1, ...sessions.map((row) => row.saved_tokens || 0));
-  const head = ["会话", "消息", "压缩次数", "节省 token", "视图 token", "缓存命中", "最近活动"].map((label, index) =>
+  const head = [t("会话"), t("消息"), t("压缩次数"), t("节省 token"), t("视图 token"), t("缓存命中"), t("最近活动")].map((label, index) =>
     h("th", { class: index > 0 && index < 6 ? "r" : null, text: label }),
   );
   const body = sessions.map((row) => {
@@ -3508,7 +3510,7 @@ function contextSessionsCard(sessions, totals) {
     return h(
       "tr",
       null,
-      h("td", { title: `${row.session} · 修订 ${str(row.revision)}` }, h("button", {
+      h("td", { title: t("{0} · 修订 {1}", row.session, str(row.revision)) }, h("button", {
         class: "ctx-session-button", type: "button", text: row.display,
         "aria-pressed": String(contextArchive.session === row.session),
         onclick: () => loadContextArchive(row.session),
@@ -3519,7 +3521,7 @@ function contextSessionsCard(sessions, totals) {
         "td",
         { class: "r" },
         h("div", { text: compact(row.saved_tokens || 0) }),
-        h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "节省 token 占比", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(saved * 100)) },
+        h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": t("节省 token 占比"), "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(saved * 100)) },
           h("div", { class: "progress-bar", style: { transform: "scaleX(" + fixed(saved, 3, "") + ")" } })),
       ),
       h("td", { class: "r", text: compact(row.view_tokens || 0) }),
@@ -3527,7 +3529,7 @@ function contextSessionsCard(sessions, totals) {
         "td",
         { class: "r" },
         h("div", { text: fixed(cache.hit_percent, 1, "%") }),
-        cache.hit_percent == null ? null : h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "缓存命中率", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(hit * 100)) },
+        cache.hit_percent == null ? null : h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": t("缓存命中率"), "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(hit * 100)) },
           h("div", { class: "progress-bar", style: { transform: "scaleX(" + fixed(hit, 3, "") + ")" } })),
       ),
       h("td", { class: "r", text: timeAgo((row.updated_at || 0) * 1000) }),
@@ -3540,26 +3542,26 @@ function contextSessionsCard(sessions, totals) {
     h(
       "tr",
       null,
-      h("td", { text: "合计" }),
+      h("td", { text: t("合计") }),
       h("td", { class: "r", text: compact(totals.messages || 0) }),
       h("td", { class: "r", text: compact(totals.compressions || 0) }),
       h("td", { class: "r", text: compact(totals.saved_tokens || 0) }),
       h("td", { class: "r", text: compact(totals.view_tokens || 0) }),
       h("td", { class: "r", text: fixed(cache.hit_percent, 1, "%") }),
-      h("td", { class: "r", text: compact(cache.turns || 0) + " 轮" }),
+      h("td", { class: "r", text: compact(cache.turns || 0) + t(" 轮") }),
     ),
   );
-  return card("会话", null, h("div", { class: "table-wrap" }, h("table", { class: "table" }, h("thead", null, h("tr", null, head)), h("tbody", null, body), foot)), null, "card-flush ctx-sessions");
+  return card(t("会话"), null, h("div", { class: "table-wrap" }, h("table", { class: "table" }, h("thead", null, h("tr", null, head)), h("tbody", null, body), foot)), null, "card-flush ctx-sessions");
 }
 
 RENDERERS.context = () => {
-  const reload = h("button", { class: "btn btn-ghost", type: "button", text: "刷新", disabled: state.contextLoading,
+  const reload = h("button", { class: "btn btn-ghost", type: "button", text: t("刷新"), disabled: state.contextLoading,
     onclick: async () => { await loadContext(); if (contextArchive.session) await loadContextArchive(contextArchive.session); } });
   if (!state.context) {
     const body = state.contextError
-      ? h("div", { class: "notice", role: "alert" }, h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }), h("div", null, h("strong", { text: "无法读取上下文统计" }), h("div", { class: "card-note", text: state.contextError.message })))
+      ? h("div", { class: "notice", role: "alert" }, h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }), h("div", null, h("strong", { text: t("无法读取上下文统计") }), h("div", { class: "card-note", text: state.contextError.message })))
       : h("div", { class: "skeleton", style: { margin: "16px 20px" } });
-    return [card("上下文引擎", null, body, [reload], "card-flush")];
+    return [card(t("上下文引擎"), null, body, [reload], "card-flush")];
   }
   const context = state.context;
   const sessions = context.sessions || [];
