@@ -1,4 +1,46 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.0
+
+### 特性新增
+
+- **模型路由**：新增 `auto/<名称>` 路由入口，所有客户端共用同一份模型列表。支持三种路由：故障转移（按顺序切换备用模型）、模型融合与按时间段路由。macOS、Windows 与 Web 面板都可以直接在流程图上编辑路由，并提供推荐路由一键启用；命令行使用统一的 `route` 子命令管理。
+- **ClaudeCode 订阅接入**：通过官方 Claude CLI 使用 Claude 订阅额度，模型列表从已登录的 CLI 读取，额度页显示套餐剩余用量。
+- **轻量模式**：macOS 菜单栏与 Windows 托盘新增「轻量模式」，关闭界面与托盘、只保留后台网关，空闲时网关进程仅占约 5 MiB 内存；重新打开 Codex Mixin 即可恢复界面。
+- **多把访问密钥**：控制面板新增「访问密钥」页，可按名称创建、查看和吊销多把网关密钥，新密钥只显示一次；命令行对应 `config keys list / create / revoke`。修改后运行中的网关自动生效，无需重启。
+- **英文界面**：Web 面板新增语言切换，默认跟随浏览器语言；Windows 界面跟随系统语言。
+- **更多安装方式**：支持 Homebrew（命令行与桌面应用）与 Docker 镜像，镜像同时提供网关（8317）与控制面板（8318）端口。发布文件附带 `SHA256SUMS`，`install.sh` 安装前自动校验。
+
+### 体验优化
+
+- **内存与存储大幅瘦身**：上下文改用无损 SQLite 存储，不再在每轮对话时复制完整历史，已摘要的原文按期清理；含 UI 界面在内，空闲时约占 77 MiB，40 个并发请求时约 114 MiB。
+- **用量页可横向对比**：三端用量页统一为可对比的卡片与堆叠图，失败的回复也会记录，可按时间段查询，最多保留 10 万条回复记录。
+- **供应商排序更直观**：登录类预设排在最前，API Key 类服务其次，自定义供应商放在最后。
+- **断开 Codex 更干净**：断开接入后，Codex 配置恢复为官方 OpenAI 默认配置。
+- **Claude Desktop 模型选择更准确**：隐藏无法提供服务的官方模型，并补齐模型元数据。
+- **WorkBuddy、CodeBuddy 细节优化**：模型名称更短，推理强度默认值与可选档位与客户端保持一致。
+- **DUCX 用量上报更完整**：补齐 Codex、Claude Code、DSH 与 Grok Build 的用量和技能使用上报，Grok Build 会话按实际模型归类。
+
+### BUG 修复
+
+- 修复故障转移路由在原模型已达限额时仍不切换的问题。现在原模型输出前报任何错误（包括在 HTTP 200 流中返回的 429），或 30 秒内没有输出，都会切到下一个模型；最后一个模型不设超时，报错时原样返回。
+- 修复 DUCX 在后台自动更新、更新不完整导致登录凭据写错目录、认证失败的问题。Mixin 启动的所有 DUCX 进程都会禁止自动更新，改为登录时由 Mixin 检查并升级，同时清理残留的半完成更新目录（#119）。
+- 修复跨上游切换后压缩状态无法回放的问题；关闭上下文管理后，同一会话再次压缩时也能保留已归档的历史（#121）。
+- 修复 OneAPI 子 Agent fork 历史后与父会话使用不同上游账号、回放推理内容解密失败的问题（#101）。
+- 修复 Grok Build 推理强度档位缺失的问题（#107）。
+- 修复 Anthropic 缓存输入未计入、客户端显示的上下文用量偏低的问题。
+- 修复健康检查卡住时网关被误判为失效、进而被重启的问题。
+- 修复网关上下文提示被 Claude 当作一轮对话的问题。
+- 修复 Antigravity 在 `/model` 切换模型后被判定为脱离托管的问题。
+- 修复 Windows「文档」文件夹不存在时开机启动失败的问题。
+- 升级 rustix 至 1.1.6，修复安全公告 RUSTSEC-2026-0486。
+
+### 致谢
+
+- @LianshengLi：贡献跨上游切换时的压缩状态回放修复（#99，已并入 #121）。
+- @Oldknife365：贡献 Grok Build 推理强度档位支持（#107）。
+- @lichuang0816：反馈 DUCX 自动更新导致认证失败的问题，并提供了详细的排查信息（#119）。
+- @meilingluolingluo：反馈 OneAPI 子 Agent 回放推理内容解密失败的问题（#101）。
+
 ## v0.7.7
 
 ### 特性新增
@@ -270,6 +312,48 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.0
+
+### 新增功能
+
+- **模型路由**：新增 `auto/<名稱>` 路由入口，所有客戶端共用同一份模型清單。支援三種路由：故障轉移（依序切換備用模型）、模型融合與依時段路由。macOS、Windows 與 Web 面板都可以直接在流程圖上編輯路由，並提供推薦路由一鍵啟用；命令列使用統一的 `route` 子命令管理。
+- **ClaudeCode 訂閱接入**：透過官方 Claude CLI 使用 Claude 訂閱額度，模型清單從已登入的 CLI 讀取，額度頁顯示方案剩餘用量。
+- **輕量模式**：macOS 選單列與 Windows 系統匣新增「輕量模式」，關閉介面與系統匣、只保留背景閘道，閒置時閘道程序僅佔約 5 MiB 記憶體；重新開啟 Codex Mixin 即可恢復介面。
+- **多把存取金鑰**：控制面板新增「存取金鑰」頁，可依名稱建立、檢視和撤銷多把閘道金鑰，新金鑰只顯示一次；命令列對應 `config keys list / create / revoke`。修改後執行中的閘道自動生效，無需重新啟動。
+- **英文介面**：Web 面板新增語言切換，預設跟隨瀏覽器語言；Windows 介面跟隨系統語言。
+- **更多安裝方式**：支援 Homebrew（命令列與桌面應用程式）與 Docker 映像檔，映像檔同時提供閘道（8317）與控制面板（8318）連接埠。發布檔案附帶 `SHA256SUMS`，`install.sh` 安裝前自動校驗。
+
+### 體驗優化
+
+- **記憶體與儲存大幅瘦身**：上下文改用無損 SQLite 儲存，不再在每輪對話時複製完整歷史，已摘要的原文定期清理；含 UI 介面在內，閒置時約佔 77 MiB，40 個並行請求時約 114 MiB。
+- **用量頁可橫向比較**：三端用量頁統一為可比較的卡片與堆疊圖，失敗的回覆也會記錄，可依時段查詢，最多保留 10 萬筆回覆紀錄。
+- **供應商排序更直觀**：登入類預設排在最前，API Key 類服務其次，自訂供應商放在最後。
+- **中斷 Codex 更乾淨**：中斷接入後，Codex 設定恢復為官方 OpenAI 預設設定。
+- **Claude Desktop 模型選擇更準確**：隱藏無法提供服務的官方模型，並補齊模型中繼資料。
+- **WorkBuddy、CodeBuddy 細節優化**：模型名稱更短，推理強度預設值與可選檔位與客戶端保持一致。
+- **DUCX 用量回報更完整**：補齊 Codex、Claude Code、DSH 與 Grok Build 的用量和技能使用回報，Grok Build 會話依實際模型歸類。
+
+### 問題修正
+
+- 修正故障轉移路由在原模型已達限額時仍不切換的問題。現在原模型輸出前回報任何錯誤（包括在 HTTP 200 串流中回傳的 429），或 30 秒內沒有輸出，都會切到下一個模型；最後一個模型不設逾時，出錯時原樣回傳。
+- 修正 DUCX 在背景自動更新、更新不完整導致登入憑證寫錯目錄、認證失敗的問題。Mixin 啟動的所有 DUCX 程序都會禁止自動更新，改為登入時由 Mixin 檢查並升級，同時清理殘留的半完成更新目錄（#119）。
+- 修正跨上游切換後壓縮狀態無法回放的問題；關閉上下文管理後，同一會話再次壓縮時也能保留已封存的歷史（#121）。
+- 修正 OneAPI 子 Agent fork 歷史後與父會話使用不同上游帳號、回放推理內容解密失敗的問題（#101）。
+- 修正 Grok Build 推理強度檔位缺失的問題（#107）。
+- 修正 Anthropic 快取輸入未計入、客戶端顯示的上下文用量偏低的問題。
+- 修正健康檢查卡住時閘道被誤判為失效、進而被重新啟動的問題。
+- 修正閘道上下文提示被 Claude 當作一輪對話的問題。
+- 修正 Antigravity 在 `/model` 切換模型後被判定為脫離託管的問題。
+- 修正 Windows「文件」資料夾不存在時開機啟動失敗的問題。
+- 升級 rustix 至 1.1.6，修正安全公告 RUSTSEC-2026-0486。
+
+### 致謝
+
+- @LianshengLi：貢獻跨上游切換時的壓縮狀態回放修正（#99，已併入 #121）。
+- @Oldknife365：貢獻 Grok Build 推理強度檔位支援（#107）。
+- @lichuang0816：回報 DUCX 自動更新導致認證失敗的問題，並提供了詳細的排查資訊（#119）。
+- @meilingluolingluo：回報 OneAPI 子 Agent 回放推理內容解密失敗的問題（#101）。
+
 ## v0.7.7
 
 ### 新增功能
@@ -541,6 +625,48 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.0
+
+### New features
+
+- **Model routing**: new `auto/<name>` route entries, with one model list shared by every client. Three route types are supported: failover (switch to backup models in order), model fusion, and time-based routing. Routes can be edited directly on their flow diagram in macOS, Windows, and the Web panel, and recommended routes can be enabled in one click. The CLI manages them with the unified `route` subcommand.
+- **ClaudeCode subscription**: use your Claude subscription through the official Claude CLI. Models are listed from the signed-in CLI, and the quota page shows the plan's remaining allowance.
+- **Lightweight mode**: a new "Lightweight mode" entry in the macOS menu bar and Windows tray closes the UI and tray and keeps only the background gateway, which uses about 5 MiB of memory when idle. Reopen Codex Mixin to bring the UI back.
+- **Multiple access keys**: a new "Access keys" page in the control panel creates, lists, and revokes named gateway keys; a new key is shown only once. The CLI equivalent is `config keys list / create / revoke`. Changes apply to the running gateway without a restart.
+- **English interface**: the Web panel has a language switch and follows the browser language by default; the Windows UI follows the system language.
+- **More ways to install**: Homebrew (CLI and desktop app) and a Docker image that exposes both the gateway (8317) and control panel (8318) ports. Release files ship with `SHA256SUMS`, which `install.sh` verifies before installing.
+
+### Improvements
+
+- **Much lower memory and storage use**: context now uses lossless SQLite storage, no longer copies the whole history on every turn, and expires summarized originals. Including the UI, Mixin uses about 77 MiB when idle and about 114 MiB with 40 concurrent requests.
+- **Comparable usage pages**: usage pages on all three surfaces share comparable cards and a stacked chart, record failed replies, support time-window queries, and keep up to 100,000 reply records.
+- **Clearer provider order**: sign-in presets come first, API-key services next, and custom providers last.
+- **Cleaner Codex disconnect**: disconnecting resets Codex to the official OpenAI configuration.
+- **More accurate Claude Desktop model picker**: unservable official models are hidden and model metadata is complete.
+- **WorkBuddy and CodeBuddy polish**: shorter model names, and reasoning effort defaults and choices that match the clients.
+- **More complete DUCX usage reporting**: usage and skill reports now cover Codex, Claude Code, DSH, and Grok Build, and Grok Build sessions are attributed to their actual models.
+
+### Bug fixes
+
+- Fix failover routes staying on the source model after it hit its usage limit. Any error before output (including a 429 reported inside an HTTP 200 stream), or no output within 30 seconds, now switches to the next model. The last model has no timeout, and its errors are returned as-is.
+- Fix DUCX updating itself in the background, where an incomplete update wrote login credentials into the wrong directory and authentication failed. Every DUCX process started by Mixin now has self-update disabled; Mixin checks and upgrades DUCX at login and removes leftover half-finished updates (#119).
+- Fix compaction state not replaying after switching upstreams; with context management off, re-compacting the same session now keeps the archived history (#121).
+- Fix OneAPI subagents using a different upstream account from the parent after forking history, which made reasoning content fail to decrypt on replay (#101).
+- Fix missing Grok Build reasoning effort choices (#107).
+- Fix cached Anthropic input not being counted, which made clients show lower context usage.
+- Fix a stalled health check marking the gateway as failed and restarting it.
+- Fix the gateway context note being treated as a Claude turn.
+- Fix Antigravity being considered unmanaged after switching models with `/model`.
+- Fix Windows startup failing when the Documents folder does not exist.
+- Bump rustix to 1.1.6 for security advisory RUSTSEC-2026-0486.
+
+### Thanks
+
+- @LianshengLi: contributed the compaction replay fix for upstream switches (#99, carried into #121).
+- @Oldknife365: contributed Grok Build reasoning effort support (#107).
+- @lichuang0816: reported the DUCX self-update authentication failure with detailed diagnostics (#119).
+- @meilingluolingluo: reported the OneAPI subagent reasoning decryption failure (#101).
+
 ## v0.7.7
 
 ### New features
