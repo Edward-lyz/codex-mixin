@@ -7390,6 +7390,53 @@ async fn maps_deferred_tool_search_back_to_codex_call() {
 }
 
 #[tokio::test]
+async fn public_peers_need_the_gateway_key() {
+    use tower::ServiceExt;
+
+    let (upstream_url, _requests) = spawn_mock_upstream(MockMode::Text).await;
+    let database = tempfile::tempdir().unwrap();
+    let public_peer: std::net::SocketAddr = "203.0.113.7:50000".parse().unwrap();
+    let request = |key: Option<&str>| {
+        let mut builder = axum::http::Request::post("/v1/responses")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(key) = key {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
+        }
+        let mut request = builder
+            .body(Body::from(responses_request().to_string()))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(public_peer));
+        request
+    };
+    for configured_key in [Some("gateway-key"), None] {
+        let mut config = test_config(upstream_url.clone());
+        config.accept_codex_oauth = false;
+        config.gateway_api_key = configured_key.map(str::to_owned);
+        let state = AppState::with_env_lookup(config, |name| {
+            (name == codex_mixin::context::DATABASE_ENV)
+                .then(|| database.path().join("context.db").display().to_string())
+        })
+        .unwrap();
+        let app = router(state);
+        for key in [None, Some("copied-key"), Some("gateway-key")] {
+            let response = app.clone().oneshot(request(key)).await.unwrap();
+            let expected = if configured_key.is_some() && key == configured_key {
+                StatusCode::OK
+            } else {
+                StatusCode::UNAUTHORIZED
+            };
+            assert_eq!(
+                response.status(),
+                expected,
+                "configured {configured_key:?}, sent {key:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn responses_auth_obeys_build_feature() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
