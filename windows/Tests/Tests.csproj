@@ -5,4 +5,5 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup><Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="../Core/Strings.resx" LogicalName="CodexMixin.Strings.resources" /></ItemGroup>
 </Project>

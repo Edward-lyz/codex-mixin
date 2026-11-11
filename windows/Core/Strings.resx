@@ -1,0 +1,1745 @@
+<?xml version='1.0' encoding='utf-8'?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="&#10;上游实际返回 {0}" xml:space="preserve">
+    <value>
+Upstream actually returned {0}</value>
+  </data>
+  <data name="&#10;状态刷新失败：{0}" xml:space="preserve">
+    <value>
+Status refresh failed: {0}</value>
+  </data>
+  <data name="&#10;额度展示缓存保存失败：{0}" xml:space="preserve">
+    <value>
+Failed to save quota display cache: {0}</value>
+  </data>
+  <data name=" · 上次刷新 {0:MM/dd HH:mm}" xml:space="preserve">
+    <value>  · last refreshed {0:MM/dd HH:mm}</value>
+  </data>
+  <data name=" · 正在刷新" xml:space="preserve">
+    <value> · refreshing</value>
+  </data>
+  <data name="30 天" xml:space="preserve">
+    <value>30 days</value>
+  </data>
+  <data name="429 · 5xx · 连接失败 · 超时，且尚未输出" xml:space="preserve">
+    <value>Any error, or no output within 30 seconds</value>
+  </data>
+  <data name="5 小时" xml:space="preserve">
+    <value>5 hours</value>
+  </data>
+  <data name="7 天" xml:space="preserve">
+    <value>7 days</value>
+  </data>
+  <data name="API Key（可选；留空使用原生客户端登录状态）" xml:space="preserve">
+    <value>API key (optional; leave blank to use the native client's sign-in)</value>
+  </data>
+  <data name="API Key（可选；留空使用本地 OAuth）" xml:space="preserve">
+    <value>API key (optional; leave blank to use local OAuth)</value>
+  </data>
+  <data name="API 路径（custom，可选）" xml:space="preserve">
+    <value>API path (custom, optional)</value>
+  </data>
+  <data name="AWS Access Key ID（留空保留）" xml:space="preserve">
+    <value>AWS access key ID (leave blank to keep)</value>
+  </data>
+  <data name="AWS Secret Access Key（留空保留）" xml:space="preserve">
+    <value>AWS secret access key (leave blank to keep)</value>
+  </data>
+  <data name="AWS Session Token（可选）" xml:space="preserve">
+    <value>AWS session token (optional)</value>
+  </data>
+  <data name="Agent 接入" xml:space="preserve">
+    <value>Agent connections</value>
+  </data>
+  <data name="Agent 接入失败" xml:space="preserve">
+    <value>Failed to connect Agent</value>
+  </data>
+  <data name="Agent 接入管理" xml:space="preserve">
+    <value>Agent connections</value>
+  </data>
+  <data name="Base URL（预设可留空）" xml:space="preserve">
+    <value>Base URL (optional for presets)</value>
+  </data>
+  <data name="Base64 不是加密。备份包含供应商密钥，请保存到安全位置。" xml:space="preserve">
+    <value>Base64 is not encryption. The backup contains provider keys, so keep it somewhere safe.</value>
+  </data>
+  <data name="CLI contract 列表包含无效 string。" xml:space="preserve">
+    <value>CLI contract list contains an invalid string.</value>
+  </data>
+  <data name="CLI contract 列表包含无效对象。" xml:space="preserve">
+    <value>CLI contract list contains an invalid object.</value>
+  </data>
+  <data name="CLI contract 字段 hit_percent 必须在 0 到 100 之间。" xml:space="preserve">
+    <value>CLI contract field hit_percent must be between 0 and 100.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是 bool。" xml:space="preserve">
+    <value>CLI contract field {0} must be a bool.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是 string 或 null。" xml:space="preserve">
+    <value>CLI contract field {0} must be a string or null.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是 string。" xml:space="preserve">
+    <value>CLI contract field {0} must be a string.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是数字。" xml:space="preserve">
+    <value>CLI contract field {0} must be a number.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是整数。" xml:space="preserve">
+    <value>CLI contract field {0} must be an integer.</value>
+  </data>
+  <data name="CLI contract 字段 {0} 必须是整数或 null。" xml:space="preserve">
+    <value>CLI contract field {0} must be an integer or null.</value>
+  </data>
+  <data name="CLI contract 必须返回 array。" xml:space="preserve">
+    <value>CLI contract must return an array.</value>
+  </data>
+  <data name="CLI contract 必须返回 string array。" xml:space="preserve">
+    <value>CLI contract must return a string array.</value>
+  </data>
+  <data name="CLI contract 的压缩块引用不是有效 JSON。" xml:space="preserve">
+    <value>The compressed block reference in the CLI contract isn't valid JSON.</value>
+  </data>
+  <data name="CLI contract 缺少字段：{0}" xml:space="preserve">
+    <value>CLI contract is missing field: {0}</value>
+  </data>
+  <data name="CLI provider catalog 包含不支持的认证方式。" xml:space="preserve">
+    <value>The CLI provider catalog contains an unsupported auth mode.</value>
+  </data>
+  <data name="CLI provider catalog 的默认选项无效，请更新完整应用包。" xml:space="preserve">
+    <value>Invalid default option in the CLI provider catalog. Update the full app package.</value>
+  </data>
+  <data name="CLI 将恢复或移除此 Agent 的托管配置。" xml:space="preserve">
+    <value>The CLI will restore or remove this Agent's managed config.</value>
+  </data>
+  <data name="CLI 尚未连接，请先刷新。" xml:space="preserve">
+    <value>CLI not connected yet. Refresh first.</value>
+  </data>
+  <data name="CLI 尚未连接，请刷新。" xml:space="preserve">
+    <value>CLI not connected yet. Please refresh.</value>
+  </data>
+  <data name="CLI 未返回轻量归档，请更新后重试。" xml:space="preserve">
+    <value>The CLI didn't return a lightweight archive. Update and try again.</value>
+  </data>
+  <data name="CLI 超时或输出管道未关闭；配置可能已保存，请刷新确认状态。" xml:space="preserve">
+    <value>The CLI timed out or its output pipe didn't close; the config may have been saved. Refresh to confirm the status.</value>
+  </data>
+  <data name="CLI 输出超过 8 MiB 限制。" xml:space="preserve">
+    <value>CLI output exceeded the 8 MiB limit.</value>
+  </data>
+  <data name="CLI 返回了其他会话的归档。" xml:space="preserve">
+    <value>The CLI returned the archive of another session.</value>
+  </data>
+  <data name="CLI 返回了无效 Agent ID。" xml:space="preserve">
+    <value>The CLI returned an invalid Agent ID.</value>
+  </data>
+  <data name="CLI 返回了无效的 {0} 数值。" xml:space="preserve">
+    <value>The CLI returned an invalid {0} value.</value>
+  </data>
+  <data name="CLI 返回的 {0} 路径必须是绝对路径。" xml:space="preserve">
+    <value>The {0} path returned by the CLI must be absolute.</value>
+  </data>
+  <data name="CLI 退出码 {0}：{1}" xml:space="preserve">
+    <value>CLI exit code {0}: {1}</value>
+  </data>
+  <data name="Codex Mixin · 主面板" xml:space="preserve">
+    <value>Codex Mixin · Main panel</value>
+  </data>
+  <data name="Codex Mixin 有可用更新" xml:space="preserve">
+    <value>Codex Mixin update available</value>
+  </data>
+  <data name="Codex 中选择的模型：{0}" xml:space="preserve">
+    <value>Model selected in Codex: {0}</value>
+  </data>
+  <data name="Codex 会话命名模型覆盖" xml:space="preserve">
+    <value>Codex session naming model override</value>
+  </data>
+  <data name="Codex 审查模型覆盖" xml:space="preserve">
+    <value>Codex review model override</value>
+  </data>
+  <data name="DUCX 使用独立副本。保存时自动下载；需要登录时会打开终端显示二维码，请在终端完成扫码。关闭终端或取消后可重新登录。" xml:space="preserve">
+    <value>DUCX uses its own copy. It downloads automatically when you save; if sign-in is needed, a terminal opens with a QR code. Scan it in the terminal. You can sign in again after closing the terminal or canceling.</value>
+  </data>
+  <data name="DUCX 已就绪" xml:space="preserve">
+    <value>DUCX is ready</value>
+  </data>
+  <data name="DUCX 返回的路径必须是绝对路径。" xml:space="preserve">
+    <value>The path returned by DUCX must be absolute.</value>
+  </data>
+  <data name="Explorer 重启后无法恢复托盘，请重新启动应用。" xml:space="preserve">
+    <value>Can't restore the tray after Explorer restarted. Please restart the app.</value>
+  </data>
+  <data name="Final · 作答" xml:space="preserve">
+    <value>Final · answer</value>
+  </data>
+  <data name="Final 模型" xml:space="preserve">
+    <value>Final model</value>
+  </data>
+  <data name="GUI {0} · 完整应用包包含 GUI、CLI 和运行时" xml:space="preserve">
+    <value>GUI {0} · The full app package includes the GUI, CLI, and runtime</value>
+  </data>
+  <data name="GUI 与 CLI 版本不一致，升级会降级其中一个组件。请从发布页选择完整应用包。" xml:space="preserve">
+    <value>The GUI and CLI versions differ, so upgrading would downgrade one of them. Choose the full app package from the releases page.</value>
+  </data>
+  <data name="Judge · 评审" xml:space="preserve">
+    <value>Judge · review</value>
+  </data>
+  <data name="Judge 模型" xml:space="preserve">
+    <value>Judge model</value>
+  </data>
+  <data name="OAuth 授权超时（秒）" xml:space="preserve">
+    <value>OAuth authorization timeout (seconds)</value>
+  </data>
+  <data name="OneAPI 代码上报" xml:space="preserve">
+    <value>OneAPI code reports</value>
+  </data>
+  <data name="OneAPI 认证桥接" xml:space="preserve">
+    <value>OneAPI auth bridge</value>
+  </data>
+  <data name="OneAPI 额度用户名" xml:space="preserve">
+    <value>OneAPI quota username</value>
+  </data>
+  <data name="OpenCode Go Cookie（留空保留）" xml:space="preserve">
+    <value>OpenCode Go cookie (leave blank to keep)</value>
+  </data>
+  <data name="Panel · 并行（{0}）" xml:space="preserve">
+    <value>Panel · parallel ({0})</value>
+  </data>
+  <data name="Panel 模型" xml:space="preserve">
+    <value>Panel models</value>
+  </data>
+  <data name="Windows 更新签名公钥无效。" xml:space="preserve">
+    <value>Invalid Windows update signing key.</value>
+  </data>
+  <data name="{0:HH:mm:ss} · 配置已同步" xml:space="preserve">
+    <value>{0:HH:mm:ss} · config synced</value>
+  </data>
+  <data name="{0:M/d}（UTC 日）" xml:space="preserve">
+    <value>{0:M/d} (UTC day)</value>
+  </data>
+  <data name="{0:MM-dd HH:mm} 重置" xml:space="preserve">
+    <value>Resets {0:MM-dd HH:mm}</value>
+  </data>
+  <data name="{0:yyyy年M月d日 HH:mm} · 超时 {1} 秒 · " xml:space="preserve">
+    <value>{0:yyyy-MM-dd HH:mm} · timeout {1} s · </value>
+  </data>
+  <data name="{0}&#10;revision {1}&#10;消息 {2} · 视图 {3} · 命中 {4}&#10;更新 {5}" xml:space="preserve">
+    <value>{0}
+revision {1}
+Messages {2} · View {3} · Hits {4}
+Updated {5}</value>
+  </data>
+  <data name="{0}&#10;只看这个会话，再次点击显示全部" xml:space="preserve">
+    <value>{0}
+Only this session; click again to show all</value>
+  </data>
+  <data name="{0}&#10;点击更换模型" xml:space="preserve">
+    <value>{0}
+Click to change model</value>
+  </data>
+  <data name="{0} / {1} 次失败" xml:space="preserve">
+    <value>{0} / {1} failed</value>
+  </data>
+  <data name="{0} · {1} 个模型" xml:space="preserve">
+    <value>{0} · {1} models</value>
+  </data>
+  <data name="{0} · {1}/{2} 个模型" xml:space="preserve">
+    <value>{0} · {1}/{2} models</value>
+  </data>
+  <data name="{0} · 合计 {1}" xml:space="preserve">
+    <value>{0} · total {1}</value>
+  </data>
+  <data name="{0} · 已加入 {1} / 可选 {2}{3} · 配置 {4:HH:mm:ss}" xml:space="preserve">
+    <value>{0} · added {1} / available {2}{3} · config {4:HH:mm:ss}</value>
+  </data>
+  <data name="{0} · 当前 {1} · 最新 {2}" xml:space="preserve">
+    <value>{0} · current {1} · latest {2}</value>
+  </data>
+  <data name="{0} 上下文" xml:space="preserve">
+    <value>{0} context</value>
+  </data>
+  <data name="{0} 个 Panel → Judge {1} → Final {2}" xml:space="preserve">
+    <value>{0} Panel → Judge {1} → Final {2}</value>
+  </data>
+  <data name="{0} 加入 Codex" xml:space="preserve">
+    <value>Add {0} to Codex</value>
+  </data>
+  <data name="{0} 失败" xml:space="preserve">
+    <value>{0} failed</value>
+  </data>
+  <data name="{0} 已配置故障转移。" xml:space="preserve">
+    <value>{0} already has failover configured.</value>
+  </data>
+  <data name="{0} 接入" xml:space="preserve">
+    <value>Connect {0}</value>
+  </data>
+  <data name="{0} 条 · {1} tokens · 缓存命中 {2}" xml:space="preserve">
+    <value>{0} items · {1} tokens · cache hits {2}</value>
+  </data>
+  <data name="{0} 条内容 → 1 条摘要" xml:space="preserve">
+    <value>{0} items → 1 summary</value>
+  </data>
+  <data name="{0} 条归档消息" xml:space="preserve">
+    <value>{0} archived messages</value>
+  </data>
+  <data name="{0} 查询超时，请重试。" xml:space="preserve">
+    <value>{0} query timed out. Try again.</value>
+  </data>
+  <data name="{0} 返回了无效 JSON：{1}" xml:space="preserve">
+    <value>{0} returned invalid JSON: {1}</value>
+  </data>
+  <data name="{0}会丢弃尚未保存的更改。" xml:space="preserve">
+    <value>{0} will discard unsaved changes.</value>
+  </data>
+  <data name="{0}失败" xml:space="preserve">
+    <value>{0} failed</value>
+  </data>
+  <data name="{0}完成 · {1:HH:mm:ss}" xml:space="preserve">
+    <value>{0} done · {1:HH:mm:ss}</value>
+  </data>
+  <data name="{0}完成，状态刷新失败" xml:space="preserve">
+    <value>{0} done, but status refresh failed</value>
+  </data>
+  <data name="{0}已用比例" xml:space="preserve">
+    <value>{0} used ratio</value>
+  </data>
+  <data name="{0}正在测速 {1}/{2}" xml:space="preserve">
+    <value>{0}Testing speed {1}/{2}</value>
+  </data>
+  <data name="{0}测速任务失败：{1}" xml:space="preserve">
+    <value>{0}Speed test failed: {1}</value>
+  </data>
+  <data name="{0}测速完成：成功 {1}，超时 {2}，失败 {3}" xml:space="preserve">
+    <value>{0}Speed test done: {1} succeeded, {2} timed out, {3} failed</value>
+  </data>
+  <data name="{0}，{1} 条" xml:space="preserve">
+    <value>{0}, {1} items</value>
+  </data>
+  <data name="上下文" xml:space="preserve">
+    <value>Context</value>
+  </data>
+  <data name="上下文 Token 数" xml:space="preserve">
+    <value>Context tokens</value>
+  </data>
+  <data name="上下文 Token 数必须是正整数。" xml:space="preserve">
+    <value>Context tokens must be a positive integer.</value>
+  </data>
+  <data name="上下文增长" xml:space="preserve">
+    <value>Context growth</value>
+  </data>
+  <data name="上下文引擎" xml:space="preserve">
+    <value>Context engine</value>
+  </data>
+  <data name="上下文统计不可用" xml:space="preserve">
+    <value>Context stats unavailable</value>
+  </data>
+  <data name="上下文设置…" xml:space="preserve">
+    <value>Context settings…</value>
+  </data>
+  <data name="上下文设置不可用" xml:space="preserve">
+    <value>Context settings unavailable</value>
+  </data>
+  <data name="上下文详情" xml:space="preserve">
+    <value>Context details</value>
+  </data>
+  <data name="上次更新 {0:HH:mm:ss}{1}" xml:space="preserve">
+    <value>Last updated {0:HH:mm:ss}{1}</value>
+  </data>
+  <data name="上次更新失败：{0}" xml:space="preserve">
+    <value>Last update failed: {0}</value>
+  </data>
+  <data name="上次额度缓存不可用：{0}" xml:space="preserve">
+    <value>Last quota cache unavailable: {0}</value>
+  </data>
+  <data name="上游请求失败" xml:space="preserve">
+    <value>Upstream request failed</value>
+  </data>
+  <data name="上移" xml:space="preserve">
+    <value>Move up</value>
+  </data>
+  <data name="上移备用模型 {0}" xml:space="preserve">
+    <value>Move fallback model {0} up</value>
+  </data>
+  <data name="下移" xml:space="preserve">
+    <value>Move down</value>
+  </data>
+  <data name="下移备用模型 {0}" xml:space="preserve">
+    <value>Move fallback model {0} down</value>
+  </data>
+  <data name="不支持" xml:space="preserve">
+    <value>Not supported</value>
+  </data>
+  <data name="不支持此 CLI protocol version，请更新完整应用包。" xml:space="preserve">
+    <value>This CLI protocol version isn't supported. Update the full app package.</value>
+  </data>
+  <data name="与上一个等长时段相比" xml:space="preserve">
+    <value>Compared with the previous period of the same length</value>
+  </data>
+  <data name="仅看模型替换" xml:space="preserve">
+    <value>Only model substitutions</value>
+  </data>
+  <data name="仅看模型替换（{0}）" xml:space="preserve">
+    <value>Only model substitutions ({0})</value>
+  </data>
+  <data name="仅自定义模型" xml:space="preserve">
+    <value>Custom models only</value>
+  </data>
+  <data name="今天" xml:space="preserve">
+    <value>Today</value>
+  </data>
+  <data name="会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。" xml:space="preserve">
+    <value>Stops the local gateway and closes the UI. Agents connected through Mixin will be unavailable until you start it again.</value>
+  </data>
+  <data name="会话" xml:space="preserve">
+    <value>Session</value>
+  </data>
+  <data name="会话 {0}" xml:space="preserve">
+    <value>Session {0}</value>
+  </data>
+  <data name="会话命名模型" xml:space="preserve">
+    <value>Session naming model</value>
+  </data>
+  <data name="余额" xml:space="preserve">
+    <value>Balance</value>
+  </data>
+  <data name="余额 {0:0.##} {1}" xml:space="preserve">
+    <value>Balance {0:0.##} {1}</value>
+  </data>
+  <data name="供应商 ID" xml:space="preserve">
+    <value>Provider ID</value>
+  </data>
+  <data name="供应商 {0} 的 {1} 必须是 array。" xml:space="preserve">
+    <value>{1} of provider {0} must be an array.</value>
+  </data>
+  <data name="供应商与模型" xml:space="preserve">
+    <value>Providers and models</value>
+  </data>
+  <data name="供应商类型" xml:space="preserve">
+    <value>Provider type</value>
+  </data>
+  <data name="供应商网站（可选）" xml:space="preserve">
+    <value>Provider website (optional)</value>
+  </data>
+  <data name="保存" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="保存供应商" xml:space="preserve">
+    <value>Save provider</value>
+  </data>
+  <data name="保存并应用设置" xml:space="preserve">
+    <value>Save and apply settings</value>
+  </data>
+  <data name="保存并重启网关" xml:space="preserve">
+    <value>Save and restart gateway</value>
+  </data>
+  <data name="保存更改后自动重启运行中的网关并生效。" xml:space="preserve">
+    <value>After saving, the running gateway restarts automatically to apply changes.</value>
+  </data>
+  <data name="保存模型路由" xml:space="preserve">
+    <value>Save model route</value>
+  </data>
+  <data name="保存设置" xml:space="preserve">
+    <value>Save settings</value>
+  </data>
+  <data name="倍率" xml:space="preserve">
+    <value>Rate</value>
+  </data>
+  <data name="停止网关" xml:space="preserve">
+    <value>Stop gateway</value>
+  </data>
+  <data name="健康检测和修复…" xml:space="preserve">
+    <value>Health check and repair…</value>
+  </data>
+  <data name="允许 Panel 使用进程内只读工具" xml:space="preserve">
+    <value>Allow Panels to use in-process read-only tools</value>
+  </data>
+  <data name="先在「模型与服务」中添加供应商并选择模型，再配置模型路由。" xml:space="preserve">
+    <value>Add a provider and choose models in Models &amp; Services before configuring model routes.</value>
+  </data>
+  <data name="先添加一个供应商，再选择模型并接入 Agent。" xml:space="preserve">
+    <value>Add a provider first, then choose models and connect an Agent.</value>
+  </data>
+  <data name="全部" xml:space="preserve">
+    <value>All</value>
+  </data>
+  <data name="全部模型" xml:space="preserve">
+    <value>All models</value>
+  </data>
+  <data name="全部（{0}）" xml:space="preserve">
+    <value>All ({0})</value>
+  </data>
+  <data name="关于" xml:space="preserve">
+    <value>About</value>
+  </data>
+  <data name="关于与日志…" xml:space="preserve">
+    <value>About and logs…</value>
+  </data>
+  <data name="关于与诊断" xml:space="preserve">
+    <value>About and diagnostics</value>
+  </data>
+  <data name="关闭 ECH" xml:space="preserve">
+    <value>Disable ECH</value>
+  </data>
+  <data name="关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。" xml:space="preserve">
+    <value>Closes the UI and tray, keeps only the background gateway, and turns on gateway autostart. Open Codex Mixin again to bring the UI back.</value>
+  </data>
+  <data name="关闭窗口" xml:space="preserve">
+    <value>Close window</value>
+  </data>
+  <data name="关闭网关自启" xml:space="preserve">
+    <value>Disable gateway autostart</value>
+  </data>
+  <data name="其中失败 {0}" xml:space="preserve">
+    <value>{0} failed</value>
+  </data>
+  <data name="其他" xml:space="preserve">
+    <value>Other</value>
+  </data>
+  <data name="其他 {0} 条" xml:space="preserve">
+    <value>{0} others</value>
+  </data>
+  <data name="其余时间" xml:space="preserve">
+    <value>Rest of the day</value>
+  </data>
+  <data name="再次点击显示全部回复" xml:space="preserve">
+    <value>Click again to show all replies</value>
+  </data>
+  <data name="准备 DUCX，请在弹出的终端扫码" xml:space="preserve">
+    <value>Preparing DUCX. Scan the QR code in the terminal that opens</value>
+  </data>
+  <data name="切换服务商" xml:space="preserve">
+    <value>Switch provider</value>
+  </data>
+  <data name="切换编辑页" xml:space="preserve">
+    <value>Switch editor tab</value>
+  </data>
+  <data name="切换路由" xml:space="preserve">
+    <value>Switch route</value>
+  </data>
+  <data name="切换页面" xml:space="preserve">
+    <value>Switch page</value>
+  </data>
+  <data name="删除" xml:space="preserve">
+    <value>Delete</value>
+  </data>
+  <data name="删除服务商" xml:space="preserve">
+    <value>Delete provider</value>
+  </data>
+  <data name="删除服务商？" xml:space="preserve">
+    <value>Delete provider?</value>
+  </data>
+  <data name="删除模型路由" xml:space="preserve">
+    <value>Delete model route</value>
+  </data>
+  <data name="删除模型路由失败" xml:space="preserve">
+    <value>Failed to delete model route</value>
+  </data>
+  <data name="删除模型路由？" xml:space="preserve">
+    <value>Delete model route?</value>
+  </data>
+  <data name="删除路由…" xml:space="preserve">
+    <value>Delete route…</value>
+  </data>
+  <data name="刷新" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="刷新 (Ctrl+R)" xml:space="preserve">
+    <value>Refresh (Ctrl+R)</value>
+  </data>
+  <data name="刷新模型" xml:space="preserve">
+    <value>Refresh models</value>
+  </data>
+  <data name="刷新模型列表" xml:space="preserve">
+    <value>Refresh model list</value>
+  </data>
+  <data name="刷新状态" xml:space="preserve">
+    <value>Refresh status</value>
+  </data>
+  <data name="刷新页面" xml:space="preserve">
+    <value>Refresh page</value>
+  </data>
+  <data name="刷新额度" xml:space="preserve">
+    <value>Refresh quota</value>
+  </data>
+  <data name="剩余 {0:0.##} {1}" xml:space="preserve">
+    <value>Remaining {0:0.##} {1}</value>
+  </data>
+  <data name="加入" xml:space="preserve">
+    <value>Add</value>
+  </data>
+  <data name="助手消息" xml:space="preserve">
+    <value>Assistant messages</value>
+  </data>
+  <data name="升级" xml:space="preserve">
+    <value>Upgrade</value>
+  </data>
+  <data name="升级 Agent" xml:space="preserve">
+    <value>Upgrade Agent</value>
+  </data>
+  <data name="协议（custom）" xml:space="preserve">
+    <value>Protocol (custom)</value>
+  </data>
+  <data name="单模型超时必须大于 0。" xml:space="preserve">
+    <value>Per-model timeout must be greater than 0.</value>
+  </data>
+  <data name="单模型超时（秒）" xml:space="preserve">
+    <value>Per-model timeout (seconds)</value>
+  </data>
+  <data name="厂商原生模型管理" xml:space="preserve">
+    <value>Vendor-native model management</value>
+  </data>
+  <data name="历史压缩（{0}）" xml:space="preserve">
+    <value>History compression ({0})</value>
+  </data>
+  <data name="压缩" xml:space="preserve">
+    <value>Compression</value>
+  </data>
+  <data name="压缩概览" xml:space="preserve">
+    <value>Compression overview</value>
+  </data>
+  <data name="压缩次数" xml:space="preserve">
+    <value>Compressions</value>
+  </data>
+  <data name="原模型" xml:space="preserve">
+    <value>Source model</value>
+  </data>
+  <data name="原模型报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，报错直接透传。" xml:space="preserve">
+    <value>If the source model returns any error, or produces no output within 30 seconds, the fallback models are tried in order. The last model waits without a timeout and its errors are passed through.</value>
+  </data>
+  <data name="原生凭据存储" xml:space="preserve">
+    <value>Native credential storage</value>
+  </data>
+  <data name="原生应用 API" xml:space="preserve">
+    <value>Native app API</value>
+  </data>
+  <data name="原生模型已托管" xml:space="preserve">
+    <value>Native models managed</value>
+  </data>
+  <data name="原生运行时" xml:space="preserve">
+    <value>Native runtime</value>
+  </data>
+  <data name="发现 {0}。" xml:space="preserve">
+    <value>Found {0}.</value>
+  </data>
+  <data name="发现 {0}，单击查看版本并下载完整应用包。" xml:space="preserve">
+    <value>Found {0}. Click to see the version and download the full app package.</value>
+  </data>
+  <data name="取消" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="取消操作" xml:space="preserve">
+    <value>Cancel operation</value>
+  </data>
+  <data name="可选；留空则直接接管原模型" xml:space="preserve">
+    <value>Optional; leave empty to take over the source model directly</value>
+  </data>
+  <data name="名称" xml:space="preserve">
+    <value>Name</value>
+  </data>
+  <data name="名称不能为空，也不能包含 /。" xml:space="preserve">
+    <value>The name can't be empty or contain /.</value>
+  </data>
+  <data name="名称不能包含 /。" xml:space="preserve">
+    <value>Name cannot contain /.</value>
+  </data>
+  <data name="启动安装失败：{0}" xml:space="preserve">
+    <value>Failed to start installer: {0}</value>
+  </data>
+  <data name="启动模型测速" xml:space="preserve">
+    <value>Start model speed test</value>
+  </data>
+  <data name="启动网关" xml:space="preserve">
+    <value>Start gateway</value>
+  </data>
+  <data name="启动设置失败" xml:space="preserve">
+    <value>Failed to change startup setting</value>
+  </data>
+  <data name="启动项已被 Windows 禁用，请在系统「启动应用」中启用。" xml:space="preserve">
+    <value>Windows has disabled this startup item. Enable it in the system Startup apps settings.</value>
+  </data>
+  <data name="启动项已被 Windows 禁用，请在系统「启动应用」中调整。" xml:space="preserve">
+    <value>Windows has disabled this startup item. Change it in the system Startup apps settings.</value>
+  </data>
+  <data name="启用" xml:space="preserve">
+    <value>Enable</value>
+  </data>
+  <data name="启用 ECH" xml:space="preserve">
+    <value>Enable ECH</value>
+  </data>
+  <data name="启用 {0}" xml:space="preserve">
+    <value>Enable {0}</value>
+  </data>
+  <data name="启用上下文引擎" xml:space="preserve">
+    <value>Enable context engine</value>
+  </data>
+  <data name="启用网关开机启动" xml:space="preserve">
+    <value>Start gateway at sign-in</value>
+  </data>
+  <data name="启用网关自启" xml:space="preserve">
+    <value>Enable gateway autostart</value>
+  </data>
+  <data name="命中 {0} tokens" xml:space="preserve">
+    <value>{0} tokens hit</value>
+  </data>
+  <data name="命中缓存" xml:space="preserve">
+    <value>Cache hits</value>
+  </data>
+  <data name="回复明细" xml:space="preserve">
+    <value>Reply details</value>
+  </data>
+  <data name="图像生成路径（可选）" xml:space="preserve">
+    <value>Image generation path (optional)</value>
+  </data>
+  <data name="图片输入" xml:space="preserve">
+    <value>Image input</value>
+  </data>
+  <data name="图表分组" xml:space="preserve">
+    <value>Chart grouping</value>
+  </data>
+  <data name="图表指标" xml:space="preserve">
+    <value>Chart metric</value>
+  </data>
+  <data name="圆环" xml:space="preserve">
+    <value>Ring</value>
+  </data>
+  <data name="在回答中显示 Panel / Judge 中间结果" xml:space="preserve">
+    <value>Show Panel / Judge intermediate results in the answer</value>
+  </data>
+  <data name="备用模型 {0}" xml:space="preserve">
+    <value>Fallback model {0}</value>
+  </data>
+  <data name="备用模型不能重复，也不能与原模型相同。" xml:space="preserve">
+    <value>Fallback models cannot repeat or match the source model.</value>
+  </data>
+  <data name="备用模型（按顺序）" xml:space="preserve">
+    <value>Fallback models (in order)</value>
+  </data>
+  <data name="复制地址" xml:space="preserve">
+    <value>Copy address</value>
+  </data>
+  <data name="外观" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="外观与启动" xml:space="preserve">
+    <value>Appearance and startup</value>
+  </data>
+  <data name="失败" xml:space="preserve">
+    <value>Failed</value>
+  </data>
+  <data name="失败（{0}）" xml:space="preserve">
+    <value>Failed ({0})</value>
+  </data>
+  <data name="安装 / 登录 DUCX…" xml:space="preserve">
+    <value>Install / sign in to DUCX…</value>
+  </data>
+  <data name="安装前状态检查超时，请重试。" xml:space="preserve">
+    <value>Pre-install status check timed out. Try again.</value>
+  </data>
+  <data name="官方" xml:space="preserve">
+    <value>Official</value>
+  </data>
+  <data name="官方发布页" xml:space="preserve">
+    <value>Official releases page</value>
+  </data>
+  <data name="官方服务商由 Codex OAuth 管理，连接参数只读。" xml:space="preserve">
+    <value>The official provider is managed by Codex OAuth; connection settings are read-only.</value>
+  </data>
+  <data name="官方账号 + 自定义模型" xml:space="preserve">
+    <value>Official account + custom models</value>
+  </data>
+  <data name="官方连接 · ECH" xml:space="preserve">
+    <value>Official connection · ECH</value>
+  </data>
+  <data name="定时" xml:space="preserve">
+    <value>Scheduled</value>
+  </data>
+  <data name="审查模型" xml:space="preserve">
+    <value>Review model</value>
+  </data>
+  <data name="家族与版本" xml:space="preserve">
+    <value>Family and version</value>
+  </data>
+  <data name="密钥已配置时留空保留；修改后使用底部「应用更改」。" xml:space="preserve">
+    <value>Leave keys blank to keep the configured ones; after editing, use Apply changes at the bottom.</value>
+  </data>
+  <data name="导入" xml:space="preserve">
+    <value>Import</value>
+  </data>
+  <data name="导入会替换现有供应商与密钥，并应用到已接入的客户端。" xml:space="preserve">
+    <value>Importing replaces existing providers and keys and applies them to connected clients.</value>
+  </data>
+  <data name="导入配置" xml:space="preserve">
+    <value>Import config</value>
+  </data>
+  <data name="导出包含凭据的备份？" xml:space="preserve">
+    <value>Export a backup with credentials?</value>
+  </data>
+  <data name="导出配置" xml:space="preserve">
+    <value>Export config</value>
+  </data>
+  <data name="将删除 {0}，保存后网关自动重启。此操作不可撤销。" xml:space="preserve">
+    <value>{0} will be deleted and the gateway restarts after saving. This can't be undone.</value>
+  </data>
+  <data name="将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。" xml:space="preserve">
+    <value>Authorization happens in the browser. Closing the page doesn't send a cancel; use the window's cancel action to stop waiting.</value>
+  </data>
+  <data name="将移除当前服务商及其模型配置。" xml:space="preserve">
+    <value>Removes the current provider and its model settings.</value>
+  </data>
+  <data name="尚无运行中的接口地址" xml:space="preserve">
+    <value>No running endpoint address yet</value>
+  </data>
+  <data name="尚未压缩 · {0} 条内容" xml:space="preserve">
+    <value>Not compressed · {0} items</value>
+  </data>
+  <data name="尚未探测" xml:space="preserve">
+    <value>Not probed yet</value>
+  </data>
+  <data name="尚未检查更新。" xml:space="preserve">
+    <value>Not checked for updates yet.</value>
+  </data>
+  <data name="尚未配置服务商" xml:space="preserve">
+    <value>No provider configured yet</value>
+  </data>
+  <data name="工具结果" xml:space="preserve">
+    <value>Tool results</value>
+  </data>
+  <data name="工具调用" xml:space="preserve">
+    <value>Tool calls</value>
+  </data>
+  <data name="已停止" xml:space="preserve">
+    <value>Stopped</value>
+  </data>
+  <data name="已停用" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="已关闭" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="已加入" xml:space="preserve">
+    <value>Added</value>
+  </data>
+  <data name="已启用" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="已接入" xml:space="preserve">
+    <value>Connected</value>
+  </data>
+  <data name="已接入 {0} 个 Agent · 已检测到 {1} 个 · {2:HH:mm:ss}" xml:space="preserve">
+    <value>{0} Agents connected · {1} detected · {2:HH:mm:ss}</value>
+  </data>
+  <data name="已用 {0:0.##} {1}" xml:space="preserve">
+    <value>Used {0:0.##} {1}</value>
+  </data>
+  <data name="已覆盖上游上下文" xml:space="preserve">
+    <value>Upstream context overridden</value>
+  </data>
+  <data name="已选 {0} / {1}" xml:space="preserve">
+    <value>Selected {0} / {1}</value>
+  </data>
+  <data name="应用会自动下载、验证签名、安装并重新打开；网关原先运行时也会恢复。安装版可能出现系统 UAC 授权提示。请求进行中或草稿未保存时暂缓安装。" xml:space="preserve">
+    <value>The app downloads, verifies the signature, installs, and reopens automatically; a gateway that was running is restored. Installed builds may show a UAC prompt. Installation waits while requests are running or a draft is unsaved.</value>
+  </data>
+  <data name="应用内确认导入" xml:space="preserve">
+    <value>Import confirmed in app</value>
+  </data>
+  <data name="应用到草稿" xml:space="preserve">
+    <value>Apply to draft</value>
+  </data>
+  <data name="应用更改" xml:space="preserve">
+    <value>Apply changes</value>
+  </data>
+  <data name="应用更改失败" xml:space="preserve">
+    <value>Failed to apply changes</value>
+  </data>
+  <data name="应用更新" xml:space="preserve">
+    <value>App updates</value>
+  </data>
+  <data name="应用模型更改" xml:space="preserve">
+    <value>Apply model changes</value>
+  </data>
+  <data name="开始连接模型服务" xml:space="preserve">
+    <value>Connect a model service</value>
+  </data>
+  <data name="归档库：{0}" xml:space="preserve">
+    <value>Archive: {0}</value>
+  </data>
+  <data name="归档文本增长：原始 {0:0.0} KiB，当前视图 {1:0.0} KiB" xml:space="preserve">
+    <value>Archive text growth: original {0:0.0} KiB, current view {1:0.0} KiB</value>
+  </data>
+  <data name="归档读取失败" xml:space="preserve">
+    <value>Failed to read archive</value>
+  </data>
+  <data name="当前 CLI 不支持 {0}，请更新完整应用包。" xml:space="preserve">
+    <value>The current CLI doesn't support {0}. Update the full app package.</value>
+  </data>
+  <data name="当前 {0} · {1} 个时段" xml:space="preserve">
+    <value>Now {0} · {1} time slots</value>
+  </data>
+  <data name="当前安装无需升级到发布版 {0}。" xml:space="preserve">
+    <value>This install doesn't need to update to release {0}.</value>
+  </data>
+  <data name="当前时段" xml:space="preserve">
+    <value>Current slot</value>
+  </data>
+  <data name="当前服务商暂无测速结果" xml:space="preserve">
+    <value>No speed test results for this provider</value>
+  </data>
+  <data name="当前视图 {0}" xml:space="preserve">
+    <value>Current view {0}</value>
+  </data>
+  <data name="当前视图 {0} token · 已节省 {1} token" xml:space="preserve">
+    <value>Current view {0} tokens · {1} tokens saved</value>
+  </data>
+  <data name="彻底退出" xml:space="preserve">
+    <value>Quit completely</value>
+  </data>
+  <data name="彻底退出 Mixin" xml:space="preserve">
+    <value>Quit Mixin completely</value>
+  </data>
+  <data name="彻底退出 Mixin？" xml:space="preserve">
+    <value>Quit Mixin completely?</value>
+  </data>
+  <data name="思考" xml:space="preserve">
+    <value>Thinking</value>
+  </data>
+  <data name="思考内容约 {0} 字" xml:space="preserve">
+    <value>About {0} characters of thinking</value>
+  </data>
+  <data name="恢复默认" xml:space="preserve">
+    <value>Restore default</value>
+  </data>
+  <data name="成功" xml:space="preserve">
+    <value>Succeeded</value>
+  </data>
+  <data name="成功（{0}）" xml:space="preserve">
+    <value>Succeeded ({0})</value>
+  </data>
+  <data name="所有模型都已配置故障转移。" xml:space="preserve">
+    <value>Every model already has failover configured.</value>
+  </data>
+  <data name="手动排序" xml:space="preserve">
+    <value>Manual order</value>
+  </data>
+  <data name="打开控制台…" xml:space="preserve">
+    <value>Open console…</value>
+  </data>
+  <data name="打开界面日志" xml:space="preserve">
+    <value>Open UI logs</value>
+  </data>
+  <data name="打开网关日志" xml:space="preserve">
+    <value>Open gateway logs</value>
+  </data>
+  <data name="打开配置目录" xml:space="preserve">
+    <value>Open config folder</value>
+  </data>
+  <data name="托盘主面板" xml:space="preserve">
+    <value>Tray main panel</value>
+  </data>
+  <data name="扫码登录已完成，可以保存服务商配置。" xml:space="preserve">
+    <value>QR sign-in finished. You can save the provider settings now.</value>
+  </data>
+  <data name="找不到 codex-mixin.exe。请使用完整发布包，或先构建 Rust CLI。" xml:space="preserve">
+    <value>Can't find codex-mixin.exe. Use the full release package or build the Rust CLI first.</value>
+  </data>
+  <data name="拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。" xml:space="preserve">
+    <value>Drag added models or use the row menu to reorder. Changes take effect after you apply them.</value>
+  </data>
+  <data name="拖动排序；右键菜单可上移、下移。" xml:space="preserve">
+    <value>Drag to reorder; right-click to move up or down.</value>
+  </data>
+  <data name="按 Provider 拆分" xml:space="preserve">
+    <value>Split by provider</value>
+  </data>
+  <data name="按会话分组" xml:space="preserve">
+    <value>Group by session</value>
+  </data>
+  <data name="按会话统计" xml:space="preserve">
+    <value>Per-session stats</value>
+  </data>
+  <data name="按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。" xml:space="preserve">
+    <value>Pick a model by local time. The start time is included and the end time is excluded; an end before the start crosses midnight. Time slots cannot overlap.</value>
+  </data>
+  <data name="按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。" xml:space="preserve">
+    <value>Cumulative JSON UTF-8 size in message order. The current view shows how existing compression is distributed, not historical model token usage, and excludes summary wrapper text.</value>
+  </data>
+  <data name="探测模型能力" xml:space="preserve">
+    <value>Probe model capabilities</value>
+  </data>
+  <data name="接入" xml:space="preserve">
+    <value>Connect</value>
+  </data>
+  <data name="接入 Agent" xml:space="preserve">
+    <value>Connect Agent</value>
+  </data>
+  <data name="接入 Codex" xml:space="preserve">
+    <value>Connect Codex</value>
+  </data>
+  <data name="接入模式" xml:space="preserve">
+    <value>Connection mode</value>
+  </data>
+  <data name="接口地址已复制" xml:space="preserve">
+    <value>Endpoint address copied</value>
+  </data>
+  <data name="推理" xml:space="preserve">
+    <value>Reasoning</value>
+  </data>
+  <data name="推荐路由" xml:space="preserve">
+    <value>Suggested routes</value>
+  </data>
+  <data name="搜索当前服务商的模型" xml:space="preserve">
+    <value>Search this provider's models</value>
+  </data>
+  <data name="搜索模型" xml:space="preserve">
+    <value>Search models</value>
+  </data>
+  <data name="操作仍在进行" xml:space="preserve">
+    <value>An operation is still running</value>
+  </data>
+  <data name="操作完成。" xml:space="preserve">
+    <value>Done.</value>
+  </data>
+  <data name="操作已取消；已经保存的配置不会自动回滚，请刷新确认状态。" xml:space="preserve">
+    <value>Operation canceled; saved config isn't rolled back automatically. Refresh to confirm the status.</value>
+  </data>
+  <data name="操作已执行，请刷新确认最新状态。" xml:space="preserve">
+    <value>The operation ran. Refresh to confirm the latest status.</value>
+  </data>
+  <data name="支持" xml:space="preserve">
+    <value>Supported</value>
+  </data>
+  <data name="放弃更改" xml:space="preserve">
+    <value>Discard changes</value>
+  </data>
+  <data name="放弃未应用的更改？" xml:space="preserve">
+    <value>Discard unapplied changes?</value>
+  </data>
+  <data name="故障转移" xml:space="preserve">
+    <value>Failover</value>
+  </data>
+  <data name="故障转移至少需要两个可用模型，请先在「模型与服务」中再添加一个模型。" xml:space="preserve">
+    <value>Failover needs at least two available models. Add another model in Models and services first.</value>
+  </data>
+  <data name="断开" xml:space="preserve">
+    <value>Disconnect</value>
+  </data>
+  <data name="断开 Agent" xml:space="preserve">
+    <value>Disconnect Agent</value>
+  </data>
+  <data name="断开 Agent？" xml:space="preserve">
+    <value>Disconnect Agent?</value>
+  </data>
+  <data name="新 API Key（留空保留）" xml:space="preserve">
+    <value>New API key (leave blank to keep)</value>
+  </data>
+  <data name="新增服务商" xml:space="preserve">
+    <value>Add provider</value>
+  </data>
+  <data name="新增服务商失败" xml:space="preserve">
+    <value>Failed to add provider</value>
+  </data>
+  <data name="新建" xml:space="preserve">
+    <value>New</value>
+  </data>
+  <data name="新建{0}" xml:space="preserve">
+    <value>New {0}</value>
+  </data>
+  <data name="新建模型路由" xml:space="preserve">
+    <value>New model route</value>
+  </data>
+  <data name="新建路由" xml:space="preserve">
+    <value>New route</value>
+  </data>
+  <data name="新建路由失败" xml:space="preserve">
+    <value>Failed to create route</value>
+  </data>
+  <data name="无法创建系统托盘图标。" xml:space="preserve">
+    <value>Can't create the system tray icon.</value>
+  </data>
+  <data name="无法刷新测速结果：{0}" xml:space="preserve">
+    <value>Can't refresh speed test results: {0}</value>
+  </data>
+  <data name="无法加载托盘图标，请生成 Windows assets。" xml:space="preserve">
+    <value>Can't load the tray icon. Generate the Windows assets.</value>
+  </data>
+  <data name="无法启动 Rust CLI。" xml:space="preserve">
+    <value>Can't start the Rust CLI.</value>
+  </data>
+  <data name="无法启动整包更新安装进程。" xml:space="preserve">
+    <value>Can't start the full package update installer.</value>
+  </data>
+  <data name="无法启用系统托盘交互协议。" xml:space="preserve">
+    <value>Can't enable the system tray interaction protocol.</value>
+  </data>
+  <data name="无法安装原生窗口事件。" xml:space="preserve">
+    <value>Can't install native window events.</value>
+  </data>
+  <data name="无法定位应用程序。" xml:space="preserve">
+    <value>Can't locate the application.</value>
+  </data>
+  <data name="无法打开发布页。" xml:space="preserve">
+    <value>Can't open the releases page.</value>
+  </data>
+  <data name="无法读取 GUI 版本。" xml:space="preserve">
+    <value>Can't read the GUI version.</value>
+  </data>
+  <data name="无法读取当前状态，请刷新重试。" xml:space="preserve">
+    <value>Can't read the current status. Refresh and try again.</value>
+  </data>
+  <data name="无法调度 Windows 界面初始化。" xml:space="preserve">
+    <value>Can't schedule Windows UI initialization.</value>
+  </data>
+  <data name="时段 {0} 开始" xml:space="preserve">
+    <value>Slot {0} start</value>
+  </data>
+  <data name="时段 {0} 结束" xml:space="preserve">
+    <value>Slot {0} end</value>
+  </data>
+  <data name="时段不能重叠。" xml:space="preserve">
+    <value>Time slots cannot overlap.</value>
+  </data>
+  <data name="时段模型" xml:space="preserve">
+    <value>Scheduled model</value>
+  </data>
+  <data name="时段的开始和结束时间不能相同。" xml:space="preserve">
+    <value>A slot's start and end times cannot be the same.</value>
+  </data>
+  <data name="时段（本机时间）" xml:space="preserve">
+    <value>Time slots (local time)</value>
+  </data>
+  <data name="时间" xml:space="preserve">
+    <value>Time</value>
+  </data>
+  <data name="显示 {0} 条回复" xml:space="preserve">
+    <value>Showing {0} replies</value>
+  </data>
+  <data name="显示名称" xml:space="preserve">
+    <value>Display name</value>
+  </data>
+  <data name="显示未接入且未检测到的 {0} 个 Agent" xml:space="preserve">
+    <value>Show {0} Agents that aren't connected or detected</value>
+  </data>
+  <data name="暂不支持接入" xml:space="preserve">
+    <value>Not supported yet</value>
+  </data>
+  <data name="暂无会话。" xml:space="preserve">
+    <value>No sessions yet.</value>
+  </data>
+  <data name="暂无可用模型" xml:space="preserve">
+    <value>No models available</value>
+  </data>
+  <data name="暂缓安装：{0}" xml:space="preserve">
+    <value>Installation postponed: {0}</value>
+  </data>
+  <data name="暂缓更新：请先保存草稿并完成当前操作。" xml:space="preserve">
+    <value>Update postponed: save your draft and finish the current operation first.</value>
+  </data>
+  <data name="更多" xml:space="preserve">
+    <value>More</value>
+  </data>
+  <data name="更多模型操作" xml:space="preserve">
+    <value>More model actions</value>
+  </data>
+  <data name="更多窗口" xml:space="preserve">
+    <value>More windows</value>
+  </data>
+  <data name="更新到 {0}" xml:space="preserve">
+    <value>Update to {0}</value>
+  </data>
+  <data name="更新器初始化失败：{0}" xml:space="preserve">
+    <value>Updater failed to start: {0}</value>
+  </data>
+  <data name="更新失败：{0} 可点立即更新重试。" xml:space="preserve">
+    <value>Update failed: {0} Click Update now to try again.</value>
+  </data>
+  <data name="更新失败；下载、签名或安装前检查未通过，请重试。更新日志位于界面日志目录。" xml:space="preserve">
+    <value>Update failed; the download, signature, or pre-install check didn't pass. Try again. The update log is in the UI log folder.</value>
+  </data>
+  <data name="更新已取消，可稍后重试。" xml:space="preserve">
+    <value>Update canceled. You can try again later.</value>
+  </data>
+  <data name="更新检查已取消。" xml:space="preserve">
+    <value>Update check canceled.</value>
+  </data>
+  <data name="更新源暂时没有可安装的新版本，请稍后重试。" xml:space="preserve">
+    <value>No installable update is available right now. Try again later.</value>
+  </data>
+  <data name="更新设置失败" xml:space="preserve">
+    <value>Failed to change update setting</value>
+  </data>
+  <data name="更新重试计数无效，请检查界面更新设置。" xml:space="preserve">
+    <value>Invalid update retry count. Check the UI update settings.</value>
+  </data>
+  <data name="替换当前配置？" xml:space="preserve">
+    <value>Replace the current config?</value>
+  </data>
+  <data name="最少成功 Panel" xml:space="preserve">
+    <value>Minimum successful Panels</value>
+  </data>
+  <data name="最少成功 Panel 必须是 1 到 Panel 数量之间的整数。" xml:space="preserve">
+    <value>Minimum successful Panels must be a whole number between 1 and the number of Panels.</value>
+  </data>
+  <data name="服务商" xml:space="preserve">
+    <value>Providers</value>
+  </data>
+  <data name="服务商未提供上下文窗口；可刷新模型目录或手动设置。" xml:space="preserve">
+    <value>The provider doesn't report a context window. Refresh the model catalog or set it manually.</value>
+  </data>
+  <data name="服务商读取失败 · 保留上次显示" xml:space="preserve">
+    <value>Failed to read providers · keeping last display</value>
+  </data>
+  <data name="服务商读取失败，未查询额度。请刷新重试。" xml:space="preserve">
+    <value>Failed to read providers, so quota wasn't queried. Refresh and try again.</value>
+  </data>
+  <data name="服务商读取失败：{0}" xml:space="preserve">
+    <value>Failed to read providers: {0}</value>
+  </data>
+  <data name="服务诊断" xml:space="preserve">
+    <value>Service diagnostics</value>
+  </data>
+  <data name="未修改" xml:space="preserve">
+    <value>No changes</value>
+  </data>
+  <data name="未加入" xml:space="preserve">
+    <value>Not added</value>
+  </data>
+  <data name="未发生自动关闭" xml:space="preserve">
+    <value>No automatic disable has happened</value>
+  </data>
+  <data name="未接入" xml:space="preserve">
+    <value>Not connected</value>
+  </data>
+  <data name="未检测到安装程序" xml:space="preserve">
+    <value>Installer not detected</value>
+  </data>
+  <data name="未知" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="未知状态：{0}" xml:space="preserve">
+    <value>Unknown status: {0}</value>
+  </data>
+  <data name="未知网关状态：{0}" xml:space="preserve">
+    <value>Unknown gateway status: {0}</value>
+  </data>
+  <data name="未知错误" xml:space="preserve">
+    <value>Unknown error</value>
+  </data>
+  <data name="未缓存" xml:space="preserve">
+    <value>Not cached</value>
+  </data>
+  <data name="未缓存输入" xml:space="preserve">
+    <value>Uncached input</value>
+  </data>
+  <data name="未配置" xml:space="preserve">
+    <value>Not configured</value>
+  </data>
+  <data name="本地服务 · 状态未知" xml:space="preserve">
+    <value>Local service · status unknown</value>
+  </data>
+  <data name="本地服务{0}" xml:space="preserve">
+    <value>Local service{0}</value>
+  </data>
+  <data name="本地网关" xml:space="preserve">
+    <value>Local gateway</value>
+  </data>
+  <data name="本地网关 · {0}" xml:space="preserve">
+    <value>Local gateway · {0}</value>
+  </data>
+  <data name="条形" xml:space="preserve">
+    <value>Bar</value>
+  </data>
+  <data name="构成" xml:space="preserve">
+    <value>Breakdown</value>
+  </data>
+  <data name="查看摘要" xml:space="preserve">
+    <value>View summary</value>
+  </data>
+  <data name="查询失败" xml:space="preserve">
+    <value>Query failed</value>
+  </data>
+  <data name="检查 Agent 版本" xml:space="preserve">
+    <value>Check Agent versions</value>
+  </data>
+  <data name="检查更新…" xml:space="preserve">
+    <value>Check for updates…</value>
+  </data>
+  <data name="检查版本更新" xml:space="preserve">
+    <value>Check for version updates</value>
+  </data>
+  <data name="检测 ECH" xml:space="preserve">
+    <value>Check ECH</value>
+  </data>
+  <data name="检测失败" xml:space="preserve">
+    <value>Detection failed</value>
+  </data>
+  <data name="概览" xml:space="preserve">
+    <value>Overview</value>
+  </data>
+  <data name="模型" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="模型上下文" xml:space="preserve">
+    <value>Model context</value>
+  </data>
+  <data name="模型不可用" xml:space="preserve">
+    <value>Model unavailable</value>
+  </data>
+  <data name="模型与服务" xml:space="preserve">
+    <value>Models &amp; Services</value>
+  </data>
+  <data name="模型排序" xml:space="preserve">
+    <value>Model order</value>
+  </data>
+  <data name="模型筛选" xml:space="preserve">
+    <value>Model filter</value>
+  </data>
+  <data name="模型路由" xml:space="preserve">
+    <value>Model Routing</value>
+  </data>
+  <data name="模型路由…" xml:space="preserve">
+    <value>Model routing…</value>
+  </data>
+  <data name="正在刷新本地状态与额度…" xml:space="preserve">
+    <value>Refreshing local status and quota…</value>
+  </data>
+  <data name="正在处理请求，完成后请再点立即更新。" xml:space="preserve">
+    <value>Requests are in progress. Click Update now again when they finish.</value>
+  </data>
+  <data name="正在执行网关操作…" xml:space="preserve">
+    <value>Running gateway operation…</value>
+  </data>
+  <data name="正在排队查询额度…" xml:space="preserve">
+    <value>Queued to query quota…</value>
+  </data>
+  <data name="正在更新到 {0}：下载和验签由 WinSparkle 处理，完成后自动安装并重启。" xml:space="preserve">
+    <value>Updating to {0}: WinSparkle downloads and verifies the signature, then installs and restarts.</value>
+  </data>
+  <data name="正在检查 Windows 完整应用更新…" xml:space="preserve">
+    <value>Checking for full Windows app updates…</value>
+  </data>
+  <data name="正在读取…" xml:space="preserve">
+    <value>Loading…</value>
+  </data>
+  <data name="正在读取归档…" xml:space="preserve">
+    <value>Reading archive…</value>
+  </data>
+  <data name="正在读取服务商…" xml:space="preserve">
+    <value>Loading providers…</value>
+  </data>
+  <data name="正在读取服务状态" xml:space="preserve">
+    <value>Loading service status</value>
+  </data>
+  <data name="正在读取测速结果…" xml:space="preserve">
+    <value>Loading speed test results…</value>
+  </data>
+  <data name="正在读取这段时间的回复…" xml:space="preserve">
+    <value>Loading replies for this period…</value>
+  </data>
+  <data name="正在读取额度…" xml:space="preserve">
+    <value>Loading quota…</value>
+  </data>
+  <data name="正在连接 CLI…" xml:space="preserve">
+    <value>Connecting to CLI…</value>
+  </data>
+  <data name="正常" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="此会话尚无压缩块。" xml:space="preserve">
+    <value>This session has no compressed blocks yet.</value>
+  </data>
+  <data name="每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。" xml:space="preserve">
+    <value>For each new user turn, Panel models answer in parallel, the Judge compares and summarizes, and the Final model revises and replies. Tool follow-ups within the same turn go straight to the Final model.</value>
+  </data>
+  <data name="每周" xml:space="preserve">
+    <value>Weekly</value>
+  </data>
+  <data name="每月" xml:space="preserve">
+    <value>Monthly</value>
+  </data>
+  <data name="没有匹配的模型" xml:space="preserve">
+    <value>No matching models</value>
+  </data>
+  <data name="没有符合条件的回复。" xml:space="preserve">
+    <value>No matching replies.</value>
+  </data>
+  <data name="没有需要保存的更改。" xml:space="preserve">
+    <value>Nothing to save.</value>
+  </data>
+  <data name="浅色" xml:space="preserve">
+    <value>Light</value>
+  </data>
+  <data name="测试已加入的 {0} 个模型" xml:space="preserve">
+    <value>Test the {0} added models</value>
+  </data>
+  <data name="消息顺序" xml:space="preserve">
+    <value>Message order</value>
+  </data>
+  <data name="深色" xml:space="preserve">
+    <value>Dark</value>
+  </data>
+  <data name="添加供应商" xml:space="preserve">
+    <value>Add provider</value>
+  </data>
+  <data name="添加备用模型" xml:space="preserve">
+    <value>Add fallback model</value>
+  </data>
+  <data name="添加时段" xml:space="preserve">
+    <value>Add time slot</value>
+  </data>
+  <data name="清除密钥" xml:space="preserve">
+    <value>Clear key</value>
+  </data>
+  <data name="清除筛选：{0}" xml:space="preserve">
+    <value>Clear filter: {0}</value>
+  </data>
+  <data name="点击只看这段时间的回复" xml:space="preserve">
+    <value>Click to see only replies in this period</value>
+  </data>
+  <data name="版本检查失败：{0}" xml:space="preserve">
+    <value>Version check failed: {0}</value>
+  </data>
+  <data name="版本检查结果" xml:space="preserve">
+    <value>Version check results</value>
+  </data>
+  <data name="状态" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="状态刷新失败" xml:space="preserve">
+    <value>Status refresh failed</value>
+  </data>
+  <data name="状态未知" xml:space="preserve">
+    <value>Status unknown</value>
+  </data>
+  <data name="状态读取失败：{0}" xml:space="preserve">
+    <value>Failed to read status: {0}</value>
+  </data>
+  <data name="环比 {0}" xml:space="preserve">
+    <value>{0} vs previous</value>
+  </data>
+  <data name="生成速度" xml:space="preserve">
+    <value>Generation speed</value>
+  </data>
+  <data name="用户消息" xml:space="preserve">
+    <value>User messages</value>
+  </data>
+  <data name="用量不可用" xml:space="preserve">
+    <value>Usage unavailable</value>
+  </data>
+  <data name="用量明细" xml:space="preserve">
+    <value>Usage details</value>
+  </data>
+  <data name="用量趋势 · 按天（UTC）" xml:space="preserve">
+    <value>Usage trend · daily (UTC)</value>
+  </data>
+  <data name="用量趋势 · 按小时" xml:space="preserve">
+    <value>Usage trend · hourly</value>
+  </data>
+  <data name="界面登录启动与网关自启分别管理。" xml:space="preserve">
+    <value>UI startup at sign-in and gateway autostart are managed separately.</value>
+  </data>
+  <data name="登录 Windows 时启动界面" xml:space="preserve">
+    <value>Start the UI when signing in to Windows</value>
+  </data>
+  <data name="目录不存在：{0}" xml:space="preserve">
+    <value>Folder doesn't exist: {0}</value>
+  </data>
+  <data name="移除备用模型 {0}" xml:space="preserve">
+    <value>Remove fallback model {0}</value>
+  </data>
+  <data name="移除此时段" xml:space="preserve">
+    <value>Remove this slot</value>
+  </data>
+  <data name="立即更新" xml:space="preserve">
+    <value>Update now</value>
+  </data>
+  <data name="等待原生应用确认" xml:space="preserve">
+    <value>Waiting for the native app to confirm</value>
+  </data>
+  <data name="等待原生应用移除" xml:space="preserve">
+    <value>Waiting for the native app to remove</value>
+  </data>
+  <data name="等待网关空闲 30 分钟后自动更新。" xml:space="preserve">
+    <value>Updates install automatically after the gateway is idle for 30 minutes.</value>
+  </data>
+  <data name="精简摘要" xml:space="preserve">
+    <value>Condensed summary</value>
+  </data>
+  <data name="系统托盘不可用" xml:space="preserve">
+    <value>System tray unavailable</value>
+  </data>
+  <data name="统计范围" xml:space="preserve">
+    <value>Scope</value>
+  </data>
+  <data name="缓存命中" xml:space="preserve">
+    <value>Cache hits</value>
+  </data>
+  <data name="缓存命中率" xml:space="preserve">
+    <value>Cache hit rate</value>
+  </data>
+  <data name="缓存输入" xml:space="preserve">
+    <value>Cached input</value>
+  </data>
+  <data name="编辑 Panel 模型" xml:space="preserve">
+    <value>Edit Panel models</value>
+  </data>
+  <data name="编辑上下文" xml:space="preserve">
+    <value>Edit context</value>
+  </data>
+  <data name="网关未启动" xml:space="preserve">
+    <value>Gateway not running</value>
+  </data>
+  <data name="网关自启" xml:space="preserve">
+    <value>Gateway autostart</value>
+  </data>
+  <data name="能力" xml:space="preserve">
+    <value>Capabilities</value>
+  </data>
+  <data name="自动更新已重试三次，请点立即更新重试。" xml:space="preserve">
+    <value>Automatic update retried three times. Click Update now to try again.</value>
+  </data>
+  <data name="自动更新需要有效的稳定版版本号，请从发布页选择完整应用包。" xml:space="preserve">
+    <value>Automatic updates need a valid stable version number. Choose the full app package from the releases page.</value>
+  </data>
+  <data name="自动更新（每小时检查；网关空闲 30 分钟后安装）" xml:space="preserve">
+    <value>Automatic updates (checked hourly; installed after the gateway is idle for 30 minutes)</value>
+  </data>
+  <data name="自动检测" xml:space="preserve">
+    <value>Auto detect</value>
+  </data>
+  <data name="节省" xml:space="preserve">
+    <value>Saved</value>
+  </data>
+  <data name="节省 tokens" xml:space="preserve">
+    <value>Tokens saved</value>
+  </data>
+  <data name="虚线：原始归档   实线：当前视图   单位：KiB" xml:space="preserve">
+    <value>Dashed: original archive   Solid: current view   Unit: KiB</value>
+  </data>
+  <data name="融合" xml:space="preserve">
+    <value>Fusion</value>
+  </data>
+  <data name="融合、定时与故障转移都在这里配置，保存后网关自动重启。" xml:space="preserve">
+    <value>Configure fusion, schedules, and failover here. The gateway restarts automatically after saving.</value>
+  </data>
+  <data name="设置" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="设置与诊断" xml:space="preserve">
+    <value>Settings and diagnostics</value>
+  </data>
+  <data name="诊断" xml:space="preserve">
+    <value>Diagnostics</value>
+  </data>
+  <data name="请先配置服务商" xml:space="preserve">
+    <value>Configure a provider first</value>
+  </data>
+  <data name="请求 {0} · 失败 {1} · 缓存命中 {2}" xml:space="preserve">
+    <value>Requests {0} · failed {1} · cache hits {2}</value>
+  </data>
+  <data name="请求次数" xml:space="preserve">
+    <value>Request count</value>
+  </data>
+  <data name="请等待当前操作完成后退出。" xml:space="preserve">
+    <value>Wait for the current operation to finish before quitting.</value>
+  </data>
+  <data name="请等待当前操作完成后退出。关闭窗口可以收起到托盘。" xml:space="preserve">
+    <value>Wait for the current operation to finish before quitting. Closing the window hides it to the tray.</value>
+  </data>
+  <data name="请选择 1–8 个 Panel 模型。" xml:space="preserve">
+    <value>Choose 1–8 Panel models.</value>
+  </data>
+  <data name="请配置 1–24 个时段。" xml:space="preserve">
+    <value>Configure 1–24 time slots.</value>
+  </data>
+  <data name="请配置 1–4 个备用模型。" xml:space="preserve">
+    <value>Configure 1–4 fallback models.</value>
+  </data>
+  <data name="请重新打开面板重试" xml:space="preserve">
+    <value>Reopen the panel and try again</value>
+  </data>
+  <data name="读取回复失败" xml:space="preserve">
+    <value>Failed to read replies</value>
+  </data>
+  <data name="读取失败：{0}" xml:space="preserve">
+    <value>Failed to read: {0}</value>
+  </data>
+  <data name="读取服务商失败" xml:space="preserve">
+    <value>Failed to read providers</value>
+  </data>
+  <data name="读取用量" xml:space="preserve">
+    <value>Read usage</value>
+  </data>
+  <data name="超时" xml:space="preserve">
+    <value>Timeout</value>
+  </data>
+  <data name="跟随系统" xml:space="preserve">
+    <value>Follow system</value>
+  </data>
+  <data name="路由" xml:space="preserve">
+    <value>Routes</value>
+  </data>
+  <data name="轻量模式" xml:space="preserve">
+    <value>Lightweight mode</value>
+  </data>
+  <data name="输出" xml:space="preserve">
+    <value>Output</value>
+  </data>
+  <data name="运行中" xml:space="preserve">
+    <value>Running</value>
+  </data>
+  <data name="运行诊断" xml:space="preserve">
+    <value>Run diagnostics</value>
+  </data>
+  <data name="还有未应用的更改" xml:space="preserve">
+    <value>There are unapplied changes</value>
+  </data>
+  <data name="还没有服务商" xml:space="preserve">
+    <value>No providers yet</value>
+  </data>
+  <data name="还没有模型路由。" xml:space="preserve">
+    <value>No model routes yet.</value>
+  </data>
+  <data name="进入轻量模式" xml:space="preserve">
+    <value>Enter lightweight mode</value>
+  </data>
+  <data name="进入轻量模式失败" xml:space="preserve">
+    <value>Failed to enter lightweight mode</value>
+  </data>
+  <data name="进入轻量模式？" xml:space="preserve">
+    <value>Enter lightweight mode?</value>
+  </data>
+  <data name="连接 CLI" xml:space="preserve">
+    <value>Connect CLI</value>
+  </data>
+  <data name="连接、备份与诊断…" xml:space="preserve">
+    <value>Connections, backup, and diagnostics…</value>
+  </data>
+  <data name="连接设置" xml:space="preserve">
+    <value>Connection settings</value>
+  </data>
+  <data name="连接配置" xml:space="preserve">
+    <value>Connection</value>
+  </data>
+  <data name="退出失败" xml:space="preserve">
+    <value>Failed to quit</value>
+  </data>
+  <data name="退出应用" xml:space="preserve">
+    <value>Quit app</value>
+  </data>
+  <data name="选择 Panel 模型" xml:space="preserve">
+    <value>Choose Panel models</value>
+  </data>
+  <data name="选择一个会话，查看上下文增长，以及消息和工具如何合并成精简摘要。" xml:space="preserve">
+    <value>Select a session to see how its context grows and how messages and tools are merged into compact summaries.</value>
+  </data>
+  <data name="选择保存位置" xml:space="preserve">
+    <value>Choose where to save</value>
+  </data>
+  <data name="速度" xml:space="preserve">
+    <value>Speed</value>
+  </data>
+  <data name="配置备份" xml:space="preserve">
+    <value>Configuration backup</value>
+  </data>
+  <data name="配置就绪" xml:space="preserve">
+    <value>Ready</value>
+  </data>
+  <data name="配置已保存，但应用配置失败：{0}" xml:space="preserve">
+    <value>Config saved, but applying it failed: {0}</value>
+  </data>
+  <data name="配置已保存，后续操作失败" xml:space="preserve">
+    <value>Config saved, but a later step failed</value>
+  </data>
+  <data name="配置已保存，状态刷新失败" xml:space="preserve">
+    <value>Config saved, but status refresh failed</value>
+  </data>
+  <data name="配置已同步" xml:space="preserve">
+    <value>Config synced</value>
+  </data>
+  <data name="配置已改变" xml:space="preserve">
+    <value>Config changed</value>
+  </data>
+  <data name="重启" xml:space="preserve">
+    <value>Restart</value>
+  </data>
+  <data name="重启网关" xml:space="preserve">
+    <value>Restart gateway</value>
+  </data>
+  <data name="重放上报" xml:space="preserve">
+    <value>Resend reports</value>
+  </data>
+  <data name="重新探测已加入模型的能力" xml:space="preserve">
+    <value>Re-probe capabilities of added models</value>
+  </data>
+  <data name="重试" xml:space="preserve">
+    <value>Retry</value>
+  </data>
+  <data name="错误率" xml:space="preserve">
+    <value>Error rate</value>
+  </data>
+  <data name="降级" xml:space="preserve">
+    <value>Degraded</value>
+  </data>
+  <data name="顺序" xml:space="preserve">
+    <value>Order</value>
+  </data>
+  <data name="额度" xml:space="preserve">
+    <value>Quota</value>
+  </data>
+  <data name="额度{0}展示" xml:space="preserve">
+    <value>Quota {0} display</value>
+  </data>
+  <data name="额度刷新失败（保留上次数据）：{0}" xml:space="preserve">
+    <value>Quota refresh failed (keeping last data): {0}</value>
+  </data>
+  <data name="额度展示字段过长。" xml:space="preserve">
+    <value>Quota display field is too long.</value>
+  </data>
+  <data name="额度展示数值无效。" xml:space="preserve">
+    <value>Invalid quota display value.</value>
+  </data>
+  <data name="额度展示缓存不完整。" xml:space="preserve">
+    <value>Quota display cache is incomplete.</value>
+  </data>
+  <data name="额度展示缓存为空。" xml:space="preserve">
+    <value>Quota display cache is empty.</value>
+  </data>
+  <data name="额度展示缓存过大。" xml:space="preserve">
+    <value>Quota display cache is too large.</value>
+  </data>
+  <data name="额度未知" xml:space="preserve">
+    <value>Quota unknown</value>
+  </data>
+  <data name="额度读取失败：{0}" xml:space="preserve">
+    <value>Failed to read quota: {0}</value>
+  </data>
+  <data name="首 Token" xml:space="preserve">
+    <value>First token</value>
+  </data>
+  <data name="首字" xml:space="preserve">
+    <value>TTFT</value>
+  </data>
+  <data name="高级" xml:space="preserve">
+    <value>Advanced</value>
+  </data>
+  <data name="高级选项" xml:space="preserve">
+    <value>Advanced options</value>
+  </data>
+  <data name="默认模型" xml:space="preserve">
+    <value>Default model</value>
+  </data>
+  <data name="（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）" xml:space="preserve">
+    <value>(Only the latest 500 are listed; click a chart bar to see all replies in that period)</value>
+  </data>
+</root>

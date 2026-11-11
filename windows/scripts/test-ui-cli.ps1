@@ -36,6 +36,7 @@ $isolatedEnvironment = @{
     NO_PROXY = '127.0.0.1,localhost'
     WINAPP_UI_WORKFLOW_ID = [guid]::NewGuid().ToString('N')
     WINAPP_CLI_TELEMETRY_OPTOUT = '1'
+    CODEX_MIXIN_LANG = 'zh'
 }
 foreach ($entry in $isolatedEnvironment.GetEnumerator()) {
     $originalEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key)

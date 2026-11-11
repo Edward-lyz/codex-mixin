@@ -19,7 +19,7 @@ internal sealed class AppRelease
             var parts = value.Split('.');
             if (parts.Length != 3 || parts.Any(part => part.Length == 0 || part.Length > 1 && part[0] == '0' || part.Any(character => character is < '0' or > '9'))
                 || !System.Version.TryParse(value, out var version))
-                throw new CliFailure("自动更新需要有效的稳定版版本号，请从发布页选择完整应用包。");
+                throw new CliFailure(Localized.Get("自动更新需要有效的稳定版版本号，请从发布页选择完整应用包。"));
             return version;
         }
         var latestText = Json.Text(metadata, "latest_version");
@@ -27,7 +27,7 @@ internal sealed class AppRelease
         var cli = StableVersion(Json.Text(metadata, "current_version"));
         var gui = StableVersion(guiVersion);
         if ((cli > latest && gui < latest) || (gui > latest && cli < latest))
-            throw new CliFailure("GUI 与 CLI 版本不一致，升级会降级其中一个组件。请从发布页选择完整应用包。");
+            throw new CliFailure(Localized.Get("GUI 与 CLI 版本不一致，升级会降级其中一个组件。请从发布页选择完整应用包。"));
         return new AppRelease(latestText, (cli < gui ? cli : gui).ToString(3), latest >= cli && latest >= gui && (latest > cli || latest > gui));
     }
 }

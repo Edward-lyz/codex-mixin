@@ -15,11 +15,11 @@ internal sealed class AppUpdates(Func<CliClient> client)
     internal bool LastInstallFailed { get; private set; }
     internal bool Installing => updater?.Installing == true;
     internal static string GuiVersion => (typeof(App).Assembly.GetName().Version
-        ?? throw new InvalidOperationException("无法读取 GUI 版本。")).ToString(3);
+        ?? throw new InvalidOperationException(Localized.Get("无法读取 GUI 版本。"))).ToString(3);
     internal event Action? Changed;
     internal AppRelease? Release { get; private set; }
     internal bool Busy => checking || updating;
-    internal string Status { get; private set; } = "尚未检查更新。";
+    internal string Status { get; private set; } = Localized.Get("尚未检查更新。");
     internal bool Automatic { get; private set; } = true;
 
     internal void LoadPreferences()
@@ -31,7 +31,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
             if (settings?.GetValue("LastInstallError") is string error && error.Length > 0)
             {
                 LastInstallFailed = true;
-                Status = $"上次更新失败：{error}";
+                Status = Localized.Format("上次更新失败：{0}", error);
             }
             updater = new NativeUpdater(this);
             updater.Initialize();
@@ -39,7 +39,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException or DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
         {
             Automatic = false;
-            Status = $"更新器初始化失败：{error.Message}";
+            Status = Localized.Format("更新器初始化失败：{0}", error.Message);
         }
     }
 
@@ -62,7 +62,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
     {
         var previousStatus = Status;
         checking = true;
-        Status = "正在检查 Windows 完整应用更新…";
+        Status = Localized.Get("正在检查 Windows 完整应用更新…");
         Changed?.Invoke();
         try
         {
@@ -78,27 +78,27 @@ internal sealed class AppUpdates(Func<CliClient> client)
             var snapshot = await client().QueryAsync(["update", "--check", "--json"], lifetime.Token, TimeSpan.FromSeconds(60));
             Release = AppRelease.Parse(snapshot, GuiVersion);
             Status = Release.IsNewer
-                ? $"发现 {Release.Version}。"
-                : $"当前安装无需升级到发布版 {Release.Version}。";
+                ? Localized.Format("发现 {0}。", Release.Version)
+                : Localized.Format("当前安装无需升级到发布版 {0}。", Release.Version);
             if (!Release.IsNewer) return;
             automaticInstall = automatic;
             if (!(await PrepareInstallAsync(lifetime.Token)).Allowed) return;
             var attempts = settings.GetValue("AttemptVersion") as string == Release.Version && settings.GetValue("Attempts") is int count ? count : 0;
-            if (attempts < 0) throw new CliFailure("更新重试计数无效，请检查界面更新设置。");
-            if (automatic && attempts >= 3) { Status = "自动更新已重试三次，请点立即更新重试。"; return; }
+            if (attempts < 0) throw new CliFailure(Localized.Get("更新重试计数无效，请检查界面更新设置。"));
+            if (automatic && attempts >= 3) { Status = Localized.Get("自动更新已重试三次，请点立即更新重试。"); return; }
             settings.SetValue("AttemptVersion", Release.Version);
             settings.SetValue("Attempts", Math.Min(attempts, 2) + 1);
             settings.SetValue("NextCheck", DateTimeOffset.UtcNow.AddHours(Math.Min(4, 1 << Math.Min(attempts, 2))).ToString("O"));
             updater ??= new NativeUpdater(this);
             updating = true;
-            Status = $"正在更新到 {Release.Version}：下载和验签由 WinSparkle 处理，完成后自动安装并重启。";
+            Status = Localized.Format("正在更新到 {0}：下载和验签由 WinSparkle 处理，完成后自动安装并重启。", Release.Version);
             updater.Start(Release.CurrentVersion);
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { Status = "更新检查已取消。"; }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { Status = Localized.Get("更新检查已取消。"); }
         catch (Exception error)
         {
             updating = false;
-            Status = $"更新失败：{error.Message} 可点立即更新重试。";
+            Status = Localized.Format("更新失败：{0} 可点立即更新重试。", error.Message);
             await Diagnostics.RecordAsync("updates", $"{DateTimeOffset.UtcNow:O} stage=metadata outcome=failed error_type={error.GetType().Name}");
         }
         finally { checking = false; Changed?.Invoke(); }
@@ -109,7 +109,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
         var app = (App)Microsoft.UI.Xaml.Application.Current;
         if (app.HasPendingChanges || app.HasDraftChanges)
         {
-            Status = "暂缓更新：请先保存草稿并完成当前操作。";
+            Status = Localized.Get("暂缓更新：请先保存草稿并完成当前操作。");
             Changed?.Invoke();
             return (false, false);
         }
@@ -123,7 +123,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
             var idle = Json.OptionalInteger(activity, "idle_seconds");
             if (activeRequests != 0 || automaticInstall && idle is not >= 1800)
             {
-                Status = automaticInstall ? "等待网关空闲 30 分钟后自动更新。" : "正在处理请求，完成后请再点立即更新。";
+                Status = automaticInstall ? Localized.Get("等待网关空闲 30 分钟后自动更新。") : Localized.Get("正在处理请求，完成后请再点立即更新。");
                 Changed?.Invoke();
                 return (false, true);
             }

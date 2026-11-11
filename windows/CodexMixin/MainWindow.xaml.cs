@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
     {
         this.page = page;
         InitializeComponent();
+        XamlText.Translate(Content);
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         ProviderList.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
         ProviderList.ItemContainerStyle = Themed("ModelRowContainer");
@@ -88,14 +89,14 @@ public sealed partial class MainWindow : Window
         var handle = WindowNative.GetWindowHandle(this);
         // The console window owns the tray icon; settings is a side window.
         try { if (IsConsolePage(page)) shell = new NativeShell(handle, OnTrayCommand); }
-        catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
+        catch (Exception error) { ShowNotice(Localized.Get("系统托盘不可用"), error.Message, InfoBarSeverity.Warning); }
         AppWindow.Closing += async (_, args) =>
         {
             if (exiting) return;
             if (shell != null) { args.Cancel = true; shell.Hide(); return; }
             if (!draftDirty) return;
             args.Cancel = true;
-            if (await ConfirmDiscardAsync("关闭窗口")) Shutdown();
+            if (await ConfirmDiscardAsync(Localized.Get("关闭窗口"))) Shutdown();
         };
         Closed += (_, _) =>
         {
@@ -119,7 +120,7 @@ public sealed partial class MainWindow : Window
         timer.Tick += async (_, _) =>
         {
             if (!busy && !dialogOpen && page == "overview" && IsViewVisible && cli != null)
-                await ExecuteUiAsync("刷新状态", LoadPageAsync);
+                await ExecuteUiAsync(Localized.Get("刷新状态"), LoadPageAsync);
             if (!busy && page == "providers" && !connectionSelected && IsViewVisible && cli != null)
                 await RefreshTimingsAsync(lifetime.Token);
         };
@@ -143,13 +144,13 @@ public sealed partial class MainWindow : Window
         if (!DispatcherQueue.TryEnqueue(async () =>
         {
             ready = true;
-            await ExecuteUiAsync("连接 CLI", async token =>
+            await ExecuteUiAsync(Localized.Get("连接 CLI"), async token =>
             {
                 if (page != "settings") await ConnectCliAsync(token);
                 await LoadPageAsync(token);
             }, readOnly: true);
             UpdateRefreshTimer();
-        })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
+        })) throw new InvalidOperationException(Localized.Get("无法调度 Windows 界面初始化。"));
     }
 
     private bool IsViewVisible => AppWindow.IsVisible && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };
@@ -173,12 +174,12 @@ public sealed partial class MainWindow : Window
     {
         Title = page switch
         {
-            "providers" => "模型与服务",
-            "agents" => "Agent 接入管理",
-            "routing" => "模型路由",
-            "usage" => "用量明细",
-            "context" => "上下文",
-            _ => "设置与诊断"
+            "providers" => Localized.Get("模型与服务"),
+            "agents" => Localized.Get("Agent 接入管理"),
+            "routing" => Localized.Get("模型路由"),
+            "usage" => Localized.Get("用量明细"),
+            "context" => Localized.Get("上下文"),
+            _ => Localized.Get("设置与诊断")
         };
         var console = IsConsolePage(page);
         TitleBar.Title = console ? "Codex Mixin" : $"Codex Mixin · {Title}";
@@ -214,7 +215,7 @@ public sealed partial class MainWindow : Window
         if (next == page && pageLoaded) return;
         // The draft dictionaries cache every provider's editor; only MarkDirty
         // means the user changed something that is not applied yet.
-        if (!await ConfirmDiscardAsync("切换页面"))
+        if (!await ConfirmDiscardAsync(Localized.Get("切换页面")))
         {
             ApplyPageLayout();
             return;
@@ -227,7 +228,7 @@ public sealed partial class MainWindow : Window
         page = next;
         ApplyPageLayout();
         if (ready && !interfaceReady && page != "settings") { await ReloadAsync(); return; }
-        if (ready) await ExecuteUiAsync("切换页面", async token =>
+        if (ready) await ExecuteUiAsync(Localized.Get("切换页面"), async token =>
         {
             await LoadPageAsync(token);
         }, readOnly: true);
@@ -252,7 +253,7 @@ public sealed partial class MainWindow : Window
         if (command == "tray-error")
         {
             ShowMain();
-            ShowNotice("系统托盘不可用", "Explorer 重启后无法恢复托盘，请重新启动应用。", InfoBarSeverity.Warning);
+            ShowNotice(Localized.Get("系统托盘不可用"), Localized.Get("Explorer 重启后无法恢复托盘，请重新启动应用。"), InfoBarSeverity.Warning);
             return;
         }
         if (command == "exit") { await ExitAsync(lightweight: false); return; }
@@ -260,7 +261,7 @@ public sealed partial class MainWindow : Window
         if (command is "start" or "stop")
         {
             if (busy) { ShowMain(); return; }
-            await ChangeAsync(command == "start" ? "启动网关" : "停止网关",
+            await ChangeAsync(command == "start" ? Localized.Get("启动网关") : Localized.Get("停止网关"),
                 ["service", command, "--managed", "--json"]);
             return;
         }
@@ -272,7 +273,7 @@ public sealed partial class MainWindow : Window
         if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges)
         {
             ShowMain();
-            ShowNotice("操作仍在进行", "请等待当前操作完成后退出。关闭窗口可以收起到托盘。", InfoBarSeverity.Warning);
+            ShowNotice(Localized.Get("操作仍在进行"), Localized.Get("请等待当前操作完成后退出。关闭窗口可以收起到托盘。"), InfoBarSeverity.Warning);
             return;
         }
         // A never-shown tray-only window has no XamlRoot for a ContentDialog.
@@ -280,8 +281,8 @@ public sealed partial class MainWindow : Window
         var app = (App)Microsoft.UI.Xaml.Application.Current;
         Func<Task> exit = lightweight ? app.EnterLightweightModeAsync : app.QuitCompletelyAsync;
         var confirmed = !initialized || (lightweight
-            ? await ConfirmAsync("进入轻量模式？", "关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。", "进入轻量模式")
-            : await ConfirmAsync("彻底退出 Mixin？", "会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。", "彻底退出"));
+            ? await ConfirmAsync(Localized.Get("进入轻量模式？"), Localized.Get("关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。"), Localized.Get("进入轻量模式"))
+            : await ConfirmAsync(Localized.Get("彻底退出 Mixin？"), Localized.Get("会停止本地网关并关闭界面，通过 Mixin 接入的 Agent 将暂时不可用。"), Localized.Get("彻底退出")));
         if (!confirmed) return;
         try
         {
@@ -292,7 +293,7 @@ public sealed partial class MainWindow : Window
         {
             exiting = false;
             ShowMain();
-            ShowNotice(lightweight ? "进入轻量模式失败" : "退出失败", error.Message, InfoBarSeverity.Error);
+            ShowNotice(lightweight ? Localized.Get("进入轻量模式失败") : Localized.Get("退出失败"), error.Message, InfoBarSeverity.Error);
         }
     }
 
@@ -305,7 +306,7 @@ public sealed partial class MainWindow : Window
             ProviderList.SelectedItem = providerId;
             try
             {
-                if (!await ConfirmDiscardAsync("切换服务商")) return;
+                if (!await ConfirmDiscardAsync(Localized.Get("切换服务商"))) return;
                 ProviderList.SelectedItem = id;
                 connectionDrafts.Clear(); modelDrafts.Clear();
             }
@@ -320,16 +321,16 @@ public sealed partial class MainWindow : Window
         try
         {
             var hadDraft = draftDirty;
-            if (!await ConfirmDiscardAsync("新增服务商")) return;
+            if (!await ConfirmDiscardAsync(Localized.Get("新增服务商"))) return;
             if (hadDraft) await ReloadAsync();
             await AddProviderAsync();
         }
-        catch (Exception error) { ShowNotice("新增服务商失败", error.Message, InfoBarSeverity.Error); }
+        catch (Exception error) { ShowNotice(Localized.Get("新增服务商失败"), error.Message, InfoBarSeverity.Error); }
     }
     private async void OnRemoveProvider(object sender, RoutedEventArgs args)
     {
-        if (providerId != null && await ConfirmAsync("删除服务商？", "将移除当前服务商及其模型配置。", "删除"))
-            await ChangeAsync("删除服务商", ["provider", "remove", providerId], apply: true);
+        if (providerId != null && await ConfirmAsync(Localized.Get("删除服务商？"), Localized.Get("将移除当前服务商及其模型配置。"), Localized.Get("删除")))
+            await ChangeAsync(Localized.Get("删除服务商"), ["provider", "remove", providerId], apply: true);
     }
     private async void OnProviderTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
@@ -339,7 +340,7 @@ public sealed partial class MainWindow : Window
 
     private async Task SelectProviderTabAsync(bool connection)
     {
-        if (connection != connectionSelected && await ConfirmDiscardAsync("切换编辑页"))
+        if (connection != connectionSelected && await ConfirmDiscardAsync(Localized.Get("切换编辑页")))
         {
             connectionSelected = connection;
             UpdateRefreshTimer();
@@ -360,7 +361,7 @@ public sealed partial class MainWindow : Window
         if (busy || applyingDraft || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
         applyingDraft = true;
         try { if (pendingApply != null) await pendingApply(); }
-        catch (Exception error) { ShowNotice("应用更改失败", error.Message, InfoBarSeverity.Error); }
+        catch (Exception error) { ShowNotice(Localized.Get("应用更改失败"), error.Message, InfoBarSeverity.Error); }
         finally { applyingDraft = false; }
     }
 
@@ -384,8 +385,8 @@ public sealed partial class MainWindow : Window
 
     private async Task ReloadAsync()
     {
-        if (!await ConfirmDiscardAsync("刷新页面")) return;
-        await ExecuteUiAsync("刷新", async token =>
+        if (!await ConfirmDiscardAsync(Localized.Get("刷新页面"))) return;
+        await ExecuteUiAsync(Localized.Get("刷新"), async token =>
         {
             if (page != "settings") await ConnectCliAsync(token, refresh: true);
             agentSnapshot = null; providerSnapshot = null; benchmarkSnapshot = null;
@@ -397,7 +398,7 @@ public sealed partial class MainWindow : Window
     {
         if (!draftDirty) return true;
         ShowMain();
-        if (!await ConfirmAsync("放弃未应用的更改？", $"{action}会丢弃尚未保存的更改。", "放弃更改")) return false;
+        if (!await ConfirmAsync(Localized.Get("放弃未应用的更改？"), Localized.Format("{0}会丢弃尚未保存的更改。", action), Localized.Get("放弃更改"))) return false;
         if (discard)
         {
             draftDirty = false;
@@ -425,7 +426,7 @@ public sealed partial class MainWindow : Window
             await work(cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
             succeeded = true;
-            if (!exiting) StatusText.Text = $"{label}完成 · {DateTime.Now:HH:mm:ss}";
+            if (!exiting) StatusText.Text = Localized.Format("{0}完成 · {1:HH:mm:ss}", label, DateTime.Now);
         }
         catch (Exception error) when (readOnly && queuedPage != null && cancellation.IsCancellationRequested
             && error is CliFailure or OperationCanceledException)
@@ -435,7 +436,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             if (exiting) return false;
-            var title = error is CliFailure { Committed: true } ? "配置已保存，后续操作失败" : $"{label}失败";
+            var title = error is CliFailure { Committed: true } ? Localized.Get("配置已保存，后续操作失败") : Localized.Format("{0}失败", label);
             StatusText.Text = title;
             ShowNotice(title, error.Message, InfoBarSeverity.Error);
             if (error is CliFailure { Committed: true })
@@ -445,14 +446,14 @@ public sealed partial class MainWindow : Window
                 catch (Exception refreshError)
                 {
                     PageBody.Children.Clear();
-                    Notice.Message += $"\n状态刷新失败：{refreshError.Message}";
+                    Notice.Message += Localized.Format("\n状态刷新失败：{0}", refreshError.Message);
                 }
             }
             // Never leave a failed status query showing a previously healthy gateway.
             if (page == "overview")
             {
                 PageBody.Children.Clear();
-                PageBody.Children.Add(Card("状态未知", "无法读取当前状态，请刷新重试。", Text(error.Message)));
+                PageBody.Children.Add(Card(Localized.Get("状态未知"), Localized.Get("无法读取当前状态，请刷新重试。"), Text(error.Message)));
             }
         }
         finally
@@ -480,21 +481,21 @@ public sealed partial class MainWindow : Window
         return await ExecuteUiAsync(label, async token =>
     {
         await ConnectCliAsync(token);
-        var service = operations ?? throw new InvalidOperationException("CLI 尚未连接，请先刷新。");
+        var service = operations ?? throw new InvalidOperationException(Localized.Get("CLI 尚未连接，请先刷新。"));
         var progress = new Progress<string>(message => StatusText.Text = message);
         var output = await service.ChangeAsync(args, token, secrets, progress, apply);
         draftDirty = false;
-        if (apply) ShowSummary("配置已同步");
-        ShowNotice(label, string.IsNullOrWhiteSpace(output) ? "操作完成。" : output.Trim(), InfoBarSeverity.Success);
+        if (apply) ShowSummary(Localized.Get("配置已同步"));
+        ShowNotice(label, string.IsNullOrWhiteSpace(output) ? Localized.Get("操作完成。") : output.Trim(), InfoBarSeverity.Success);
         // A tray-only startup has not loaded the console; do not build a hidden model page.
         if (!initialized) return;
-        try { await LoadPageAsync(token); if (apply) ShowSummary("配置已同步"); }
+        try { await LoadPageAsync(token); if (apply) ShowSummary(Localized.Get("配置已同步")); }
         catch (Exception error)
         {
-            ShowSummary("配置已保存，状态刷新失败");
-            ShowNotice($"{label}完成，状态刷新失败", error.Message, InfoBarSeverity.Warning);
+            ShowSummary(Localized.Get("配置已保存，状态刷新失败"));
+            ShowNotice(Localized.Format("{0}完成，状态刷新失败", label), error.Message, InfoBarSeverity.Warning);
             PageBody.Children.Clear();
-            PageBody.Children.Add(Card("状态刷新失败", "操作已执行，请刷新确认最新状态。", Text(error.Message)));
+            PageBody.Children.Add(Card(Localized.Get("状态刷新失败"), Localized.Get("操作已执行，请刷新确认最新状态。"), Text(error.Message)));
         }
     });
     }
@@ -509,19 +510,19 @@ public sealed partial class MainWindow : Window
         draftDirty = false;
         pendingApply = null;
         ApplyChanges.IsEnabled = false;
-        ApplyChanges.Content = "应用更改";
+        ApplyChanges.Content = Localized.Get("应用更改");
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
-        ShowSummary("未修改");
+        ShowSummary(Localized.Get("未修改"));
         ToolTipService.SetToolTip(PageTitle, null);
         PageTitle.Text = page switch
         {
-            "providers" => "供应商与模型",
-            "agents" => "Agent 接入",
-            "usage" => "用量明细",
-            "context" => "上下文",
-            "routing" => "模型路由",
-            "settings" => "设置",
-            _ => "概览"
+            "providers" => Localized.Get("供应商与模型"),
+            "agents" => Localized.Get("Agent 接入"),
+            "usage" => Localized.Get("用量明细"),
+            "context" => Localized.Get("上下文"),
+            "routing" => Localized.Get("模型路由"),
+            "settings" => Localized.Get("设置"),
+            _ => Localized.Get("概览")
         };
         switch (page)
         {
@@ -537,7 +538,7 @@ public sealed partial class MainWindow : Window
         pageLoaded = true;
     }
 
-    private CliClient Client => cli ?? throw new InvalidOperationException("CLI 尚未连接，请刷新。");
+    private CliClient Client => cli ?? throw new InvalidOperationException(Localized.Get("CLI 尚未连接，请刷新。"));
 
     private async Task OverviewAsync(CancellationToken token)
     {
@@ -545,33 +546,33 @@ public sealed partial class MainWindow : Window
         var state = Json.Gateway(status);
         var endpoint = Json.OptionalText(status, "endpoint");
         var buttons = Row();
-        buttons.Children.Add(Button("启动网关", () => ChangeAsync("启动网关", ["service", "start", "--managed", "--json"]), true));
-        buttons.Children.Add(Button("停止网关", () => ChangeAsync("停止网关", ["service", "stop", "--managed", "--json"])));
-        buttons.Children.Add(Button("重启", () => ChangeAsync("重启网关", ["service", "restart", "--managed", "--json"])));
-        if (endpoint != null) buttons.Children.Add(Button("复制地址", () =>
+        buttons.Children.Add(Button(Localized.Get("启动网关"), () => ChangeAsync(Localized.Get("启动网关"), ["service", "start", "--managed", "--json"]), true));
+        buttons.Children.Add(Button(Localized.Get("停止网关"), () => ChangeAsync(Localized.Get("停止网关"), ["service", "stop", "--managed", "--json"])));
+        buttons.Children.Add(Button(Localized.Get("重启"), () => ChangeAsync(Localized.Get("重启网关"), ["service", "restart", "--managed", "--json"])));
+        if (endpoint != null) buttons.Children.Add(Button(Localized.Get("复制地址"), () =>
         {
             var content = new DataPackage(); content.SetText(endpoint); Clipboard.SetContent(content);
-            StatusText.Text = "接口地址已复制";
+            StatusText.Text = Localized.Get("接口地址已复制");
             return Task.CompletedTask;
         }));
-        PageBody.Children.Add(Card($"本地网关 · {state}", endpoint ?? "尚无运行中的接口地址", buttons));
+        PageBody.Children.Add(Card(Localized.Format("本地网关 · {0}", state), endpoint ?? Localized.Get("尚无运行中的接口地址"), buttons));
         if (Json.OptionalText(status, "error") is { } statusError)
-            PageBody.Children.Add(Card("服务诊断", statusError));
+            PageBody.Children.Add(Card(Localized.Get("服务诊断"), statusError));
         var providers = Json.Flag(status, "configured")
             ? Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"))
             : [];
-        if (providers.Length == 0) PageBody.Children.Add(Card("开始连接模型服务", "先添加一个供应商，再选择模型并接入 Agent。",
-            Button("添加供应商", AddProviderAsync, true)));
+        if (providers.Length == 0) PageBody.Children.Add(Card(Localized.Get("开始连接模型服务"), Localized.Get("先添加一个供应商，再选择模型并接入 Agent。"),
+            Button(Localized.Get("添加供应商"), AddProviderAsync, true)));
         foreach (var provider in providers)
         {
             var selected = Json.Strings(Json.Field(provider, "selected_models"));
             PageBody.Children.Add(Card(Json.Text(provider, "display_name"),
-                $"{Readiness(provider)} · {selected.Length} 个模型", Text(string.Join("  ·  ", selected))));
+                Localized.Format("{0} · {1} 个模型", Readiness(provider), selected.Length), Text(string.Join("  ·  ", selected))));
         }
     }
 
-    private static string Readiness(JsonElement provider) => !Json.Flag(provider, "enabled") ? "已停用" :
-        Json.Text(provider, "readiness") switch { "healthy" => "正常", "degraded" => "降级", var value => value };
+    private static string Readiness(JsonElement provider) => !Json.Flag(provider, "enabled") ? Localized.Get("已停用") :
+        Json.Text(provider, "readiness") switch { "healthy" => Localized.Get("正常"), "degraded" => Localized.Get("降级"), var value => value };
 
     private static string ReadinessDot(JsonElement provider) => !Json.Flag(provider, "enabled") ? "DotOff" :
         Json.Text(provider, "readiness") == "healthy" ? "DotOn" : "DotWarn";
@@ -593,7 +594,7 @@ public sealed partial class MainWindow : Window
         item.Click += async (_, _) =>
         {
             try { await work(); }
-            catch (Exception error) { ShowNotice($"{label}失败", error.Message, InfoBarSeverity.Error); }
+            catch (Exception error) { ShowNotice(Localized.Format("{0}失败", label), error.Message, InfoBarSeverity.Error); }
         };
         return item;
     }
@@ -621,7 +622,7 @@ public sealed partial class MainWindow : Window
                 foreach (var field in new[] { "display_name", "readiness", "icon" }) Json.Text(provider, field);
                 Json.Flag(provider, "enabled");
                 foreach (var field in new[] { "selected_models", "cached_models" })
-                    if (Json.Field(provider, field).ValueKind != JsonValueKind.Array) throw new CliFailure($"供应商 {id} 的 {field} 必须是 array。");
+                    if (Json.Field(provider, field).ValueKind != JsonValueKind.Array) throw new CliFailure(Localized.Format("供应商 {0} 的 {1} 必须是 array。", id, field));
                 providerRows.Add(id, provider);
             }
             ProviderList.ItemsSource = providers.Select(provider => Json.Text(provider, "id")).ToArray();
@@ -630,8 +631,8 @@ public sealed partial class MainWindow : Window
         if (providers.Length == 0)
         {
             pendingApply = null; ApplyChanges.IsEnabled = false;
-            PageTitle.Text = "还没有服务商";
-            PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
+            PageTitle.Text = Localized.Get("还没有服务商");
+            PageBody.Children.Add(Button(Localized.Get("新增服务商"), AddProviderAsync, true));
             return;
         }
         // SelectionChanged renders once after the list has its final selection.
@@ -649,7 +650,7 @@ public sealed partial class MainWindow : Window
         row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
         var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
-        state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Field(provider, "selected_models").GetArrayLength()}/{Json.Field(provider, "cached_models").GetArrayLength()} 个模型", Style = Themed("Caption") });
+        state.Children.Add(new TextBlock { Text = Localized.Format("{0} · {1}/{2} 个模型", Readiness(provider), Json.Field(provider, "selected_models").GetArrayLength(), Json.Field(provider, "cached_models").GetArrayLength()), Style = Themed("Caption") });
         row.Children.Add(state);
         var tile = new Grid { ColumnSpacing = 12 };
         tile.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -673,11 +674,11 @@ public sealed partial class MainWindow : Window
         OfficialBadge.Visibility = Json.Text(provider, "kind") == "official" ? Visibility.Visible : Visibility.Collapsed;
         var healthy = Json.Flag(provider, "enabled") && Json.Text(provider, "readiness") == "healthy";
         StatusBadge.Style = Themed(healthy ? "SuccessBadge" : "CautionBadge");
-        StatusBadgeText.Text = healthy ? "配置就绪" : Readiness(provider);
+        StatusBadgeText.Text = healthy ? Localized.Get("配置就绪") : Readiness(provider);
         StatusBadge.Visibility = Visibility.Visible;
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
-            ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():MM/dd HH:mm}" : "";
-        ToolTipService.SetToolTip(PageTitle, $"{providerId} · 已加入 {Json.Field(provider, "selected_models").GetArrayLength()} / 可选 {Json.Field(provider, "cached_models").GetArrayLength()}{refreshed} · 配置 {providerSnapshotAt.ToLocalTime():HH:mm:ss}");
+            ? Localized.Format(" · 上次刷新 {0:MM/dd HH:mm}", DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime()) : "";
+        ToolTipService.SetToolTip(PageTitle, Localized.Format("{0} · 已加入 {1} / 可选 {2}{3} · 配置 {4:HH:mm:ss}", providerId, Json.Field(provider, "selected_models").GetArrayLength(), Json.Field(provider, "cached_models").GetArrayLength(), refreshed, providerSnapshotAt.ToLocalTime()));
         ApplyChanges.IsEnabled = draftDirty;
         try
         {
@@ -685,7 +686,7 @@ public sealed partial class MainWindow : Window
             {
                 if (Json.Text(provider, "kind") == "official")
                 {
-                    PageBody.Children.Add(Card("连接配置", "官方服务商由 Codex OAuth 管理，连接参数只读。"));
+                    PageBody.Children.Add(Card(Localized.Get("连接配置"), Localized.Get("官方服务商由 Codex OAuth 管理，连接参数只读。")));
                     pendingApply = null; ApplyChanges.IsEnabled = false; return;
                 }
                 if (connectionDrafts.TryGetValue(providerId, out var draft))
@@ -701,7 +702,7 @@ public sealed partial class MainWindow : Window
             else RenderModels(provider);
             if (!connectionSelected && benchmarkSnapshot is { } snapshot) ApplyTimings(snapshot);
         }
-        catch (Exception error) { ShowNotice("读取服务商失败", error.Message, InfoBarSeverity.Error); }
+        catch (Exception error) { ShowNotice(Localized.Get("读取服务商失败"), error.Message, InfoBarSeverity.Error); }
     }
 
     private void RenderModels(JsonElement provider)
@@ -719,25 +720,25 @@ public sealed partial class MainWindow : Window
         var toolbar = new Grid { ColumnSpacing = 8 };
         foreach (var width in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto })
             toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
-        var search = new AutoSuggestBox { PlaceholderText = "搜索当前服务商的模型", QueryIcon = new SymbolIcon(Symbol.Find), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetName(search, "搜索当前服务商的模型");
+        var search = new AutoSuggestBox { PlaceholderText = Localized.Get("搜索当前服务商的模型"), QueryIcon = new SymbolIcon(Symbol.Find), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Stretch };
+        AutomationProperties.SetName(search, Localized.Get("搜索当前服务商的模型"));
         var filter = new ComboBox { MinWidth = 108, VerticalAlignment = VerticalAlignment.Center };
-        foreach (var option in new[] { "全部", "已加入", "未加入" }) filter.Items.Add(option);
+        foreach (var option in new[] { Localized.Get("全部"), Localized.Get("已加入"), Localized.Get("未加入") }) filter.Items.Add(option);
         filter.SelectedIndex = 0;
-        AutomationProperties.SetName(filter, "模型筛选");
+        AutomationProperties.SetName(filter, Localized.Get("模型筛选"));
         var actions = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
-        actions.Items.Add(MenuItem("刷新模型列表", "\uE72C", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
-        actions.Items.Add(MenuItem("重新探测已加入模型的能力", "\uE9D9", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
+        actions.Items.Add(MenuItem(Localized.Get("刷新模型列表"), "\uE72C", () => ChangeAsync(Localized.Get("刷新模型"), ["provider", "discover", id], apply: true)));
+        actions.Items.Add(MenuItem(Localized.Get("重新探测已加入模型的能力"), "\uE9D9", () => ChangeAsync(Localized.Get("探测模型能力"), ["provider", "probe", id], apply: true)));
         var more = new DropDownButton { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = actions, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetName(more, "更多模型操作");
-        var test = Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
-        test.Content = IconLabel("\uE916", $"测试已加入的 {selected.Count} 个模型");
-        AutomationProperties.SetName(test, $"测试已加入的 {selected.Count} 个模型");
+        AutomationProperties.SetName(more, Localized.Get("更多模型操作"));
+        var test = Button(Localized.Format("测试已加入的 {0} 个模型", selected.Count), () => ChangeAsync(Localized.Get("启动模型测速"), ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
+        test.Content = IconLabel("\uE916", Localized.Format("测试已加入的 {0} 个模型", selected.Count));
+        AutomationProperties.SetName(test, Localized.Format("测试已加入的 {0} 个模型", selected.Count));
         var order = new ComboBox { MinWidth = 128, VerticalAlignment = VerticalAlignment.Center };
-        order.Items.Add("家族与版本"); order.Items.Add("手动排序");
+        order.Items.Add(Localized.Get("家族与版本")); order.Items.Add(Localized.Get("手动排序"));
         order.SelectedIndex = modelOrder == "manual" ? 1 : 0;
-        AutomationProperties.SetName(order, "模型排序");
-        ToolTipService.SetToolTip(order, "拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。");
+        AutomationProperties.SetName(order, Localized.Get("模型排序"));
+        ToolTipService.SetToolTip(order, Localized.Get("拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。"));
         var tools = new FrameworkElement[] { search, filter, order, more, test };
         for (var index = 0; index < tools.Length; index++) { Grid.SetColumn(tools[index], index); toolbar.Children.Add(tools[index]); }
         modelBody.Children.Add(toolbar);
@@ -751,7 +752,7 @@ public sealed partial class MainWindow : Window
             return grid;
         }
         var header = Columns();
-        var labels = new[] { "加入", "顺序", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
+        var labels = new[] { Localized.Get("加入"), Localized.Get("顺序"), Localized.Get("模型"), Localized.Get("首 Token"), Localized.Get("生成速度"), Localized.Get("上下文"), Localized.Get("倍率"), Localized.Get("能力") };
         for (var index = 0; index < labels.Length; index++)
         {
             var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 3 and <= 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
@@ -778,7 +779,7 @@ public sealed partial class MainWindow : Window
             var (model, modelIndex) = modelsById[modelId];
             var row = Columns();
             var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
-            AutomationProperties.SetName(check, $"{modelId} 加入 Codex");
+            AutomationProperties.SetName(check, Localized.Format("{0} 加入 Codex", modelId));
             check.Checked += (_, _) => { if (!selected.Contains(modelId)) selected.Add(modelId); MarkDirty(); Filter(); };
             check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); Filter(); };
             var rank = new TextBlock { Text = selected.Contains(modelId) ? $"{selected.IndexOf(modelId) + 1}  ≡" : "", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
@@ -792,8 +793,8 @@ public sealed partial class MainWindow : Window
                 modelOrder = "manual"; order.SelectedIndex = 1; MarkDirty(); Filter();
                 await Task.CompletedTask;
             }
-            var up = MenuItem("上移", "\uE74A", () => Move(-1));
-            var down = MenuItem("下移", "\uE74B", () => Move(1));
+            var up = MenuItem(Localized.Get("上移"), "\uE74A", () => Move(-1));
+            var down = MenuItem(Localized.Get("下移"), "\uE74B", () => Move(1));
             moveMenu.Items.Add(up); moveMenu.Items.Add(down);
             moveMenu.Opening += (_, _) =>
             {
@@ -801,7 +802,7 @@ public sealed partial class MainWindow : Window
                 down.IsEnabled = selected.Contains(modelId) && selected.IndexOf(modelId) < selected.Count - 1;
             };
             args.ItemContainer.ContextFlyout = moveMenu;
-            ToolTipService.SetToolTip(rank, "拖动排序；右键菜单可上移、下移。");
+            ToolTipService.SetToolTip(rank, Localized.Get("拖动排序；右键菜单可上移、下移。"));
             var title = new Grid { ColumnSpacing = 0, VerticalAlignment = VerticalAlignment.Center };
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -812,39 +813,39 @@ public sealed partial class MainWindow : Window
             var originalContext = model.TryGetProperty("context_window", out var original) && original.ValueKind == JsonValueKind.Number ? original.GetDouble() : double.NaN;
             var contextText = new TextBlock { Style = Themed("MonoPrimary") };
             var overridden = new FontIcon { Glyph = "\uE7A7", FontSize = 10, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
-            ToolTipService.SetToolTip(overridden, "已覆盖上游上下文");
+            ToolTipService.SetToolTip(overridden, Localized.Get("已覆盖上游上下文"));
             void ShowContext()
             {
                 var value = contexts.GetValueOrDefault(modelId, double.NaN);
                 overridden.Visibility = double.IsNaN(value) ? Visibility.Collapsed : Visibility.Visible;
                 if (double.IsNaN(value)) value = originalContext;
-                contextText.Text = double.IsNaN(value) ? "未知" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
-                ToolTipService.SetToolTip(contextText, double.IsNaN(value) ? "服务商未提供上下文窗口；可刷新模型目录或手动设置。" : $"{value:N0} tokens");
+                contextText.Text = double.IsNaN(value) ? Localized.Get("未知") : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+                ToolTipService.SetToolTip(contextText, double.IsNaN(value) ? Localized.Get("服务商未提供上下文窗口；可刷新模型目录或手动设置。") : $"{value:N0} tokens");
             }
             ShowContext();
             var contextLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
             contextLabel.Children.Add(contextText); contextLabel.Children.Add(overridden);
-            var context = Button("编辑上下文", async () =>
+            var context = Button(Localized.Get("编辑上下文"), async () =>
             {
-                var number = new NumberBox { Header = "上下文 Token 数", Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-                var dialog = Dialog("模型上下文", number); dialog.PrimaryButtonText = "应用到草稿"; dialog.SecondaryButtonText = "恢复默认";
+                var number = new NumberBox { Header = Localized.Get("上下文 Token 数"), Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+                var dialog = Dialog(Localized.Get("模型上下文"), number); dialog.PrimaryButtonText = Localized.Get("应用到草稿"); dialog.SecondaryButtonText = Localized.Get("恢复默认");
                 var choice = await ShowDialogAsync(dialog);
                 if (choice == ContentDialogResult.None) return;
                 if (choice == ContentDialogResult.Primary && (!double.IsFinite(number.Value) || number.Value <= 0 || number.Value != Math.Truncate(number.Value)))
-                    throw new InvalidOperationException("上下文 Token 数必须是正整数。");
+                    throw new InvalidOperationException(Localized.Get("上下文 Token 数必须是正整数。"));
                 contexts[modelId] = choice == ContentDialogResult.Secondary ? double.NaN : number.Value;
                 ShowContext(); MarkDirty();
             });
             context.Content = contextLabel; context.Style = Themed("FlatButton");
             context.Padding = new Thickness(4, 2, 4, 2); context.HorizontalAlignment = HorizontalAlignment.Right; context.MinHeight = 0;
-            AutomationProperties.SetName(context, $"{modelId} 上下文");
+            AutomationProperties.SetName(context, Localized.Format("{0} 上下文", modelId));
             var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "\uE82F"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
+            foreach (var (field, label, glyph) in new[] { ("supports_image", Localized.Get("图片输入"), "\uE8B9"), ("supports_thinking", "Thinking", "\uE82F"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
             {
                 var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
                 var supported = known && support.ValueKind == JsonValueKind.True;
                 var icon = new FontIcon { Glyph = glyph, Style = Themed(supported ? "GlyphOn" : "GlyphOff") };
-                var summary = $"{label} · {(known ? supported ? "支持" : "不支持" : "尚未探测")}";
+                var summary = $"{label} · {(known ? supported ? Localized.Get("支持") : Localized.Get("不支持") : Localized.Get("尚未探测"))}";
                 ToolTipService.SetToolTip(icon, summary); AutomationProperties.SetName(icon, summary);
                 capabilities.Children.Add(icon);
             }
@@ -907,7 +908,7 @@ public sealed partial class MainWindow : Window
         order.SelectionChanged += (_, _) => { modelOrder = order.SelectedIndex == 1 ? "manual" : "family"; MarkDirty(); Filter(); };
         Filter();
         modelBody.Children.Add(list);
-        ShowSummary("正在读取测速结果…");
+        ShowSummary(Localized.Get("正在读取测速结果…"));
         pendingApply = async () =>
         {
             var arguments = new List<string> { "provider", "select", id, "--model-order", modelOrder };
@@ -915,10 +916,10 @@ public sealed partial class MainWindow : Window
             foreach (var (modelId, value) in contexts)
             {
                 if (double.IsNaN(value)) { if (savedContexts.TryGetProperty(modelId, out _)) arguments.AddRange(["--clear-model-context", modelId]); continue; }
-                if (!double.IsFinite(value) || value <= 0 || value != Math.Truncate(value)) throw new InvalidOperationException("上下文 Token 数必须是正整数。");
+                if (!double.IsFinite(value) || value <= 0 || value != Math.Truncate(value)) throw new InvalidOperationException(Localized.Get("上下文 Token 数必须是正整数。"));
                 arguments.AddRange(["--model-context", $"{modelId}={value:0}"]);
             }
-            await ChangeAsync("应用模型更改", arguments.ToArray(), apply: true);
+            await ChangeAsync(Localized.Get("应用模型更改"), arguments.ToArray(), apply: true);
         };
         modelDrafts[id] = (modelBody, pendingApply);
         PageBody.Children.Add(modelBody);
@@ -932,7 +933,7 @@ public sealed partial class MainWindow : Window
     {
         if (loadingPage || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
         draftDirty = true;
-        ShowSummary("还有未应用的更改");
+        ShowSummary(Localized.Get("还有未应用的更改"));
         ApplyChanges.IsEnabled = true;
     }
 
@@ -990,8 +991,8 @@ public sealed partial class MainWindow : Window
         var latency = row.TryGetProperty("ttft_ms", out var ms) && ms.ValueKind == JsonValueKind.Number ? ms.GetDouble() : (double?)null;
         (ttft.Text, ttft.Style) = status switch
         {
-            "timed_out" => ("超时", Themed("MonoCaution")),
-            "failed" => ("失败", Themed("MonoCritical")),
+            "timed_out" => (Localized.Get("超时"), Themed("MonoCaution")),
+            "failed" => (Localized.Get("失败"), Themed("MonoCritical")),
             _ when latency is { } value => (Milliseconds(value), Themed(value < 1000 ? "MonoSuccess" : value < 3000 ? "MonoCaution" : "MonoCritical")),
             _ => ("-", Themed("Mono"))
         };
@@ -1017,7 +1018,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             if (!token.IsCancellationRequested && !exiting && page == "providers" && !connectionSelected && !draftDirty)
-                ShowSummary($"无法刷新测速结果：{error.Message}");
+                ShowSummary(Localized.Format("无法刷新测速结果：{0}", error.Message));
         }
         finally { refreshingTimings = false; }
     }
@@ -1034,7 +1035,7 @@ public sealed partial class MainWindow : Window
         }
         if (snapshot.ValueKind == JsonValueKind.Null)
         {
-            if (!draftDirty) ShowSummary("当前服务商暂无测速结果");
+            if (!draftDirty) ShowSummary(Localized.Get("当前服务商暂无测速结果"));
             return;
         }
         var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
@@ -1045,17 +1046,17 @@ public sealed partial class MainWindow : Window
             if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
         }
         if (draftDirty) return;
-        if (results.Length == 0) { ShowSummary("当前服务商暂无测速结果"); return; }
+        if (results.Length == 0) { ShowSummary(Localized.Get("当前服务商暂无测速结果")); return; }
         var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
-        var prefix = $"{started:yyyy年M月d日 HH:mm} · 超时 {Json.Field(snapshot, "timeout_seconds")} 秒 · ";
+        var prefix = Localized.Format("{0:yyyy年M月d日 HH:mm} · 超时 {1} 秒 · ", started, Json.Field(snapshot, "timeout_seconds"));
         var completed = results.Count(row => Json.Text(row, "status") == "completed");
         var timedOut = results.Count(row => Json.Text(row, "status") == "timed_out");
         var failed = results.Length - completed - timedOut;
         switch (Json.Text(snapshot, "status"))
         {
-            case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}"); break;
-            case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}"); break;
-            default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}"); break;
+            case "running": ShowSummary(Localized.Format("{0}正在测速 {1}/{2}", prefix, results.Length, Json.Field(snapshot, "total_models"))); break;
+            case "failed": ShowSummary(Localized.Format("{0}测速任务失败：{1}", prefix, Json.OptionalText(snapshot, "error") ?? Localized.Get("未知错误"))); break;
+            default: ShowSummary(Localized.Format("{0}测速完成：成功 {1}，超时 {2}，失败 {3}", prefix, completed, timedOut, failed)); break;
         }
     }
 
@@ -1067,41 +1068,41 @@ public sealed partial class MainWindow : Window
         var catalog = Json.Field(metadata, "provider_catalog");
         var presets = Json.Rows(Json.Field(catalog, "presets"));
         var protocols = Json.Rows(Json.Field(catalog, "protocols"));
-        var preset = Choice("供应商类型", presets.Select(row => Json.Text(row, "id")).ToArray(),
+        var preset = Choice(Localized.Get("供应商类型"), presets.Select(row => Json.Text(row, "id")).ToArray(),
             provider is { } stored ? Json.OptionalText(stored, "preset_id") ?? "custom" : Json.Text(catalog, "default_preset"));
         preset.IsEnabled = provider == null;
-        var id = Input("供应商 ID", provider is { } p ? Json.Text(p, "id") : "");
+        var id = Input(Localized.Get("供应商 ID"), provider is { } p ? Json.Text(p, "id") : "");
         id.IsEnabled = provider == null;
-        var name = Input("显示名称", provider is { } n ? Json.Text(n, "display_name") : "");
-        var url = Input("Base URL（预设可留空）", provider is { } u ? Json.Text(u, "base_url") : "");
+        var name = Input(Localized.Get("显示名称"), provider is { } n ? Json.Text(n, "display_name") : "");
+        var url = Input(Localized.Get("Base URL（预设可留空）"), provider is { } u ? Json.Text(u, "base_url") : "");
         AutomationProperties.SetAutomationId(url, "provider-base-url");
-        var website = Input("供应商网站（可选）", provider is { } site ? Json.OptionalText(site, "website_url") ?? "" : "");
-        var imagePath = Input("图像生成路径（可选）", provider is { } image ? Json.OptionalText(image, "image_generation_path") ?? "" : "");
-        var apiPath = Input("API 路径（custom，可选）", provider is { } api ? Json.OptionalText(api, "api_path") ?? "" : "");
-        var key = new PasswordBox { Header = provider == null ? "API Key" : "新 API Key（留空保留）" };
-        var protocol = Choice("协议（custom）", new[] { "自动检测" }.Concat(protocols.Select(row => Json.Text(row, "id"))).ToArray(),
-            provider is { } pr ? Json.Text(pr, "protocol") : "自动检测");
-        var username = Input("OneAPI 额度用户名", provider is { } q ? Json.OptionalText(q, "quota_username") ?? "" : "");
+        var website = Input(Localized.Get("供应商网站（可选）"), provider is { } site ? Json.OptionalText(site, "website_url") ?? "" : "");
+        var imagePath = Input(Localized.Get("图像生成路径（可选）"), provider is { } image ? Json.OptionalText(image, "image_generation_path") ?? "" : "");
+        var apiPath = Input(Localized.Get("API 路径（custom，可选）"), provider is { } api ? Json.OptionalText(api, "api_path") ?? "" : "");
+        var key = new PasswordBox { Header = provider == null ? "API Key" : Localized.Get("新 API Key（留空保留）") };
+        var protocol = Choice(Localized.Get("协议（custom）"), new[] { Localized.Get("自动检测") }.Concat(protocols.Select(row => Json.Text(row, "id"))).ToArray(),
+            provider is { } pr ? Json.Text(pr, "protocol") : Localized.Get("自动检测"));
+        var username = Input(Localized.Get("OneAPI 额度用户名"), provider is { } q ? Json.OptionalText(q, "quota_username") ?? "" : "");
         var workspace = Input("OpenCode Go workspace ID", provider is { } w ? Json.OptionalText(w, "quota_workspace_id") ?? "" : "");
-        var cookie = new PasswordBox { Header = "OpenCode Go Cookie（留空保留）" };
-        var accessKey = new PasswordBox { Header = "AWS Access Key ID（留空保留）" };
-        var secretKey = new PasswordBox { Header = "AWS Secret Access Key（留空保留）" };
-        var session = new PasswordBox { Header = "AWS Session Token（可选）" };
+        var cookie = new PasswordBox { Header = Localized.Get("OpenCode Go Cookie（留空保留）") };
+        var accessKey = new PasswordBox { Header = Localized.Get("AWS Access Key ID（留空保留）") };
+        var secretKey = new PasswordBox { Header = Localized.Get("AWS Secret Access Key（留空保留）") };
+        var session = new PasswordBox { Header = Localized.Get("AWS Session Token（可选）") };
         var region = Input("AWS Region", provider is { } r ? Json.OptionalText(r, "aws_region") ?? Json.Text(catalog, "default_aws_region") : Json.Text(catalog, "default_aws_region"));
-        var bridge = Choice("OneAPI 认证桥接", ["disabled", "ducx_loopback"],
+        var bridge = Choice(Localized.Get("OneAPI 认证桥接"), ["disabled", "ducx_loopback"],
             provider is { } b ? Json.OptionalText(b, "baidu_auth_bridge") ?? "disabled" : "disabled");
         var report = new CheckBox
         {
-            Content = "OneAPI 代码上报",
+            Content = Localized.Get("OneAPI 代码上报"),
             IsChecked = provider is { } br &&
             Json.Field(br, "baidu_code_report").ValueKind == JsonValueKind.True
         };
         string[] overrideModels = provider is { } configured
             ? Json.Strings(Json.Field(configured, "selected_models")) : [];
-        var reviewOverride = new CheckBox { Content = "Codex 审查模型覆盖", IsChecked = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
-        var reviewModel = Choice("审查模型", overrideModels, provider is { } rm ? Json.OptionalText(rm, "auto_review_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
-        var titleOverride = new CheckBox { Content = "Codex 会话命名模型覆盖", IsChecked = provider is { } titleProvider && Json.OptionalText(titleProvider, "codex_thread_title_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
-        var titleModel = Choice("会话命名模型", overrideModels, provider is { } tm ? Json.OptionalText(tm, "codex_thread_title_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
+        var reviewOverride = new CheckBox { Content = Localized.Get("Codex 审查模型覆盖"), IsChecked = provider is { } reviewProvider && Json.OptionalText(reviewProvider, "auto_review_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var reviewModel = Choice(Localized.Get("审查模型"), overrideModels, provider is { } rm ? Json.OptionalText(rm, "auto_review_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
+        var titleOverride = new CheckBox { Content = Localized.Get("Codex 会话命名模型覆盖"), IsChecked = provider is { } titleProvider && Json.OptionalText(titleProvider, "codex_thread_title_model") is { Length: > 0 }, IsEnabled = overrideModels.Length > 0 };
+        var titleModel = Choice(Localized.Get("会话命名模型"), overrideModels, provider is { } tm ? Json.OptionalText(tm, "codex_thread_title_model") ?? overrideModels.FirstOrDefault() ?? "" : "");
         void OverrideFields()
         {
             reviewOverride.Visibility = titleOverride.Visibility = provider == null ? Visibility.Collapsed : Visibility.Visible;
@@ -1113,8 +1114,8 @@ public sealed partial class MainWindow : Window
         titleOverride.Checked += (_, _) => OverrideFields();
         titleOverride.Unchecked += (_, _) => OverrideFields();
         OverrideFields();
-        var oauthTimeout = Input("OAuth 授权超时（秒）", Json.Field(catalog, "oauth_timeout_seconds").ToString());
-        var oauthHint = Text("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。");
+        var oauthTimeout = Input(Localized.Get("OAuth 授权超时（秒）"), Json.Field(catalog, "oauth_timeout_seconds").ToString());
+        var oauthHint = Text(Localized.Get("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。"));
         form.Children.Add(oauthTimeout);
         form.Children.Add(oauthHint);
         foreach (var element in new FrameworkElement[] { preset, id, name, url, website, protocol, apiPath, imagePath, key, username, bridge, report, workspace, cookie, accessKey, secretKey, session, region, reviewOverride, reviewModel, titleOverride, titleModel })
@@ -1128,7 +1129,7 @@ public sealed partial class MainWindow : Window
             oauthHint.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
             id.Visibility = oauth && !Json.Flag(definition, "allow_multiple") ? Visibility.Collapsed : Visibility.Visible;
             var localSession = Json.Text(definition, "auth_mode") == "local_session";
-            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : localSession ? "API Key（可选；留空使用原生客户端登录状态）" : "API Key（可选；留空使用本地 OAuth）";
+            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : localSession ? Localized.Get("API Key（可选；留空使用原生客户端登录状态）") : Localized.Get("API Key（可选；留空使用本地 OAuth）");
             key.Visibility = aws || oauth ? Visibility.Collapsed : Visibility.Visible;
             foreach (var element in new FrameworkElement[] { name, url, website, imagePath })
                 element.Visibility = oauth ? Visibility.Collapsed : Visibility.Visible;
@@ -1138,17 +1139,17 @@ public sealed partial class MainWindow : Window
             protocol.Visibility = Json.Flag(definition, "custom_endpoint") ? Visibility.Visible : Visibility.Collapsed;
             apiPath.Visibility = protocol.Visibility;
         }
-        var ducxHint = Text("DUCX 使用独立副本。保存时自动下载；需要登录时会打开终端显示二维码，请在终端完成扫码。关闭终端或取消后可重新登录。");
-        var setupDucx = Button("安装 / 登录 DUCX…", async () =>
+        var ducxHint = Text(Localized.Get("DUCX 使用独立副本。保存时自动下载；需要登录时会打开终端显示二维码，请在终端完成扫码。关闭终端或取消后可重新登录。"));
+        var setupDucx = Button(Localized.Get("安装 / 登录 DUCX…"), async () =>
         {
-            await ExecuteUiAsync("准备 DUCX，请在弹出的终端扫码", async token =>
+            await ExecuteUiAsync(Localized.Get("准备 DUCX，请在弹出的终端扫码"), async token =>
             {
                 var output = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(
                     ["connect", "ducx", "--json"], token, progress: new Progress<string>(message => StatusText.Text = message));
                 using var document = JsonDocument.Parse(output);
                 var executable = Json.Text(document.RootElement, "executable");
-                if (!Path.IsPathFullyQualified(executable)) throw new CliFailure("DUCX 返回的路径必须是绝对路径。");
-                ShowNotice("DUCX 已就绪", "扫码登录已完成，可以保存服务商配置。", InfoBarSeverity.Success);
+                if (!Path.IsPathFullyQualified(executable)) throw new CliFailure(Localized.Get("DUCX 返回的路径必须是绝对路径。"));
+                ShowNotice(Localized.Get("DUCX 已就绪"), Localized.Get("扫码登录已完成，可以保存服务商配置。"), InfoBarSeverity.Success);
             });
         });
         AutomationProperties.SetAutomationId(setupDucx, "ducx-login");
@@ -1167,8 +1168,8 @@ public sealed partial class MainWindow : Window
             foreach (var control in form.Children.OfType<FrameworkElement>()) TrackDraft(control);
         if (!inline)
         {
-            var dialog = Dialog(provider == null ? "新增服务商" : "连接配置", new ScrollViewer { Content = form, MaxHeight = 480 });
-            dialog.PrimaryButtonText = "保存";
+            var dialog = Dialog(provider == null ? Localized.Get("新增服务商") : Localized.Get("连接配置"), new ScrollViewer { Content = form, MaxHeight = 480 });
+            dialog.PrimaryButtonText = Localized.Get("保存");
             if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
         }
         async Task Save()
@@ -1189,7 +1190,7 @@ public sealed partial class MainWindow : Window
             foreach (var (flag, box) in new[] { ("--display-name", name), ("--base-url", url), ("--website-url", website), ("--image-generation-path", imagePath) })
                 if (box.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
             var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
-            if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
+            if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != Localized.Get("自动检测")) args.AddRange(["--protocol", (string)protocol.SelectedItem]);
             if (Json.Flag(definition, "custom_endpoint") && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
             if (Json.Text(definition, "auth_mode") == "aws_sigv4")
             {
@@ -1220,14 +1221,14 @@ public sealed partial class MainWindow : Window
                     args.AddRange(["--codex-thread-title-model", titleSelection]);
                 else args.Add("--clear-codex-thread-title-model");
             }
-            try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); }
+            try { await ChangeAsync(Localized.Get("保存供应商"), args.ToArray(), apply: true, secrets: secrets); }
             finally { secrets.Clear(); }
         }
         if (inline && provider is { } connection)
         {
             var body = new StackPanel { Spacing = 16, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
-            body.Children.Add(Card("连接配置", "密钥已配置时留空保留；修改后使用底部「应用更改」。", form));
-            body.Children.Add(Button("清除密钥", () => ChangeAsync("清除密钥", ["provider", "update", Json.Text(connection, "id"), Json.OptionalText(connection, "preset_id") == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key"], apply: true)));
+            body.Children.Add(Card(Localized.Get("连接配置"), Localized.Get("密钥已配置时留空保留；修改后使用底部「应用更改」。"), form));
+            body.Children.Add(Button(Localized.Get("清除密钥"), () => ChangeAsync(Localized.Get("清除密钥"), ["provider", "update", Json.Text(connection, "id"), Json.OptionalText(connection, "preset_id") == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key"], apply: true)));
             pendingApply = Save;
             connectionDrafts[Json.Text(connection, "id")] = (body, Save);
             PageBody.Children.Add(body);
@@ -1247,7 +1248,7 @@ public sealed partial class MainWindow : Window
             agentRevision = revision;
         }
         var agents = agentSnapshot;
-        var checkVersions = Button("检查版本更新", () => ExecuteUiAsync("检查 Agent 版本", async cancellation =>
+        var checkVersions = Button(Localized.Get("检查版本更新"), () => ExecuteUiAsync(Localized.Get("检查 Agent 版本"), async cancellation =>
         {
             var versions = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "versions", "--json", "--refresh"], cancellation), "agents"));
             var body = new StackPanel { Spacing = 12 };
@@ -1256,19 +1257,19 @@ public sealed partial class MainWindow : Window
                 var version = Json.Field(agent, "cli");
                 var id = Json.Text(agent, "id");
                 var row = Row();
-                row.Children.Add(Text($"{id} · 当前 {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "未知"} · 最新 {Json.OptionalText(version, "latest") ?? "未知"}"));
-                if (Json.Flag(version, "update")) row.Children.Add(Button("升级", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
+                row.Children.Add(Text(Localized.Format("{0} · 当前 {1} · 最新 {2}", id, Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? Localized.Get("未知"), Json.OptionalText(version, "latest") ?? Localized.Get("未知"))));
+                if (Json.Flag(version, "update")) row.Children.Add(Button(Localized.Get("升级"), () => ChangeAsync(Localized.Get("升级 Agent"), ["agent", "upgrade", id, "--json"])));
                 if (Json.OptionalText(version, "error") is { } error) row.Children.Add(Text(error));
                 body.Children.Add(row);
             }
-            PageBody.Children.Insert(1, Card("版本检查结果", "", body));
+            PageBody.Children.Insert(1, Card(Localized.Get("版本检查结果"), "", body));
         }, readOnly: true));
-        checkVersions.Content = IconLabel("\uE895", "检查版本更新");
+        checkVersions.Content = IconLabel("\uE895", Localized.Get("检查版本更新"));
         checkVersions.Style = Themed("FlatButton");
         var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));
         var connectedCount = agents.Count(agent => Json.Text(Json.Field(agent, "integration"), "state") is "managed" or "drift");
         var agentToolbar = new Grid();
-        var agentSummary = new TextBlock { Text = $"已接入 {connectedCount} 个 Agent · 已检测到 {detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+        var agentSummary = new TextBlock { Text = Localized.Format("已接入 {0} 个 Agent · 已检测到 {1} 个 · {2:HH:mm:ss}", connectedCount, detectedCount, agentSnapshotAt.ToLocalTime()), Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetAutomationId(agentSummary, "agent-summary");
         agentToolbar.Children.Add(agentSummary);
         checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
@@ -1283,32 +1284,32 @@ public sealed partial class MainWindow : Window
             var state = Json.Text(integration, "state");
             var stateLabel = state switch
             {
-                "managed" => "已接入",
-                "unmanaged" => "未接入",
-                "drift" => "配置已改变",
-                "error" => "检测失败",
-                "unsupported" => "暂不支持接入",
-                "pending" => "等待原生应用确认",
-                "pending_removal" => "等待原生应用移除",
-                _ => $"未知状态：{state}"
+                "managed" => Localized.Get("已接入"),
+                "unmanaged" => Localized.Get("未接入"),
+                "drift" => Localized.Get("配置已改变"),
+                "error" => Localized.Get("检测失败"),
+                "unsupported" => Localized.Get("暂不支持接入"),
+                "pending" => Localized.Get("等待原生应用确认"),
+                "pending_removal" => Localized.Get("等待原生应用移除"),
+                _ => Localized.Format("未知状态：{0}", state)
             };
             var version = Json.Field(agent, "cli");
             var integrationMode = Json.OptionalText(integration, "mode");
             var modeLabel = integrationMode switch
             {
-                "native_models" => "厂商原生模型管理",
-                "native_credentials" => "原生凭据存储",
-                "native_runtime" => "原生运行时",
-                "native_app" => "原生应用 API",
-                "confirmed_import" => "应用内确认导入",
+                "native_models" => Localized.Get("厂商原生模型管理"),
+                "native_credentials" => Localized.Get("原生凭据存储"),
+                "native_runtime" => Localized.Get("原生运行时"),
+                "native_app" => Localized.Get("原生应用 API"),
+                "confirmed_import" => Localized.Get("应用内确认导入"),
                 _ => ""
             };
             if (integrationMode == "native_models" && state == "managed")
-                stateLabel = "原生模型已托管";
+                stateLabel = Localized.Get("原生模型已托管");
             if (modeLabel.Length > 0) stateLabel += $" · {modeLabel}";
             var connected = state is "managed" or "drift" or "pending" or "pending_removal";
             var connectSwitch = new ToggleSwitch { IsOn = connected, OnContent = "", OffContent = "", IsEnabled = state != "unsupported", MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
-            AutomationProperties.SetName(connectSwitch, $"{Json.Text(agent, "name")} 接入");
+            AutomationProperties.SetName(connectSwitch, Localized.Format("{0} 接入", Json.Text(agent, "name")));
             var restoringSwitch = false;
             connectSwitch.Toggled += async (_, _) =>
             {
@@ -1319,21 +1320,21 @@ public sealed partial class MainWindow : Window
                 {
                     if (!connect)
                     {
-                        if (await ConfirmAsync("断开 Agent？", "CLI 将恢复或移除此 Agent 的托管配置。", "断开"))
-                            await ChangeAsync("断开 Agent", ["agent", "disconnect", id]);
+                        if (await ConfirmAsync(Localized.Get("断开 Agent？"), Localized.Get("CLI 将恢复或移除此 Agent 的托管配置。"), Localized.Get("断开")))
+                            await ChangeAsync(Localized.Get("断开 Agent"), ["agent", "disconnect", id]);
                         return;
                     }
                     var args = new List<string> { "agent", "connect", id };
                     if (id == "codex")
                     {
-                        var mode = Choice("接入模式", ["官方账号 + 自定义模型", "仅自定义模型"], "官方账号 + 自定义模型");
-                        var dialog = Dialog("接入 Codex", mode); dialog.PrimaryButtonText = "接入";
+                        var mode = Choice(Localized.Get("接入模式"), [Localized.Get("官方账号 + 自定义模型"), Localized.Get("仅自定义模型")], Localized.Get("官方账号 + 自定义模型"));
+                        var dialog = Dialog(Localized.Get("接入 Codex"), mode); dialog.PrimaryButtonText = Localized.Get("接入");
                         if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
                         args.AddRange(["--mode", mode.SelectedIndex == 0 ? "official-account" : "custom-only"]);
                     }
-                    await ChangeAsync("接入 Agent", args.ToArray());
+                    await ChangeAsync(Localized.Get("接入 Agent"), args.ToArray());
                 }
-                catch (Exception error) { ShowNotice("Agent 接入失败", error.Message, InfoBarSeverity.Error); }
+                catch (Exception error) { ShowNotice(Localized.Get("Agent 接入失败"), error.Message, InfoBarSeverity.Error); }
             };
             var heading = new Grid { ColumnSpacing = 12 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1347,10 +1348,10 @@ public sealed partial class MainWindow : Window
             text.Children.Add(title);
             var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
-            var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? $"版本检查失败：{failure}" : null);
+            var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? Localized.Format("版本检查失败：{0}", failure) : null);
             summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
             if (connected && !Json.Flag(agent, "detected"))
-                summary.Children.Add(new TextBlock { Text = "未检测到安装程序", Style = Themed("Caption"), FontSize = 13 });
+                summary.Children.Add(new TextBlock { Text = Localized.Get("未检测到安装程序"), Style = Themed("Caption"), FontSize = 13 });
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
             var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -1358,7 +1359,7 @@ public sealed partial class MainWindow : Window
             heading.Children.Add(identity);
             var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
             if (Json.Flag(version, "update"))
-                controls.Children.Add(Button($"更新到 {Json.Text(version, "latest")}", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
+                controls.Children.Add(Button(Localized.Format("更新到 {0}", Json.Text(version, "latest")), () => ChangeAsync(Localized.Get("升级 Agent"), ["agent", "upgrade", id, "--json"])));
             controls.Children.Add(connectSwitch);
             Grid.SetColumn(controls, 1); heading.Children.Add(controls);
             var rows = connected || Json.Flag(agent, "detected") ? detectedRows : undetected;
@@ -1370,7 +1371,7 @@ public sealed partial class MainWindow : Window
         if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 1120 });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = $"显示未接入且未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
+            var section = new Expander { Header = Localized.Format("显示未接入且未检测到的 {0} 个 Agent", undetected.Children.Count), Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
@@ -1378,9 +1379,9 @@ public sealed partial class MainWindow : Window
 
     private async Task UsageAsync(CancellationToken token)
     {
-        var range = Choice("统计范围", ["今天", "7 天", "30 天"], "7 天");
-        var metric = Choice("图表指标", ["Tokens", "请求次数"], "Tokens");
-        var grouping = Choice("图表分组", ["构成", "按 Provider 拆分"], "构成");
+        var range = Choice(Localized.Get("统计范围"), [Localized.Get("今天"), Localized.Get("7 天"), Localized.Get("30 天")], Localized.Get("7 天"));
+        var metric = Choice(Localized.Get("图表指标"), ["Tokens", Localized.Get("请求次数")], "Tokens");
+        var grouping = Choice(Localized.Get("图表分组"), [Localized.Get("构成"), Localized.Get("按 Provider 拆分")], Localized.Get("构成"));
         foreach (var picker in new[] { range, metric, grouping }) picker.MinWidth = 150;
         var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         filters.Children.Add(range); filters.Children.Add(metric); filters.Children.Add(grouping);
@@ -1394,11 +1395,11 @@ public sealed partial class MainWindow : Window
         var expanded = new HashSet<string>();
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
 
-        var status = Choice("状态", ["全部", "成功", "失败"], "全部");
-        var model = Choice("模型", ["全部模型"], "全部模型");
+        var status = Choice(Localized.Get("状态"), [Localized.Get("全部"), Localized.Get("成功"), Localized.Get("失败")], Localized.Get("全部"));
+        var model = Choice(Localized.Get("模型"), [Localized.Get("全部模型")], Localized.Get("全部模型"));
         status.MinWidth = 120; model.MinWidth = 200; status.HorizontalAlignment = model.HorizontalAlignment = HorizontalAlignment.Left;
-        var substituted = new CheckBox { Content = "仅看模型替换", VerticalAlignment = VerticalAlignment.Bottom };
-        var grouped = new CheckBox { Content = "按会话分组", VerticalAlignment = VerticalAlignment.Bottom };
+        var substituted = new CheckBox { Content = Localized.Get("仅看模型替换"), VerticalAlignment = VerticalAlignment.Bottom };
+        var grouped = new CheckBox { Content = Localized.Get("按会话分组"), VerticalAlignment = VerticalAlignment.Bottom };
         AutomationProperties.SetAutomationId(status, "usage-status"); AutomationProperties.SetAutomationId(model, "usage-model");
         AutomationProperties.SetAutomationId(grouped, "usage-group-session");
         var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Bottom };
@@ -1412,7 +1413,7 @@ public sealed partial class MainWindow : Window
         var tableNote = new TextBlock { Style = Themed("SecondaryText") };
         var tableBody = new StackPanel { Spacing = 12 };
         tableBody.Children.Add(tableBar); tableBody.Children.Add(turnsHost);
-        var tableCard = Card("回复明细", "", tableBody);
+        var tableCard = Card(Localized.Get("回复明细"), "", tableBody);
         ((StackPanel)tableCard.Child).Children.Insert(1, tableNote);
         void Attach()
         {
@@ -1424,7 +1425,7 @@ public sealed partial class MainWindow : Window
         Button Chip(string text, Action clear)
         {
             var chip = new Button { Content = IconLabel("\uE711", text), Padding = new Thickness(8, 3, 8, 3), FontSize = 12 };
-            AutomationProperties.SetName(chip, $"清除筛选：{text}");
+            AutomationProperties.SetName(chip, Localized.Format("清除筛选：{0}", text));
             chip.Click += (_, _) => clear();
             return chip;
         }
@@ -1434,13 +1435,13 @@ public sealed partial class MainWindow : Window
                 .Where(turn => session == null || Json.Text(turn, "session") == session).ToArray();
             var substitutions = scoped.Count(UsageStats.IsSubstituted);
             substituted.Visibility = substitutions > 0 ? Visibility.Visible : Visibility.Collapsed;
-            substituted.Content = $"仅看模型替换（{substitutions}）";
+            substituted.Content = Localized.Format("仅看模型替换（{0}）", substitutions);
             if (substitutions == 0) substituted.IsChecked = false;
             var failures = scoped.Count(UsageStats.IsFailed);
             updatingFilters = true;
             var statusIndex = Math.Max(0, status.SelectedIndex);
             status.Items.Clear();
-            foreach (var label in new[] { $"全部（{scoped.Length}）", $"成功（{scoped.Length - failures}）", $"失败（{failures}）" }) status.Items.Add(label);
+            foreach (var label in new[] { Localized.Format("全部（{0}）", scoped.Length), Localized.Format("成功（{0}）", scoped.Length - failures), Localized.Format("失败（{0}）", failures) }) status.Items.Add(label);
             status.SelectedIndex = statusIndex;
             updatingFilters = false;
             var modelId = model.SelectedIndex > 0 ? (string)model.SelectedItem : null;
@@ -1457,11 +1458,11 @@ public sealed partial class MainWindow : Window
             if (session != null)
             {
                 var title = scoped.Select(turn => Json.OptionalText(turn, "session_display")).FirstOrDefault(name => name != null) ?? session;
-                chips.Children.Add(Chip($"会话 {title}", () => { session = null; RenderTurns(); }));
+                chips.Children.Add(Chip(Localized.Format("会话 {0}", title), () => { session = null; RenderTurns(); }));
             }
-            tableNote.Text = slot != null && slotTurns == null ? "正在读取这段时间的回复…"
-                : $"显示 {shown.Length} 条回复" + (slot == null && session == null && turns.Length >= 500 ? "（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）" : "");
-            if (shown.Length == 0) { turnsHost.Content = Text(slot != null && slotTurns == null ? "" : "没有符合条件的回复。"); return; }
+            tableNote.Text = slot != null && slotTurns == null ? Localized.Get("正在读取这段时间的回复…")
+                : Localized.Format("显示 {0} 条回复", shown.Length) + (slot == null && session == null && turns.Length >= 500 ? Localized.Get("（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）") : "");
+            if (shown.Length == 0) { turnsHost.Content = Text(slot != null && slotTurns == null ? "" : Localized.Get("没有符合条件的回复。")); return; }
             var rows = UsageView.Rows(shown, grouped.IsChecked == true, expanded);
             var table = new StackPanel();
             table.Children.Add(UsageView.TableHeader());
@@ -1487,13 +1488,13 @@ public sealed partial class MainWindow : Window
             catch (CliFailure error) when (ReferenceEquals(slot, selected))
             {
                 slot = null; RenderCharts(); RenderTurns();
-                ShowNotice("读取回复失败", error.Message, InfoBarSeverity.Error);
+                ShowNotice(Localized.Get("读取回复失败"), error.Message, InfoBarSeverity.Error);
             }
         }
         void RenderCharts()
         {
             var chart = UsageView.Chart(slots, providerNames, metric.SelectedIndex == 1, grouping.SelectedIndex == 1, slot, selected => _ = SelectSlot(selected));
-            var card = Card(Days() == 1 ? "用量趋势 · 按小时" : "用量趋势 · 按天（UTC）", "", chart);
+            var card = Card(Days() == 1 ? Localized.Get("用量趋势 · 按小时") : Localized.Get("用量趋势 · 按天（UTC）"), "", chart);
             chartsHost.Content = card;
         }
         async Task ReadUsage(CancellationToken cancellation)
@@ -1524,9 +1525,9 @@ public sealed partial class MainWindow : Window
                 updatingFilters = true;
                 var models = turns.Select(turn => Json.Text(turn, "upstream_model_id")).Distinct().Order(StringComparer.Ordinal).ToArray();
                 var keep = model.SelectedIndex > 0 && models.Contains((string)model.SelectedItem) ? (string)model.SelectedItem : null;
-                model.Items.Clear(); model.Items.Add("全部模型");
+                model.Items.Clear(); model.Items.Add(Localized.Get("全部模型"));
                 foreach (var id in models) model.Items.Add(id);
-                model.SelectedItem = keep ?? "全部模型";
+                model.SelectedItem = keep ?? Localized.Get("全部模型");
                 updatingFilters = false;
                 if (usageBody.Children.Count != 3) Attach();
                 summaryHost.Content = UsageView.Summary(UsageStats.Sum(daily.Select(UsageStats.Daily)), UsageStats.Sum(previous.Select(UsageStats.Daily)), slots);
@@ -1534,9 +1535,9 @@ public sealed partial class MainWindow : Window
                 pageLoaded = true;
             }
             catch (CliFailure) when (cancellation.IsCancellationRequested) { throw; }
-            catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card("用量不可用", error.Message)); }
+            catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card(Localized.Get("用量不可用"), error.Message)); }
         }
-        range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage, readOnly: true);
+        range.SelectionChanged += async (_, _) => await ExecuteUiAsync(Localized.Get("读取用量"), ReadUsage, readOnly: true);
         metric.SelectionChanged += (_, _) => RenderCharts();
         grouping.SelectionChanged += (_, _) => RenderCharts();
         status.SelectionChanged += (_, _) => { if (!updatingFilters) RenderTurns(); };
@@ -1549,7 +1550,7 @@ public sealed partial class MainWindow : Window
 
     private static Task OpenPathAsync(string path)
     {
-        if (!Path.IsPathFullyQualified(path) || !Directory.Exists(path)) throw new DirectoryNotFoundException($"目录不存在：{path}");
+        if (!Path.IsPathFullyQualified(path) || !Directory.Exists(path)) throw new DirectoryNotFoundException(Localized.Format("目录不存在：{0}", path));
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
         return Task.CompletedTask;
     }
@@ -1561,7 +1562,7 @@ public sealed partial class MainWindow : Window
         button.Click += async (_, _) =>
         {
             try { await work(); }
-            catch (Exception error) { ShowNotice($"{label}失败", error.Message, InfoBarSeverity.Error); }
+            catch (Exception error) { ShowNotice(Localized.Format("{0}失败", label), error.Message, InfoBarSeverity.Error); }
         };
         return button;
     }
@@ -1597,7 +1598,7 @@ public sealed partial class MainWindow : Window
     {
         Title = title,
         Content = content,
-        CloseButtonText = "取消",
+        CloseButtonText = Localized.Get("取消"),
         XamlRoot = Root.XamlRoot,
         RequestedTheme = Root.ActualTheme,
         DefaultButton = ContentDialogButton.Primary

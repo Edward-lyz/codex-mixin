@@ -57,10 +57,10 @@ internal static class QuotaView
     internal static SelectorBar StyleSwitch(QuotaStyle current, Action<QuotaStyle> changed)
     {
         var selector = new SelectorBar { VerticalAlignment = VerticalAlignment.Center };
-        foreach (var (style, label) in new[] { (QuotaStyle.Ring, "圆环"), (QuotaStyle.Bar, "条形") })
+        foreach (var (style, label) in new[] { (QuotaStyle.Ring, Localized.Get("圆环")), (QuotaStyle.Bar, Localized.Get("条形")) })
         {
             var option = new SelectorBarItem { Text = label, Tag = (int)style };
-            AutomationProperties.SetName(option, $"额度{label}展示");
+            AutomationProperties.SetName(option, Localized.Format("额度{0}展示", label));
             selector.Items.Add(option);
             if (style == current) selector.SelectedItem = option;
         }
@@ -98,21 +98,21 @@ internal static class QuotaView
         var currency = percent ? "" : Json.OptionalText(row, "currency") ?? "";
         var label = Json.OptionalText(row, "quota_id") switch
         {
-            "five_hour" => "5 小时",
-            "weekly" => "每周",
-            "monthly" => "每月",
-            "balance" => "余额",
-            _ => Json.OptionalText(row, "label") ?? Json.OptionalText(row, "quota_id") ?? "额度",
+            "five_hour" => Localized.Get("5 小时"),
+            "weekly" => Localized.Get("每周"),
+            "monthly" => Localized.Get("每月"),
+            "balance" => Localized.Get("余额"),
+            _ => Json.OptionalText(row, "label") ?? Json.OptionalText(row, "quota_id") ?? Localized.Get("额度"),
         };
-        if (Json.OptionalText(row, "error") is { } error) return new Entry(label, "查询失败", null, error, null);
+        if (Json.OptionalText(row, "error") is { } error) return new Entry(label, Localized.Get("查询失败"), null, error, null);
         double? ratio = limit is > 0 && used is { } consumed ? consumed / limit.Value
             : limit is > 0 && remaining is { } left ? Math.Max(0, (limit.Value - left) / limit.Value) : null;
         var value = used is { } amount && limit is { } maximum ? $"{amount:0.##} / {maximum:0.##} {currency}".TrimEnd()
-            : remaining is { } balance ? $"余额 {balance:0.##} {currency}".TrimEnd()
-            : used is { } spent ? $"已用 {spent:0.##} {currency}".TrimEnd() : "额度未知";
+            : remaining is { } balance ? Localized.Format("余额 {0:0.##} {1}", balance, currency).TrimEnd()
+            : used is { } spent ? Localized.Format("已用 {0:0.##} {1}", spent, currency).TrimEnd() : Localized.Get("额度未知");
         var note = Json.OptionalText(row, "reset_at") is { } reset && DateTimeOffset.TryParse(reset, out var resetAt)
-            ? $"{resetAt.ToLocalTime():MM-dd HH:mm} 重置"
-            : !percent && remaining is { } rest && limit is > 0 ? $"剩余 {rest:0.##} {currency}".TrimEnd() : null;
+            ? Localized.Format("{0:MM-dd HH:mm} 重置", resetAt.ToLocalTime())
+            : !percent && remaining is { } rest && limit is > 0 ? Localized.Format("剩余 {0:0.##} {1}", rest, currency).TrimEnd() : null;
         return new Entry(label, value, note, null, ratio);
     }
 
@@ -120,7 +120,7 @@ internal static class QuotaView
     {
         if (!row.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null) return null;
         if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number) || !double.IsFinite(number) || number < 0)
-            throw new InvalidOperationException($"CLI 返回了无效的 {field} 数值。");
+            throw new InvalidOperationException(Localized.Format("CLI 返回了无效的 {0} 数值。", field));
         return number;
     }
 
@@ -241,7 +241,7 @@ internal static class QuotaView
             ShowError = Warning(entry),
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        AutomationProperties.SetName(bar, $"{entry.Label}已用比例");
+        AutomationProperties.SetName(bar, Localized.Format("{0}已用比例", entry.Label));
         return bar;
     }
 
