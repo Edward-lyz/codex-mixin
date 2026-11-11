@@ -57,6 +57,18 @@ Choose your platform and architecture from [Releases](https://github.com/Edward-
 
 The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
 
+You can also install with a package manager or a container:
+
+```bash
+# macOS / Linux: Homebrew (CLI; use --cask for the desktop app)
+brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
+brew install codex-mixin            # or: brew install --cask codex-mixin
+# Windows: winget
+winget install EdwardLyz.CodexMixin
+# Docker: configuration lives in the codex-mixin volume
+docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
+```
+
 ### 2. Configure models and connect an Agent
 
 1. In Models & Services, add a provider with an API key or OAuth sign-in.

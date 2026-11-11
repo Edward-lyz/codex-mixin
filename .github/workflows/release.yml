@@ -185,6 +185,13 @@ jobs:
           EOF
             xmllint --noout "dist/release/$feed"
           done
+      - name: Write package manager manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/package-managers.sh "${{ needs.version.outputs.version }}" dist/release "$RUNNER_TEMP/pm"
+          tar -C "$RUNNER_TEMP/pm" -czf "dist/release/codex-mixin-${{ needs.version.outputs.version }}-winget-manifests.tar.gz" winget
+          cp -R "$RUNNER_TEMP/pm/Formula" "$RUNNER_TEMP/pm/Casks" .
       - name: Write SHA256SUMS
         shell: bash
         run: |
@@ -199,3 +206,76 @@ jobs:
           name: Codex Mixin ${{ needs.version.outputs.tag }}
           body_path: .current-release-notes.md
           files: dist/release/*
+      - name: Update Homebrew formula and cask on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout -B homebrew-update origin/main
+          git add Formula Casks
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "brew: codex-mixin ${{ needs.version.outputs.version }}"
+          git push origin HEAD:main
+
+  docker:
+    name: Publish container image
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download Linux CLI archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: codex-mixin-linux-*
+          path: dist/release
+          merge-multiple: true
+      - name: Extract binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.version.outputs.version }}"
+          for pair in amd64:x86_64 arm64:aarch64; do
+            arch="${pair%%:*}" target="${pair#*:}-unknown-linux-musl"
+            mkdir -p "dist/docker/$arch"
+            tar -xzf "dist/release/codex-mixin-cli-$version-$target.tar.gz" \
+              -C "dist/docker/$arch" --strip-components=1 "codex-mixin-cli-$version-$target/codex-mixin"
+          done
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/edward-lyz/codex-mixin:${{ needs.version.outputs.version }}
+            ghcr.io/edward-lyz/codex-mixin:latest
+
+  winget:
+    name: Submit winget update
+    needs: [version, publish]
+    runs-on: windows-latest
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: Submit to microsoft/winget-pkgs
+        if: env.WINGET_TOKEN != ''
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: EdwardLyz.CodexMixin
+          version: ${{ needs.version.outputs.version }}
+          release-tag: ${{ needs.version.outputs.tag }}
+          installers-regex: 'windows-x86_64-setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}

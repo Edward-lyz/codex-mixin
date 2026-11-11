@@ -57,6 +57,18 @@
 
 Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
 
+也可以用包管理器或容器安装：
+
+```bash
+# macOS / Linux：Homebrew（命令行版；桌面 App 用 --cask）
+brew tap edward-lyz/codex-mixin https://github.com/Edward-lyz/codex-mixin
+brew install codex-mixin            # 或 brew install --cask codex-mixin
+# Windows：winget
+winget install EdwardLyz.CodexMixin
+# Docker：配置保存在 codex-mixin 卷里
+docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -v codex-mixin:/data ghcr.io/edward-lyz/codex-mixin
+```
+
 ### 2. 配置模型并接入 Agent
 
 1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
