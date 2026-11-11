@@ -359,15 +359,15 @@ impl GatewayExecutor {
             Ok(body) => self.dispatch_round(plan, body, headers).await,
             Err(error) => Err(error),
         };
-        let error = match primary {
-            Err(error) if super::failover::is_transient(&error) => error,
-            other => {
-                if other.is_ok() {
-                    super::failover::record(route.entry_model(), Some(route.source.clone()), None)
-                        .await;
-                }
-                return other;
+        let last = route.fallbacks.is_empty();
+        let error = match super::failover::settle(primary, last).await {
+            Ok(served) => {
+                super::failover::record(route.entry_model(), Some(route.source.clone()), None)
+                    .await;
+                return Ok(served);
             }
+            Err(error) if !last => error,
+            Err(error) => return Err(error),
         };
         self.try_fallbacks(route, &original, plan, headers, error)
             .await
@@ -392,7 +392,8 @@ impl GatewayExecutor {
             switch.served = served.map(str::to_owned);
             super::failover::record(route.entry_model(), served.map(str::to_owned), Some(switch))
         };
-        for fallback in &route.fallbacks {
+        for (index, fallback) in route.fallbacks.iter().enumerate() {
+            let last = index + 1 == route.fallbacks.len();
             let failed = failed_models.last().map_or("", String::as_str);
             tracing::warn!(
                 source = route.source,
@@ -417,14 +418,14 @@ impl GatewayExecutor {
                 }
                 Err(error) => Err(error),
             };
-            match attempt {
+            match super::failover::settle(attempt, last).await {
                 Ok((stream, body)) => {
                     record_switch(&failed_models, Some(fallback)).await;
                     let stream =
                         super::failover::announce(stream, &route.source, fallback, &error)?;
                     return Ok((stream, body));
                 }
-                Err(next) if super::failover::is_transient(&next) => {
+                Err(next) if !last => {
                     error = next;
                     failed_models.push(fallback.clone());
                 }
