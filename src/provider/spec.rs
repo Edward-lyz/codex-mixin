@@ -164,6 +164,7 @@ pub enum AuthMode {
     /// A session signed in by the vendor's own desktop/CLI app.
     LocalSession,
     /// AWS access key pair or Bedrock API key.
+    #[serde(rename = "aws_sigv4")]
     AwsSigV4,
 }
 

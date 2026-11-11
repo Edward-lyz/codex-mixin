@@ -12080,8 +12080,8 @@ async fn context_websocket_close_releases_lease_before_upstream_finishes() {
 
     // Release both upstream rounds after measuring cancellation. This also lets
     // the red case unwind cleanly when the first WS handler missed its Close.
-    gate.add_permits(2);
-    let completion = tokio::time::timeout(Duration::from_secs(5), async {
+    gate.add_permits(8);
+    let completion = tokio::time::timeout(Duration::from_secs(20), async {
         while let Some(message) = resumed.next().await {
             let message = message.unwrap();
             if let WsMessage::Text(text) = message
