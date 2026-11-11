@@ -1,4 +1,5 @@
 use super::*;
+use crate::context::request_context_checkpoint;
 
 #[tokio::test]
 async fn maps_fast_service_tier_to_anthropic_request_and_beta() {
@@ -1652,6 +1653,47 @@ async fn handles_context_checkpoints_when_switching_providers() {
         assert!(!replay.contains("codex-mixin:context:v2:"));
         assert!(!replay.contains("archived session is unavailable"));
     }
+}
+
+#[tokio::test]
+async fn official_recompaction_keeps_archived_history_with_context_off() {
+    let (mut config, official_requests, _, _auth_home) = mock_official_gateway_config(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(30),
+    )
+    .await;
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    config.providers[0].base_url = upstream_url;
+    config.context.enabled = true;
+    config.context.context_window_tokens = Some(50_000);
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config.clone(), &database_path).await;
+    let session = "recompact-with-context-off";
+    let token = request_context_checkpoint(&gateway_url, session).await;
+
+    config.context.enabled = false;
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", session)
+        .json(&json!({"model": "gpt-6.1-sol", "input": [
+            {"type": "compaction", "encrypted_content": token},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "after checkpoint"}]}
+        ]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.bytes().await.unwrap();
+
+    let requests = official_requests.lock().unwrap();
+    let replay = requests.last().unwrap().to_string();
+    assert!(replay.contains("distinctive opening request"), "{replay}");
+    assert!(replay.contains("after checkpoint"));
+    assert!(!replay.contains("codex-mixin:context:v2:"));
+    assert!(!replay.contains("archived session is unavailable"));
 }
 
 #[tokio::test]
