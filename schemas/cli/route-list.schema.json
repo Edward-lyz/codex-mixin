@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/route-list.schema.json",
+  "title": "codex-mixin route list --json",
+  "type": "object",
+  "properties": {
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "final_model": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "judge_model": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "max_completion_tokens": {
+            "type": "integer"
+          },
+          "min_successful": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "panel_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "panel_tools": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "max_calls_per_model": {
+                "type": "integer"
+              },
+              "max_rounds": {
+                "type": "integer"
+              }
+            }
+          },
+          "show_intermediate_results": {
+            "type": "boolean"
+          },
+          "time_routes": {
+            "type": "array"
+          },
+          "timeout_ms": {
+            "type": "integer"
+          },
+          "activity": {
+            "type": "object",
+            "properties": {
+              "at_ms": {
+                "type": "integer"
+              },
+              "served": {
+                "type": "string"
+              }
+            }
+          },
+          "fallbacks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "routes"
+  ]
+}

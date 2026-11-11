@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/providers-list.schema.json",
+  "title": "codex-mixin providers list --json",
+  "type": "object",
+  "properties": {
+    "codex_install_mode": {
+      "type": "string"
+    },
+    "config_version": {
+      "type": "integer"
+    },
+    "fusion_profile": {
+      "type": "object",
+      "properties": {
+        "final_model": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "judge_model": {
+          "type": "string"
+        },
+        "max_completion_tokens": {
+          "type": "integer"
+        },
+        "min_successful": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "panel_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "panel_tools": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "max_calls_per_model": {
+              "type": "integer"
+            },
+            "max_rounds": {
+              "type": "integer"
+            }
+          }
+        },
+        "show_intermediate_results": {
+          "type": "boolean"
+        },
+        "time_routes": {
+          "type": "array"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    "gateway_auth_configured": {
+      "type": "boolean"
+    },
+    "gateway_bind": {
+      "type": "string"
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "api_key_configured": {
+            "type": "boolean"
+          },
+          "api_path": {
+            "type": "string"
+          },
+          "auto_review_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "auxiliary_model_upstream": {
+            "type": "boolean"
+          },
+          "baidu_auth_bridge": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "baidu_code_report": {
+            "type": "boolean"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "cached_models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "api_path": {
+                  "type": "string"
+                },
+                "context_window": {
+                  "type": "integer"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "source_context_window": {
+                  "type": "integer"
+                },
+                "supports_function_tools": {
+                  "type": "boolean"
+                },
+                "supports_image": {
+                  "type": "boolean"
+                },
+                "supports_thinking": {
+                  "type": "boolean"
+                },
+                "supports_tool_search": {
+                  "type": "boolean"
+                },
+                "supports_web_search": {
+                  "type": "boolean"
+                },
+                "max_output_tokens": {
+                  "type": "integer"
+                },
+                "price_type": {
+                  "type": "string"
+                },
+                "ratio": {
+                  "type": "string"
+                },
+                "capabilities_probed_at_ms": {
+                  "type": "integer"
+                },
+                "capability_probe_error": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "codex_thread_title_model": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "custom_headers_from_env": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "image_generation_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_model_refresh_error": {
+            "type": "null"
+          },
+          "model_context_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "model_order": {
+            "type": "string"
+          },
+          "model_source": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          },
+          "models_refreshed_at_ms": {
+            "type": "integer"
+          },
+          "new_models": {
+            "type": "array"
+          },
+          "preset_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "quota_auth_cookie_configured": {
+            "type": "boolean"
+          },
+          "quota_currency": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_parser": {
+            "type": "string"
+          },
+          "quota_url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_workspace_id": {
+            "type": "null"
+          },
+          "readiness": {
+            "type": "string"
+          },
+          "readiness_issues": {
+            "type": "array"
+          },
+          "routable_model_count": {
+            "type": "integer"
+          },
+          "selected_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unavailable_selected_models": {
+            "type": "array"
+          },
+          "website_url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "aws_region": {
+            "type": "null"
+          },
+          "aws_session_token_configured": {
+            "type": "boolean"
+          },
+          "aws_sigv4_configured": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "codex_install_mode",
+    "config_version",
+    "fusion_profile",
+    "gateway_auth_configured",
+    "gateway_bind",
+    "providers"
+  ]
+}

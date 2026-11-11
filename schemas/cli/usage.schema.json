@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/usage.schema.json",
+  "title": "codex-mixin usage --json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "provider_id": {
+        "type": "string"
+      },
+      "model_id": {
+        "type": "string"
+      },
+      "request_count": {
+        "type": "integer"
+      },
+      "input_tokens": {
+        "type": "integer"
+      },
+      "cache_read_tokens": {
+        "type": "integer"
+      },
+      "cache_creation_tokens": {
+        "type": "integer"
+      },
+      "output_tokens": {
+        "type": "integer"
+      },
+      "cache_hit_percent": {
+        "type": [
+          "null",
+          "number"
+        ]
+      },
+      "average_ttft_ms": {
+        "type": [
+          "null",
+          "number"
+        ]
+      },
+      "output_tps": {
+        "type": [
+          "null",
+          "number"
+        ]
+      },
+      "error_count": {
+        "type": "integer"
+      }
+    }
+  }
+}

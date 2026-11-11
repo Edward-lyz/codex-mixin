@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/agent-list.schema.json",
+  "title": "codex-mixin agent list --json",
+  "type": "object",
+  "properties": {
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cli": {
+            "type": "object",
+            "properties": {
+              "app_path": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "app_version": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "command": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "error": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "latest": {
+                "type": "null"
+              },
+              "path": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "update": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "via": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            }
+          },
+          "detected": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "integration": {
+            "type": "object",
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "error": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "mode": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "state": {
+                "type": "string"
+              }
+            }
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "agents"
+  ]
+}

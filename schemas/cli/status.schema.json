@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/status.schema.json",
+  "title": "codex-mixin status --json",
+  "type": "object",
+  "properties": {
+    "activity": {
+      "type": "object",
+      "properties": {
+        "active_requests": {
+          "type": "integer"
+        },
+        "idle_seconds": {
+          "type": "integer"
+        }
+      }
+    },
+    "bind": {
+      "type": "string"
+    },
+    "configured": {
+      "type": "boolean"
+    },
+    "daemon": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "gateway": {
+      "type": "string"
+    },
+    "gateway_version": {
+      "type": "string"
+    },
+    "healthz": {
+      "type": "string"
+    },
+    "log": {
+      "type": "null"
+    },
+    "official_ech": {
+      "type": "object",
+      "properties": {
+        "doh_url": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "fallback_reason": {
+          "type": "null"
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pid": {
+      "type": "null"
+    },
+    "provider_counts": {
+      "type": "object",
+      "properties": {
+        "degraded": {
+          "type": "integer"
+        },
+        "disabled": {
+          "type": "integer"
+        },
+        "healthy": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        }
+      }
+    },
+    "provider_readiness": {
+      "type": "string"
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "object",
+            "properties": {
+              "available_model_count": {
+                "type": "integer"
+              },
+              "issues": {
+                "type": "array"
+              },
+              "last_model_refresh_error": {
+                "type": "null"
+              },
+              "models_refreshed_at_ms": {
+                "type": "integer"
+              },
+              "routable_model_count": {
+                "type": "integer"
+              },
+              "selected_model_count": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "unavailable_selected_model_count": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "activity",
+    "bind",
+    "configured",
+    "daemon",
+    "endpoint",
+    "gateway",
+    "gateway_version",
+    "healthz",
+    "log",
+    "official_ech",
+    "pid",
+    "provider_counts",
+    "provider_readiness",
+    "providers"
+  ]
+}

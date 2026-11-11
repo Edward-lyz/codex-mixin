@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/config.schema.json",
+  "title": "codex-mixin config --scope effective --json",
+  "type": "object",
+  "properties": {
+    "accept_codex_oauth": {
+      "type": "boolean"
+    },
+    "bind": {
+      "type": "string"
+    },
+    "codex_auth_path": {
+      "type": "string"
+    },
+    "enable_web_search_tool": {
+      "type": "boolean"
+    },
+    "gateway_api_key": {
+      "type": "null"
+    },
+    "official_image_edit_url": {
+      "type": "string"
+    },
+    "official_image_generation_url": {
+      "type": "string"
+    },
+    "official_responses_url": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "api_key": {
+            "type": "string"
+          },
+          "api_path": {
+            "type": "string"
+          },
+          "aws_sigv4": {
+            "type": "null"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "cached_models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "context_window": {
+                  "type": "integer"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "source_context_window": {
+                  "type": "integer"
+                },
+                "supports_function_tools": {
+                  "type": "boolean"
+                },
+                "supports_image": {
+                  "type": "boolean"
+                },
+                "supports_thinking": {
+                  "type": "boolean"
+                },
+                "supports_tool_search": {
+                  "type": "boolean"
+                },
+                "supports_web_search": {
+                  "type": "boolean"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "max_output_tokens": {
+                  "type": "integer"
+                },
+                "price_type": {
+                  "type": "string"
+                },
+                "ratio": {
+                  "type": "string"
+                },
+                "protocol": {
+                  "type": "string"
+                },
+                "capabilities_probed_at_ms": {
+                  "type": "integer"
+                },
+                "capability_probe_error": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "image_generation_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_model_refresh_error": {
+            "type": "null"
+          },
+          "model_source": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          },
+          "models_refreshed_at_ms": {
+            "type": "integer"
+          },
+          "new_models": {
+            "type": "array"
+          },
+          "preset_id": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "quota_auth_cookie": {
+            "type": "null"
+          },
+          "quota_currency": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "quota_workspace_id": {
+            "type": "null"
+          },
+          "readiness": {
+            "type": "object",
+            "properties": {
+              "available_model_count": {
+                "type": "integer"
+              },
+              "issues": {
+                "type": "array"
+              },
+              "last_model_refresh_error": {
+                "type": "null"
+              },
+              "models_refreshed_at_ms": {
+                "type": "integer"
+              },
+              "routable_model_count": {
+                "type": "integer"
+              },
+              "selected_model_count": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "unavailable_selected_model_count": {
+                "type": "integer"
+              }
+            }
+          },
+          "selected_models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "thinking_mode": {
+      "type": "string"
+    },
+    "web_search_max_uses": {
+      "type": "integer"
+    },
+    "web_search_tool_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "accept_codex_oauth",
+    "bind",
+    "codex_auth_path",
+    "enable_web_search_tool",
+    "gateway_api_key",
+    "official_image_edit_url",
+    "official_image_generation_url",
+    "official_responses_url",
+    "path",
+    "providers",
+    "thinking_mode",
+    "web_search_max_uses",
+    "web_search_tool_type"
+  ]
+}

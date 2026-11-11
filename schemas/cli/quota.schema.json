@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/quota.schema.json",
+  "title": "codex-mixin quota --json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "currency": {
+        "type": [
+          "null",
+          "string"
+        ]
+      },
+      "display_name": {
+        "type": "string"
+      },
+      "error": {
+        "type": "null"
+      },
+      "label": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "number"
+      },
+      "provider_display_name": {
+        "type": "string"
+      },
+      "provider_id": {
+        "type": "string"
+      },
+      "quota_id": {
+        "type": "string"
+      },
+      "remaining": {
+        "type": "number"
+      },
+      "reset_at": {
+        "type": [
+          "null",
+          "string"
+        ]
+      },
+      "source": {
+        "type": "string"
+      },
+      "stale_at": {
+        "type": [
+          "null",
+          "string"
+        ]
+      },
+      "unit": {
+        "type": "string"
+      },
+      "used": {
+        "type": "number"
+      },
+      "value": {
+        "type": "number"
+      },
+      "raw": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": [
+              "boolean",
+              "integer"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "is_unlimited": {
+                "type": "boolean"
+              },
+              "month_quota_limit": {
+                "type": "integer"
+              },
+              "remaining_quota": {
+                "type": "number"
+              },
+              "request_count": {
+                "type": "integer"
+              },
+              "should_warning_level": {
+                "type": "integer"
+              },
+              "used_quota": {
+                "type": "number"
+              },
+              "username": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": "integer"
+              },
+              "model_limits": {
+                "type": "object",
+                "properties": {}
+              },
+              "model_limits_enabled": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string"
+              },
+              "total_available": {
+                "type": "integer"
+              },
+              "total_granted": {
+                "type": "integer"
+              },
+              "total_used": {
+                "type": "integer"
+              },
+              "unlimited_quota": {
+                "type": "boolean"
+              }
+            }
+          },
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

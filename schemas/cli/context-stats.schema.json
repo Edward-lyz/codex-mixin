@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Edward-lyz/codex-mixin/blob/main/schemas/cli/context-stats.schema.json",
+  "title": "codex-mixin context stats --json",
+  "type": "object",
+  "properties": {
+    "database_path": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cache": {
+            "type": "object",
+            "properties": {
+              "cached_tokens": {
+                "type": "integer"
+              },
+              "hit_percent": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "input_tokens": {
+                "type": "integer"
+              },
+              "output_tokens": {
+                "type": "integer"
+              },
+              "turns": {
+                "type": "integer"
+              }
+            }
+          },
+          "compressions": {
+            "type": "integer"
+          },
+          "display": {
+            "type": "string"
+          },
+          "expired_messages": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "integer"
+          },
+          "revision": {
+            "type": "integer"
+          },
+          "saved_tokens": {
+            "type": "integer"
+          },
+          "session": {
+            "type": "string"
+          },
+          "tiers": {
+            "type": "object",
+            "properties": {
+              "messages": {
+                "type": "integer"
+              },
+              "t1_blocks": {
+                "type": "integer"
+              },
+              "t2_blocks": {
+                "type": "integer"
+              },
+              "t3_blocks": {
+                "type": "integer"
+              }
+            }
+          },
+          "updated_at": {
+            "type": "integer"
+          },
+          "view_tokens": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "cache": {
+          "type": "object",
+          "properties": {
+            "cached_tokens": {
+              "type": "integer"
+            },
+            "hit_percent": {
+              "type": "number"
+            },
+            "input_tokens": {
+              "type": "integer"
+            },
+            "output_tokens": {
+              "type": "integer"
+            },
+            "turns": {
+              "type": "integer"
+            }
+          }
+        },
+        "compressions": {
+          "type": "integer"
+        },
+        "expired_messages": {
+          "type": "integer"
+        },
+        "messages": {
+          "type": "integer"
+        },
+        "saved_tokens": {
+          "type": "integer"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "view_tokens": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "required": [
+    "database_path",
+    "enabled",
+    "sessions",
+    "totals"
+  ]
+}
