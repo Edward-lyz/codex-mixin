@@ -929,8 +929,45 @@ impl Store {
         items: &[Value],
         fingerprint: impl Fn(&Value) -> Result<String>,
         prefix_len: usize,
+        source: Option<&str>,
     ) -> Result<()> {
         let mut session = self.ensure_session(key)?;
+        if let Some(source) = source {
+            if source == key || session.next_ref != 1 || !self.history(key)?.is_empty() {
+                bail!("context archive inheritance requires a new child session");
+            }
+            let parent = self.ensure_session(source)?;
+            let transaction = self
+                .connection
+                .transaction()
+                .context("begin inherited context archive")?;
+            for (table, columns) in [
+                (
+                    "messages",
+                    "reference,fingerprint,item_json,created_at,expired_at,body_codec,body_bytes,body_checksum,body_kind,body_tool",
+                ),
+                ("history", "position,reference"),
+                (
+                    "blocks",
+                    "block_id,tier,topic,summary,direct_refs,full_refs,start_position,end_position,superseded_by,covered_tokens,replacement_tokens,created_at",
+                ),
+                ("segments", "revision,position,end_position,kind,reference"),
+            ] {
+                // Identifiers are constants; all request-derived values stay bound.
+                transaction.execute(
+                    &format!("INSERT INTO {table} (session_key,{columns}) SELECT ?1,{columns} FROM {table} WHERE session_key=?2"),
+                    params![key, source],
+                ).context("copy inherited context archive rows")?;
+            }
+            transaction.execute(
+                "UPDATE sessions SET revision=?2,next_ref=?3,next_block=?4,updated_at=?5 WHERE session_key=?1",
+                params![key, parent.revision, parent.next_ref, parent.next_block, unix_now()],
+            ).context("initialize inherited context session")?;
+            transaction
+                .commit()
+                .context("commit inherited context archive")?;
+            session = parent;
+        }
         let history = self.history(key)?;
         let history_len = history.len();
         if prefix_len > history_len {

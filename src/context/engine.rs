@@ -338,13 +338,14 @@ impl ContextEngine {
         output.extend_from_slice(incoming);
         drop(store);
         self.lock()?
-            .sync_history_from(session, &output, fingerprint, prefix_len)?;
+            .sync_history_from(session, &output, fingerprint, prefix_len, None)?;
         self.current_view(session, window_tokens)
     }
 
     pub(crate) fn begin_checkpoint_turn(
         &self,
         session: &str,
+        parent_session: Option<&str>,
         items: &[Value],
         secret: &str,
         window_tokens: u64,
@@ -359,7 +360,7 @@ impl ContextEngine {
             .context("context checkpoint item has no token")?;
         let decoded =
             checkpoint::decode(token, secret).map_err(|error| anyhow!(error.to_string()))?;
-        if decoded.session != session {
+        if decoded.session != session && parent_session != Some(decoded.session.as_str()) {
             bail!(
                 "compaction checkpoint belongs to context session {}",
                 session_display_name(&decoded.session)
@@ -367,12 +368,33 @@ impl ContextEngine {
         }
         let Some(prefix_len) = decoded.history_len else {
             let expanded = self
-                .expand_checkpoint(session, items, secret)?
+                .expand_checkpoint(&decoded.session, items, secret)?
                 .context("context checkpoint could not be expanded")?;
             return self.begin_turn(session, &expanded, window_tokens);
         };
         let mut store = self.lock()?;
-        let stored = store.ensure_session(session)?;
+        let mut stored = store.ensure_session(session)?;
+        if decoded.session != session && stored.next_ref == 1 {
+            // A fork may inherit the parent's checkpoint. Copy its archive
+            // before appending any child history; never mutate the source.
+            let source = store.ensure_session(&decoded.session)?;
+            if decoded.revision > source.revision {
+                bail!("inherited compaction checkpoint is newer than the archived parent revision");
+            }
+            store.validate_history_anchor(
+                &decoded.session,
+                prefix_len,
+                decoded.history_tip.as_deref(),
+            )?;
+            store.sync_history_from(
+                session,
+                &[],
+                fingerprint,
+                prefix_len,
+                Some(&decoded.session),
+            )?;
+            stored = store.ensure_session(session)?;
+        }
         if decoded.revision > stored.revision {
             bail!(
                 "compaction checkpoint revision {} is newer than the archived session revision {}",
@@ -381,7 +403,7 @@ impl ContextEngine {
             );
         }
         store.validate_history_anchor(session, prefix_len, decoded.history_tip.as_deref())?;
-        store.sync_history_from(session, &items[index + 1..], fingerprint, prefix_len)?;
+        store.sync_history_from(session, &items[index + 1..], fingerprint, prefix_len, None)?;
         drop(store);
         self.current_view(session, window_tokens)
     }

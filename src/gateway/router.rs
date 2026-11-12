@@ -173,18 +173,27 @@ pub(crate) fn stable_oneapi_routing(
         // they share the root thread's key instead of deriving their own.
         let affinity_thread = parent_thread_id.unwrap_or(thread_id);
         let mut cache_namespace = format!("thread-id\0{affinity_thread}");
+        let mut context_namespace = format!("thread-id\0{thread_id}");
         if let Some(prompt_cache_key) = prompt_cache_key
             && Some(prompt_cache_key) != session_id
             && Some(prompt_cache_key) != x_session_id
             && Some(prompt_cache_key) != opencode_session
         {
-            cache_namespace.push_str("\0prompt-cache-key\0");
-            cache_namespace.push_str(prompt_cache_key);
+            for namespace in [&mut cache_namespace, &mut context_namespace] {
+                namespace.push_str("\0prompt-cache-key\0");
+                namespace.push_str(prompt_cache_key);
+            }
         }
         return Ok(Some(super::UpstreamRouting {
             session_id: thread_id.to_owned(),
             hash_key: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cache_namespace.as_bytes())
                 .to_string(),
+            // Backend affinity is shared; mutable archives belong to each thread.
+            context_hash_key: uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_URL,
+                context_namespace.as_bytes(),
+            )
+            .to_string(),
         }));
     }
 
@@ -194,9 +203,14 @@ pub(crate) fn stable_oneapi_routing(
         .or(session_id)
         .map(str::to_owned)
         .or_else(|| claude_metadata_session(body));
-    Ok(session_id.map(|session_id| super::UpstreamRouting {
-        hash_key: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
-        session_id,
+    Ok(session_id.map(|session_id| {
+        let hash_key =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string();
+        super::UpstreamRouting {
+            context_hash_key: hash_key.clone(),
+            hash_key,
+            session_id,
+        }
     }))
 }
 

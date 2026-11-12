@@ -32,4 +32,5 @@ pub(crate) use router::{
 pub(crate) struct UpstreamRouting {
     pub session_id: String,
     pub hash_key: String,
+    pub context_hash_key: String,
 }

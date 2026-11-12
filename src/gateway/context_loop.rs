@@ -124,8 +124,14 @@ impl ContextRun {
             .acquire_lease(&self.session)
             .await
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
-        let view =
-            context_input(&self.engine, &self.session, &plan.body, self.window_tokens).await?;
+        let view = context_input(
+            &self.engine,
+            &self.session,
+            &headers,
+            &plan.body,
+            self.window_tokens,
+        )
+        .await?;
         if !self.enabled {
             return self
                 .stream_read_only(executor, plan, headers, view, lease)
@@ -781,14 +787,28 @@ fn tool_output_item(call: &Value, content: String) -> Value {
 pub(crate) async fn context_input(
     engine: &Arc<ContextEngine>,
     session: &str,
+    headers: &HeaderMap,
     body: &Value,
     window_tokens: u64,
 ) -> Result<TurnView, GatewayError> {
+    let parent_session = super::stable_oneapi_routing(headers, body)?
+        .filter(|routing| routing.hash_key != routing.context_hash_key)
+        .and_then(|routing| {
+            session
+                .split_once(SESSION_SEPARATOR)
+                .map(|(client, _)| format!("{client}{SESSION_SEPARATOR}{}", routing.hash_key))
+        });
     let engine = Arc::clone(engine);
     let session = session.to_owned();
     let body = body.clone();
     tokio::task::spawn_blocking(move || {
-        prepare_context_input(&engine, &session, &body, window_tokens)
+        prepare_context_input(
+            &engine,
+            &session,
+            parent_session.as_deref(),
+            &body,
+            window_tokens,
+        )
     })
     .await
     .map_err(|error| {
@@ -816,6 +836,7 @@ async fn current_view_off_runtime(
 fn prepare_context_input(
     engine: &ContextEngine,
     session: &str,
+    parent_session: Option<&str>,
     body: &Value,
     window_tokens: u64,
 ) -> Result<TurnView, GatewayError> {
@@ -844,7 +865,7 @@ fn prepare_context_input(
     if incoming.iter().any(checkpoint::is_checkpoint_item) {
         let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
         return engine
-            .begin_checkpoint_turn(session, &incoming, &secret, window_tokens)
+            .begin_checkpoint_turn(session, parent_session, &incoming, &secret, window_tokens)
             .map_err(|error| GatewayError::BadRequest(error.to_string()));
     }
     match body.get("previous_response_id").and_then(Value::as_str) {
@@ -858,8 +879,7 @@ fn prepare_context_input(
 }
 
 /// Session identity is the authenticated client plus the explicit thread or
-/// session the client sent. Subagent routing hashes are included so a subagent
-/// never shares the parent view.
+/// session the client sent. Backend account affinity must not merge archives.
 pub(crate) fn context_session(
     executor: &GatewayExecutor,
     headers: &HeaderMap,
@@ -869,7 +889,7 @@ pub(crate) fn context_session(
         return Ok(None);
     };
     let client = executor.client_identity(headers);
-    let base = format!("{client}{SESSION_SEPARATOR}{}", routing.hash_key);
+    let base = format!("{client}{SESSION_SEPARATOR}{}", routing.context_hash_key);
     let Some(engine) = executor.context_engine() else {
         return Ok(Some(base));
     };

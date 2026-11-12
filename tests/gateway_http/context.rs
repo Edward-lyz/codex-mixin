@@ -1222,19 +1222,99 @@ async fn context_checkpoint_replaces_local_compaction() {
     let gateway_url = spawn_gateway_with_context(config, &database_path).await;
     let session = "thread-context-checkpoint";
 
-    let token = request_context_checkpoint(&gateway_url, session).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", session)
+        .json(&json!({
+            "model": "DeepSeek-V4-Flash-custom",
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"distinctive opening request"}]},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"the first answer"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"second question"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let compacted: Value = response.json().await.unwrap();
+    let token = compacted["output"][0]["encrypted_content"]
+        .as_str()
+        .unwrap();
     assert!(token.starts_with("codex-mixin:context:v2:"), "{token}");
     assert!(
         requests.lock().unwrap().is_empty(),
         "a local checkpoint must not call a model"
     );
 
-    let response = replay_context_checkpoint(&gateway_url, session, &token).await;
-    assert_eq!(response.status(), StatusCode::OK);
+    // HTTP and WebSocket clients put parent affinity in different locations.
+    // A fresh child must not replace the parent's checkpoint-backed archive.
+    for (metadata_parent, inherited) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let mut child = responses_request();
+        child.as_object_mut().unwrap().remove("instructions");
+        child["input"] = json!([
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"independent child request"}]}
+        ]);
+        if inherited {
+            child["input"]
+                .as_array_mut()
+                .unwrap()
+                .insert(0, json!({"type":"compaction","encrypted_content":token}));
+        }
+        let mut request = client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header(
+                "thread-id",
+                format!("checkpoint-child-{metadata_parent}-{inherited}"),
+            );
+        if metadata_parent {
+            child["client_metadata"] = json!({"x-codex-parent-thread-id": session});
+        } else {
+            request = request.header("x-codex-parent-thread-id", session);
+        }
+        let response = request.json(&child).send().await.unwrap();
+        let status = response.status();
+        let stream = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "child failed: {stream}");
+        if inherited {
+            assert!(
+                requests.lock().unwrap().last().unwrap()["messages"]
+                    .to_string()
+                    .contains("distinctive opening request"),
+                "child lost the inherited archive"
+            );
+        }
+    }
+
+    let mut follow_up = responses_request();
+    follow_up["input"] = json!([
+        {"type":"compaction","encrypted_content":token},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"next question"}]}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", session)
+        .json(&follow_up)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
     let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert_eq!(status, StatusCode::OK, "checkpoint replay failed: {stream}");
     assert!(stream.contains("hello codex"), "missing answer: {stream}");
 
     let recorded = requests.lock().unwrap().clone();
+    assert!(
+        !recorded.last().unwrap()["messages"]
+            .to_string()
+            .contains("independent child request"),
+        "child history contaminated the parent"
+    );
     assert!(
         !recorded.is_empty(),
         "the follow-up must reach the provider"

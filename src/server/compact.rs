@@ -171,7 +171,8 @@ async fn expand_archived_checkpoints(
         .await
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
-    let view = crate::gateway::context_input(&engine, &session, &body, window_tokens).await?;
+    let view =
+        crate::gateway::context_input(&engine, &session, headers, &body, window_tokens).await?;
     body["input"] = Value::Array(view.items);
     if let Some(object) = body.as_object_mut() {
         object.remove("previous_response_id");
@@ -203,7 +204,8 @@ pub(super) async fn context_checkpoint(
         .await
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
-    let view = crate::gateway::context_input(&engine, &session, body, window_tokens).await?;
+    let view =
+        crate::gateway::context_input(&engine, &session, headers, body, window_tokens).await?;
     let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
     let (history_len, history_tip) = engine
         .history_anchor(&session)
