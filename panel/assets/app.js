@@ -164,6 +164,15 @@ function fixed(value, digits = 1, suffix = "") {
   return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(digits)}${suffix}` : "\u2014";
 }
 
+// List-price USD from the CLI. Below a cent keeps four decimals, so one cheap
+// reply does not read as free.
+function usd(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "\u2014";
+  if (value > 0 && value < 0.0001) return "<$0.0001";
+  if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function timeAgo(ms) {
   if (!ms) return "\u2014";
   const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -916,13 +925,14 @@ function usageCard() {
   else if (!rows.length) body = emptyState(t("暂无用量"), t("所选时间范围内还没有经过网关的请求。"));
   else {
     const total = (key) => rows.reduce((sum, row) => sum + (row[key] || 0), 0);
+    const priced = rows.some((row) => typeof row.estimated_cost_usd === "number");
     body = h(
       "div",
       { class: "table-wrap" },
       h(
         "table",
         { class: "table" },
-        h("thead", null, h("tr", null, ...[t("Provider / 模型"), t("请求"), t("输入"), t("缓存命中"), t("输出"), t("首字延迟"), t("输出速度")].map((text, index) => h("th", { class: index ? "r" : null, scope: "col", text })))),
+        h("thead", null, h("tr", null, ...[t("Provider / 模型"), t("请求"), t("输入"), t("缓存命中"), t("输出"), t("预估费用"), t("首字延迟"), t("输出速度")].map((text, index) => h("th", { class: index ? "r" : null, scope: "col", text })))),
         h(
           "tbody",
           null,
@@ -935,12 +945,13 @@ function usageCard() {
               h("td", { class: "r", text: compact(row.input_tokens) }),
               h("td", { class: "r", text: fixed(row.cache_hit_percent, 1, "%") }),
               h("td", { class: "r", text: compact(row.output_tokens) }),
+              h("td", { class: "r", text: usd(row.estimated_cost_usd) }),
               h("td", { class: "r", text: fixed(row.average_ttft_ms, 0, " ms") }),
               h("td", { class: "r", text: fixed(row.output_tps, 1, " t/s") }),
             ),
           ),
         ),
-        h("tfoot", null, h("tr", null, h("td", { text: t("合计") }), h("td", { class: "r", text: compact(total("request_count")) }), h("td", { class: "r", text: compact(total("input_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r", text: compact(total("output_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r muted", text: "" }))),
+        h("tfoot", null, h("tr", null, h("td", { text: t("合计") }), h("td", { class: "r", text: compact(total("request_count")) }), h("td", { class: "r", text: compact(total("input_tokens")) }), h("td", { class: "r muted", text: "" }), h("td", { class: "r", text: compact(total("output_tokens")) }), h("td", { class: "r", text: priced ? usd(total("estimated_cost_usd")) : "\u2014" }), h("td", { class: "r muted", text: "" }), h("td", { class: "r muted", text: "" }))),
       ),
     );
   }
@@ -949,7 +960,7 @@ function usageCard() {
 }
 
 // ---------- Usage ----------
-// Four comparable cards (all counted per request attempt), a stacked chart
+// A list-price cost card and four comparable cards (counted per request attempt), a stacked chart
 // whose columns filter the reply table, and the per-reply ledger the CLI
 // records. The page only aggregates CLI rows for display.
 
@@ -972,6 +983,7 @@ const SERIES_COLORS = 4;
 const TURN_PAGE = 100;
 const TOKEN_PARTS = [["cached", t("缓存输入"), "ring-1"], ["uncached", t("未缓存输入"), "ring-2"], ["output", t("输出"), "ring-3"]];
 const REQUEST_PARTS = [["requests", t("成功"), "ring-1"], ["errors", t("失败"), "is-alert"]];
+const COST_PARTS = [["cost", t("预估费用"), "ring-1"]];
 
 // Each load gets a sequence number; a response for a superseded range is
 // dropped, so a fast range switch never renders old data on the new axis.
@@ -1024,7 +1036,7 @@ function tokenTotal(row) {
 }
 
 function emptyStats() {
-  return { requests: 0, errors: 0, cached: 0, uncached: 0, output: 0, hitRead: 0, hitPrompt: 0 };
+  return { requests: 0, errors: 0, cached: 0, uncached: 0, output: 0, hitRead: 0, hitPrompt: 0, cost: 0, costed: 0, unpriced: 0 };
 }
 
 function addStats(total, part) {
@@ -1034,15 +1046,24 @@ function addStats(total, part) {
 
 // `requests` are replies that reported usage, `errors` failed attempts; every
 // rate below shares their sum so the four cards stay comparable.
+// `costed` replies have a list price; a CLI without estimates prices none.
 function rowStats(row, failed = false, single = false) {
   const cached = row.cache_read_tokens || 0;
   const uncached = (row.input_tokens || 0) + (row.cache_creation_tokens || 0);
   const reports = typeof row.cache_hit_percent === "number";
+  const requests = single ? (failed ? 0 : 1) : row.request_count || 0;
+  const priced = typeof row.estimated_cost_usd === "number" && !(single && failed);
+  const counted = ["input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens"].some((key) => typeof row[key] === "number");
+  const unpriced = !("estimated_cost_usd" in row) ? 0
+    : single ? (!failed && !priced && counted ? 1 : 0) : row.unpriced_request_count || 0;
   return {
-    requests: single ? (failed ? 0 : 1) : row.request_count || 0,
+    requests,
     errors: single ? (failed ? 1 : 0) : row.error_count || 0,
     cached, uncached, output: row.output_tokens || 0,
     hitRead: reports ? cached : 0, hitPrompt: reports ? cached + uncached : 0,
+    cost: priced ? row.estimated_cost_usd : 0,
+    costed: priced ? (single ? 1 : Math.max(1, requests - unpriced)) : 0,
+    unpriced,
   };
 }
 
@@ -1053,6 +1074,9 @@ const attempts = (stats) => stats.requests + stats.errors;
 const tokensOf = (stats) => stats.cached + stats.uncached + stats.output;
 const hitPercent = (stats) => (stats.hitPrompt ? (stats.hitRead / stats.hitPrompt) * 100 : null);
 const errorPercent = (stats) => (attempts(stats) ? (stats.errors / attempts(stats)) * 100 : null);
+const costOf = (stats) => (stats.costed ? stats.cost : null);
+// Trend point: a quiet period costs nothing; one with only unpriced replies is unknown.
+const costPoint = (stats) => (stats.costed ? stats.cost : stats.unpriced ? null : 0);
 
 function dayLabel(day) {
   const date = new Date(day * DAY_MS);
@@ -1090,13 +1114,23 @@ function seriesClass(keys, key) {
   return index >= 0 && index < SERIES_COLORS ? `ring-${index + 1}` : "is-extra";
 }
 
+// Unknown points (null) leave a gap instead of dropping to the baseline.
 function sparkline(values) {
-  const points = values.map((value) => (typeof value === "number" ? value : 0));
-  if (points.length < 2 || points.every((value) => value === 0)) return null;
-  const max = Math.max(...points) || 1;
-  const step = 100 / (points.length - 1);
+  const known = values.filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (values.length < 2 || known.every((value) => value === 0)) return null;
+  const max = Math.max(...known) || 1;
+  const step = 100 / (values.length - 1);
   const svg = svgNode("svg", { class: "spark", viewBox: "0 0 100 24", preserveAspectRatio: "none", "aria-hidden": "true" });
-  svg.append(svgNode("polyline", { points: points.map((value, index) => `${(index * step).toFixed(2)},${(22 - (value / max) * 20).toFixed(2)}`).join(" ") }));
+  let run = [];
+  const flush = () => {
+    if (run.length > 1) svg.append(svgNode("polyline", { points: run.join(" ") }));
+    run = [];
+  };
+  values.forEach((value, index) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) { flush(); return; }
+    run.push(`${(index * step).toFixed(2)},${(22 - (value / max) * 20).toFixed(2)}`);
+  });
+  flush();
   return svg;
 }
 
@@ -1129,7 +1163,15 @@ function tokenShare(stats) {
 
 function usageCards(current, previous, slots) {
   const total = tokensOf(current);
-  return h("div", { class: "grid grid-4" },
+  // Totals that leave unpriced replies out are compared only when neither does.
+  const costDelta = current.unpriced || previous.unpriced ? null
+    : costOf(previous) === 0 ? (costOf(current) ? t("上一周期 {0}", usd(0)) : null)
+    : deltaText(costOf(current), costOf(previous));
+  const cost = kpiCard(t("预估费用"), usd(costOf(current)), t("按 API 标价估算"),
+    costDelta, sparkline(slots.map((slot) => costPoint(slot.total))));
+  cost.title = t("按 models.dev 公布的 API 标价估算；订阅账号不按此扣费。");
+  return h("div", { class: "grid grid-5" },
+    cost,
     kpiCard(t("请求次数"), compact(attempts(current)), current.errors ? t("失败 {0}", compact(current.errors)) : t("含失败请求"),
       deltaText(attempts(current), attempts(previous)), sparkline(slots.map((slot) => attempts(slot.total)))),
     kpiCard("Tokens", compact(total), t("输出 {0}", compact(current.output)),
@@ -1144,20 +1186,24 @@ function usageCards(current, previous, slots) {
 // click narrows the reply table to it.
 function usageChart(slots, keys) {
   const requests = usagePage.chart === "requests";
+  const cost = usagePage.chart === "cost";
   const parts = usagePage.split
     ? keys.map((key) => [key, providerName(key), seriesClass(keys, key)])
-    : requests ? REQUEST_PARTS : TOKEN_PARTS;
-  const valueOf = (stats) => (requests ? attempts(stats) : tokensOf(stats));
+    : cost ? COST_PARTS : requests ? REQUEST_PARTS : TOKEN_PARTS;
+  const valueOf = (stats) => (cost ? stats.cost : requests ? attempts(stats) : tokensOf(stats));
   const partValue = (slot, key) => (usagePage.split ? valueOf(slot.byProvider.get(key) || emptyStats()) : slot.total[key]);
+  // Cost labels read the CLI estimate, so an unpriced period shows a dash.
+  const totalText = (stats) => (cost ? usd(costOf(stats)) : compact(valueOf(stats)));
+  const partText = (slot, key) => (cost ? totalText(usagePage.split ? slot.byProvider.get(key) || emptyStats() : slot.total) : compact(partValue(slot, key)));
   const max = Math.max(1, ...slots.map((slot) => valueOf(slot.total)));
   const labelEvery = Math.ceil(slots.length / 8);
   const columns = slots.map((slot, index) => {
-    const detail = parts.map(([key, text]) => `${text} ${compact(partValue(slot, key))}`).join("\n");
+    const detail = parts.map(([key, text]) => `${text} ${partText(slot, key)}`).join("\n");
     const selected = usagePage.slot?.start === slot.start;
     return h("button", {
       class: `uchart-col ${selected ? "is-selected" : ""}`.trim(), type: "button",
-      title: t("{0} · 合计 {1}\n{2}", slot.label, compact(valueOf(slot.total)), detail),
-      "aria-label": t("{0}，合计 {1}", slot.label, compact(valueOf(slot.total))), "aria-pressed": String(selected),
+      title: t("{0} · 合计 {1}\n{2}", slot.label, totalText(slot.total), detail),
+      "aria-label": t("{0}，合计 {1}", slot.label, totalText(slot.total)), "aria-pressed": String(selected),
       onclick: () => selectUsageSlot(slot),
     },
     h("span", { class: "uchart-stack" }, parts.map(([key, , color]) => {
@@ -1204,12 +1250,13 @@ function turnRow(turn) {
     h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? t("长提示的缓存命中低于 50%") : null },
       compact(turn.cache_read_tokens), h("span", { class: "row-sub", text: ` ${fixed(turn.cache_hit_percent, 0, "%")}` })),
     h("td", { class: "r", text: compact(turn.output_tokens) }),
+    h("td", { class: "r", text: usd(failed ? null : turn.estimated_cost_usd) }),
     h("td", { class: "r", text: reasoning, title: turn.reasoning_chars ? t("思考文本 {0} 字", compact(turn.reasoning_chars)) : null }),
     h("td", { class: "r", text: fixed(turn.ttft_ms, 0, " ms") }),
     h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }));
 }
 
-const TURN_COLUMNS = [t("时间"), t("状态"), t("会话"), t("模型"), t("未缓存输入"), t("命中缓存"), t("输出"), t("思考 Token"), t("首字"), t("速度")];
+const TURN_COLUMNS = [t("时间"), t("状态"), t("会话"), t("模型"), t("未缓存输入"), t("命中缓存"), t("输出"), t("费用"), t("思考 Token"), t("首字"), t("速度")];
 
 function turnsTable(turns) {
   if (!turns.length) return emptyState(t("没有匹配的回复"), t("调整上方筛选，或选择其他时间范围。"));
@@ -1230,7 +1277,7 @@ function turnsTable(turns) {
         },
         h("span", { class: "group-caret", "aria-hidden": "true", text: open ? "\u25be" : "\u25b8" }),
         h("span", { class: "mono", text: rows[0].session_display || session }),
-        h("span", { class: "row-sub", text: t("{0} 次 · {1} tokens{2}", rows.length, compact(tokensOf(stats)), stats.errors ? t(" · 失败 {0}", stats.errors) : "") })))));
+        h("span", { class: "row-sub", text: t("{0} 次 · {1} tokens{2}", rows.length, compact(tokensOf(stats)), stats.errors ? t(" · 失败 {0}", stats.errors) : "") + (stats.costed ? ` · ${usd(stats.cost)}` : "") })))));
       if (open) for (const turn of rows) body.append(turnRow(turn));
     }
   } else {
@@ -1305,7 +1352,7 @@ RENDERERS.usage = () => {
     .filter((turn) => !usagePage.model || turn.upstream_model_id === usagePage.model)
     .filter((turn) => !usagePage.substitutions || turnSubstituted(turn));
   const chartControls = h("div", { class: "usage-toolbar" },
-    segmented([["tokens", "Tokens"], ["requests", t("请求")]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, t("图表指标")),
+    segmented([["tokens", "Tokens"], ["requests", t("请求")], ["cost", t("费用")]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, t("图表指标")),
     segmented([["merge", t("构成")], ["split", t("按 Provider")]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, t("图表分组")));
   const tableNote = usagePage.slotLoading ? t("正在读取所选时段…")
     : t("{0} 条{1}；点击柱子只看该时段", turns.length, usagePage.slot ? `（${usagePage.slot.label}）` : t("，最近 {0} 条以内", allTurns.length));

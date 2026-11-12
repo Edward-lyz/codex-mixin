@@ -873,6 +873,7 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 /* ---------- Usage ---------- */
 
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .usage-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .select-sm { width: auto; min-width: 160px; height: 32px; font-size: var(--fs-xs); }
 .uchart { display: grid; gap: 10px; min-width: 0; }
@@ -931,6 +932,8 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 .usage-filters { padding: 0 20px 12px; }
 /* Dense rows: at least ten replies fit on one screen. */
 .table.turns td { padding-top: 6px; padding-bottom: 6px; }
+/* Eleven columns: tighter gutters keep the speed column on screen. */
+.table.turns th, .table.turns td { padding-left: 10px; padding-right: 10px; }
 .table.turns .turn-model { max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
 .table.turns tr.is-failed td:first-child { box-shadow: inset 2px 0 0 var(--c-alert); }
 .table.turns td.is-low .row-sub { color: var(--alert-text); }
@@ -1618,8 +1621,12 @@ button.picker-item { grid-template-columns: minmax(0, 1fr); }
 
 /* ---------- Narrow screens ---------- */
 
+@media (max-width: 1180px) {
+  .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (max-width: 960px) {
-  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-4, .grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
