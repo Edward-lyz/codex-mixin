@@ -57,8 +57,29 @@ pub(crate) async fn discover_models(
             "--verbose",
             "--setting-sources",
             "",
+            "--safe-mode",
+            "--no-chrome",
+            "--strict-mcp-config",
+            "--mcp-config",
+            r#"{"mcpServers":{}}"#,
+            "--settings",
+            r#"{"disableAllHooks":true}"#,
         ])
+        .env_remove("BUN_OPTIONS")
+        .env_remove("NODE_OPTIONS")
         .current_dir(&workdir);
+    for (name, _) in std::env::vars_os() {
+        let text = name.to_string_lossy();
+        if (text.starts_with("CLAUDE_") || text.starts_with("ANTHROPIC_"))
+            && text != "CLAUDE_CONFIG_DIR"
+            && text != "CLAUDE_CODE_GIT_BASH_PATH"
+            && text != TOKEN_ENV
+        {
+            command.env_remove(name);
+        }
+    }
+    // Set this after removing inherited Claude overrides.
+    command.env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
     for name in INHERITED_ENV {
         command.env_remove(name);
     }

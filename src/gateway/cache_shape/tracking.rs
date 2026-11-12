@@ -442,6 +442,9 @@ pub(crate) struct UpstreamCacheObserver {
     reasoning_chars: u64,
     /// Upstream error reported inside the stream, or a broken transport.
     failure: Option<String>,
+    /// Dropping a mapper after a terminal event is normal; dropping it before
+    /// that event is cancellation (including an outer failover timeout).
+    terminal: bool,
 }
 
 impl UpstreamCacheObserver {
@@ -454,6 +457,7 @@ impl UpstreamCacheObserver {
             reasoning_tokens: None,
             reasoning_chars: 0,
             failure: None,
+            terminal: false,
         }
     }
 
@@ -461,6 +465,29 @@ impl UpstreamCacheObserver {
         // AGY envelopes Gemini content in `response`; inspect the same payload
         // for timing, reasoning and usage rather than only unwrapping counters.
         let payload = value.get("response").unwrap_or(value);
+        self.terminal |= matches!(
+            value.get("type").and_then(Value::as_str),
+            Some("message_stop" | "response.completed" | "response.incomplete")
+        ) || payload
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(|choices| {
+                choices.iter().any(|choice| {
+                    choice
+                        .get("finish_reason")
+                        .is_some_and(|reason| !reason.is_null())
+                })
+            })
+            || payload
+                .get("candidates")
+                .and_then(Value::as_array)
+                .is_some_and(|candidates| {
+                    candidates.iter().any(|candidate| {
+                        candidate
+                            .get("finishReason")
+                            .is_some_and(|reason| !reason.is_null())
+                    })
+                });
         if self.failure.is_none() {
             self.failure = stream_failure(value);
         }
@@ -499,7 +526,13 @@ impl UpstreamCacheObserver {
                 self.usage.absorb(usage);
                 if let Some(reasoning) = ["output_tokens_details", "completion_tokens_details"]
                     .into_iter()
-                    .find_map(|details| usage.get(details)?.get("reasoning_tokens")?.as_u64())
+                    .find_map(|details| {
+                        let details = usage.get(details)?;
+                        details
+                            .get("reasoning_tokens")
+                            .or_else(|| details.get("thinking_tokens"))?
+                            .as_u64()
+                    })
                 {
                     self.reasoning_tokens = Some(reasoning);
                 }
@@ -622,6 +655,11 @@ fn reasoning_delta_chars(value: &Value) -> u64 {
 
 impl Drop for UpstreamCacheObserver {
     fn drop(&mut self) {
+        if !self.terminal && self.failure.is_none() {
+            self.failure = Some(
+                "upstream stream cancelled or timed out before a terminal response".to_owned(),
+            );
+        }
         if self.failure.is_some() {
             self.observation.usage.record_failure(
                 &self.observation.provider_id,
@@ -721,16 +759,24 @@ where
         let mut report = observation.map(UpstreamCacheObserver::new);
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
-            if chunk.is_err()
+            if let Err(error) = &chunk
                 && let Some(report) = report.as_mut()
                 && report.failure.is_none()
             {
-                report.failure = Some("upstream stream interrupted".to_owned());
+                report.failure = Some(if error.is_timeout() {
+                    "upstream stream timed out".to_owned()
+                } else {
+                    "upstream stream interrupted".to_owned()
+                });
             }
             if let Ok(bytes) = &chunk
                 && let Some(report) = report.as_mut()
             {
                 for event in decoder.push(bytes) {
+                    if event.data == "[DONE]" {
+                        report.terminal = true;
+                        continue;
+                    }
                     let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
                         continue;
                     };
@@ -738,6 +784,12 @@ where
                 }
             }
             yield chunk;
+        }
+        if let Some(report) = report.as_mut()
+            && !report.terminal
+            && report.failure.is_none()
+        {
+            report.failure = Some("upstream stream ended before a terminal response".to_owned());
         }
     }
 }

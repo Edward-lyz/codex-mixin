@@ -2,8 +2,8 @@
 //!
 //! Requests run through the signed-in official `claude` CLI using the built-in
 //! PTY/ConPTY adapter, with no print-mode fallback or external gateway.
-//! The CLI owns authentication, its system prompt and its
-//! request identity. The caller's tools reach the CLI as one loopback MCP
+//! The CLI owns authentication and request identity; the caller owns the system
+//! prompt, tools and generation limits. Its tools reach the CLI as one loopback MCP
 //! server. Each client thread keeps one CLI process: a tool call ends the
 //! outer response while the CLI waits inside the MCP call, and the next
 //! request's tool results answer that call so the same process continues.
@@ -459,6 +459,21 @@ async fn spawn_session(
     crate::platform::ensure_owner_only_dir(&workdir)
         .context("create the Claude Code working directory")?;
     let mut command = tokio::process::Command::from(crate::platform::launcher_command(&program));
+    // Keep native auth and launcher paths, but not an enclosing agent's
+    // prompts, provider selection or generation overrides.
+    for (name, _) in std::env::vars_os() {
+        let text = name.to_string_lossy();
+        if (text.starts_with("CLAUDE_") || text.starts_with("ANTHROPIC_"))
+            && text != "CLAUDE_CONFIG_DIR"
+            && text != "CLAUDE_CODE_GIT_BASH_PATH"
+            && text != TOKEN_ENV
+        {
+            command.env_remove(name);
+        }
+    }
+    for name in INHERITED_ENV {
+        command.env_remove(name);
+    }
     command
         .args([
             "--model",
@@ -473,8 +488,30 @@ async fn spawn_session(
             "--setting-sources",
             "",
             "--disable-slash-commands",
+            // Unlike --bare, safe mode keeps subscription OAuth and explicit MCP.
+            "--safe-mode",
+            "--no-chrome",
+            "--settings",
+            r#"{"disableAllHooks":true,"autoMemoryEnabled":false,"autoCompactEnabled":false,"promptSuggestionEnabled":false}"#,
+            "--system-prompt",
+            // An empty string falls back to the CLI's default coding prompt.
+            &system_text(request).unwrap_or_else(|| " ".to_owned()),
+            "--thinking-display",
+            request
+                .thinking
+                .as_ref()
+                .and_then(|thinking| thinking["display"].as_str())
+                .unwrap_or("summarized"),
         ])
         .current_dir(&workdir)
+        .env_remove("NODE_OPTIONS")
+        .env_remove("MAX_THINKING_TOKENS")
+        .env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", request.max_tokens.to_string())
+        .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+        .env("CLAUDE_CODE_DISABLE_ATTACHMENTS", "1")
+        .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
+        .env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
+        .env("DISABLE_AUTO_COMPACT", "1")
         .env("MCP_TOOL_TIMEOUT", MCP_TOOL_TIMEOUT_MS)
         .env("MAX_MCP_OUTPUT_TOKENS", MAX_MCP_OUTPUT_TOKENS)
         // The first message names the session through an uncached request to
@@ -485,14 +522,34 @@ async fn spawn_session(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
-    if let Some(system) = system_text(request) {
-        command.args(["--append-system-prompt", &system]);
+    match request
+        .thinking
+        .as_ref()
+        .and_then(|thinking| thinking["type"].as_str())
+    {
+        Some("disabled") | None => {
+            // The API/converters omit thinking when the caller turns it off;
+            // leaving this unspecified would re-enable the CLI's default.
+            command.args(["--thinking", "disabled"]);
+        }
+        Some("adaptive") => {
+            command.args(["--thinking", "adaptive"]);
+        }
+        Some("enabled") => {
+            if let Some(budget) = request
+                .thinking
+                .as_ref()
+                .and_then(|thinking| thinking["budget_tokens"].as_u64())
+            {
+                command.env("MAX_THINKING_TOKENS", budget.to_string());
+            } else {
+                command.args(["--thinking", "enabled"]);
+            }
+        }
+        _ => {}
     }
     if let Some(effort) = request_effort(request) {
         command.args(["--effort", effort]);
-    }
-    for name in INHERITED_ENV {
-        command.env_remove(name);
     }
     let api_key = provider.definition().auth.api_key.trim();
     if !api_key.is_empty() {
@@ -819,6 +876,12 @@ fn request_fingerprint(request: &MessageRequest) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     request.model.hash(&mut hasher);
+    request.max_tokens.hash(&mut hasher);
+    request
+        .thinking
+        .as_ref()
+        .map(Value::to_string)
+        .hash(&mut hasher);
     system_text(request).hash(&mut hasher);
     request_effort(request).hash(&mut hasher);
     for tool in &request.tools {

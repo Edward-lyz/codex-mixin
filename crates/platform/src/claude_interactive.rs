@@ -56,16 +56,14 @@ pub fn spawn(
             }
         }
     }
-    let options = std::env::var("BUN_OPTIONS").unwrap_or_default();
+    // Only our streaming tap may preload code into this owned CLI process.
+    // Inheriting another agent's preload would undo the clean startup.
     // Bun's preload option has no portable quoting for whitespace in paths.
     anyhow::ensure!(
         !tap.to_string_lossy().contains(char::is_whitespace),
         "interactive Claude temporary path contains whitespace"
     );
-    builder.env(
-        "BUN_OPTIONS",
-        format!("{options} --preload {}", tap.display()),
-    );
+    builder.env("BUN_OPTIONS", format!("--preload {}", tap.display()));
     builder.env("CODEX_MIXIN_CLAUDE_TAP", &events_file);
     builder.env("TERM", "xterm-256color");
     if let Some(cwd) = command.get_current_dir() {
