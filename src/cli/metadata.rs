@@ -2,7 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_mixin::provider::{MODELS_DEV_API_URL, MetadataResolver, default_metadata_cache_path};
+use codex_mixin::provider::{
+    MODELS_DEV_API_URL, MetadataResolver, default_metadata_cache_path, metadata_catalog_path,
+};
 
 const METADATA_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -21,9 +23,11 @@ pub(super) async fn refresh_metadata(output: Option<PathBuf>) -> anyhow::Result<
 }
 
 pub(super) async fn load_model_metadata_resolver() -> anyhow::Result<MetadataResolver> {
-    let cached = MetadataResolver::from_default_files()?;
-    if !cached.is_empty() {
-        return Ok(cached);
+    // An explicitly configured file is authoritative, so a missing one errors.
+    if std::env::var_os("CODEX_GATEWAY_MODEL_METADATA").is_some()
+        || metadata_catalog_path().exists()
+    {
+        return MetadataResolver::from_default_files();
     }
     match fetch_metadata_catalog().await {
         Ok(body) => {
@@ -43,9 +47,9 @@ pub(super) async fn load_model_metadata_resolver() -> anyhow::Result<MetadataRes
         }
         Err(err) => {
             eprintln!(
-                "warning: failed to fetch the models.dev catalog: {err}; using built-in family rules"
+                "warning: failed to fetch the models.dev catalog: {err}; using the bundled snapshot"
             );
-            Ok(MetadataResolver::empty())
+            MetadataResolver::from_default_files()
         }
     }
 }

@@ -112,6 +112,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
+      - name: Refresh bundled models.dev snapshot
+        shell: bash
+        run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
       - name: Build CLI
         run: |
           if [[ "${{ matrix.os }}" == "linux" ]]; then
@@ -204,6 +207,9 @@ jobs:
       - name: Install NSIS
         shell: pwsh
         run: ./windows/scripts/install-nsis.ps1
+      - name: Refresh bundled models.dev snapshot
+        shell: bash
+        run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
       - name: Build, test, package, and optionally sign
         shell: pwsh
         env:

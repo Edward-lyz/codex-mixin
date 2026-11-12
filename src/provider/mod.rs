@@ -20,6 +20,7 @@ mod pricing;
 pub(crate) use model_alias::flat_model_id;
 pub use model_order::{ModelOrder, compare_model_ids};
 pub(crate) use pricing::{LivePrices, ModelPrices};
+mod models_dev;
 mod quota;
 mod registry;
 mod resolver;
@@ -36,14 +37,13 @@ pub use discovery::{
     AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
     discover_provider_models, redact_provider_error,
 };
+pub use models_dev::{MODELS_DEV_API_URL, default_metadata_cache_path, metadata_catalog_path};
 pub use quota::{QuotaUsageSummary, quota_usage};
 pub use registry::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, auxiliary_auto_review_slug,
     catalog_model_slug,
 };
-pub use resolver::{
-    MODELS_DEV_API_URL, MetadataResolver, ModelMetadata, default_metadata_cache_path,
-};
+pub use resolver::{MetadataResolver, ModelMetadata};
 pub use spec::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_RUNTIME_SERVICE, AuthMode,
     CLAUDE_CODE_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, QuotaLogin,

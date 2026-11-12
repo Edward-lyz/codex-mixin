@@ -9,9 +9,10 @@ use serde_json::json;
 
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 
+use super::models_dev::fetch_models_dev_catalog;
 use super::resolver::{
-    MetadataResolver, enrich_models_with_models_dev, fetch_models_dev_catalog,
-    fill_missing_model_fields, fill_model_gaps_with_resolver, provider_models_from_catalog,
+    MetadataResolver, enrich_models_with_models_dev, fill_missing_model_fields,
+    fill_model_gaps_with_resolver, provider_models_from_catalog,
 };
 use super::spec::{OPEN_CODE_GO_PRESET_ID, spec_for};
 use super::{
