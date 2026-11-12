@@ -225,13 +225,20 @@ async fn routes_auto_review_to_official_http_backend() {
 
 #[tokio::test]
 async fn codex_thread_title_mapping_routes_http_and_websocket_without_official_quota() {
-    for websocket in [false, true] {
+    for (websocket, provided_schema, string_input) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+        (false, false, true),
+    ] {
         let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
         let (official_url, official_requests, _, _, _, _) =
             spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
         let mut config = test_config(upstream_url);
         config.official_responses_url = format!("{official_url}/v1/responses");
         config.providers[0].codex_thread_title_model = Some("DeepSeek-V4-Flash".to_owned());
+        config.enable_web_search_tool = true;
         let codex_home = tempfile::tempdir().unwrap();
         config.codex_auth_path = codex_home.path().join("auth.json");
         std::fs::write(
@@ -243,6 +250,31 @@ async fn codex_thread_title_mapping_routes_http_and_websocket_without_official_q
         let mut body = responses_request();
         body["model"] = json!("gpt-6-luna");
         body["client_metadata"] = json!({"x-codex-turn-metadata":json!({"thread_source":"thread_title","turn_trigger":"thread_title"}).to_string()});
+        body["tool_choice"] = json!("required");
+        body["text"] = json!({"verbosity":"low"});
+        body["input"].as_array_mut().unwrap().extend([
+            json!({"type":"configuration_update","text":{"format":{"type":"text"}}}),
+            json!({"type":"additional_tools","tools":[{"type":"function","name":"inherited_exec","parameters":{"type":"object"}}]}),
+            json!({"type":"tool_search_output","execution":"client","call_id":"search-1","tools":[{"type":"function","name":"discovered_exec","parameters":{"type":"object"}}]}),
+            json!({"type":"message","role":"user","content":[{"type":"input_text","text":"Output the title as plain text with no surrounding quotes or backticks."}]}),
+        ]);
+        if provided_schema {
+            body["input"][2]["text"]["format"] = json!({
+                "type":"json_schema", "name":"client_title", "strict":true,
+                "schema":{
+                    "type":"object",
+                    "properties":{
+                        "title":{"type":"string","minLength":1,"maxLength":36},
+                        "description":{"type":"string","minLength":1}
+                    },
+                    "required":["title","description"],
+                    "additionalProperties":false
+                }
+            });
+        }
+        if string_input {
+            body["input"] = json!("Output the title as plain text.");
+        }
         let response = if websocket {
             let mut handshake = format!(
                 "{}/v1/responses",
@@ -282,6 +314,26 @@ async fn codex_thread_title_mapping_routes_http_and_websocket_without_official_q
             upstream_requests.lock().unwrap()[0]["model"],
             "DeepSeek-V4-Flash"
         );
+        let upstream = upstream_requests.lock().unwrap()[0].clone();
+        assert!(upstream.get("tools").is_none(), "{upstream}");
+        assert!(upstream.get("tool_choice").is_none(), "{upstream}");
+        assert_eq!(upstream["output_config"]["format"]["type"], "json_schema");
+        let schema = &upstream["output_config"]["format"]["schema"];
+        assert_eq!(schema["required"], json!(["title", "description"]));
+        assert_eq!(
+            schema["properties"]["title"]["maxLength"],
+            if provided_schema { 36 } else { 60 }
+        );
+        assert_eq!(schema["additionalProperties"], false);
+        let title_instructions = upstream["system"].as_array().unwrap().last().unwrap()["text"]
+            .as_str()
+            .unwrap();
+        assert!(title_instructions.contains("ONLY a valid JSON object"));
+        assert!(title_instructions.contains("Do not call any tools"));
+        assert!(title_instructions.contains(&format!(
+            "\"maxLength\":{}",
+            if provided_schema { 36 } else { 60 }
+        )));
         assert!(
             official_requests.lock().unwrap().is_empty(),
             "mapped title must never call official inference"
@@ -301,6 +353,10 @@ async fn codex_thread_title_mapping_routes_http_and_websocket_without_official_q
         let _ = response.bytes().await.unwrap();
         assert_eq!(official_requests.lock().unwrap().len(), 1);
         assert_eq!(upstream_requests.lock().unwrap().len(), 1);
+        let official = official_requests.lock().unwrap()[0].clone();
+        assert_eq!(official["tools"], body["tools"]);
+        assert_eq!(official["input"], body["input"]);
+        assert_eq!(official["text"], body["text"]);
     }
 }
 

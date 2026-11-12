@@ -68,12 +68,20 @@ pub(crate) async fn stream_provider_response(
         .providers
         .provider(provider_id)
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
+    let is_thread_title = native_messages.is_none()
+        && provider.definition().codex_thread_title_model.as_deref() == Some(upstream_model_id)
+        && super::router::is_codex_thread_title(headers, body)?;
+    // Title requests can inherit an agent's tools and conflicting instructions.
+    // Normalize only the outbound view; context replay must retain the input.
+    let mut title_body = is_thread_title.then(|| body.clone());
+    let body = title_body.as_mut().unwrap_or(body);
     let downstream_model = downstream_model.unwrap_or(catalog_slug);
-    let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
+    let web_search_enabled =
+        !is_thread_title && executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
     let mut updates = Vec::new();
-    if protocol != ProviderProtocol::OpenAiResponses
+    if (protocol != ProviderProtocol::OpenAiResponses || is_thread_title)
         && let Some(input) = body.get("input").and_then(Value::as_array)
     {
         for item in input
@@ -158,6 +166,71 @@ pub(crate) async fn stream_provider_response(
             .ok_or_else(|| GatewayError::BadRequest(format!("{field} must be an object")))?;
         let previous = target.insert(setting.to_owned(), value);
         restored.push((field, setting, previous, parent));
+    }
+    if is_thread_title {
+        let format = body
+            .pointer("/text/format")
+            .filter(|format| format.get("type").and_then(Value::as_str) == Some("json_schema"))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!({
+                    "type":"json_schema", "name":"thread_title", "strict":true,
+                    "schema":{
+                        "type":"object",
+                        "properties":{
+                            "title":{"type":"string","minLength":1,"maxLength":60},
+                            "description":{"type":"string","minLength":1}
+                        },
+                        "required":["title","description"],
+                        "additionalProperties":false
+                    }
+                })
+            });
+        if body.get("text").is_none_or(Value::is_null) {
+            body["text"] = json!({});
+        }
+        body.get_mut("text")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| GatewayError::BadRequest("text must be an object".to_owned()))?
+            .insert("format".to_owned(), format.clone());
+        if let Some(Value::String(text)) = body.get("input") {
+            body["input"] = json!([{"type":"message","role":"user","content":text}]);
+        }
+        let input = body
+            .get_mut("input")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| {
+                GatewayError::BadRequest("input must be a string or array".to_owned())
+            })?;
+        for item in input.iter_mut() {
+            match item.get("type").and_then(Value::as_str) {
+                Some("additional_tools" | "tool_search_output") => item["tools"] = json!([]),
+                Some("configuration_update") => {
+                    item["text"]["format"] = format.clone();
+                }
+                _ => {}
+            }
+        }
+        // Keep this in the initial developer block: Anthropic conversion maps
+        // later developer messages to user content to preserve prefix caching.
+        let instruction_index = input
+            .iter()
+            .position(|item| {
+                matches!(
+                    item.get("role").and_then(Value::as_str),
+                    Some("user" | "assistant")
+                )
+            })
+            .unwrap_or(input.len());
+        input.insert(instruction_index, json!({
+            "type":"message", "role":"developer", "content":[{
+                "type":"input_text",
+                "text":format!("For this metadata task, return ONLY a valid JSON object with exactly two string fields: title and description. Do not use Markdown, labels, or code fences. Do not call any tools. The request to write plain text applies to the field values, not the response format. Keep the title concise and comfortably within the schema's maxLength. Follow this JSON schema: {}", format["schema"])
+            }]
+        }));
+        body["tools"] = json!([]);
+        body["tool_choice"] = json!("none");
+        body["parallel_tool_calls"] = json!(false);
     }
     let ctx = ProviderRequestContext {
         executor,

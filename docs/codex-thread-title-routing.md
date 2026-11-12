@@ -25,6 +25,14 @@ or a title-like user prompt alone does not activate it.
 
 HTTP and Responses WebSocket requests reuse the existing provider transports,
 authentication and response conversion. Client-facing model names stay intact.
+For a mapped title request, the gateway disables inherited tools and automatic
+web search, and adds an explicit JSON-only instruction for `title` and
+`description`, including the schema and title length constraint. This covers compatible upstreams that ignore structured-output
+settings or follow Codex's plain-text title wording literally. A supplied JSON
+schema is preserved (including configuration updates); if none is supplied, the
+gateway adds the title schema expected by the desktop client. These changes use
+an outbound request copy and do not rewrite stored conversation history.
+
 If an explicit mapping cannot route to its selected model, the gateway fails
 the request instead of spending official inference quota. The selected Provider
 can still charge for its own inference.
@@ -33,7 +41,8 @@ The mapping applies to title requests that reach this gateway. An older client
 that omits the metadata or a client request sent directly to OpenAI cannot be
 identified or redirected here. Tests use local official/provider endpoints to
 verify both transports, zero official requests for a mapped title, and unchanged
-ordinary-model routing.
+ordinary-model routing, plus tool suppression and schema preservation/defaults
+for inherited title requests.
 
 Wire reference: [Codex response metadata](https://github.com/openai/codex/blob/main/codex-rs/core/src/responses_metadata.rs).
 
