@@ -142,6 +142,13 @@ pub fn save_oauth(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 pub fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
+    lock_oauth_within(credentials, std::time::Duration::from_secs(20))
+}
+
+fn lock_oauth_within(
+    credentials: &Path,
+    wait: std::time::Duration,
+) -> anyhow::Result<std::fs::File> {
     use fs2::FileExt;
     use std::time::{Duration, Instant};
     let path = credentials.with_extension("lock");
@@ -157,7 +164,7 @@ pub fn lock_oauth(credentials: &Path) -> anyhow::Result<std::fs::File> {
         .write(true)
         .open(path)?;
     super::set_owner_only_mode_on(&file)?;
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + wait;
     loop {
         match file.try_lock_exclusive() {
             Ok(()) => return Ok(file),
@@ -276,7 +283,8 @@ pub fn codex_keyring(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
 
 /// Desktop launchers do not inherit shell exports. Read the user's login
 /// environment through their native shell, with bounded private stdout.
-/// The short cache avoids starting a shell while configuration is committed.
+/// The result, including absence or failure, is shared for a minute across
+/// processes, so short-lived CLI calls start at most one shell between them.
 pub fn claude_code_setup_token() -> Option<String> {
     const NAME: &str = "CLAUDE_CODE_OAUTH_TOKEN";
     if let Ok(token) = std::env::var(NAME)
@@ -308,31 +316,66 @@ pub fn claude_code_setup_token() -> Option<String> {
             .filter(|path| path.is_absolute() && path.is_file());
         shell.and_then(|shell| {
             use std::os::unix::process::CommandExt;
-            let mut command = std::process::Command::new(shell);
-            // An interactive shell touches the controlling terminal and is
-            // stopped by SIGTTIN/SIGTTOU when it is not the foreground group.
-            // Its own process group keeps that stop from freezing this process.
-            command.process_group(0);
-            command.args([
-                "-lic",
-                r#"printf '\036MIXIN_CLAUDE_TOKEN=%s\037' "$CLAUDE_CODE_OAUTH_TOKEN""#,
-            ]);
-            // Private-input mode suppresses stdout/stderr in failure errors.
-            let output = super::agent_cli::run_command_with_input(
-                command,
-                Duration::from_secs(3),
-                "Claude login environment",
-                Some(Vec::new()),
-            )
-            .ok()?;
-            let token = output
-                .stdout
-                .split('\u{001e}')
-                .find_map(|line| line.strip_prefix("MIXIN_CLAUDE_TOKEN="))?
-                .split('\u{001f}')
-                .next()?
-                .trim();
-            (!token.is_empty()).then(|| token.to_owned())
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let shared = oauth_path("claude-setup-token-cache");
+            let shell_key = shell.to_string_lossy().into_owned();
+            let now_ms = || {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_millis() as u64)
+            };
+            let read_shared = || {
+                let document: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&shared).ok()?).ok()?;
+                let age = now_ms().checked_sub(document["checked_at_ms"].as_u64()?)?;
+                (age < 60_000 && document["shell"].as_str() == Some(shell_key.as_str()))
+                    .then(|| document["token"].as_str().map(str::to_owned))
+            };
+            if let Some(token) = read_shared() {
+                return token;
+            }
+            // The holder finishes within the 3 s shell budget; recheck after it.
+            let _lock = lock_oauth_within(&shared, Duration::from_secs(5)).ok()?;
+            if let Some(token) = read_shared() {
+                return token;
+            }
+            let probe = || {
+                let mut command = std::process::Command::new(&shell);
+                // An interactive shell touches the controlling terminal and is
+                // stopped by SIGTTIN/SIGTTOU when it is not the foreground group.
+                // Its own process group keeps that stop from freezing this process.
+                command.process_group(0);
+                command.args([
+                    "-lic",
+                    r#"printf '\036MIXIN_CLAUDE_TOKEN=%s\037' "$CLAUDE_CODE_OAUTH_TOKEN""#,
+                ]);
+                // Private-input mode suppresses stdout/stderr in failure errors.
+                let output = super::agent_cli::run_command_with_input(
+                    command,
+                    Duration::from_secs(3),
+                    "Claude login environment",
+                    Some(Vec::new()),
+                )
+                .ok()?;
+                let token = output
+                    .stdout
+                    .split('\u{001e}')
+                    .find_map(|line| line.strip_prefix("MIXIN_CLAUDE_TOKEN="))?
+                    .split('\u{001f}')
+                    .next()?
+                    .trim();
+                (!token.is_empty()).then(|| token.to_owned())
+            };
+            let token = probe();
+            let record = serde_json::json!({
+                "checked_at_ms": now_ms(),
+                "shell": shell_key,
+                "token": token,
+            });
+            if let Ok(bytes) = serde_json::to_vec(&record) {
+                let _ = save_oauth(&shared, &bytes);
+            }
+            token
         })
     };
     #[cfg(windows)]

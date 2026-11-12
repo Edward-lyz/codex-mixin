@@ -107,7 +107,8 @@ extension AppDelegate {
     }
 
     func refreshScheduledStatus() async {
-        let scope: StatusRefreshScope = quotaRefreshPolicy.isDue() ? .status : .health
+        let dataDue = quotaRefreshPolicy.isDue() || providerListRefreshPolicy.isDue()
+        let scope: StatusRefreshScope = dataDue ? .status : .health
         await requestStatusRefresh(scope: scope)
     }
 
@@ -134,16 +135,21 @@ extension AppDelegate {
             }
         }
         if scope == .health {
+            // Between data refreshes the CLI runs only when the gateway state
+            // changes; a stopped gateway is rechecked on the data cadence.
+            let wasRunning = isRunning
             do {
                 let health = try await checkGatewayHealth()
                 guard isCurrent() else { return }
+                let wasDegraded = serviceStatus.contains("服务商需要处理")
                 applyHealthyGatewaySnapshot(health)
-                if health.providerReadiness == "degraded" {
+                if health.providerReadiness == "degraded", !wasDegraded {
                     let status = try await runGateway(["status", "--json"])
                     guard isCurrent() else { return }
                     applyGatewayStatus(status)
                 }
             } catch {
+                guard wasRunning else { return }
                 do {
                     let status = try await runGateway(["status", "--json"])
                     guard isCurrent() else { return }
@@ -166,60 +172,67 @@ extension AppDelegate {
                 return
             }
         }
-        guard scope == .full || quotaRefreshPolicy.isDue() else { return }
-        quotaRefreshPolicy.markAttempt()
+        let quotaDue = scope == .full || quotaRefreshPolicy.isDue()
+        let providersDue = scope == .full || providerListRefreshPolicy.isDue()
+        if quotaDue { quotaRefreshPolicy.markAttempt() }
+        if providersDue { providerListRefreshPolicy.markAttempt() }
         // Quota pages can involve several remote providers and browser-backed
         // dashboards. Start both subprocesses together so a slow quota probe
         // cannot hide the local token history on a fresh app launch.
-        let providersTask = Task { try await runGateway(["providers", "list", "--json"]) }
-        let quotaTask = Task { try await runGateway(["quota", "--json"]) }
-        do {
-            let providerList = try decodeProviderList(await providersTask.value)
-            guard isCurrent() else { return }
-            let dashboardProviders = providerList.providers.map {
-                ProviderDashboardProvider(
-                    id: $0.id,
-                    displayName: providerDisplayNameForGatewayState(
-                        $0.displayName,
-                        isGatewayRunning: isRunning,
-                        codexStatus: codexIntegrationStatus
-                    ),
-                    isEnabled: $0.enabled,
-                    websiteURL: $0.websiteURL
-                )
-            }
-            await MainActor.run {
-                providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
-            }
-            Task { [weak self] in
-                guard let self else { return }
-                for provider in dashboardProviders {
-                    guard let websiteURL = provider.websiteURL else { continue }
-                    do {
-                        if try await refreshProviderLogoIfNeeded(
-                            providerID: provider.id,
-                            websiteURL: websiteURL
-                        ) {
-                            await MainActor.run {
-                                self.providerUsageDashboardView?.refreshProviderIcons()
+        let providersTask = providersDue
+            ? Task { try await runGateway(["providers", "list", "--json"]) }
+            : nil
+        let quotaTask = quotaDue ? Task { try await runGateway(["quota", "--json"]) } : nil
+        if let providersTask {
+            do {
+                let providerList = try decodeProviderList(await providersTask.value)
+                guard isCurrent() else { return }
+                let dashboardProviders = providerList.providers.map {
+                    ProviderDashboardProvider(
+                        id: $0.id,
+                        displayName: providerDisplayNameForGatewayState(
+                            $0.displayName,
+                            isGatewayRunning: isRunning,
+                            codexStatus: codexIntegrationStatus
+                        ),
+                        isEnabled: $0.enabled,
+                        websiteURL: $0.websiteURL
+                    )
+                }
+                await MainActor.run {
+                    providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
+                }
+                Task { [weak self] in
+                    guard let self else { return }
+                    for provider in dashboardProviders {
+                        guard let websiteURL = provider.websiteURL else { continue }
+                        do {
+                            if try await refreshProviderLogoIfNeeded(
+                                providerID: provider.id,
+                                websiteURL: websiteURL
+                            ) {
+                                await MainActor.run {
+                                    self.providerUsageDashboardView?.refreshProviderIcons()
+                                }
                             }
+                        } catch {
+                            appendAppDiagnosticLog(
+                                "provider icon refresh failed for \(provider.id): \(diagnosticErrorDescription(error))",
+                                directory: self.stateDir()
+                            )
                         }
-                    } catch {
-                        appendAppDiagnosticLog(
-                            "provider icon refresh failed for \(provider.id): \(diagnosticErrorDescription(error))",
-                            directory: self.stateDir()
-                        )
                     }
                 }
+            } catch {
+                guard isCurrent() else { return }
+                updateQuotaStatus(
+                    title: "Provider 列表：不可用",
+                    detail: localizedErrorDescription(error),
+                    progress: nil
+                )
             }
-        } catch {
-            guard isCurrent() else { return }
-            updateQuotaStatus(
-                title: "Provider 列表：不可用",
-                detail: localizedErrorDescription(error),
-                progress: nil
-            )
         }
+        guard let quotaTask else { return }
         do {
             let quota = try await quotaTask.value
             guard isCurrent() else { return }

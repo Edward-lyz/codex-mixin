@@ -42,7 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     var pendingStatusRefreshScope: StatusRefreshScope?
     var codexIntegrationStatus: CodexIntegrationStatus?
-    var quotaRefreshPolicy = QuotaRefreshPolicy()
+    var quotaRefreshPolicy = RefreshTTLPolicy(ttl: 60)
+    // Configuration and login actions refresh the list immediately; this
+    // only catches logins that appear outside Mixin.
+    var providerListRefreshPolicy = RefreshTTLPolicy(ttl: 300)
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
     }
@@ -155,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func handleRefreshLifecycleEvent(_ name: Notification.Name) {
         appendDiagnosticLog("refresh lifecycle event: \(name.rawValue)")
         quotaRefreshPolicy.reset()
+        providerListRefreshPolicy.reset()
         startRefreshTimer()
         Task { @MainActor [weak self] in
             await self?.refreshStatusNow()

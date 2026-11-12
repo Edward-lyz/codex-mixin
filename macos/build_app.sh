@@ -260,15 +260,34 @@ if [[ "$MENU_MIN_VERSION" != "$MACOS_DEPLOYMENT_TARGET" ]]; then
 fi
 
 SPARKLE_FRAMEWORK="$FRAMEWORKS_DIR/Sparkle.framework/Versions/B"
+APP_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS_DIR/Info.plist")"
+CLI_IDENTIFIER="$APP_IDENTIFIER.cli"
+APP_REQUIREMENT=()
+CLI_REQUIREMENT=()
+if [[ "$CODE_SIGN_IDENTITY" == "-" ]]; then
+  # An ad-hoc signature otherwise pins its build hash, so every update looks
+  # like a new app to macOS privacy permissions. A certificate keeps its own.
+  APP_REQUIREMENT=(--requirements "=designated => identifier \"$APP_IDENTIFIER\"")
+  CLI_REQUIREMENT=(--requirements "=designated => identifier \"$CLI_IDENTIFIER\"")
+fi
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/XPCServices/Downloader.xpc"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/XPCServices/Installer.xpc"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Updater.app"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Autoupdate"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$FRAMEWORKS_DIR/Sparkle.framework"
-codesign --force --sign "$CODE_SIGN_IDENTITY" "$RESOURCES_DIR/codex-mixin"
+codesign --force --sign "$CODE_SIGN_IDENTITY" --identifier "$CLI_IDENTIFIER" \
+  ${CLI_REQUIREMENT[@]+"${CLI_REQUIREMENT[@]}"} "$RESOURCES_DIR/codex-mixin"
 codesign --force --sign "$CODE_SIGN_IDENTITY" "$MACOS_DIR/CodexMixinMenu"
-codesign --force --sign "$CODE_SIGN_IDENTITY" "$APP_DIR"
+codesign --force --sign "$CODE_SIGN_IDENTITY" \
+  ${APP_REQUIREMENT[@]+"${APP_REQUIREMENT[@]}"} "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+for signed in "$APP_DIR" "$RESOURCES_DIR/codex-mixin"; do
+  # Each update must satisfy the identity the previous version was granted.
+  if [[ "$CODE_SIGN_IDENTITY" == "-" ]] && codesign -d -r- "$signed" 2>&1 | grep -q cdhash; then
+    echo "ad-hoc designated requirement still pins the build hash: $signed" >&2
+    exit 1
+  fi
+done
 
 BUILT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CONTENTS_DIR/Info.plist")"
 if [[ "$BUILT_VERSION" != "$APP_VERSION" ]]; then

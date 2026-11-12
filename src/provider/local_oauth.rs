@@ -36,7 +36,8 @@ pub(crate) struct Locations {
     kiro_cli: Option<PathBuf>,
     claude_cli: Option<PathBuf>,
     claude_login: [PathBuf; 2],
-    claude_token: Option<String>,
+    /// Read on first use: the probe may start the user's login shell.
+    claude_token: std::cell::OnceCell<Option<String>>,
     ignore: PathBuf,
 }
 
@@ -52,9 +53,15 @@ impl Locations {
             kiro_cli: crate::platform::oauth::kiro_cli_auth_path(),
             claude_cli: crate::platform::agent_cli::find_command("claude"),
             claude_login: crate::platform::oauth::claude_code_login_paths(),
-            claude_token: crate::platform::oauth::claude_code_setup_token(),
+            claude_token: std::cell::OnceCell::new(),
             ignore: crate::platform::oauth::oauth_path(IGNORE_FILE),
         }
+    }
+
+    fn claude_token(&self) -> Option<&str> {
+        self.claude_token
+            .get_or_init(crate::platform::oauth::claude_code_setup_token)
+            .as_deref()
     }
 }
 
@@ -130,7 +137,7 @@ fn read_json_capped(path: &Path, limit: u64) -> Option<Value> {
 /// interactive login in the credential file or the account state file.
 fn inspect_claude_code(at: &Locations) -> Option<LocalCredential> {
     at.claude_cli.as_ref()?;
-    if let Some(token) = at.claude_token.as_deref() {
+    if let Some(token) = at.claude_token() {
         return Some(LocalCredential {
             fingerprint: fingerprint(&["claude-code", token]),
         });
@@ -279,7 +286,7 @@ fn discover_at(
         // the background service, which lacks that environment, can pass it
         // to the CLI.
         let token = match preset {
-            ProviderPreset::ClaudeCode => at.claude_token.as_deref().unwrap_or_default(),
+            ProviderPreset::ClaudeCode => at.claude_token().unwrap_or_default(),
             _ => "",
         };
         let mut provider = preset.create(id, token);
@@ -315,7 +322,7 @@ fn reconcile_at(at: &Locations, providers: &mut Vec<ProviderDefinition>) -> anyh
         };
         if current.fingerprint != previous {
             if preset == ProviderPreset::ClaudeCode
-                && let Some(token) = at.claude_token.as_deref()
+                && let Some(token) = at.claude_token()
             {
                 provider.auth.api_key = token.to_owned();
             }

@@ -10,11 +10,11 @@ enum StatusRefreshScope: Int {
     }
 }
 
-struct QuotaRefreshPolicy {
+struct RefreshTTLPolicy {
     let ttl: TimeInterval
     private(set) var lastAttemptAt: Date?
 
-    init(ttl: TimeInterval = 10, lastAttemptAt: Date? = nil) {
+    init(ttl: TimeInterval, lastAttemptAt: Date? = nil) {
         self.ttl = ttl
         self.lastAttemptAt = lastAttemptAt
     }
