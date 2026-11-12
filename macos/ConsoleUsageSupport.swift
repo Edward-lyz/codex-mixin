@@ -23,6 +23,8 @@ struct TurnUsageRecord: Decodable, Identifiable, Equatable {
     /// `completed` or `failed`; gateways that predate status omit it.
     let status: String?
     let error: String?
+    /// List-price USD; nil for unpriced models or CLIs without estimates.
+    let estimatedCostUSD: Double?
 
     var id: String { "\(atMs)-\(session)-\(providerID)-\(upstreamModelID)-\(status ?? "")" }
     var date: Date { Date(timeIntervalSince1970: Double(atMs) / 1_000) }
@@ -51,6 +53,7 @@ struct TurnUsageRecord: Decodable, Identifiable, Equatable {
         case outputTPS = "output_tps"
         case status
         case error
+        case estimatedCostUSD = "estimated_cost_usd"
     }
 
     /// Long prompts that mostly missed the cache. Short prompts are too small
@@ -71,6 +74,15 @@ struct TurnUsageRecord: Decodable, Identifiable, Equatable {
             stats.hitRead = stats.cached
             stats.hitPrompt = stats.cached + stats.uncached
         }
+        // A failed reply is not billed; a priced model's reply without an
+        // estimate is left out of the total and counted as unpriced.
+        let counted = [inputTokens, cacheReadTokens, cacheCreationTokens, outputTokens].contains { $0 != nil }
+        if !isFailed, let cost = estimatedCostUSD {
+            stats.cost = cost
+            stats.costed = 1
+        } else if !isFailed, counted {
+            stats.unpriced = 1
+        }
         return stats
     }
 }
@@ -88,6 +100,10 @@ struct DailyUsageRecord: Decodable, Equatable {
     let cacheHitPercent: Double?
     /// Absent from gateways that predate failure accounting.
     let errorCount: UInt64?
+    /// List-price USD of the priced replies; nil when none has a price or the
+    /// CLI predates estimates.
+    let estimatedCostUSD: Double?
+    let unpricedRequestCount: UInt64?
 
     enum CodingKeys: String, CodingKey {
         case day
@@ -100,6 +116,8 @@ struct DailyUsageRecord: Decodable, Equatable {
         case outputTokens = "output_tokens"
         case cacheHitPercent = "cache_hit_percent"
         case errorCount = "error_count"
+        case estimatedCostUSD = "estimated_cost_usd"
+        case unpricedRequestCount = "unpriced_request_count"
     }
 
     var stats: UsageSlotStats {
@@ -112,6 +130,11 @@ struct DailyUsageRecord: Decodable, Equatable {
         if cacheHitPercent != nil {
             stats.hitRead = cacheReadTokens
             stats.hitPrompt = cacheReadTokens + inputTokens + cacheCreationTokens
+        }
+        stats.unpriced = unpricedRequestCount ?? 0
+        if let cost = estimatedCostUSD {
+            stats.cost = cost
+            stats.costed = max(1, requestCount > stats.unpriced ? requestCount - stats.unpriced : 0)
         }
         return stats
     }
@@ -128,6 +151,10 @@ struct UsageSlotStats: Equatable {
     /// Prompt counters of providers that report cache usage, for the hit rate.
     var hitRead: UInt64 = 0
     var hitPrompt: UInt64 = 0
+    /// List-price USD of the `costed` replies; `unpriced` replies have none.
+    var cost: Double = 0
+    var costed: UInt64 = 0
+    var unpriced: UInt64 = 0
 
     init() {}
 
@@ -143,12 +170,30 @@ struct UsageSlotStats: Equatable {
         left.output += right.output
         left.hitRead += right.hitRead
         left.hitPrompt += right.hitPrompt
+        left.cost += right.cost
+        left.costed += right.costed
+        left.unpriced += right.unpriced
     }
 
     var attempts: UInt64 { requests + errors }
     var tokens: UInt64 { cached + uncached + output }
     var cacheHitPercent: Double? { hitPrompt > 0 ? Double(hitRead) / Double(hitPrompt) * 100 : nil }
     var errorPercent: Double? { attempts > 0 ? Double(errors) / Double(attempts) * 100 : nil }
+    /// Nil when no reply in the period has a price, so it never reads as free.
+    var estimatedCost: Double? { costed > 0 ? cost : nil }
+    /// Trend point: a quiet period costs nothing; one with only unpriced
+    /// replies is unknown.
+    var costPoint: Double? { costed > 0 ? cost : unpriced > 0 ? nil : 0 }
+    var costText: String { formatUSD(estimatedCost) }
+}
+
+/// A list-price estimate. Below a cent keeps four decimals so a cheap reply
+/// does not read as free.
+func formatUSD(_ amount: Double?) -> String {
+    guard let amount, amount.isFinite else { return "—" }
+    if amount > 0, amount < 0.0001 { return "<$0.0001" }
+    if amount > 0, amount < 0.01 { return String(format: "$%.4f", amount) }
+    return amount.formatted(.currency(code: "USD").locale(Locale(identifier: "en_US")))
 }
 
 /// Chart granularity: local hours from reply rows for the one-day range, and

@@ -238,6 +238,11 @@
 "console.usage.series.succeeded" = "Succeeded";
 "console.usage.series.failed" = "Failed";
 "console.usage.composition" = "Composition";
+"console.usage.cost" = "Est. cost";
+"console.usage.costColumn" = "Cost";
+"console.usage.listPrice" = "At API list prices";
+"console.usage.costUnavailable" = "Not provided by this gateway version";
+"console.usage.costHelp" = "Estimated at models.dev API list prices. Subscriptions are not billed this way; models without a list price are left out.";
 "console.usage.status" = "Status";
 "console.usage.statusAll" = "All";
 "console.usage.allModels" = "All models";

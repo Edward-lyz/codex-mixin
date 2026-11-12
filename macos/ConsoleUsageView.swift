@@ -192,18 +192,25 @@ private struct UsageTableRow: Identifiable {
     var isNested = false
 }
 
+/// What the usage chart stacks.
+private enum UsageChartMetric: Hashable {
+    case tokens
+    case requests
+    case cost
+}
+
 /// One stacked bar segment.
 private struct UsageBar: Identifiable {
     let slot: UsageSlot
     let series: String
-    let value: UInt64
+    let value: Double
     var id: String { "\(slot.id)-\(series)" }
 }
 
 struct ConsoleUsageView: View {
     @ObservedObject var model: ConsoleUsageModel
     @State private var pageIndex = 0
-    @State private var chartShowsRequests = false
+    @State private var chartMetric = UsageChartMetric.tokens
     @State private var groupBySession = false
     @State private var expandedSessions: Set<String> = []
     @State private var hoveredSlot: Date?
@@ -296,18 +303,21 @@ struct ConsoleUsageView: View {
 
     // MARK: Summary
 
-    /// Four cards over the same population: every reply attempt in the range
-    /// from the CLI's daily totals, each compared with the previous period.
+    /// A list-price cost card and four cards over the same population: every
+    /// reply attempt in the range from the CLI's daily totals, each compared
+    /// with the previous period. Five cards share a row when the window is
+    /// wide enough, otherwise they wrap three over two.
     private var summary: some View {
         let current = UsageSlotStats(model.filteredDaily.map(\.stats))
         let previous = UsageSlotStats(model.filteredPreviousDaily.map(\.stats))
         let hasPrevious = previous.attempts > 0
         let slots = chartSlots
-        return HStack(spacing: 12) {
-            UsageKPICard(
+        let cards = [
+            AnyView(costCard(current: current, previous: previous, slots: slots)),
+            AnyView(UsageKPICard(
                 title: AppLocalization.string("console.usage.requests"),
                 value: formatTokenCount(current.attempts),
-                delta: hasPrevious ? relativeDelta(current.attempts, previous.attempts) : nil,
+                delta: hasPrevious ? relativeDelta(Double(current.attempts), Double(previous.attempts)) : nil,
                 deltaTone: .neutral,
                 symbol: "arrow.up.arrow.down",
                 tint: .blue,
@@ -318,19 +328,19 @@ struct ConsoleUsageView: View {
                     : " ")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            UsageKPICard(
+            }),
+            AnyView(UsageKPICard(
                 title: "Tokens",
                 value: formatTokenCount(current.tokens),
-                delta: hasPrevious ? relativeDelta(current.tokens, previous.tokens) : nil,
+                delta: hasPrevious ? relativeDelta(Double(current.tokens), Double(previous.tokens)) : nil,
                 deltaTone: .neutral,
                 symbol: "square.stack.3d.up",
                 tint: .purple,
                 trend: slots.map { Double($0.total.tokens) }
             ) {
                 tokenShareBar(current)
-            }
-            UsageKPICard(
+            }),
+            AnyView(UsageKPICard(
                 title: AppLocalization.string("console.usage.cacheHit"),
                 value: current.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "—",
                 delta: hasPrevious ? pointDelta(current.cacheHitPercent, previous.cacheHitPercent) : nil,
@@ -344,8 +354,8 @@ struct ConsoleUsageView: View {
                     : AppLocalization.string("console.usage.cachedDetail", formatTokenCount(current.hitRead)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            UsageKPICard(
+            }),
+            AnyView(UsageKPICard(
                 title: AppLocalization.string("console.usage.errorRate"),
                 value: current.errorPercent.map { String(format: "%.1f%%", $0) } ?? "—",
                 delta: hasPrevious ? pointDelta(current.errorPercent, previous.errorPercent) : nil,
@@ -359,14 +369,48 @@ struct ConsoleUsageView: View {
                                             formatTokenCount(current.errors), formatTokenCount(current.attempts)))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }),
+        ]
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                ForEach(cards.indices, id: \.self) { cards[$0] }
+            }
+            .frame(minWidth: 5 * 176 + 4 * 12)
+            Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow { cards[0]; cards[1]; cards[2] }
+                GridRow { cards[3]; cards[4] }
             }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func relativeDelta(_ current: UInt64, _ previous: UInt64) -> (text: String, sign: Int)? {
+    private func costCard(current: UsageSlotStats, previous: UsageSlotStats, slots: [UsageSlot]) -> some View {
+        // Totals that leave unpriced replies out are compared only when neither does.
+        let delta = current.unpriced > 0 || previous.unpriced > 0 ? nil
+            : current.estimatedCost.flatMap { cost in previous.estimatedCost.flatMap { relativeDelta(cost, $0) } }
+        // A gateway older than cost estimates omits the fields on every row.
+        let estimated = model.filteredDaily.isEmpty || model.filteredDaily.contains { $0.unpricedRequestCount != nil }
+        return UsageKPICard(
+            title: AppLocalization.string("console.usage.cost"),
+            value: current.costText,
+            delta: delta,
+            deltaTone: .neutral,
+            symbol: "dollarsign.circle",
+            tint: .teal,
+            trend: slots.compactMap(\.total.costPoint)
+        ) {
+            Text(!estimated
+                ? AppLocalization.string("console.usage.costUnavailable")
+                : AppLocalization.string("console.usage.listPrice"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .help(AppLocalization.string("console.usage.costHelp"))
+    }
+
+    private func relativeDelta(_ current: Double, _ previous: Double) -> (text: String, sign: Int)? {
         guard previous > 0 else { return nil }
-        let change = (Double(current) - Double(previous)) / Double(previous) * 100
+        let change = (current - previous) / previous * 100
         return (String(format: "%+.0f%%", change), change > 0.5 ? 1 : change < -0.5 ? -1 : 0)
     }
 
@@ -433,25 +477,46 @@ struct ConsoleUsageView: View {
             let names = Array(Set(slots.flatMap { $0.byProvider.keys }.map(seriesName))).sorted()
             let bars = slots.flatMap { slot in
                 slot.byProvider.sorted { seriesName($0.key) < seriesName($1.key) }.map { provider, stats in
-                    UsageBar(slot: slot, series: seriesName(provider),
-                             value: chartShowsRequests ? stats.attempts : stats.tokens)
+                    UsageBar(slot: slot, series: seriesName(provider), value: metricValue(stats))
                 }
             }
             return (bars, names, names.indices.map { usageSeriesColors[$0 % usageSeriesColors.count] })
         }
-        if chartShowsRequests {
+        switch chartMetric {
+        case .requests:
             let bars = slots.flatMap { slot in
-                [UsageBar(slot: slot, series: succeededSeries, value: slot.total.requests),
-                 UsageBar(slot: slot, series: failedSeries, value: slot.total.errors)]
+                [UsageBar(slot: slot, series: succeededSeries, value: Double(slot.total.requests)),
+                 UsageBar(slot: slot, series: failedSeries, value: Double(slot.total.errors))]
             }
             return (bars, [succeededSeries, failedSeries], [Color.accentColor, usageFailedColor])
+        case .cost:
+            let series = AppLocalization.string("console.usage.cost")
+            let bars = slots.map { UsageBar(slot: $0, series: series, value: $0.total.cost) }
+            return (bars, [series], [Color.teal])
+        case .tokens:
+            let bars = slots.flatMap { slot in
+                [UsageBar(slot: slot, series: cachedSeries, value: Double(slot.total.cached)),
+                 UsageBar(slot: slot, series: uncachedSeries, value: Double(slot.total.uncached)),
+                 UsageBar(slot: slot, series: outputSeries, value: Double(slot.total.output))]
+            }
+            return (bars, [cachedSeries, uncachedSeries, outputSeries], [usageCachedColor, usageUncachedColor, usageOutputColor])
         }
-        let bars = slots.flatMap { slot in
-            [UsageBar(slot: slot, series: cachedSeries, value: slot.total.cached),
-             UsageBar(slot: slot, series: uncachedSeries, value: slot.total.uncached),
-             UsageBar(slot: slot, series: outputSeries, value: slot.total.output)]
+    }
+
+    private func metricValue(_ stats: UsageSlotStats) -> Double {
+        switch chartMetric {
+        case .tokens: return Double(stats.tokens)
+        case .requests: return Double(stats.attempts)
+        case .cost: return stats.cost
         }
-        return (bars, [cachedSeries, uncachedSeries, outputSeries], [usageCachedColor, usageUncachedColor, usageOutputColor])
+    }
+
+    private func metricText(_ stats: UsageSlotStats) -> String {
+        switch chartMetric {
+        case .tokens: return formatTokenCount(stats.tokens)
+        case .requests: return formatTokenCount(stats.attempts)
+        case .cost: return stats.costText
+        }
     }
 
     private var chartCard: some View {
@@ -463,9 +528,10 @@ struct ConsoleUsageView: View {
         let isEmpty = bars.allSatisfy { $0.value == 0 }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Picker(AppLocalization.string("console.usage.metric"), selection: $chartShowsRequests) {
-                    Text("Tokens").tag(false)
-                    Text(AppLocalization.string("console.usage.requests")).tag(true)
+                Picker(AppLocalization.string("console.usage.metric"), selection: $chartMetric) {
+                    Text("Tokens").tag(UsageChartMetric.tokens)
+                    Text(AppLocalization.string("console.usage.requests")).tag(UsageChartMetric.requests)
+                    Text(AppLocalization.string("console.usage.costColumn")).tag(UsageChartMetric.cost)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -499,10 +565,16 @@ struct ConsoleUsageView: View {
             .chartXScale(domain: chartDomain(starts, bucket: bucket))
             .chartXAxis { xAxis(bucket: bucket) }
             .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    AxisValueLabel(format: FloatingPointFormatStyle<Double>(locale: Locale(identifier: "en_US"))
-                        .notation(.compactName).precision(.fractionLength(0...1)))
+                    AxisValueLabel {
+                        if let amount = value.as(Double.self) {
+                            Text(chartMetric == .cost
+                                ? formatUSD(amount)
+                                : amount.formatted(FloatingPointFormatStyle<Double>(locale: Locale(identifier: "en_US"))
+                                    .notation(.compactName).precision(.fractionLength(0...1))))
+                        }
+                    }
                 }
             }
             .chartLegend(.hidden)
@@ -618,14 +690,14 @@ struct ConsoleUsageView: View {
             tooltipRow(cachedSeries, formatTokenCount(stats.cached), usageCachedColor)
             tooltipRow(uncachedSeries, formatTokenCount(stats.uncached), usageUncachedColor)
             tooltipRow(outputSeries, formatTokenCount(stats.output), usageOutputColor)
+            tooltipRow(AppLocalization.string("console.usage.cost"), stats.costText, nil)
             if let hit = stats.cacheHitPercent {
                 tooltipRow(AppLocalization.string("console.usage.cacheHit"), String(format: "%.1f%%", hit), nil)
             }
             if model.splitByProvider, slot.byProvider.count > 1 {
                 Divider()
                 ForEach(slot.byProvider.sorted { $0.value.tokens > $1.value.tokens }, id: \.key) { provider, stats in
-                    tooltipRow(seriesName(provider),
-                               formatTokenCount(chartShowsRequests ? stats.attempts : stats.tokens), nil)
+                    tooltipRow(seriesName(provider), metricText(stats), nil)
                 }
             }
             Text(AppLocalization.string("console.usage.slotHelp"))
@@ -841,18 +913,26 @@ struct ConsoleUsageView: View {
                     .monospacedDigit()
             }
             .width(min: 48, ideal: 60)
-            TableColumn(AppLocalization.string("console.usage.reasoning")) { row in
-                reasoningCell(row)
+            // TableColumnBuilder takes ten columns per block.
+            Group {
+                TableColumn(AppLocalization.string("console.usage.costColumn")) { (row: UsageTableRow) in
+                    Text(row.turn.map { formatUSD($0.isFailed ? nil : $0.estimatedCostUSD) } ?? row.stats.costText)
+                        .monospacedDigit()
+                }
+                .width(min: 48, ideal: 60)
+                TableColumn(AppLocalization.string("console.usage.reasoning")) { (row: UsageTableRow) in
+                    reasoningCell(row)
+                }
+                .width(min: 56, ideal: 72)
+                TableColumn("TTFT") { (row: UsageTableRow) in
+                    Text(row.turn?.ttftMs.map(durationText) ?? "—").monospacedDigit()
+                }
+                .width(min: 52, ideal: 64)
+                TableColumn(AppLocalization.string("console.usage.speed")) { (row: UsageTableRow) in
+                    Text(row.turn?.outputTPS.map { String(format: "%.1f t/s", $0) } ?? "—").monospacedDigit()
+                }
+                .width(min: 56, ideal: 70)
             }
-            .width(min: 56, ideal: 72)
-            TableColumn("TTFT") { row in
-                Text(row.turn?.ttftMs.map(durationText) ?? "—").monospacedDigit()
-            }
-            .width(min: 52, ideal: 64)
-            TableColumn(AppLocalization.string("console.usage.speed")) { row in
-                Text(row.turn?.outputTPS.map { String(format: "%.1f t/s", $0) } ?? "—").monospacedDigit()
-            }
-            .width(min: 56, ideal: 70)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
         .environment(\.defaultMinListRowHeight, 22)

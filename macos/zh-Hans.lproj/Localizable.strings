@@ -238,6 +238,11 @@
 "console.usage.series.succeeded" = "成功";
 "console.usage.series.failed" = "失败";
 "console.usage.composition" = "构成";
+"console.usage.cost" = "预估费用";
+"console.usage.costColumn" = "费用";
+"console.usage.listPrice" = "按 API 标价估算";
+"console.usage.costUnavailable" = "当前网关版本不提供费用估算";
+"console.usage.costHelp" = "按 models.dev 公布的 API 标价估算。订阅账号不按此扣费；没有标价的模型不计入。";
 "console.usage.status" = "状态";
 "console.usage.statusAll" = "全部";
 "console.usage.allModels" = "全部模型";
