@@ -9,7 +9,7 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::usage::{TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
+use crate::usage::{PERSIST_BUSY_TIMEOUT, TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
 
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
@@ -34,6 +34,11 @@ pub(crate) struct ProviderTokenUsage {
     /// Upstream replies that failed; `request_count` counts only replies
     /// that reported usage, so the attempt total is the sum of both.
     pub(crate) error_count: u64,
+    /// List-price USD of the counted replies whose model has a models.dev
+    /// price; None when none of them has one.
+    pub(crate) estimated_cost_usd: Option<f64>,
+    /// Counted replies whose model has no price, left out of the estimate.
+    pub(crate) unpriced_request_count: u64,
     #[serde(skip)]
     pub(crate) observed_cache_read_tokens: u64,
     #[serde(skip)]
@@ -68,20 +73,21 @@ fn ensure_timing_columns(connection: &Connection, table: &str) -> anyhow::Result
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
-    for (column, column_type) in [
-        ("timing_sample_count", "INTEGER"),
-        ("total_ttft_micros", "INTEGER"),
-        ("total_generation_micros", "INTEGER"),
-        ("timed_output_tokens", "INTEGER"),
-        ("total_output_tps", "REAL"),
-        ("tps_sample_count", "INTEGER"),
-        ("error_count", "INTEGER"),
+    for (column, definition) in [
+        ("timing_sample_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("total_ttft_micros", "INTEGER NOT NULL DEFAULT 0"),
+        ("total_generation_micros", "INTEGER NOT NULL DEFAULT 0"),
+        ("timed_output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("total_output_tps", "REAL NOT NULL DEFAULT 0"),
+        ("tps_sample_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("error_count", "INTEGER NOT NULL DEFAULT 0"),
+        // NULL marks counters recorded before pricing: see price_legacy_rows.
+        ("estimated_cost_usd", "REAL"),
+        ("unpriced_request_count", "INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !columns.iter().any(|existing| existing == column)
             && let Err(error) = connection.execute(
-                &format!(
-                    "ALTER TABLE {table} ADD COLUMN {column} {column_type} NOT NULL DEFAULT 0"
-                ),
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
                 [],
             )
             && !column_exists(connection, table, column)?
@@ -104,8 +110,12 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> anyhow::
     Ok(found)
 }
 
-fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
+fn load_persisted_usage(
+    path: &Path,
+    prices: &crate::provider::ModelPrices,
+) -> anyhow::Result<TokenUsageState> {
     let connection = Connection::open(path)?;
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS token_usage (
             provider_id TEXT NOT NULL,
@@ -124,6 +134,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
             error_count INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL,
+            unpriced_request_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (provider_id, model_id)
         );
         CREATE TABLE IF NOT EXISTS token_usage_daily (
@@ -144,6 +156,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
             error_count INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL,
+            unpriced_request_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (day, provider_id, model_id)
         )",
     )?;
@@ -154,7 +168,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
                 observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
                 total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
-                error_count
+                error_count, estimated_cost_usd, unpriced_request_count
          FROM token_usage",
     )?;
     let rows = statement.query_map([], |row| {
@@ -182,6 +196,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 total_output_tps: row.get(13)?,
                 tps_sample_count: row.get(14)?,
                 error_count: row.get(15)?,
+                estimated_cost_usd: row.get(16)?,
+                unpriced_request_count: row.get(17)?,
             },
         ))
     })?;
@@ -192,7 +208,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
                 observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
                 total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
-                error_count
+                error_count, estimated_cost_usd, unpriced_request_count
          FROM token_usage_daily",
     )?;
     let daily_rows = daily_statement.query_map([], |row| {
@@ -221,13 +237,78 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 total_output_tps: row.get(14)?,
                 tps_sample_count: row.get(15)?,
                 error_count: row.get(16)?,
+                estimated_cost_usd: row.get(17)?,
+                unpriced_request_count: row.get(18)?,
             },
         ))
     })?;
-    Ok(TokenUsageState {
+    let mut state = TokenUsageState {
         entries,
         daily_entries: daily_rows.collect::<Result<HashMap<_, _>, _>>()?,
-    })
+    };
+    drop(daily_statement);
+    price_legacy_rows(&connection, &mut state, prices)?;
+    Ok(state)
+}
+
+/// Prices counters recorded before cost estimates existed, once, at base
+/// rates: their per-request prompt sizes, which select a long-context tier,
+/// are gone. A row whose model is still unpriced is retried next start.
+fn price_legacy_rows(
+    connection: &Connection,
+    state: &mut TokenUsageState,
+    prices: &crate::provider::ModelPrices,
+) -> anyhow::Result<()> {
+    let estimate = |usage: &mut ProviderTokenUsage| -> bool {
+        if usage.estimated_cost_usd.is_some() || usage.request_count == 0 {
+            return false;
+        }
+        let Some(price) = prices.lookup(&usage.model_id) else {
+            let changed = usage.unpriced_request_count != usage.request_count;
+            usage.unpriced_request_count = usage.request_count;
+            return changed;
+        };
+        usage.estimated_cost_usd = Some(price.base_cost_usd(
+            usage.input_tokens,
+            usage.cache_read_tokens,
+            usage.cache_creation_tokens,
+            usage.output_tokens,
+        ));
+        usage.unpriced_request_count = 0;
+        true
+    };
+    let transaction = connection.unchecked_transaction()?;
+    for usage in state.entries.values_mut() {
+        if estimate(usage) {
+            transaction.execute(
+                "UPDATE token_usage SET estimated_cost_usd = ?1, unpriced_request_count = ?2
+                 WHERE provider_id = ?3 AND model_id = ?4 AND estimated_cost_usd IS NULL",
+                params![
+                    usage.estimated_cost_usd,
+                    usage.unpriced_request_count,
+                    usage.provider_id,
+                    usage.model_id
+                ],
+            )?;
+        }
+    }
+    for ((day, _, _), usage) in &mut state.daily_entries {
+        if estimate(usage) {
+            transaction.execute(
+                "UPDATE token_usage_daily SET estimated_cost_usd = ?1, unpriced_request_count = ?2
+                 WHERE day = ?3 AND provider_id = ?4 AND model_id = ?5
+                       AND estimated_cost_usd IS NULL",
+                params![
+                    usage.estimated_cost_usd,
+                    usage.unpriced_request_count,
+                    *day,
+                    usage.provider_id,
+                    usage.model_id
+                ],
+            )?;
+        }
+    }
+    transaction.commit().map_err(Into::into)
 }
 
 /// Creates or upgrades the aggregate tables on the shared writer connection.
@@ -252,6 +333,8 @@ fn ensure_usage_tables(connection: &Connection) -> anyhow::Result<()> {
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
             error_count INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL,
+            unpriced_request_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (provider_id, model_id)
          );
          CREATE TABLE IF NOT EXISTS token_usage_daily (
@@ -272,6 +355,8 @@ fn ensure_usage_tables(connection: &Connection) -> anyhow::Result<()> {
             total_output_tps REAL NOT NULL DEFAULT 0,
             tps_sample_count INTEGER NOT NULL DEFAULT 0,
             error_count INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL,
+            unpriced_request_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (day, provider_id, model_id)
          )",
     )?;
@@ -285,6 +370,7 @@ fn persist_usage_delta(
     provider_id: &str,
     model_id: &str,
     usage: &UpstreamCacheUsage,
+    cost: Option<f64>,
 ) -> anyhow::Result<()> {
     let mut write = USAGE_DB_WRITE
         .lock()
@@ -298,6 +384,7 @@ fn persist_usage_delta(
     let Some((_, connection)) = write.as_mut() else {
         anyhow::bail!("usage database connection is unavailable");
     };
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
     ensure_usage_tables(connection)?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
@@ -327,14 +414,17 @@ fn persist_usage_delta(
         usage.output_tokens.filter(|_| timing_recorded).unwrap_or(0),
         output_tps,
         u64::from(output_tps > 0.0),
+        cost,
+        u64::from(cost.is_none()),
     ];
     transaction.execute(
         "INSERT INTO token_usage (
             provider_id, model_id, request_count, input_tokens, cache_read_tokens,
             cache_creation_tokens, output_tokens, observed_cache_read_tokens,
             observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
-            total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
+            estimated_cost_usd, unpriced_request_count
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(provider_id, model_id) DO UPDATE SET
             request_count = token_usage.request_count + excluded.request_count,
             input_tokens = token_usage.input_tokens + excluded.input_tokens,
@@ -348,7 +438,11 @@ fn persist_usage_delta(
             total_generation_micros = token_usage.total_generation_micros + excluded.total_generation_micros,
             timed_output_tokens = token_usage.timed_output_tokens + excluded.timed_output_tokens,
             total_output_tps = token_usage.total_output_tps + excluded.total_output_tps,
-            tps_sample_count = token_usage.tps_sample_count + excluded.tps_sample_count",
+            tps_sample_count = token_usage.tps_sample_count + excluded.tps_sample_count,
+            estimated_cost_usd = CASE WHEN excluded.estimated_cost_usd IS NULL
+                THEN token_usage.estimated_cost_usd
+                ELSE COALESCE(token_usage.estimated_cost_usd, 0) + excluded.estimated_cost_usd END,
+            unpriced_request_count = token_usage.unpriced_request_count + excluded.unpriced_request_count",
         values,
     )?;
     transaction.execute(
@@ -356,8 +450,9 @@ fn persist_usage_delta(
             day, provider_id, model_id, request_count, input_tokens, cache_read_tokens,
             cache_creation_tokens, output_tokens, observed_cache_read_tokens,
             observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
-            total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            total_generation_micros, timed_output_tokens, total_output_tps, tps_sample_count,
+            estimated_cost_usd, unpriced_request_count
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(day, provider_id, model_id) DO UPDATE SET
             request_count = token_usage_daily.request_count + excluded.request_count,
             input_tokens = token_usage_daily.input_tokens + excluded.input_tokens,
@@ -371,7 +466,11 @@ fn persist_usage_delta(
             total_generation_micros = token_usage_daily.total_generation_micros + excluded.total_generation_micros,
             timed_output_tokens = token_usage_daily.timed_output_tokens + excluded.timed_output_tokens,
             total_output_tps = token_usage_daily.total_output_tps + excluded.total_output_tps,
-            tps_sample_count = token_usage_daily.tps_sample_count + excluded.tps_sample_count",
+            tps_sample_count = token_usage_daily.tps_sample_count + excluded.tps_sample_count,
+            estimated_cost_usd = CASE WHEN excluded.estimated_cost_usd IS NULL
+                THEN token_usage_daily.estimated_cost_usd
+                ELSE COALESCE(token_usage_daily.estimated_cost_usd, 0) + excluded.estimated_cost_usd END,
+            unpriced_request_count = token_usage_daily.unpriced_request_count + excluded.unpriced_request_count",
         params![
             day,
             provider_id,
@@ -391,6 +490,8 @@ fn persist_usage_delta(
             usage.output_tokens.filter(|_| timing_recorded).unwrap_or(0),
             output_tps,
             u64::from(output_tps > 0.0),
+            cost,
+            u64::from(cost.is_none()),
         ],
     )?;
     transaction.commit().map_err(Into::into)
@@ -409,6 +510,7 @@ fn persist_failure_delta(path: &Path, provider_id: &str, model_id: &str) -> anyh
     let Some((_, connection)) = write.as_mut() else {
         anyhow::bail!("usage database connection is unavailable");
     };
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
     ensure_usage_tables(connection)?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
@@ -443,6 +545,7 @@ pub(crate) struct TokenUsageAggregator {
     turns: TurnLedger,
     oneapi_providers: HashSet<String>,
     configured_providers: Option<HashSet<String>>,
+    prices: crate::provider::LivePrices,
 }
 
 impl TokenUsageAggregator {
@@ -450,8 +553,9 @@ impl TokenUsageAggregator {
         let path = crate::config::stored_config_path()
             .parent()
             .map(|parent| parent.join("usage.sqlite3"));
+        let prices = crate::provider::LivePrices::load();
         let state = match path.as_deref() {
-            Some(path) if path.exists() => load_persisted_usage(path)?,
+            Some(path) if path.exists() => load_persisted_usage(path, &prices.current())?,
             _ => TokenUsageState::default(),
         };
         Ok(Self {
@@ -460,6 +564,7 @@ impl TokenUsageAggregator {
             persist_path: path,
             oneapi_providers: HashSet::new(),
             configured_providers: None,
+            prices,
         })
     }
 
@@ -531,20 +636,41 @@ impl TokenUsageAggregator {
         !CLAUDE_FAMILY_NAMES.iter().any(|name| model.contains(name))
     }
 
-    pub(crate) fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
+    /// Adds one reply's counters and returns its list-price estimate. A failed
+    /// reply is estimated at zero; None means its model has no list price.
+    pub(crate) fn record(
+        &self,
+        provider_id: &str,
+        model_id: &str,
+        usage: &UpstreamCacheUsage,
+        completed: bool,
+    ) -> Option<f64> {
+        // Priced when recorded: the request's own prompt size selects the tier.
+        let cost = if completed {
+            self.prices.current().lookup(model_id).map(|price| {
+                price.cost_usd(
+                    usage.input_tokens.unwrap_or(0),
+                    usage.cache_read_tokens.unwrap_or(0),
+                    usage.cache_creation_tokens.unwrap_or(0),
+                    usage.output_tokens.unwrap_or(0),
+                )
+            })
+        } else {
+            Some(0.0)
+        };
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = state
             .entries
             .entry((provider_id.to_owned(), model_id.to_owned()))
             .or_default();
-        add_usage(entry, provider_id, model_id, usage);
+        add_usage(entry, provider_id, model_id, usage, cost);
         match current_unix_day() {
             Ok(day) => {
                 let daily_entry = state
                     .daily_entries
                     .entry((day, provider_id.to_owned(), model_id.to_owned()))
                     .or_default();
-                add_usage(daily_entry, provider_id, model_id, usage);
+                add_usage(daily_entry, provider_id, model_id, usage, cost);
             }
             Err(error) => {
                 tracing::error!(error = %error, "system clock cannot represent token usage day");
@@ -555,11 +681,14 @@ impl TokenUsageAggregator {
             let model_id = model_id.to_owned();
             let usage = *usage;
             tokio::task::spawn_blocking(move || {
-                if let Err(error) = persist_usage_delta(&path, &provider_id, &model_id, &usage) {
+                if let Err(error) =
+                    persist_usage_delta(&path, &provider_id, &model_id, &usage, cost)
+                {
                     tracing::warn!(error = %error, "failed to persist token usage");
                 }
             });
         }
+        cost
     }
 
     /// Counts one failed upstream reply for the provider/model and its day.
@@ -687,10 +816,17 @@ fn add_usage(
     provider_id: &str,
     model_id: &str,
     usage: &UpstreamCacheUsage,
+    cost: Option<f64>,
 ) {
     entry.provider_id = provider_id.to_owned();
     entry.model_id = model_id.to_owned();
     entry.request_count = entry.request_count.saturating_add(1);
+    match cost {
+        Some(cost) => {
+            entry.estimated_cost_usd = Some(entry.estimated_cost_usd.unwrap_or(0.0) + cost)
+        }
+        None => entry.unpriced_request_count = entry.unpriced_request_count.saturating_add(1),
+    }
     entry.input_tokens = entry
         .input_tokens
         .saturating_add(usage.input_tokens.unwrap_or(0));
@@ -775,6 +911,12 @@ fn add_aggregated_usage(entry: &mut ProviderTokenUsage, usage: &ProviderTokenUsa
         .tps_sample_count
         .saturating_add(usage.tps_sample_count);
     entry.error_count = entry.error_count.saturating_add(usage.error_count);
+    if let Some(cost) = usage.estimated_cost_usd {
+        entry.estimated_cost_usd = Some(entry.estimated_cost_usd.unwrap_or(0.0) + cost);
+    }
+    entry.unpriced_request_count = entry
+        .unpriced_request_count
+        .saturating_add(usage.unpriced_request_count);
 }
 
 fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsage> {

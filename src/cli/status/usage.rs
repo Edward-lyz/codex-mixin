@@ -43,8 +43,9 @@ pub(crate) async fn usage(json_output: bool, days: Option<u64>) -> anyhow::Resul
         } else {
             String::new()
         };
+        let cost = cost_note(row.estimated_cost_usd);
         println!(
-            "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}{errors}",
+            "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}{errors}{cost}",
             row.provider_id, row.model_id, requests, input, cached, creation, output
         );
     }
@@ -124,8 +125,9 @@ pub(crate) async fn usage_daily(json_output: bool, days: Option<u64>) -> anyhow:
             .filter(|count| *count > 0)
             .map(|count| format!(", {count} failed"))
             .unwrap_or_default();
+        let cost = cost_note(row["estimated_cost_usd"].as_f64());
         println!(
-            "{day} {}/{}: {} requests, {} input, {} cached, {} output{errors}",
+            "{day} {}/{}: {} requests, {} input, {} cached, {} output{errors}{cost}",
             row["provider_id"].as_str().unwrap_or("?"),
             row["model_id"].as_str().unwrap_or("?"),
             requests,
@@ -211,8 +213,11 @@ fn turn_line(row: &serde_json::Value) -> String {
         (Some("failed"), None) => " [failed]".to_owned(),
         _ => String::new(),
     };
+    let cost = row["estimated_cost_usd"]
+        .as_f64()
+        .map_or(String::new(), |cost| format!(", est. {}", format_usd(cost)));
     format!(
-        "{} {}/{}{model}{failure}: input {}, cached {} ({cache}), output {}, reasoning {}",
+        "{} {}/{}{model}{failure}: input {}, cached {} ({cache}), output {}, reasoning {}{cost}",
         row["session_display"]
             .as_str()
             .unwrap_or_else(|| row["session"].as_str().unwrap_or("?")),
@@ -240,4 +245,25 @@ struct ProviderTokenUsageRow {
     /// Absent from gateways that predate failure accounting.
     #[serde(default)]
     error_count: u64,
+    /// Absent from gateways that predate cost estimates.
+    #[serde(default)]
+    estimated_cost_usd: Option<f64>,
+    #[serde(default)]
+    unpriced_request_count: u64,
+}
+
+/// A list-price estimate, with more digits below a cent so small replies
+/// do not all read as zero.
+fn format_usd(amount: f64) -> String {
+    if amount >= 1.0 || amount == 0.0 {
+        format!("${amount:.2}")
+    } else if amount < 0.0001 {
+        "<$0.0001".to_owned()
+    } else {
+        format!("${amount:.4}")
+    }
+}
+
+fn cost_note(cost: Option<f64>) -> String {
+    cost.map_or(String::new(), |cost| format!(", est. {}", format_usd(cost)))
 }

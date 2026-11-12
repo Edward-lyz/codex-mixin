@@ -88,6 +88,7 @@ impl CacheShapeTracker {
                 ttft_ms: None,
                 output_tps: None,
                 status: TurnStatus::Failed,
+                estimated_cost_usd: None,
                 error: Some(error),
             }
             .finalize(),
@@ -375,9 +376,14 @@ impl PrefixObservation {
     /// preserved. A provider that recomputes a prefix we kept byte-identical is
     /// the only case that warrants a warning, because nothing on this side can
     /// fix it and it otherwise looks like a gateway bug.
-    pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
-        self.usage
-            .record(&self.provider_id, &self.upstream_model_id, usage);
+    pub(crate) fn report_upstream_cache(
+        &self,
+        usage: &UpstreamCacheUsage,
+        completed: bool,
+    ) -> Option<f64> {
+        let cost = self
+            .usage
+            .record(&self.provider_id, &self.upstream_model_id, usage, completed);
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
         let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
         let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);
@@ -399,7 +405,7 @@ impl PrefixObservation {
                 cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
                 "provider recomputed a prompt prefix this gateway kept byte-identical"
             );
-            return;
+            return cost;
         }
         tracing::debug!(
             provider_id = self.provider_id,
@@ -418,6 +424,7 @@ impl PrefixObservation {
             cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
             "provider prompt cache usage"
         );
+        cost
     }
 }
 
@@ -534,6 +541,7 @@ impl UpstreamCacheObserver {
             } else {
                 TurnStatus::Completed
             },
+            estimated_cost_usd: None,
             error: self.failure.clone(),
         }
         .finalize()
@@ -634,8 +642,13 @@ impl Drop for UpstreamCacheObserver {
                 self.usage.generation_micros =
                     Some(first_token_at.elapsed().as_micros().max(1) as u64);
             }
-            self.observation.report_upstream_cache(&self.usage);
-            self.observation.usage.record_turn(self.turn_usage());
+            let completed = self.failure.is_none();
+            let cost = self
+                .observation
+                .report_upstream_cache(&self.usage, completed);
+            let mut turn = self.turn_usage();
+            turn.estimated_cost_usd = cost.filter(|_| completed);
+            self.observation.usage.record_turn(turn);
         }
     }
 }

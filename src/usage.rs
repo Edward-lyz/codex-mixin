@@ -22,7 +22,7 @@ pub(crate) const MAX_TRACKED_TURNS: usize = 100_000;
 /// Largest page one turn query may return.
 pub(crate) const MAX_TURN_PAGE: usize = 5_000;
 
-const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Serialises writers and keeps WAL open between replies. Opening and closing
 /// the last connection per write forces repeated checkpoints and filesystem work.
@@ -53,9 +53,10 @@ CREATE INDEX IF NOT EXISTS token_usage_turns_at ON token_usage_turns (at_ms);";
 
 /// Ledger columns added after the first release; older ledgers gain them on the
 /// next write and read them as completed replies until then.
-const TURN_STATUS_COLUMNS: [(&str, &str); 2] = [
+const TURN_STATUS_COLUMNS: [(&str, &str); 3] = [
     ("status", "TEXT NOT NULL DEFAULT 'completed'"),
     ("error", "TEXT"),
+    ("estimated_cost_usd", "REAL"),
 ];
 
 /// Longest upstream failure summary kept per reply.
@@ -116,6 +117,9 @@ pub(crate) struct TurnUsage {
     pub(crate) ttft_ms: Option<f64>,
     pub(crate) output_tps: Option<f64>,
     pub(crate) status: TurnStatus,
+    /// List-price USD of this reply, None when its model has no price or it
+    /// reported no counters.
+    pub(crate) estimated_cost_usd: Option<f64>,
     /// Short upstream failure summary, such as `HTTP 429`, for failed replies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
@@ -346,13 +350,17 @@ fn query_turns(
     }
     // The reader is read-only, so a ledger last written by an older build
     // reports every row as completed instead of failing the query.
-    let status_columns = if turn_columns(&connection)?
-        .iter()
-        .any(|column| column == "status")
-    {
+    let columns = turn_columns(&connection)?;
+    let has = |name: &str| columns.iter().any(|column| column == name);
+    let status_columns = if has("status") {
         "status, error"
     } else {
         "'completed', NULL"
+    };
+    let cost_column = if has("estimated_cost_usd") {
+        "estimated_cost_usd"
+    } else {
+        "NULL"
     };
     // Inserts run on the blocking pool and may land out of order, so order by
     // the reply timestamp rather than the row id.
@@ -360,7 +368,7 @@ fn query_turns(
         "SELECT at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
                 protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
                 output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps,
-                {status_columns}
+                {status_columns}, {cost_column}
          FROM token_usage_turns
          WHERE (?1 IS NULL OR at_ms >= ?1) AND (?2 IS NULL OR provider_id = ?2)
                AND (?3 IS NULL OR at_ms < ?3)
@@ -404,6 +412,7 @@ fn query_turns(
                 ttft_ms: row.get(14)?,
                 output_tps: row.get(15)?,
                 status: TurnStatus::from_column(&row.get::<_, String>(16)?),
+                estimated_cost_usd: row.get(18)?,
                 error: row.get(17)?,
             }
             .finalize(),
@@ -449,8 +458,10 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
         "INSERT INTO token_usage_turns (
             at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
             protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
-            output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps, status, error
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps, status, error,
+            estimated_cost_usd
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                   ?19)",
         params![
             turn.at_ms,
             turn.session,
@@ -470,6 +481,7 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
             turn.output_tps,
             turn.status.as_str(),
             turn.error,
+            turn.estimated_cost_usd,
         ],
     )?;
     connection.execute(
