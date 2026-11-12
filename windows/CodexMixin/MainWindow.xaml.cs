@@ -1,17 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Automation.Peers;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Windows.ApplicationModel.DataTransfer;
-using Windows.Storage.Pickers;
-using Windows.System;
-using WinRT.Interop;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Microsoft.Win32;
 
 namespace CodexMixin;
 
@@ -68,32 +66,20 @@ public sealed partial class MainWindow : Window
         this.page = page;
         InitializeComponent();
         XamlText.Translate(Content);
-        Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
-        ProviderList.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
         ProviderList.ItemContainerStyle = Themed("ModelRowContainer");
-        ProviderList.ContainerContentChanging += RenderProviderRow;
+        ProviderList.Prepared += RenderProviderRow;
+        Menus.Attach(WindowMenu, WindowMenuItems());
+        Root.SizeChanged += (_, _) => ApplyWidthLayout();
         ApplyPageLayout();
-        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
-        if (IsConsolePage(page)) AppWindow.MoveAndResize(NativeShell.ConsoleBounds());
-        else AppWindow.MoveAndResize(NativeShell.SideWindowBounds());
-        if (AppWindowTitleBar.IsCustomizationSupported())
-        {
-            ExtendsContentIntoTitleBar = true;
-            SetTitleBar(TitleBar);
-            AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
-            AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
-            Root.ActualThemeChanged += (_, _) =>
-                AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
-        }
-        SystemBackdrop = new MicaBackdrop();
-        var handle = WindowNative.GetWindowHandle(this);
+        var handle = new WindowInteropHelper(this).EnsureHandle();
+        NativeShell.Place(handle, IsConsolePage(page) ? NativeShell.ConsoleBounds() : NativeShell.SideWindowBounds());
         // The console window owns the tray icon; settings is a side window.
         try { if (IsConsolePage(page)) shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice(Localized.Get("系统托盘不可用"), error.Message, InfoBarSeverity.Warning); }
-        AppWindow.Closing += async (_, args) =>
+        Closing += async (_, args) =>
         {
             if (exiting) return;
-            if (shell != null) { args.Cancel = true; shell.Hide(); return; }
+            if (shell != null) { args.Cancel = true; Hide(); return; }
             if (!draftDirty) return;
             args.Cancel = true;
             if (await ConfirmDiscardAsync(Localized.Get("关闭窗口"))) Shutdown();
@@ -108,15 +94,8 @@ public sealed partial class MainWindow : Window
             shell?.Dispose();
         };
         Root.Loaded += (_, _) => InitializeView();
-        AppWindow.Changed += (_, args) =>
-        {
-            if (args.DidVisibilityChange || args.DidSizeChange || args.DidPresenterChange)
-            {
-                InitializeView();
-                UpdateRefreshTimer();
-                Activity.IsActive = busy && IsViewVisible;
-            }
-        };
+        IsVisibleChanged += (_, _) => OnViewStateChanged();
+        StateChanged += (_, _) => OnViewStateChanged();
         timer.Tick += async (_, _) =>
         {
             if (!busy && !dialogOpen && page == "overview" && IsViewVisible && cli != null)
@@ -124,15 +103,44 @@ public sealed partial class MainWindow : Window
             if (!busy && page == "providers" && !connectionSelected && IsViewVisible && cli != null)
                 await RefreshTimingsAsync(lifetime.Token);
         };
-        var refresh = new KeyboardAccelerator { Key = VirtualKey.R, Modifiers = VirtualKeyModifiers.Control };
-        refresh.Invoked += async (_, args) => { args.Handled = true; await ReloadAsync(); };
-        Root.KeyboardAccelerators.Add(refresh);
+        PreviewKeyDown += async (_, args) =>
+        {
+            if (args.Key != Key.R || Keyboard.Modifiers != ModifierKeys.Control) return;
+            args.Handled = true;
+            await ReloadAsync();
+        };
         // The model table virtualizes its rows, so it gets the visible height instead of the page scroller.
         PageScroll.SizeChanged += (_, _) =>
         {
-            foreach (var table in PageBody.Children.OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<ListView>()))
+            foreach (var table in PageBody.Children.OfType<Stack>().SelectMany(panel => panel.Children.OfType<VirtualList>()))
                 table.Height = ModelTableHeight();
         };
+    }
+
+    private ContextMenu WindowMenuItems()
+    {
+        var menu = new ContextMenu();
+        foreach (var (label, tag, glyph) in new[]
+        {
+            ("托盘主面板", "overview", "\uE80F"), ("模型路由", "routing", "\uE8F1"),
+            ("检查更新…", "updates", ""), ("设置与诊断", "settings", "\uE713")
+        })
+        {
+            var item = new MenuItem { Header = Localized.Get(label), Tag = tag };
+            if (glyph.Length > 0) item.Icon = new FontIcon { Glyph = glyph, FontSize = 14 };
+            item.Click += OnOpenPage;
+            menu.Items.Add(item);
+        }
+        return menu;
+    }
+
+    private void OnViewStateChanged()
+    {
+        // WindowChrome lets a maximized window extend past the screen by its resize border.
+        Root.Margin = WindowState == WindowState.Maximized ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);
+        InitializeView();
+        UpdateRefreshTimer();
+        Activity.IsActive = busy && IsViewVisible;
     }
 
     private void InitializeView()
@@ -141,7 +149,7 @@ public sealed partial class MainWindow : Window
         initialized = true;
         // Loaded can run inside a synchronous native layout callback.
         // Start CLI work after that callback returns to the message loop.
-        if (!DispatcherQueue.TryEnqueue(async () =>
+        _ = Dispatcher.InvokeAsync(async () =>
         {
             ready = true;
             await ExecuteUiAsync(Localized.Get("连接 CLI"), async token =>
@@ -150,10 +158,10 @@ public sealed partial class MainWindow : Window
                 await LoadPageAsync(token);
             }, readOnly: true);
             UpdateRefreshTimer();
-        })) throw new InvalidOperationException(Localized.Get("无法调度 Windows 界面初始化。"));
+        }, DispatcherPriority.Background);
     }
 
-    private bool IsViewVisible => AppWindow.IsVisible && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+    private bool IsViewVisible => IsVisible && WindowState != WindowState.Minimized;
 
     private void UpdateRefreshTimer()
     {
@@ -165,7 +173,6 @@ public sealed partial class MainWindow : Window
     internal bool HasDraftChanges => draftDirty;
     internal bool NotifyUpdate(string version) => shell?.NotifyUpdate(version) == true;
     internal void Shutdown() { exiting = true; Close(); }
-    internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
     /// Pages hosted by the single console window, in tab order.
     internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "context" or "usage" or "routing";
@@ -182,21 +189,34 @@ public sealed partial class MainWindow : Window
             _ => Localized.Get("设置与诊断")
         };
         var console = IsConsolePage(page);
-        TitleBar.Title = console ? "Codex Mixin" : $"Codex Mixin · {Title}";
-        ConsoleTabs.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
+        NavPane.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
         selectingNavigation = true;
-        try { if (console) ConsoleTabs.SelectedItem = ConsoleTabs.Items.First(item => (string)item.Tag == page); }
+        try { if (console) ConsoleTabs.SelectedItem = ConsoleTabs.Items.OfType<TabItem>().First(item => (string)item.Tag == page); }
         finally { selectingNavigation = false; }
         var providers = page == "providers";
-        SidebarColumn.Width = new GridLength(providers ? 248 : 0);
         ProviderSidebar.Visibility = providers ? Visibility.Visible : Visibility.Collapsed;
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
-        ContentLayer.BorderThickness = providers ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
-        ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
+        // Console pages sit on a layer beside the navigation pane; the settings window fills its client area.
+        ContentLayer.BorderThickness = console ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
+        ContentLayer.CornerRadius = console ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
+        StatusLayer.BorderThickness = console ? new Thickness(1, 0, 0, 0) : new Thickness(0);
         DraftSummary.Visibility = ApplyChanges.Visibility = page is "providers" or "routing" or "context" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
         PageTitle.Visibility = header;
+        ApplyWidthLayout();
         UpdateRefreshTimer();
+    }
+
+    // Narrow windows keep navigation as icons and give the page more room, like Windows Settings.
+    private void ApplyWidthLayout()
+    {
+        var compact = Root.ActualWidth > 0 && Root.ActualWidth < 1100;
+        NavPane.Width = compact ? 48 : 212;
+        ConsoleTabs.Tag = compact ? "compact" : null;
+        SettingsLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var item in ConsoleTabs.Items.OfType<TabItem>()) item.ToolTip = compact ? item.Header : null;
+        SidebarColumn.Width = new GridLength(page == "providers" ? compact ? 224 : 264 : 0);
+        PageLayout.Margin = compact ? new Thickness(24, 20, 24, 12) : new Thickness(32, 24, 32, 16);
     }
 
     /// Switches the console window to another console page. Unapplied provider
@@ -234,21 +254,24 @@ public sealed partial class MainWindow : Window
         }, readOnly: true);
     }
 
-    private void OnConsoleTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    private void OnConsoleTab(object sender, SelectionChangedEventArgs args)
     {
-        if (ready && !selectingNavigation && sender.SelectedItem?.Tag is string next) ShowPage(next);
+        // Selection events bubble from child selectors inside tab content; only the tab strip itself navigates.
+        if (args.OriginalSource != ConsoleTabs) return;
+        if (ready && !selectingNavigation && ConsoleTabs.SelectedItem is TabItem { Tag: string next }) ShowPage(next);
     }
 
     internal void ShowMain()
     {
-        shell?.Show();
-        AppWindow.Show();
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
-        // Native ShowWindow can deliver Loaded before AppWindow reports visibility.
-        DispatcherQueue.TryEnqueue(InitializeView);
+        // Tray clicks need SetForegroundWindow to beat the foreground lock.
+        shell?.Show();
+        _ = Dispatcher.InvokeAsync(InitializeView, DispatcherPriority.Background);
     }
 
-    private void OnTrayCommand(string command) => DispatcherQueue.TryEnqueue(async () =>
+    private void OnTrayCommand(string command) => Dispatcher.InvokeAsync(async () =>
     {
         if (command == "tray-error")
         {
@@ -265,20 +288,20 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "routing" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
+        ((App)Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "routing" or "fusion" or "context" or "settings" or "updates" ? command : "overview");
     });
 
     private async Task ExitAsync(bool lightweight)
     {
-        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges)
+        if (((App)Application.Current).HasPendingChanges)
         {
             ShowMain();
             ShowNotice(Localized.Get("操作仍在进行"), Localized.Get("请等待当前操作完成后退出。关闭窗口可以收起到托盘。"), InfoBarSeverity.Warning);
             return;
         }
-        // A never-shown tray-only window has no XamlRoot for a ContentDialog.
-        if (!await ((App)Microsoft.UI.Xaml.Application.Current).ConfirmDraftsAsync()) return;
-        var app = (App)Microsoft.UI.Xaml.Application.Current;
+        // A never-shown tray-only window cannot own a dialog, so confirm drafts first.
+        if (!await ((App)Application.Current).ConfirmDraftsAsync()) return;
+        var app = (App)Application.Current;
         Func<Task> exit = lightweight ? app.EnterLightweightModeAsync : app.QuitCompletelyAsync;
         var confirmed = !initialized || (lightweight
             ? await ConfirmAsync(Localized.Get("进入轻量模式？"), Localized.Get("关闭界面和托盘，只保留后台网关，并开启网关开机启动。需要时重新打开 Codex Mixin 即可恢复界面。"), Localized.Get("进入轻量模式"))
@@ -332,10 +355,11 @@ public sealed partial class MainWindow : Window
         if (providerId != null && await ConfirmAsync(Localized.Get("删除服务商？"), Localized.Get("将移除当前服务商及其模型配置。"), Localized.Get("删除")))
             await ChangeAsync(Localized.Get("删除服务商"), ["provider", "remove", providerId], apply: true);
     }
-    private async void OnProviderTab(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    private async void OnProviderTab(object sender, SelectionChangedEventArgs args)
     {
-        if (!ready || loadingPage || selectingNavigation || sender.SelectedItem == null) return;
-        await SelectProviderTabAsync(sender.SelectedItem == ConnectionTab);
+        if (args.OriginalSource != ProviderTabs) return;
+        if (!ready || loadingPage || selectingNavigation || ProviderTabs.SelectedItem == null) return;
+        await SelectProviderTabAsync(ProviderTabs.SelectedItem == ConnectionTab);
     }
 
     private async Task SelectProviderTabAsync(bool connection)
@@ -358,7 +382,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnApplyChanges(object sender, RoutedEventArgs args)
     {
-        if (busy || applyingDraft || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
+        if (busy || applyingDraft || ((App)Application.Current).IsUpdating) return;
         applyingDraft = true;
         try { if (pendingApply != null) await pendingApply(); }
         catch (Exception error) { ShowNotice(Localized.Get("应用更改失败"), error.Message, InfoBarSeverity.Error); }
@@ -366,15 +390,18 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnOpenPage(object sender, RoutedEventArgs args) =>
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage((string)((MenuFlyoutItem)sender).Tag);
+        ((App)Application.Current).OpenPage((string)((MenuItem)sender).Tag);
+
+    private void OnNavButton(object sender, RoutedEventArgs args) =>
+        ((App)Application.Current).OpenPage((string)((FrameworkElement)sender).Tag);
 
     private async void OnRefresh(object sender, RoutedEventArgs args) => await ReloadAsync();
     private void OnCancel(object sender, RoutedEventArgs args) => activeCancellation?.Cancel();
 
     private async Task ConnectCliAsync(CancellationToken token, bool refresh = false)
     {
-        cli ??= ((App)Microsoft.UI.Xaml.Application.Current).Client;
-        operations ??= ((App)Microsoft.UI.Xaml.Application.Current).Operations;
+        cli ??= ((App)Application.Current).Client;
+        operations ??= ((App)Application.Current).Operations;
         if (interfaceReady && !refresh) return;
         interfaceReady = false;
         var contract = await cli.QueryAsync(["interface", "--json"], token);
@@ -390,6 +417,8 @@ public sealed partial class MainWindow : Window
         {
             if (page != "settings") await ConnectCliAsync(token, refresh: true);
             agentSnapshot = null; providerSnapshot = null; benchmarkSnapshot = null;
+            // A successful reload supersedes the previous failure message.
+            Notice.IsOpen = false;
             await LoadPageAsync(token);
         }, readOnly: true);
     }
@@ -409,7 +438,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
     {
-        if (busy || exiting || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return false;
+        if (busy || exiting || ((App)Application.Current).IsUpdating) return false;
         var succeeded = false;
         busy = true;
         loadingPage = readOnly;
@@ -551,7 +580,7 @@ public sealed partial class MainWindow : Window
         buttons.Children.Add(Button(Localized.Get("重启"), () => ChangeAsync(Localized.Get("重启网关"), ["service", "restart", "--managed", "--json"])));
         if (endpoint != null) buttons.Children.Add(Button(Localized.Get("复制地址"), () =>
         {
-            var content = new DataPackage(); content.SetText(endpoint); Clipboard.SetContent(content);
+            Clipboard.SetText(endpoint);
             StatusText.Text = Localized.Get("接口地址已复制");
             return Task.CompletedTask;
         }));
@@ -577,20 +606,20 @@ public sealed partial class MainWindow : Window
     private static string ReadinessDot(JsonElement provider) => !Json.Flag(provider, "enabled") ? "DotOff" :
         Json.Text(provider, "readiness") == "healthy" ? "DotOn" : "DotWarn";
 
-    // Styles carry ThemeResource brushes, so code-built elements follow the window theme.
-    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+    // Styles carry DynamicResource brushes, so code-built elements follow the app theme.
+    private static Style Themed(string key) => (Style)Application.Current.Resources[key];
 
-    private static StackPanel IconLabel(string glyph, string text)
+    private static Stack IconLabel(string glyph, string text)
     {
-        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var label = new Stack { Orientation = Orientation.Horizontal, Spacing = 8 };
         label.Children.Add(new FontIcon { Glyph = glyph, FontSize = 14 });
         label.Children.Add(new TextBlock { Text = text });
         return label;
     }
 
-    private MenuFlyoutItem MenuItem(string label, string glyph, Func<Task> work)
+    private MenuItem MenuItem(string label, string glyph, Func<Task> work)
     {
-        var item = new MenuFlyoutItem { Text = label, Icon = new FontIcon { Glyph = glyph } };
+        var item = new MenuItem { Header = label, Icon = new FontIcon { Glyph = glyph, FontSize = 14 } };
         item.Click += async (_, _) =>
         {
             try { await work(); }
@@ -601,7 +630,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ProvidersAsync(CancellationToken token)
     {
-        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        var revision = ((App)Application.Current).Operations.Revision;
         if (providerSnapshot == null || providerRevision != revision || Stopwatch.GetElapsedTime(providerSnapshotStamp) >= ReadSnapshotAge)
         {
             providerSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
@@ -626,6 +655,13 @@ public sealed partial class MainWindow : Window
                 providerRows.Add(id, provider);
             }
             ProviderList.ItemsSource = providers.Select(provider => Json.Text(provider, "id")).ToArray();
+            // WPF keeps an equal selection across ItemsSource swaps without raising SelectionChanged.
+            if (providers.Length > 0)
+            {
+                var index = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
+                ProviderList.SelectedIndex = index;
+                providerId = Json.Text(providers[index], "id");
+            }
         }
         finally { selectingProvider = false; }
         if (providers.Length == 0)
@@ -635,30 +671,26 @@ public sealed partial class MainWindow : Window
             PageBody.Children.Add(Button(Localized.Get("新增服务商"), AddProviderAsync, true));
             return;
         }
-        // SelectionChanged renders once after the list has its final selection.
-        ProviderList.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
+        RenderSelectedProvider();
         // Render the local snapshot first; benchmark IPC is not on the navigation path.
         _ = RefreshTimingsAsync(pageRefresh!.Token);
     }
 
-    private void RenderProviderRow(ListViewBase sender, ContainerContentChangingEventArgs args)
+    private void RenderProviderRow(ListViewItem container, object item)
     {
-        if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
-        content.Content = null;
-        if (args.InRecycleQueue || args.Item is not string id || !providerRows.TryGetValue(id, out var provider)) return;
-        var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        if (item is not string id || !providerRows.TryGetValue(id, out var provider)) return;
+        var row = new Stack { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
-        var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
+        var state = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
+        state.Children.Add(new System.Windows.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
         state.Children.Add(new TextBlock { Text = Localized.Format("{0} · {1}/{2} 个模型", Readiness(provider), Json.Field(provider, "selected_models").GetArrayLength(), Json.Field(provider, "cached_models").GetArrayLength()), Style = Themed("Caption") });
         row.Children.Add(state);
-        var tile = new Grid { ColumnSpacing = 12 };
+        var tile = new SpacedGrid { ColumnSpacing = 12 };
         tile.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         tile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         tile.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
         Grid.SetColumn(row, 1); tile.Children.Add(row);
-        content.Content = new Border { Child = tile, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) };
-        args.Handled = true;
+        container.Content = new Border { Child = tile, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) };
     }
 
     private async void RenderSelectedProvider()
@@ -669,7 +701,7 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Clear();
         SyncProviderTab();
         PageTitle.Text = Json.Text(provider, "display_name");
-        ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
+        ProviderHeaderIcon.Content = Marks.Provider(provider);
         ProviderHeaderTile.Visibility = Visibility.Visible;
         OfficialBadge.Visibility = Json.Text(provider, "kind") == "official" ? Visibility.Visible : Visibility.Collapsed;
         var healthy = Json.Flag(provider, "enabled") && Json.Text(provider, "readiness") == "healthy";
@@ -707,7 +739,7 @@ public sealed partial class MainWindow : Window
 
     private void RenderModels(JsonElement provider)
     {
-        var modelBody = new StackPanel { Spacing = 8 };
+        var modelBody = new Stack { Spacing = 8 };
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
         var modelsById = models.Select((model, index) => (Model: model, Index: index)).ToDictionary(row => Json.Text(row.Model, "id"));
@@ -717,19 +749,20 @@ public sealed partial class MainWindow : Window
         var savedContexts = Json.Field(provider, "model_context_overrides");
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
 
-        var toolbar = new Grid { ColumnSpacing = 8 };
-        foreach (var width in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto })
-            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
-        var search = new AutoSuggestBox { PlaceholderText = Localized.Get("搜索当前服务商的模型"), QueryIcon = new SymbolIcon(Symbol.Find), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Stretch };
+        // The toolbar wraps on narrow windows instead of clipping the actions.
+        var toolbar = new ActionPanel();
+        var search = new TextBox { Width = 280, VerticalAlignment = VerticalAlignment.Center };
+        Placeholder.Set(search, Localized.Get("搜索当前服务商的模型"));
         AutomationProperties.SetName(search, Localized.Get("搜索当前服务商的模型"));
         var filter = new ComboBox { MinWidth = 108, VerticalAlignment = VerticalAlignment.Center };
         foreach (var option in new[] { Localized.Get("全部"), Localized.Get("已加入"), Localized.Get("未加入") }) filter.Items.Add(option);
         filter.SelectedIndex = 0;
         AutomationProperties.SetName(filter, Localized.Get("模型筛选"));
-        var actions = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        var actions = new ContextMenu();
         actions.Items.Add(MenuItem(Localized.Get("刷新模型列表"), "\uE72C", () => ChangeAsync(Localized.Get("刷新模型"), ["provider", "discover", id], apply: true)));
         actions.Items.Add(MenuItem(Localized.Get("重新探测已加入模型的能力"), "\uE9D9", () => ChangeAsync(Localized.Get("探测模型能力"), ["provider", "probe", id], apply: true)));
-        var more = new DropDownButton { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = actions, VerticalAlignment = VerticalAlignment.Center };
+        var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(10, 7, 10, 7) };
+        Menus.Attach(more, actions);
         AutomationProperties.SetName(more, Localized.Get("更多模型操作"));
         var test = Button(Localized.Format("测试已加入的 {0} 个模型", selected.Count), () => ChangeAsync(Localized.Get("启动模型测速"), ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
         test.Content = IconLabel("\uE916", Localized.Format("测试已加入的 {0} 个模型", selected.Count));
@@ -739,15 +772,25 @@ public sealed partial class MainWindow : Window
         order.SelectedIndex = modelOrder == "manual" ? 1 : 0;
         AutomationProperties.SetName(order, Localized.Get("模型排序"));
         ToolTipService.SetToolTip(order, Localized.Get("拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。"));
-        var tools = new FrameworkElement[] { search, filter, order, more, test };
-        for (var index = 0; index < tools.Length; index++) { Grid.SetColumn(tools[index], index); toolbar.Children.Add(tools[index]); }
+        foreach (var tool in new FrameworkElement[] { search, filter, order, more, test }) toolbar.Children.Add(tool);
         modelBody.Children.Add(toolbar);
 
-        // Shared by the header and every virtualized row so the columns stay aligned.
-        Grid Columns()
+        // Shared by the header and every virtualized row so the columns stay aligned. Narrow tables
+        // drop the order, speed and ratio columns so the model name keeps its room.
+        var widths = new[] { 48d, 56d, -1d, 76d, 84d, 80d, 48d, 120d };
+        int[] optional = [1, 4, 6];
+        var wide = true;
+        var grids = new HashSet<SpacedGrid>();
+        void Fit(SpacedGrid grid)
         {
-            var grid = new Grid { ColumnSpacing = 12 };
-            foreach (var width in new[] { 64d, 64d, -1d, 76d, 84d, 80d, 48d, 120d })
+            foreach (var index in optional) grid.ColumnDefinitions[index].Width = new GridLength(wide ? widths[index] : 0);
+            foreach (FrameworkElement cell in grid.Children)
+                if (optional.Contains(Grid.GetColumn(cell))) cell.Visibility = wide ? Visibility.Visible : Visibility.Collapsed;
+        }
+        SpacedGrid Columns()
+        {
+            var grid = new SpacedGrid { ColumnSpacing = 12 };
+            foreach (var width in widths)
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
@@ -758,24 +801,33 @@ public sealed partial class MainWindow : Window
             var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 3 and <= 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
             Grid.SetColumn(label, index); header.Children.Add(label);
         }
+        Fit(header);
         modelBody.Children.Add(new Border { Style = Themed("RowDivider"), Padding = new Thickness(12, 8, 12, 8), Child = header });
+        modelBody.SizeChanged += (_, args) =>
+        {
+            // Fixed columns, gaps and padding take about 620px; keep about 240px for the model name.
+            var next = args.NewSize.Width >= 860;
+            if (next == wide) return;
+            wide = next;
+            Fit(header);
+            foreach (var grid in grids) Fit(grid);
+        };
 
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, Height = ModelTableHeight(), Padding = new Thickness(0) };
-        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
+        var list = new VirtualList { SelectionMode = SelectionMode.Single, Height = ModelTableHeight(), Padding = new Thickness(0) };
         list.ItemContainerStyle = Themed("ModelRowContainer");
         AutomationProperties.SetAutomationId(list, "model-table");
-        list.ContainerContentChanging += (_, args) =>
+        list.Cleared += (container, _) =>
         {
-            if (args.ItemContainer.Tag is ValueTuple<string, TextBlock> previous
+            if (container.Tag is ValueTuple<string, TextBlock> previous
                 && timingCells.TryGetValue(previous.Item1, out var retained)
                 && ReferenceEquals(retained.Ttft, previous.Item2)) timingCells.Remove(previous.Item1);
-            args.ItemContainer.Tag = null;
-            if (args.InRecycleQueue)
-            {
-                if (args.ItemContainer.ContentTemplateRoot is ContentControl recycled) recycled.Content = null;
-                return;
-            }
-            if (args.Item is not string modelId) return;
+            container.Tag = null;
+            container.ContextMenu = null;
+            if (container.Content is Border { Child: SpacedGrid previousRow }) grids.Remove(previousRow);
+        };
+        list.Prepared += (container, item) =>
+        {
+            if (item is not string modelId) return;
             var (model, modelIndex) = modelsById[modelId];
             var row = Columns();
             var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
@@ -783,7 +835,7 @@ public sealed partial class MainWindow : Window
             check.Checked += (_, _) => { if (!selected.Contains(modelId)) selected.Add(modelId); MarkDirty(); Filter(); };
             check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); Filter(); };
             var rank = new TextBlock { Text = selected.Contains(modelId) ? $"{selected.IndexOf(modelId) + 1}  ≡" : "", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
-            var moveMenu = new MenuFlyout();
+            var moveMenu = new ContextMenu();
             async Task Move(int delta)
             {
                 var current = selected.IndexOf(modelId);
@@ -796,14 +848,14 @@ public sealed partial class MainWindow : Window
             var up = MenuItem(Localized.Get("上移"), "\uE74A", () => Move(-1));
             var down = MenuItem(Localized.Get("下移"), "\uE74B", () => Move(1));
             moveMenu.Items.Add(up); moveMenu.Items.Add(down);
-            moveMenu.Opening += (_, _) =>
+            moveMenu.Opened += (_, _) =>
             {
                 up.IsEnabled = selected.IndexOf(modelId) > 0;
                 down.IsEnabled = selected.Contains(modelId) && selected.IndexOf(modelId) < selected.Count - 1;
             };
-            args.ItemContainer.ContextFlyout = moveMenu;
+            container.ContextMenu = moveMenu;
             ToolTipService.SetToolTip(rank, Localized.Get("拖动排序；右键菜单可上移、下移。"));
-            var title = new Grid { ColumnSpacing = 0, VerticalAlignment = VerticalAlignment.Center };
+            var title = new Grid { VerticalAlignment = VerticalAlignment.Center };
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var name = new TextBlock { Text = modelId, Style = Themed("MonoPrimary"), MaxWidth = 280 };
@@ -823,12 +875,12 @@ public sealed partial class MainWindow : Window
                 ToolTipService.SetToolTip(contextText, double.IsNaN(value) ? Localized.Get("服务商未提供上下文窗口；可刷新模型目录或手动设置。") : $"{value:N0} tokens");
             }
             ShowContext();
-            var contextLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+            var contextLabel = new Stack { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
             contextLabel.Children.Add(contextText); contextLabel.Children.Add(overridden);
             var context = Button(Localized.Get("编辑上下文"), async () =>
             {
-                var number = new NumberBox { Header = Localized.Get("上下文 Token 数"), Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-                var dialog = Dialog(Localized.Get("模型上下文"), number); dialog.PrimaryButtonText = Localized.Get("应用到草稿"); dialog.SecondaryButtonText = Localized.Get("恢复默认");
+                var number = Field.Labeled(new NumberBox { Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext) }, Localized.Get("上下文 Token 数"));
+                var dialog = Dialog(Localized.Get("模型上下文"), Field.Wrap(number)); dialog.PrimaryButtonText = Localized.Get("应用到草稿"); dialog.SecondaryButtonText = Localized.Get("恢复默认");
                 var choice = await ShowDialogAsync(dialog);
                 if (choice == ContentDialogResult.None) return;
                 if (choice == ContentDialogResult.Primary && (!double.IsFinite(number.Value) || number.Value <= 0 || number.Value != Math.Truncate(number.Value)))
@@ -839,7 +891,7 @@ public sealed partial class MainWindow : Window
             context.Content = contextLabel; context.Style = Themed("FlatButton");
             context.Padding = new Thickness(4, 2, 4, 2); context.HorizontalAlignment = HorizontalAlignment.Right; context.MinHeight = 0;
             AutomationProperties.SetName(context, Localized.Format("{0} 上下文", modelId));
-            var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+            var capabilities = new Stack { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
             foreach (var (field, label, glyph) in new[] { ("supports_image", Localized.Get("图片输入"), "\uE8B9"), ("supports_thinking", "Thinking", "\uE82F"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
             {
                 var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
@@ -852,40 +904,55 @@ public sealed partial class MainWindow : Window
             var ttft = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
             var tps = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
             timingCells[$"{id}/{modelId}"] = (ttft, tps);
-            args.ItemContainer.Tag = ($"{id}/{modelId}", ttft);
+            container.Tag = ($"{id}/{modelId}", ttft);
             if (timings.TryGetValue($"{id}/{modelId}", out var timing)) ShowTiming(timing, ttft, tps);
             var ratio = new TextBlock { Text = Json.OptionalText(model, "ratio") ?? "-", Style = Themed("MonoPrimary"), HorizontalAlignment = HorizontalAlignment.Right };
             var cells = new FrameworkElement[] { check, rank, title, ttft, tps, context, ratio, capabilities };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
-            args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-            ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = new Border
+            Fit(row);
+            grids.Add(row);
+            container.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+            container.Content = new Border
             {
                 Child = row,
-                Style = Themed(modelIndex % 2 == 0 ? "RowStripe" : "RowPlain"),
+                Style = Themed("RowPlain"),
                 Padding = new Thickness(12, 0, 12, 0),
-                Height = 34
+                Height = 40
             };
-            args.Handled = true;
         };
-        // WinRT collections can expose strings directly; JsonElement is a .NET struct.
-        list.CanDragItems = true;
+        // Only models already added to Codex can be dragged; the row's DataContext is its model id.
         list.AllowDrop = true;
         string? draggedModel = null;
-        list.DragItemsStarting += (_, args) =>
+        Point? dragStart = null;
+        static ListViewItem? RowAt(object source)
         {
-            draggedModel = args.Items.FirstOrDefault() as string;
-            if (draggedModel is null || !selected.Contains(draggedModel)) { args.Cancel = true; draggedModel = null; }
+            var target = source as DependencyObject;
+            while (target is not null and not ListViewItem) target = VisualTreeHelper.GetParent(target);
+            return target as ListViewItem;
+        }
+        list.PreviewMouseLeftButtonDown += (_, args) =>
+        {
+            draggedModel = RowAt(args.OriginalSource)?.DataContext as string;
+            dragStart = draggedModel is not null && selected.Contains(draggedModel) && args.OriginalSource is not CheckBox ? args.GetPosition(list) : null;
+        };
+        list.PreviewMouseMove += (_, args) =>
+        {
+            if (dragStart is not { } start || draggedModel is null || args.LeftButton != MouseButtonState.Pressed) return;
+            var offset = args.GetPosition(list) - start;
+            if (Math.Abs(offset.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(offset.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            dragStart = null;
+            DragDrop.DoDragDrop(list, draggedModel, DragDropEffects.Move);
+            draggedModel = null;
         };
         list.DragOver += (_, args) =>
         {
-            if (draggedModel is not null) args.AcceptedOperation = DataPackageOperation.Move;
+            args.Effects = draggedModel is not null && args.Data.GetDataPresent(typeof(string)) ? DragDropEffects.Move : DragDropEffects.None;
+            args.Handled = true;
         };
         list.Drop += (_, args) =>
         {
             if (draggedModel is null) return;
-            DependencyObject? target = args.OriginalSource as DependencyObject;
-            while (target is not null && target is not ListViewItem) target = VisualTreeHelper.GetParent(target);
-            if (target is ListViewItem container && container.Content is string targetId && selected.Contains(targetId))
+            if (RowAt(args.OriginalSource)?.DataContext is string targetId && targetId != draggedModel && selected.Contains(targetId))
             {
                 var position = selected.IndexOf(targetId);
                 selected.Remove(draggedModel); selected.Insert(position, draggedModel);
@@ -893,7 +960,6 @@ public sealed partial class MainWindow : Window
             }
             draggedModel = null;
         };
-        list.DragItemsCompleted += (_, _) => draggedModel = null;
         list.ItemsSource = modelIds;
         void Filter()
         {
@@ -931,7 +997,7 @@ public sealed partial class MainWindow : Window
 
     private void MarkDirty()
     {
-        if (loadingPage || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
+        if (loadingPage || ((App)Application.Current).IsUpdating) return;
         draftDirty = true;
         ShowSummary(Localized.Get("还有未应用的更改"));
         ApplyChanges.IsEnabled = true;
@@ -941,30 +1007,11 @@ public sealed partial class MainWindow : Window
     {
         switch (control)
         {
+            case Field field: TrackDraft(field.Control); break;
+            // NumberBox is a TextBox, so its text edits are covered here too.
             case TextBox box: box.TextChanged += (_, _) => MarkDirty(); break;
             case PasswordBox box: box.PasswordChanged += (_, _) => MarkDirty(); break;
             case ComboBox picker: picker.SelectionChanged += (_, _) => MarkDirty(); break;
-            case NumberBox number:
-                number.ValueChanged += (_, _) => MarkDirty();
-                var textTracked = false;
-                number.Loaded += (_, _) =>
-                {
-                    if (textTracked) return;
-                    var descendants = new Queue<DependencyObject>();
-                    descendants.Enqueue(number);
-                    while (descendants.TryDequeue(out var element))
-                    {
-                        if (element is TextBox input)
-                        {
-                            input.TextChanged += (_, _) => MarkDirty();
-                            textTracked = true;
-                            break;
-                        }
-                        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(element); index++)
-                            descendants.Enqueue(VisualTreeHelper.GetChild(element, index));
-                    }
-                };
-                break;
             case ToggleSwitch toggle: toggle.Toggled += (_, _) => MarkDirty(); break;
             case CheckBox check:
                 check.Checked += (_, _) => MarkDirty(); check.Unchecked += (_, _) => MarkDirty(); break;
@@ -1064,7 +1111,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ProviderDialogAsync(JsonElement? provider, bool inline = false)
     {
-        var form = new StackPanel { Spacing = 12, MinWidth = 360 };
+        var form = new Stack { Spacing = 12, MinWidth = 360 };
         var catalog = Json.Field(metadata, "provider_catalog");
         var presets = Json.Rows(Json.Field(catalog, "presets"));
         var protocols = Json.Rows(Json.Field(catalog, "protocols"));
@@ -1079,15 +1126,15 @@ public sealed partial class MainWindow : Window
         var website = Input(Localized.Get("供应商网站（可选）"), provider is { } site ? Json.OptionalText(site, "website_url") ?? "" : "");
         var imagePath = Input(Localized.Get("图像生成路径（可选）"), provider is { } image ? Json.OptionalText(image, "image_generation_path") ?? "" : "");
         var apiPath = Input(Localized.Get("API 路径（custom，可选）"), provider is { } api ? Json.OptionalText(api, "api_path") ?? "" : "");
-        var key = new PasswordBox { Header = provider == null ? "API Key" : Localized.Get("新 API Key（留空保留）") };
+        var key = Field.Labeled(new PasswordBox(), provider == null ? "API Key" : Localized.Get("新 API Key（留空保留）"));
         var protocol = Choice(Localized.Get("协议（custom）"), new[] { Localized.Get("自动检测") }.Concat(protocols.Select(row => Json.Text(row, "id"))).ToArray(),
             provider is { } pr ? Json.Text(pr, "protocol") : Localized.Get("自动检测"));
         var username = Input(Localized.Get("OneAPI 额度用户名"), provider is { } q ? Json.OptionalText(q, "quota_username") ?? "" : "");
         var workspace = Input("OpenCode Go workspace ID", provider is { } w ? Json.OptionalText(w, "quota_workspace_id") ?? "" : "");
-        var cookie = new PasswordBox { Header = Localized.Get("OpenCode Go Cookie（留空保留）") };
-        var accessKey = new PasswordBox { Header = Localized.Get("AWS Access Key ID（留空保留）") };
-        var secretKey = new PasswordBox { Header = Localized.Get("AWS Secret Access Key（留空保留）") };
-        var session = new PasswordBox { Header = Localized.Get("AWS Session Token（可选）") };
+        var cookie = Field.Labeled(new PasswordBox(), Localized.Get("OpenCode Go Cookie（留空保留）"));
+        var accessKey = Field.Labeled(new PasswordBox(), Localized.Get("AWS Access Key ID（留空保留）"));
+        var secretKey = Field.Labeled(new PasswordBox(), Localized.Get("AWS Secret Access Key（留空保留）"));
+        var session = Field.Labeled(new PasswordBox(), Localized.Get("AWS Session Token（可选）"));
         var region = Input("AWS Region", provider is { } r ? Json.OptionalText(r, "aws_region") ?? Json.Text(catalog, "default_aws_region") : Json.Text(catalog, "default_aws_region"));
         var bridge = Choice(Localized.Get("OneAPI 认证桥接"), ["disabled", "ducx_loopback"],
             provider is { } b ? Json.OptionalText(b, "baidu_auth_bridge") ?? "disabled" : "disabled");
@@ -1116,10 +1163,10 @@ public sealed partial class MainWindow : Window
         OverrideFields();
         var oauthTimeout = Input(Localized.Get("OAuth 授权超时（秒）"), Json.Field(catalog, "oauth_timeout_seconds").ToString());
         var oauthHint = Text(Localized.Get("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。"));
-        form.Children.Add(oauthTimeout);
+        form.Children.Add(Field.Wrap(oauthTimeout));
         form.Children.Add(oauthHint);
         foreach (var element in new FrameworkElement[] { preset, id, name, url, website, protocol, apiPath, imagePath, key, username, bridge, report, workspace, cookie, accessKey, secretKey, session, region, reviewOverride, reviewModel, titleOverride, titleModel })
-            form.Children.Add(element);
+            form.Children.Add(Field.Wrap(element));
         void Fields()
         {
             var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
@@ -1129,7 +1176,7 @@ public sealed partial class MainWindow : Window
             oauthHint.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
             id.Visibility = oauth && !Json.Flag(definition, "allow_multiple") ? Visibility.Collapsed : Visibility.Visible;
             var localSession = Json.Text(definition, "auth_mode") == "local_session";
-            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : localSession ? Localized.Get("API Key（可选；留空使用原生客户端登录状态）") : Localized.Get("API Key（可选；留空使用本地 OAuth）");
+            Field.SetHeader(key, Json.Flag(definition, "api_key_required") ? "API Key" : localSession ? Localized.Get("API Key（可选；留空使用原生客户端登录状态）") : Localized.Get("API Key（可选；留空使用本地 OAuth）"));
             key.Visibility = aws || oauth ? Visibility.Collapsed : Visibility.Visible;
             foreach (var element in new FrameworkElement[] { name, url, website, imagePath })
                 element.Visibility = oauth ? Visibility.Collapsed : Visibility.Visible;
@@ -1144,7 +1191,7 @@ public sealed partial class MainWindow : Window
         {
             await ExecuteUiAsync(Localized.Get("准备 DUCX，请在弹出的终端扫码"), async token =>
             {
-                var output = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(
+                var output = await ((App)Application.Current).Operations.ChangeAsync(
                     ["connect", "ducx", "--json"], token, progress: new Progress<string>(message => StatusText.Text = message));
                 using var document = JsonDocument.Parse(output);
                 var executable = Json.Text(document.RootElement, "executable");
@@ -1226,7 +1273,7 @@ public sealed partial class MainWindow : Window
         }
         if (inline && provider is { } connection)
         {
-            var body = new StackPanel { Spacing = 16, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var body = new Stack { Spacing = 16, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
             body.Children.Add(Card(Localized.Get("连接配置"), Localized.Get("密钥已配置时留空保留；修改后使用底部「应用更改」。"), form));
             body.Children.Add(Button(Localized.Get("清除密钥"), () => ChangeAsync(Localized.Get("清除密钥"), ["provider", "update", Json.Text(connection, "id"), Json.OptionalText(connection, "preset_id") == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key"], apply: true)));
             pendingApply = Save;
@@ -1239,7 +1286,7 @@ public sealed partial class MainWindow : Window
 
     private async Task AgentsAsync(CancellationToken token)
     {
-        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        var revision = ((App)Application.Current).Operations.Revision;
         if (agentSnapshot == null || agentRevision != revision || Stopwatch.GetElapsedTime(agentSnapshotStamp) >= ReadSnapshotAge)
         {
             agentSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
@@ -1251,7 +1298,7 @@ public sealed partial class MainWindow : Window
         var checkVersions = Button(Localized.Get("检查版本更新"), () => ExecuteUiAsync(Localized.Get("检查 Agent 版本"), async cancellation =>
         {
             var versions = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "versions", "--json", "--refresh"], cancellation), "agents"));
-            var body = new StackPanel { Spacing = 12 };
+            var body = new Stack { Spacing = 12 };
             foreach (var agent in versions)
             {
                 var version = Json.Field(agent, "cli");
@@ -1275,8 +1322,8 @@ public sealed partial class MainWindow : Window
         checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
         agentToolbar.Children.Add(checkVersions);
         PageBody.Children.Add(agentToolbar);
-        var undetected = new StackPanel { Spacing = 0 };
-        var detectedRows = new StackPanel { Spacing = 0 };
+        var undetected = new Stack { Spacing = 0 };
+        var detectedRows = new Stack { Spacing = 0 };
         foreach (var agent in agents)
         {
             var id = Json.Text(agent, "id");
@@ -1308,7 +1355,7 @@ public sealed partial class MainWindow : Window
                 stateLabel = Localized.Get("原生模型已托管");
             if (modeLabel.Length > 0) stateLabel += $" · {modeLabel}";
             var connected = state is "managed" or "drift" or "pending" or "pending_removal";
-            var connectSwitch = new ToggleSwitch { IsOn = connected, OnContent = "", OffContent = "", IsEnabled = state != "unsupported", MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
+            var connectSwitch = new ToggleSwitch { IsOn = connected, IsEnabled = state != "unsupported", MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
             AutomationProperties.SetName(connectSwitch, Localized.Format("{0} 接入", Json.Text(agent, "name")));
             var restoringSwitch = false;
             connectSwitch.Toggled += async (_, _) =>
@@ -1328,7 +1375,7 @@ public sealed partial class MainWindow : Window
                     if (id == "codex")
                     {
                         var mode = Choice(Localized.Get("接入模式"), [Localized.Get("官方账号 + 自定义模型"), Localized.Get("仅自定义模型")], Localized.Get("官方账号 + 自定义模型"));
-                        var dialog = Dialog(Localized.Get("接入 Codex"), mode); dialog.PrimaryButtonText = Localized.Get("接入");
+                        var dialog = Dialog(Localized.Get("接入 Codex"), Field.Wrap(mode)); dialog.PrimaryButtonText = Localized.Get("接入");
                         if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
                         args.AddRange(["--mode", mode.SelectedIndex == 0 ? "official-account" : "custom-only"]);
                     }
@@ -1336,28 +1383,28 @@ public sealed partial class MainWindow : Window
                 }
                 catch (Exception error) { ShowNotice(Localized.Get("Agent 接入失败"), error.Message, InfoBarSeverity.Error); }
             };
-            var heading = new Grid { ColumnSpacing = 12 };
+            var heading = new SpacedGrid { ColumnSpacing = 12 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            var title = new Stack { Orientation = Orientation.Horizontal, Spacing = 10 };
             title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontSize = 15 });
             var versions = string.Join("  ", new[] { Json.OptionalText(version, "version") is { } cliVersion ? (Json.OptionalText(version, "app_version") != null ? $"CLI {cliVersion}" : cliVersion) : null,
                 Json.OptionalText(version, "app_version") is { } appVersion ? $"App {appVersion}" : null }.Where(value => value != null));
             if (versions.Length > 0) title.Children.Add(new TextBlock { Text = versions, Style = Themed("Caption"), FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
-            var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
+            var text = new Stack { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(title);
-            var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
+            var summary = new Stack { Orientation = Orientation.Horizontal, Spacing = 8 };
+            summary.Children.Add(new System.Windows.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
             var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? Localized.Format("版本检查失败：{0}", failure) : null);
             summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
             if (connected && !Json.Flag(agent, "detected"))
                 summary.Children.Add(new TextBlock { Text = Localized.Get("未检测到安装程序"), Style = Themed("Caption"), FontSize = 13 });
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
-            var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+            var identity = new Stack { Orientation = Orientation.Horizontal, Spacing = 16 };
             identity.Children.Add(new Border { Width = 40, Height = 40, Child = Marks.Agent(id) }); identity.Children.Add(text);
             heading.Children.Add(identity);
-            var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            var controls = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
             if (Json.Flag(version, "update"))
                 controls.Children.Add(Button(Localized.Format("更新到 {0}", Json.Text(version, "latest")), () => ChangeAsync(Localized.Get("升级 Agent"), ["agent", "upgrade", id, "--json"])));
             controls.Children.Add(connectSwitch);
@@ -1383,9 +1430,9 @@ public sealed partial class MainWindow : Window
         var metric = Choice(Localized.Get("图表指标"), ["Tokens", Localized.Get("请求次数")], "Tokens");
         var grouping = Choice(Localized.Get("图表分组"), [Localized.Get("构成"), Localized.Get("按 Provider 拆分")], Localized.Get("构成"));
         foreach (var picker in new[] { range, metric, grouping }) picker.MinWidth = 150;
-        var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        filters.Children.Add(range); filters.Children.Add(metric); filters.Children.Add(grouping);
-        var usageBody = new StackPanel { Spacing = 12 };
+        var filters = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
+        filters.Children.Add(Field.Wrap(range)); filters.Children.Add(Field.Wrap(metric)); filters.Children.Add(Field.Wrap(grouping));
+        var usageBody = new Stack { Spacing = 12 };
         JsonElement[] daily = [], previous = [], turns = [];
         JsonElement[]? slotTurns = null;
         UsageSlot[] slots = [];
@@ -1402,19 +1449,19 @@ public sealed partial class MainWindow : Window
         var grouped = new CheckBox { Content = Localized.Get("按会话分组"), VerticalAlignment = VerticalAlignment.Bottom };
         AutomationProperties.SetAutomationId(status, "usage-status"); AutomationProperties.SetAutomationId(model, "usage-model");
         AutomationProperties.SetAutomationId(grouped, "usage-group-session");
-        var chips = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Bottom };
-        var tableBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        foreach (var element in new FrameworkElement[] { status, model, substituted, grouped, chips }) tableBar.Children.Add(element);
+        var chips = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Bottom };
+        var tableBar = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
+        foreach (var element in new FrameworkElement[] { status, model, substituted, grouped, chips }) tableBar.Children.Add(Field.Wrap(element));
         var updatingFilters = false;
 
         var summaryHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var chartsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var turnsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var tableNote = new TextBlock { Style = Themed("SecondaryText") };
-        var tableBody = new StackPanel { Spacing = 12 };
+        var tableBody = new Stack { Spacing = 12 };
         tableBody.Children.Add(tableBar); tableBody.Children.Add(turnsHost);
         var tableCard = Card(Localized.Get("回复明细"), "", tableBody);
-        ((StackPanel)tableCard.Child).Children.Insert(1, tableNote);
+        ((Stack)tableCard.Child).Children.Insert(1, tableNote);
         void Attach()
         {
             usageBody.Children.Clear();
@@ -1464,7 +1511,7 @@ public sealed partial class MainWindow : Window
                 : Localized.Format("显示 {0} 条回复", shown.Length) + (slot == null && session == null && turns.Length >= 500 ? Localized.Get("（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）") : "");
             if (shown.Length == 0) { turnsHost.Content = Text(slot != null && slotTurns == null ? "" : Localized.Get("没有符合条件的回复。")); return; }
             var rows = UsageView.Rows(shown, grouped.IsChecked == true, expanded);
-            var table = new StackPanel();
+            var table = new Stack();
             table.Children.Add(UsageView.TableHeader());
             table.Children.Add(UsageView.Turns(rows, providerNames,
                 tag => { session = session == tag ? null : tag; RenderTurns(); },
@@ -1558,7 +1605,7 @@ public sealed partial class MainWindow : Window
     private Button Button(string label, Func<Task> work, bool primary = false)
     {
         var button = new Button { Content = label };
-        if (primary) button.Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["AccentButtonStyle"];
+        if (primary) button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
         button.Click += async (_, _) =>
         {
             try { await work(); }
@@ -1568,11 +1615,12 @@ public sealed partial class MainWindow : Window
     }
 
     private static ActionPanel Row() => new();
-    private static TextBlock Text(string value) => new() { Text = value, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
-    private static TextBox Input(string header, string value) => new() { Header = header, Text = value };
+    private static TextBlock Text(string value) => new() { Text = value, TextWrapping = TextWrapping.Wrap };
+    // Labeled controls; add them to a panel through Field.Wrap so the header follows Visibility.
+    private static TextBox Input(string header, string value) => Field.Labeled(new TextBox { Text = value }, header);
     private static ComboBox Choice(string header, string[] values, string selected)
     {
-        var picker = new ComboBox { Header = header, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var picker = Field.Labeled(new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch }, header);
         foreach (var value in values) picker.Items.Add(value);
         // Keep unavailable saved references visible rather than silently replacing them.
         if (!values.Contains(selected)) picker.Items.Add(selected);
@@ -1582,16 +1630,16 @@ public sealed partial class MainWindow : Window
 
     private Border Card(string title, string description, UIElement? content = null)
     {
-        var body = new StackPanel { Spacing = 12 };
-        body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, TextWrapping = TextWrapping.Wrap });
+        var body = new Stack { Spacing = 12 };
+        body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), TextWrapping = TextWrapping.Wrap });
         if (!string.IsNullOrWhiteSpace(description))
             body.Children.Add(new TextBlock
             {
                 Text = description,
-                Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"]
+                Style = (Style)Application.Current.Resources["SecondaryText"]
             });
         if (content != null) body.Children.Add(content);
-        return new Border { Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["Card"], Child = body };
+        return new Border { Style = (Style)Application.Current.Resources["Card"], Child = body };
     }
 
     private ContentDialog Dialog(string title, UIElement content) => new()
@@ -1599,8 +1647,7 @@ public sealed partial class MainWindow : Window
         Title = title,
         Content = content,
         CloseButtonText = Localized.Get("取消"),
-        XamlRoot = Root.XamlRoot,
-        RequestedTheme = Root.ActualTheme,
+        Owner = this,
         DefaultButton = ContentDialogButton.Primary
     };
 

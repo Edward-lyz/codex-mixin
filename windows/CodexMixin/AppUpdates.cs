@@ -106,7 +106,7 @@ internal sealed class AppUpdates(Func<CliClient> client)
 
     internal async Task<(bool Allowed, bool Running)> PrepareInstallAsync(CancellationToken token)
     {
-        var app = (App)Microsoft.UI.Xaml.Application.Current;
+        var app = (App)System.Windows.Application.Current;
         if (app.HasPendingChanges || app.HasDraftChanges)
         {
             Status = Localized.Get("暂缓更新：请先保存草稿并完成当前操作。");

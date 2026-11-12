@@ -1,14 +1,14 @@
 # Codex Mixin Windows 原生端
 
-Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Rust CLI / 本地网关负责供应商、模型、客户端接入、配置事务和服务生命周期。
+Windows 前端使用 **C# + XAML + WPF（.NET 10 内置 Fluent 主题）**。Rust CLI / 本地网关负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
-采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK WinUI 模块固定为 stable `1.8.260803003`，Foundation、InteractiveExperiences 和 Base 沿用 lock file 中同一发行组的版本，避免引入 preview / experimental API。
+界面使用 .NET 10 自带的 WPF 与 [Fluent 主题](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/whats-new/net90#fluent-theme)，不依赖 Windows App SDK runtime。供应商与 Agent 的 SVG 图标通过 NuGet `SharpVectors.Wpf` 渲染，版本固定在 lock file。
 
 ## 原生界面
 
 - 紧凑托盘主面板；控制台顶部依次切换模型与服务、Agent 接入、用量明细、上下文、模型路由；模型路由页统一配置融合、定时和故障转移。
 - 模型与服务使用服务商侧栏、模型/连接设置页、Codex 模型选择表和底部统一「应用更改」。供应商图标与 macOS 共用来源。
-- Fluent 原生控件、Mica 背景、系统明暗主题、高对比度、键盘导航与 UI Automation。
+- Fluent 控件、Windows 11 Mica 背景、系统明暗主题、高对比度、键盘导航与 UI Automation。
 - 供应商新增、编辑、启停、删除、连接测试；模型搜索、选择、上下文覆盖、发现、能力探测和测速。
 - OneAPI 认证桥接与上报、AWS 凭据、OpenCode Go 额度 Cookie 使用安全输入，经子进程环境传给 CLI。
 - Agent 列表由 CLI 动态提供；支持版本检查、接入、断开和升级，Codex 接入必须明确选择模式。
@@ -43,12 +43,12 @@ CLI 进程启动和 JSON 解析在后台线程执行。未显式配置 `TOKIO_WO
 
 | 路径 | 职责 |
 | --- | --- |
-| `CodexMixin/` | WinUI 原生窗口、页面与 Windows 平台壳 |
+| `CodexMixin/` | WPF 窗口、页面与 Windows 平台壳 |
 | `Core/` | CLI 进程、严格 JSON 契约与保存后应用配置 |
 | `Tests/` | 用真实 Rust CLI 检查 `Core/` 的契约解析 |
 | `scripts/` | 图标生成、自包含发布、NSIS、安装与卸载 |
 
-开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Visual Studio 的 WinUI 开发工具和 Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。WinUI 的 XAML 编译器必须在 Windows 执行。
+开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。
 
 命令行编译可使用 Visual Studio 2022 Build Tools 的「使用 C++ 的桌面开发」工作负载，包含 MSVC x64/x86、Windows SDK 和 CMake。仅安装 .NET 运行时不能编译界面；仅安装 Rust 也缺少链接所需的 `kernel32.lib`。安装完成后重新打开终端，在 x64 Developer PowerShell 中构建 CLI，再使用 .NET SDK 构建界面。
 
@@ -62,7 +62,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 ## CI 验证与发布
 
-`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust Clippy 与 E2E、真实 CLI 契约测试、自包含 WinUI 发布，最后生成安装器和便携包。
+`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust Clippy 与 E2E、真实 CLI 契约测试、自包含 WPF 发布，最后生成安装器和便携包。
 
 Windows 原生界面另由 `Windows UI and CLI` job 在隔离配置下运行真实发布包，以固定版本的微软 winapp UI Automation 操作控件，并用真实 CLI 读取结果。无可用桌面或操作失败均使检查失败，窗口树、截图和脱敏日志上传为 `windows-ui-evidence`。截图用于故障证据，不作像素视觉回归。具体覆盖范围以脚本和运行产物为准，其他平台仍按根级 `AGENTS.md` 人工验收。
 

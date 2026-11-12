@@ -159,7 +159,7 @@ curl http://127.0.0.1:8317/v1/models                      # 返回模型列表�
 
 ## 界面
 
-macOS 提供原生菜单栏与控制台，Windows 提供 WinUI 3 控制台与托盘，Linux 使用 CLI 和 Web 面板。三端功能一致。
+macOS 提供原生菜单栏与控制台，Windows 提供 WPF 控制台与托盘，Linux 使用 CLI 和 Web 面板。三端功能一致。
 
 <table>
   <tr>

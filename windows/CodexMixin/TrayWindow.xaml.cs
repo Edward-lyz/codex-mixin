@@ -1,9 +1,11 @@
 using System.Text.Json;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace CodexMixin;
 
@@ -48,35 +50,32 @@ public sealed partial class TrayWindow : Window
         InitializeComponent();
         XamlText.Translate(Content);
         GatewaySwitch.IsEnabled = false;
-        Panel.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         Title = Localized.Get("Codex Mixin · 主面板");
-        AppWindow.IsShownInSwitchers = false;
-        var presenter = (OverlappedPresenter)AppWindow.Presenter;
-        presenter.SetBorderAndTitleBar(false, false);
-        presenter.IsResizable = false;
-        presenter.IsMinimizable = false;
-        presenter.IsMaximizable = false;
-        presenter.IsAlwaysOnTop = true;
-        NativeShell.ConfigurePopupFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
-        Activated += (_, args) => { if (!dialogOpen && args.WindowActivationState == WindowActivationState.Deactivated) HidePanel(); };
+        Menus.Attach(AdvancedRow, AdvancedRow.ContextMenu, PlacementMode.Top);
+        Menus.Attach(AboutRow, AboutRow.ContextMenu, PlacementMode.Top);
+        NativeShell.ConfigurePopupFrame(Handle);
+        // Windows 11 draws the rounded popup border itself.
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) Panel.BorderThickness = new Thickness(0);
+        Deactivated += (_, _) => { if (!dialogOpen && !MenuOpen) HidePanel(); };
         Panel.Loaded += (_, _) => FitToContent();
         PanelContent.SizeChanged += (_, _) => FitToContent();
         PanelMenu.SizeChanged += (_, _) => FitToContent();
         Closed += (_, _) => { timer.Stop(); lifetime.Cancel(); };
         timer.Tick += async (_, _) => await ReloadAsync();
-        AppWindow.Closing += (_, args) => { if (!exiting) { args.Cancel = true; HidePanel(); } };
+        Closing += (_, args) => { if (!exiting) { args.Cancel = true; HidePanel(); } };
     }
 
+    private nint Handle => new WindowInteropHelper(this).EnsureHandle();
+    private bool MenuOpen => AdvancedRow.ContextMenu.IsOpen || AboutRow.ContextMenu.IsOpen;
     internal bool IsChanging => changing;
     internal void Shutdown() { exiting = true; Close(); }
     internal void HidePanel()
     {
         // macOS keeps quota warm while its menu is closed. Visibility must not
         // cancel a slow provider and force the next click to start over.
-        AppWindow.Hide();
+        Hide();
         RenderQuota();
     }
-    internal void SetTheme(ElementTheme theme) => Panel.RequestedTheme = theme;
     internal async Task PreloadAsync()
     {
         try
@@ -105,17 +104,17 @@ public sealed partial class TrayWindow : Window
         var bounds = NativeShell.PanelBounds();
         maximumHeight = bounds.Height;
         // Start compact even before XAML has a root; remote reads never size the window.
-        AppWindow.MoveAndResize(NativeShell.PanelBounds(Math.Min(bounds.Height, bounds.Width)));
+        NativeShell.Place(Handle, NativeShell.PanelBounds(Math.Min(bounds.Height, bounds.Width)));
         // The console may have changed the style since this cached panel last showed.
         quotaStyle = QuotaView.Stored();
         RenderQuota();
-        AppWindow.Show(); Activate();
-        NativeShell.ConfigurePopupFrame(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        Show(); Activate();
+        NativeShell.ConfigurePopupFrame(Handle);
         FitToContent();
         // Paint cached values immediately; an existing background refresh is
         // reused without cancellation, even after switching providers.
-        if (exiting || changing || !preloadComplete || !AppWindow.IsVisible) return;
-        if (DateTimeOffset.UtcNow - refreshedAt < SnapshotAge && snapshotRevision == ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision)
+        if (exiting || changing || !preloadComplete || !IsVisible) return;
+        if (DateTimeOffset.UtcNow - refreshedAt < SnapshotAge && snapshotRevision == ((App)Application.Current).Operations.Revision)
         {
             RenderQuota();
             return;
@@ -143,11 +142,11 @@ public sealed partial class TrayWindow : Window
         PanelStatus.Text = Localized.Get("正在刷新本地状态与额度…");
         using var refresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         refreshCancellation = refresh;
-        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        var revision = ((App)Application.Current).Operations.Revision;
         RenderQuota();
         try
         {
-            var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
+            var client = ((App)Application.Current).Client;
             // Reserve both query slots for local reads first. Each section renders and
             // fails independently; quota must never disable an already-known gateway.
             var statusTask = ReadStatusAsync(refresh.Token);
@@ -289,7 +288,7 @@ public sealed partial class TrayWindow : Window
     {
         try
         {
-            var status = await ((App)Microsoft.UI.Xaml.Application.Current).Client.QueryAsync(["service", "status", "--json"], token, LocalReadTimeout);
+            var status = await ((App)Application.Current).Client.QueryAsync(["service", "status", "--json"], token, LocalReadTimeout);
             token.ThrowIfCancellationRequested();
             ServiceTitle.Text = Localized.Format("本地服务{0}", Json.Gateway(status));
             serviceKnown = true;
@@ -320,9 +319,9 @@ public sealed partial class TrayWindow : Window
         {
             var id = Json.Text(provider, "id");
             var tile = new Border { Style = Themed(id == providerId ? "IconTile" : "IconTileIdle"), Width = 40, Height = 40, Child = Marks.Provider(provider, 24) };
-            var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
+            var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0) };
             ToolTipService.SetToolTip(button, Json.Text(provider, "display_name"));
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
+            AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
             button.Click += (_, _) =>
             {
                 providerId = id;
@@ -350,35 +349,35 @@ public sealed partial class TrayWindow : Window
     private void FitToContent()
     {
         if (exiting || fitting || fitQueued) return;
-        fitQueued = DispatcherQueue.TryEnqueue(() =>
+        fitQueued = true;
+        _ = Dispatcher.InvokeAsync(() =>
         {
             fitQueued = false;
             FitPanelToContent();
-        });
+        }, DispatcherPriority.Loaded);
     }
 
     private void FitPanelToContent()
     {
-        if (exiting || fitting || !Panel.IsLoaded || Panel.XamlRoot is not { } root || maximumHeight == 0) return;
+        if (exiting || fitting || !Panel.IsLoaded || maximumHeight == 0) return;
         fitting = true;
         try
         {
-            var scale = root.RasterizationScale;
-            var width = AppWindow.Size.Width / scale - 2;
-            // Measuring the Window's root re-enters WinUI layout and can throw inside
-            // ScrollViewer before its visual tree is ready. Measure only the content.
-            PanelContent.Measure(new Windows.Foundation.Size(width, double.PositiveInfinity));
-            PanelMenu.Measure(new Windows.Foundation.Size(width - 12, double.PositiveInfinity));
+            var scale = VisualTreeHelper.GetDpi(this).DpiScaleY;
+            var width = ActualWidth - Panel.BorderThickness.Left - Panel.BorderThickness.Right;
+            // Measure only the content; the window's own size is what this computes.
+            PanelContent.Measure(new Size(width, double.PositiveInfinity));
+            PanelMenu.Measure(new Size(width - 12, double.PositiveInfinity));
             var footer = PanelMenu.DesiredSize.Height + 14;
             PanelScroll.MaxHeight = Math.Max(1, maximumHeight / scale - footer);
             var height = Math.Min(maximumHeight, (int)Math.Ceiling((Math.Min(PanelContent.DesiredSize.Height, PanelScroll.MaxHeight) + footer) * scale));
-            if (height != AppWindow.Size.Height)
-                AppWindow.MoveAndResize(NativeShell.PanelBounds(height));
+            if (height != (int)Math.Round(ActualHeight * scale))
+                NativeShell.Place(Handle, NativeShell.PanelBounds(height));
         }
         finally { fitting = false; }
     }
 
-    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+    private static Style Themed(string key) => (Style)Application.Current.Resources[key];
 
     private void RenderQuota()
     {
@@ -393,7 +392,7 @@ public sealed partial class TrayWindow : Window
         });
         if (quotaRows.Length == 0 && providerId != null && quotaPending.Contains(providerId))
         {
-            QuotaBody.Children.Add(new ProgressBar { IsIndeterminate = AppWindow.IsVisible, Height = 4 });
+            QuotaBody.Children.Add(new ProgressBar { IsIndeterminate = IsVisible, Height = 4 });
             QuotaBody.Children.Add(new TextBlock { Text = quotaProvider == providerId ? Localized.Get("正在读取额度…") : Localized.Get("正在排队查询额度…"), Style = Themed("Caption") });
         }
         else QuotaBody.Children.Add(quotaRows.Length == 0
@@ -409,7 +408,7 @@ public sealed partial class TrayWindow : Window
     private void OnOpen(object sender, RoutedEventArgs args)
     {
         var target = (string)((FrameworkElement)sender).Tag;
-        HidePanel(); ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(target);
+        HidePanel(); ((App)Application.Current).OpenPage(target);
     }
     private async void OnAutostart(object sender, RoutedEventArgs args) => await ChangeAsync(["service", "autostart", "enable", "--json"]);
     private async void OnRefreshQuota(object sender, RoutedEventArgs args)
@@ -418,7 +417,7 @@ public sealed partial class TrayWindow : Window
         refreshCancellation?.Cancel();
         statusCancellation?.Cancel();
         await Task.WhenAll(refreshTask, statusRefreshTask);
-        if (!exiting && AppWindow.IsVisible) await ReloadAsync();
+        if (!exiting && IsVisible) await ReloadAsync();
     }
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
@@ -437,11 +436,12 @@ public sealed partial class TrayWindow : Window
 
     private async Task ConfirmExitAsync(string title, string content, string primary, Func<App, Task> exit)
     {
-        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = Localized.Get("请等待当前操作完成后退出。"); return; }
+        if (dialogOpen) return;
+        if (((App)Application.Current).HasPendingChanges) { PanelStatus.Text = Localized.Get("请等待当前操作完成后退出。"); return; }
         dialogOpen = true;
         try
         {
-            if (!await ((App)Microsoft.UI.Xaml.Application.Current).ConfirmDraftsAsync()) return;
+            if (!await ((App)Application.Current).ConfirmDraftsAsync()) return;
         }
         finally { dialogOpen = false; }
         ShowPanel();
@@ -451,21 +451,20 @@ public sealed partial class TrayWindow : Window
             Content = content,
             PrimaryButtonText = primary,
             CloseButtonText = Localized.Get("取消"),
-            XamlRoot = Panel.XamlRoot,
-            RequestedTheme = Panel.ActualTheme
+            Owner = this
         };
         dialogOpen = true;
         try
         {
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            await exit((App)Microsoft.UI.Xaml.Application.Current);
+            await exit((App)Application.Current);
         }
         catch (Exception error) when (!exiting) { PanelStatus.Text = error.Message; FitToContent(); }
         finally { dialogOpen = false; }
     }
     private async Task ChangeAsync(string[] args)
     {
-        if (changing || ((App)Microsoft.UI.Xaml.Application.Current).IsUpdating) return;
+        if (changing || ((App)Application.Current).IsUpdating) return;
         changing = true;
         GatewaySwitch.IsEnabled = false;
         refreshCancellation?.Cancel();
@@ -476,11 +475,11 @@ public sealed partial class TrayWindow : Window
         {
             PanelStatus.Text = Localized.Get("正在执行网关操作…");
             FitToContent();
-            PanelStatus.Text = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(args, lifetime.Token);
+            PanelStatus.Text = await ((App)Application.Current).Operations.ChangeAsync(args, lifetime.Token);
         }
         catch (Exception error) { failure = error.Message; }
         finally { changing = false; }
-        if (!exiting && AppWindow.IsVisible) await ReloadAsync();
+        if (!exiting && IsVisible) await ReloadAsync();
         if (!exiting && failure != null) { PanelStatus.Text = failure; FitToContent(); }
     }
 }

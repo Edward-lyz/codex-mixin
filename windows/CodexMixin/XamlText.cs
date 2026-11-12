@@ -1,6 +1,6 @@
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Controls;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
 
 namespace CodexMixin;
 
@@ -19,16 +19,21 @@ internal static class XamlText
         switch (node)
         {
             case TextBlock text: text.Text = Localized.Get(text.Text); break;
-            case SelectorBarItem item: item.Text = Localized.Get(item.Text); break;
-            case MenuFlyoutItem item: item.Text = Localized.Get(item.Text); break;
-            case MenuFlyout flyout: foreach (var item in flyout.Items) Translate(item); break;
-            case SelectorBar bar: foreach (var item in bar.Items) Translate(item); break;
+            case HeaderedItemsControl item:
+                if (item.Header is string header) item.Header = Localized.Get(header);
+                foreach (var child in item.Items) Translate(child);
+                break;
+            case ItemsControl items: foreach (var child in items.Items) Translate(child); break;
             case Panel panel: foreach (var child in panel.Children) Translate(child); break;
             case Border border: Translate(border.Child); break;
+            case HeaderedContentControl tab:
+                if (tab.Header is string title) tab.Header = Localized.Get(title);
+                Translate(tab.Content);
+                break;
             case ContentControl control:
                 if (control.Content is string content) control.Content = Localized.Get(content);
                 else Translate(control.Content);
-                if (control is Button button) Translate(button.Flyout);
+                Translate(control.ContextMenu);
                 break;
         }
     }

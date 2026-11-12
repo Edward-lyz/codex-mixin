@@ -12,6 +12,8 @@ $WinApp = (Resolve-Path $WinApp).Path
 $evidence = [IO.Directory]::CreateDirectory($EvidenceDirectory).FullName
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('codex-mixin-ui-' + [guid]::NewGuid().ToString('N'))
 $null = [IO.Directory]::CreateDirectory($fixture)
+# The in-process Win32 file dialogs resolve Desktop from USERPROFILE and refuse to open without it.
+$null = [IO.Directory]::CreateDirectory("$fixture\home\Desktop")
 $app = $null
 $upstream = $null
 $settingsChanged = $false
@@ -88,7 +90,9 @@ try {
     & $WinApp ui invoke $add.matches[0].selector -a $app.Id
     & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
     $option = & $WinApp ui search 'custom' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
+    # WPF also exposes open ComboBox items through the popup window as wrapper peers
+    # without SelectionItemPattern; click the visible item like a user would.
+    & $WinApp ui click $option.matches[0].selector -a $app.Id
     $field = & $WinApp ui search '供应商 ID' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector ui-local -a $app.Id
     $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
@@ -96,7 +100,7 @@ try {
     & $WinApp ui set-value provider-base-url $upstreamUrl -a $app.Id
     & $WinApp ui invoke '协议（custom）' -a $app.Id --action expand
     $option = & $WinApp ui search 'open_ai_chat' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
+    & $WinApp ui click $option.matches[0].selector -a $app.Id
     $field = & $WinApp ui search 'API Key' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector ui-fixture-key -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
@@ -193,7 +197,7 @@ try {
     & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
     & $WinApp ui invoke 接入模式 -a $app.Id --action expand
     $option = & $WinApp ui search '仅自定义模型' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
+    & $WinApp ui click $option.matches[0].selector -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '接入 Agent完成' --contains --timeout 90000
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
@@ -242,7 +246,7 @@ try {
     & $WinApp ui wait-for operation-status -a $app.Id --value '读取用量完成' --contains --timeout 30000
     & $WinApp ui invoke 图表分组 -a $app.Id --action expand
     $option = & $WinApp ui search '按 Provider 拆分' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui invoke $option.matches[0].selector -a $app.Id --action select
+    & $WinApp ui click $option.matches[0].selector -a $app.Id
     & $WinApp ui wait-for usage-status -a $app.Id --timeout 10000
     $null = & $cli --no-tui --json-errors usage --daily --json --days 1 | ConvertFrom-Json
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
@@ -309,7 +313,7 @@ try {
     foreach ($theme in @('浅色', '深色', '跟随系统')) {
         & $WinApp ui invoke theme-picker -w $settingsWindow --action expand
         $option = & $WinApp ui search $theme -w $settingsWindow --type ListItem --json | ConvertFrom-Json
-        & $WinApp ui invoke $option.matches[0].selector -w $settingsWindow --action select
+        & $WinApp ui click $option.matches[0].selector -w $settingsWindow
         & $WinApp ui screenshot -w $settingsWindow --output "$evidence\theme-$theme.png"
     }
     $settingsChanged = $true
@@ -475,7 +479,7 @@ finally {
             @{ pid = $app.Id; exitCode = $app.ExitCode; stage = $stage } |
                 ConvertTo-Json | Set-Content "$evidence\app-exit.json"
             @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $appStartedAt; Level = 2 } -ErrorAction SilentlyContinue |
-                Where-Object { $_.Message -match 'codex_mixin_ui|CodexMixin|Microsoft.UI.Xaml' } |
+                Where-Object { $_.Message -match 'codex_mixin_ui|CodexMixin|PresentationFramework' } |
                 Select-Object TimeCreated, ProviderName, Id, Message) |
                 ConvertTo-Json -Depth 4 | Set-Content "$evidence\app-crashes.json"
         }

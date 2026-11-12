@@ -8,7 +8,7 @@
 
 ## 产品原则：CLI 是核心，GUI 是外壳
 
-Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WinUI 3 App 和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
+Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WPF App 和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
 
 - 新增业务必须先提供可在 `--no-tui` 下使用的 CLI 入口及可验证的 Rust 用例；自动化调用需要稳定 JSON 输出与结构化错误。无 GUI 环境也必须能配置、运行、诊断和恢复。
 - “CLI 是核心”不等于把业务都塞进 `src/cli/`。参数、输入、渲染与退出码属于 CLI；业务规则、提交顺序和可复用能力属于 `application` 及下层模块。

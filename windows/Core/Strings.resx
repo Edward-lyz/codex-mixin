@@ -1742,4 +1742,13 @@ Click to change model</value>
   <data name="（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）" xml:space="preserve">
     <value>(Only the latest 500 are listed; click a chart bar to see all replies in that period)</value>
   </data>
+  <data name="小时" xml:space="preserve">
+    <value>Hour</value>
+  </data>
+  <data name="分钟" xml:space="preserve">
+    <value>Minute</value>
+  </data>
+  <data name="关闭" xml:space="preserve">
+    <value>Close</value>
+  </data>
 </root>

@@ -2,15 +2,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
-    <UseWinUI>true</UseWinUI>
-    <EnableMsixTooling>true</EnableMsixTooling>
-    <WindowsPackageType>None</WindowsPackageType>
-    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <!-- Keep XAML reflection intact; omit development symbols from distribution. -->
@@ -23,12 +20,18 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- ThemeMode (Fluent light/dark switching) is still marked experimental. -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode>true</RestoreLockedMode>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Self-contained component payloads avoid the all-features Runtime MSIX. -->
-    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <!-- WPF drops System.IO from implicit usings because of Shapes.Path; the shared Core sources need it. -->
+    <Using Include="System.IO" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- WPF has no SVG renderer; SharpVectors draws the shared macOS logos. -->
+    <PackageReference Include="SharpVectors.Wpf" Version="1.8.6" />
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <EmbeddedResource Include="../Core/Strings.resx" LogicalName="CodexMixin.Strings.resources" />
     <Content Include="../build/winsparkle/WinSparkle.dll;../build/winsparkle/WinSparkle.PublicKey.txt;../build/winsparkle/WinSparkle.LICENSE.txt;../build/winsparkle/WinSparkle.Expat.LICENSE.txt" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
@@ -39,7 +42,7 @@
     <Content Include="../assets/agents/*.svg;../assets/agents/*.png" Link="Assets/agents/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/agents/ATTRIBUTION.md" Link="Assets/agents/ATTRIBUTION.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-  <Target Name="FetchWinSparkle" BeforeTargets="PrepareForBuild">
+  <Target Name="FetchWinSparkle" BeforeTargets="PrepareForBuild" Condition="'$(OS)' == 'Windows_NT'">
     <Exec Command="powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\fetch-winsparkle.ps1&quot;" />
   </Target>
 </Project>

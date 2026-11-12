@@ -129,12 +129,12 @@ $agents = Join-Path $repo "windows\assets\agents"
 New-Item -ItemType Directory -Force -Path $agents | Out-Null
 Copy-Item -Path (Join-Path $repo "macos\assets\agents\*.svg"), (Join-Path $repo "macos\assets\agents\*.png") -Destination $agents -Force
 Copy-Item -LiteralPath (Join-Path $repo "macos\assets\agents\ATTRIBUTION.md") -Destination $agents -Force
-# WinUI needs an explicit viewport for the em-sized logos used by macOS.
+# The SVG renderer needs an explicit viewport for the em-sized logos used by macOS.
 foreach ($asset in Get-ChildItem $agents -Filter '*.svg') {
   $document = New-Object System.Xml.XmlDocument
   $document.Load($asset.FullName)
   # SVGs such as WorkBuddy use a 64px canvas without a viewBox. Preserve
-  # that coordinate system before normalizing the WinUI display size.
+  # that coordinate system before normalizing the Windows display size.
   if (-not $document.DocumentElement.HasAttribute('viewBox')) {
     $width = $document.DocumentElement.GetAttribute('width')
     $height = $document.DocumentElement.GetAttribute('height')

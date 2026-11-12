@@ -78,7 +78,7 @@ jobs:
 
   native:
     if: ${{ !inputs.artifacts_run_id }}
-    name: WinUI 3 build and adapter tests
+    name: WPF build and adapter tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5

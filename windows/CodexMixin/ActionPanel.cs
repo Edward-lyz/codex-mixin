@@ -1,5 +1,5 @@
-using Microsoft.UI.Xaml.Controls;
-using Windows.Foundation;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace CodexMixin;
 
@@ -11,7 +11,7 @@ internal sealed class ActionPanel : Panel
     protected override Size MeasureOverride(Size availableSize)
     {
         double left = 0, top = 0, rowHeight = 0, width = 0;
-        foreach (var child in Children)
+        foreach (UIElement child in InternalChildren)
         {
             child.Measure(availableSize);
             var size = child.DesiredSize;
@@ -29,7 +29,7 @@ internal sealed class ActionPanel : Panel
     protected override Size ArrangeOverride(Size finalSize)
     {
         double left = 0, top = 0, rowHeight = 0;
-        foreach (var child in Children)
+        foreach (UIElement child in InternalChildren)
         {
             var size = child.DesiredSize;
             var width = Math.Min(size.Width, finalSize.Width);

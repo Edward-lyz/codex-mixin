@@ -160,7 +160,7 @@ See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-
 
 ## Interface
 
-macOS has a native menu bar app and console, Windows has a WinUI 3 console and tray, and Linux uses the CLI and Web panel. All three offer the same features.
+macOS has a native menu bar app and console, Windows has a WPF console and tray, and Linux uses the CLI and Web panel. All three offer the same features.
 
 <table>
   <tr>
