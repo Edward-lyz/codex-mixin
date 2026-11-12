@@ -26,8 +26,11 @@ impl Drop for InteractiveChild {
 pub type InteractiveInput = tokio::sync::mpsc::Sender<Vec<Value>>;
 
 /// The command must describe an interactive invocation, never print mode.
+/// `history` holds Messages API messages the session resumes from, so only
+/// new input goes through the terminal.
 pub fn spawn(
     command: &std::process::Command,
+    history: &[Value],
 ) -> anyhow::Result<(
     InteractiveChild,
     InteractiveInput,
@@ -69,7 +72,6 @@ pub fn spawn(
         builder.cwd(cwd);
     }
     let session_id = uuid::Uuid::new_v4().to_string();
-    builder.args(["--session-id", &session_id]);
     let config_root = command
         .get_envs()
         .find_map(|(name, value)| (name == "CLAUDE_CONFIG_DIR").then_some(value).flatten())
@@ -82,10 +84,64 @@ pub fn spawn(
         pixel_width: 0,
         pixel_height: 0,
     })?;
-    let mut child = pair
-        .slave
-        .spawn_command(builder)
-        .context("start interactive Claude PTY")?;
+    let mut resumed = None;
+    if history.is_empty() {
+        builder.args(["--session-id", &session_id]);
+    } else {
+        // Claude Code looks up resumed sessions in the project folder named
+        // after its resolved working directory, each non-alphanumeric UTF-16
+        // unit a dash.
+        let cwd = command
+            .get_current_dir()
+            .map(std::path::Path::to_path_buf)
+            .map_or_else(std::env::current_dir, Ok)?
+            .canonicalize()?;
+        let cwd_text = cwd.to_string_lossy();
+        let cwd_text = cwd_text.strip_prefix(r"\\?\").unwrap_or(&cwd_text);
+        let project: String = cwd_text
+            .encode_utf16()
+            .map(|unit| match char::from_u32(unit.into()) {
+                Some(c) if c.is_ascii_alphanumeric() => c,
+                _ => '-',
+            })
+            .collect();
+        let folder = config_root.join("projects").join(project);
+        super::ensure_owner_only_dir(&folder)?;
+        let timestamp = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut parent = Value::Null;
+        let mut transcript = Vec::new();
+        for message in history {
+            let id = uuid::Uuid::new_v4().to_string();
+            let line = json!({
+                "parentUuid": parent,
+                "isSidechain": false,
+                "type": message["role"],
+                "message": message,
+                "uuid": id,
+                "timestamp": timestamp,
+                "sessionId": session_id,
+                "cwd": cwd_text,
+                "userType": "external",
+            });
+            serde_json::to_writer(&mut transcript, &line)?;
+            transcript.push(b'\n');
+            parent = Value::String(id);
+        }
+        let file = folder.join(format!("{session_id}.jsonl"));
+        super::write_owner_only(&file, &transcript)?;
+        builder.args(["--resume", &session_id]);
+        resumed = Some(file);
+    }
+    let mut child = match pair.slave.spawn_command(builder) {
+        Ok(child) => child,
+        Err(error) => {
+            // The worker that sweeps this run's transcript never starts.
+            if let Some(file) = resumed {
+                let _ = std::fs::remove_file(file);
+            }
+            return Err(error.context("start interactive Claude PTY"));
+        }
+    };
     let killer = child.clone_killer();
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader()?;
@@ -200,8 +256,8 @@ pub fn spawn(
                 }
                 // Option menus such as the fullscreen renderer offer also draw
                 // the prompt glyph, and pasted input would land in the menu.
-                // Pasted text always starts on a new line, so a user message
-                // never puts a digit right after the glyph.
+                // Pasted text that starts with a digit starts on a new line,
+                // so a user message never puts a digit right after the glyph.
                 let menu = display.lines().any(|line| {
                     line.trim_start()
                         .strip_prefix('\u{276f}')
@@ -234,7 +290,7 @@ pub fn spawn(
                 {
                     for (index, part) in content.iter().enumerate() {
                         if let Some(words) = part["text"].as_str() {
-                            paste(&writer, &screen, words, false, &stop)?;
+                            paste(&writer, &screen, words, false, index != 0, &stop)?;
                         } else if part["type"] == "image" {
                             use base64::Engine;
                             let data = part["source"]["data"]
@@ -252,7 +308,14 @@ pub fn spawn(
                                 &image,
                                 &base64::engine::general_purpose::STANDARD.decode(data)?,
                             )?;
-                            paste(&writer, &screen, &image.to_string_lossy(), true, &stop)?;
+                            paste(
+                                &writer,
+                                &screen,
+                                &image.to_string_lossy(),
+                                true,
+                                false,
+                                &stop,
+                            )?;
                         } else {
                             bail!("unsupported interactive input content");
                         }
@@ -293,6 +356,7 @@ fn paste(
     screen: &Arc<Mutex<vt100::Parser>>,
     text: &str,
     image: bool,
+    separate: bool,
     stopped: &AtomicBool,
 ) -> anyhow::Result<()> {
     if text.trim().is_empty() {
@@ -321,8 +385,15 @@ fn paste(
             .lock()
             .map_err(|_| anyhow::anyhow!("terminal writer poisoned"))?;
         writer.write_all(b"\x1b[200~")?;
-        // Keep leading slash/bang/ampersand input from being a CLI command.
-        if !image {
+        // Separate later blocks without changing the first ordinary text block.
+        // A leading command marker or digit also needs a newline so the CLI
+        // does not interpret it as a command or an option menu.
+        if !image
+            && (separate
+                || text
+                    .trim_start()
+                    .starts_with(|c: char| matches!(c, '/' | '!' | '&') || c.is_ascii_digit()))
+        {
             writer.write_all(b"\n")?;
         }
         writer.write_all(text.as_bytes())?;

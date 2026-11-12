@@ -628,6 +628,7 @@ version = "0.8.1"
 dependencies = [
  "anyhow",
  "base64",
+ "chrono",
  "fs2",
  "portable-pty",
  "reqwest",

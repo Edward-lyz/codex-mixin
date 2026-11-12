@@ -47,7 +47,6 @@ const MCP_TOOL_TIMEOUT_MS: &str = "86400000";
 /// again at its lower default.
 const MAX_MCP_OUTPUT_TOKENS: &str = "100000";
 const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-const HISTORY_INTRO: &str = "The conversation so far, recorded by the client application. Continue it; the tools named there are available to you.";
 const CONTINUE_PROMPT: &str = "Continue from where the conversation above left off.";
 
 /// Tool desks of the running processes, keyed by their MCP URL token.
@@ -145,9 +144,10 @@ impl UpstreamAccess {
         let (mut session, step) = match planned {
             Some(planned) => planned,
             None => {
-                let session = spawn_session(provider, request, &bridge, fingerprint).await?;
-                let opening = opening_message(&request.messages);
-                (session, Step::NewTurn(opening))
+                let (history, latest) = opening(&request.messages);
+                let session =
+                    spawn_session(provider, request, &bridge, fingerprint, history).await?;
+                (session, Step::NewTurn(latest))
             }
         };
         match step {
@@ -441,6 +441,7 @@ async fn spawn_session(
     request: &MessageRequest,
     bridge: &Bridge,
     fingerprint: u64,
+    history: Vec<Value>,
 ) -> Result<Session, GatewayError> {
     let program = crate::platform::agent_cli::find_command(CLI_NAME)
         .context("Claude Code CLI `claude` was not found; install it and sign in")?;
@@ -476,6 +477,10 @@ async fn spawn_session(
         .current_dir(&workdir)
         .env("MCP_TOOL_TIMEOUT", MCP_TOOL_TIMEOUT_MS)
         .env("MAX_MCP_OUTPUT_TOKENS", MAX_MCP_OUTPUT_TOKENS)
+        // The first message names the session through an uncached request to
+        // the session model carrying the whole message; a replayed transcript
+        // would pay for itself twice.
+        .env("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -495,7 +500,7 @@ async fn spawn_session(
     }
     crate::platform::prepare_background_tokio_command(&mut command);
     let (child, stdin, mut source) = tokio::task::spawn_blocking(move || {
-        crate::platform::claude_interactive::spawn(command.as_std())
+        crate::platform::claude_interactive::spawn(command.as_std(), &history)
     })
     .await
     .context("start interactive Claude worker")??;
@@ -644,9 +649,10 @@ async fn write_user(stdin: &mut InteractiveInput, content: Vec<Value>) -> Result
     Ok(())
 }
 
-/// First message of a fresh process: earlier history as a transcript, then
-/// the latest user input as real content blocks.
-fn opening_message(messages: &[Message]) -> Vec<Value> {
+/// Split a fresh process's request into the history it resumes from, as
+/// Messages API messages in Claude Code's own tool naming, and the latest user
+/// input it receives through the terminal.
+fn opening(messages: &[Message]) -> (Vec<Value>, Vec<Value>) {
     // The host may append a note (the context state) after the user's own
     // message, so the latest input is every trailing plain user message, not
     // just the last one; otherwise the real request would be buried in history.
@@ -664,16 +670,8 @@ fn opening_message(messages: &[Message]) -> Vec<Value> {
             .take_while(|message| is_plain_user(message))
             .count();
     let (history, latest) = messages.split_at(split);
+    let history = history.iter().filter_map(history_message).collect();
     let mut content = Vec::new();
-    if !history.is_empty() {
-        let mut transcript = format!("{HISTORY_INTRO}\n<history>\n");
-        for message in history {
-            render_message(message, &mut transcript);
-        }
-        transcript.push_str("</history>");
-        content.push(json!({"type": "text", "text": transcript}));
-    }
-    let before = content.len();
     content.extend(
         latest
             .iter()
@@ -686,29 +684,59 @@ fn opening_message(messages: &[Message]) -> Vec<Value> {
             })
             .filter_map(|block| serde_json::to_value(block).ok()),
     );
-    if content.len() == before {
+    if content.is_empty() {
         content.push(json!({"type": "text", "text": CONTINUE_PROMPT}));
     }
-    content
+    (history, content)
 }
 
-fn render_message(message: &Message, out: &mut String) {
-    for block in &message.content {
-        let line = match block {
-            ContentBlock::Text { text } => format!("[{}] {text}", message.role),
-            ContentBlock::Image { .. } => format!("[{}] (image)", message.role),
-            ContentBlock::ToolUse { id, name, input } => {
-                format!("[assistant tool call {id}] {name} {input}")
+/// One history message as the live process would have recorded it: tools under
+/// their MCP names and results as MCP content. Context notes that rode alone
+/// with tool results never reached the process. Thinking is dropped: a
+/// signature from another model or account would fail the resumed request.
+fn history_message(message: &Message) -> Option<Value> {
+    let only_notes = message.content.iter().all(|block| match block {
+        ContentBlock::Text { .. } => is_context_note(&json!(block)),
+        ContentBlock::Image { .. } => false,
+        _ => true,
+    });
+    let content = message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } if text.is_empty() => None,
+            ContentBlock::Text { .. } if only_notes => None,
+            ContentBlock::Text { .. } | ContentBlock::Image { .. } => {
+                serde_json::to_value(block).ok()
             }
+            ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => None,
+            ContentBlock::ToolUse { id, name, input } => Some(json!({
+                "type": "tool_use",
+                "id": id,
+                "name": format!("{MCP_PREFIX}{}", mcp_tool_name(name)),
+                "input": input,
+            })),
             ContentBlock::ToolResult {
                 tool_use_id,
                 content,
-            } => format!("[tool result {tool_use_id}] {}", result_text(content)),
-            ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => continue,
-        };
-        out.push_str(&line);
-        out.push('\n');
-    }
+            } => {
+                let parts = mcp_result(content)["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|part| match part["type"].as_str() {
+                        Some("image") => json!({
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": part["mimeType"], "data": part["data"]},
+                        }),
+                        _ => json!({"type": "text", "text": part["text"]}),
+                    })
+                    .collect::<Vec<_>>();
+                Some(json!({"type": "tool_result", "tool_use_id": tool_use_id, "content": parts}))
+            }
+        })
+        .collect::<Vec<_>>();
+    (!content.is_empty()).then(|| json!({"role": message.role, "content": content}))
 }
 
 fn result_text(content: &Value) -> String {
