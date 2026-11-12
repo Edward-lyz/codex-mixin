@@ -31,7 +31,7 @@ internal static class Marks
     {
         var name = Json.Text(provider, "icon");
         var agy = name == "agy" || Json.OptionalText(provider, "preset_id") == "agy";
-        if (!new[] { "aws", "baidu", "custom", "deepseek", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
+        if (!new[] { "aws", "baidu", "claude", "custom", "deepseek", "kiro", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
         var key = agy ? "agents/agy.png" : $"providers/{name}.svg";
         if (!sources.TryGetValue(key, out var source))
         {

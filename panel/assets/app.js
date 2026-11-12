@@ -558,6 +558,7 @@ function buildNav() {
         h(
           "button",
           { class: "nav-item", type: "button", "data-page": page.id, onclick: () => navigate(page.id) },
+          h("span", { class: "nav-icon", "aria-hidden": "true" }),
           h("span", { text: page.title }),
         ),
       ),
@@ -1965,7 +1966,8 @@ function modelsTab(provider) {
       run: () => { const ids = selectedModelIds(provider); draft.order = value; draft.models = new Set(ids); svc.sort = { key: "selected", reversed: false }; render({ animate: false }); },
     })),
   ], "btn btn-ghost btn-sm");
-  order.querySelector("button").textContent = "↕";
+  // U+FE0E keeps the arrow a text glyph; Chrome on macOS otherwise draws the emoji.
+  order.querySelector("button").textContent = "\u2195\uFE0E";
   const bench = actionButton(t("测试已加入的 {0} 个模型", appliedCount), "benchmark_start", () => ({ timeout_seconds: svc.benchTimeout, target_output_tokens: svc.benchMode, providers: [provider.id] }), { ok: t("测速已开始，结果会实时更新") }, "btn-sm");
   bench.disabled = state.busy || changes > 0 || appliedCount === 0 || !gatewayRunning() || provider.kind === "official";
   bench.title = changes > 0 ? t("先应用更改，再测试。测速不会自动保存选择。") : !gatewayRunning() ? t("网关未运行") : "";
@@ -2393,11 +2395,12 @@ const MAX_PANELS = 8;
 const MAX_FALLBACKS = 4;
 const MAX_SLOTS = 24;
 const ROUTE_KINDS = {
-  fusion: { title: t("融合"), badge: "\u2a01", description: t("每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。") },
-  schedule: { title: t("定时"), badge: "\u25f7", description: t("按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。") },
-  failover: { title: t("故障转移"), badge: "\u21a9", description: t("原模型在输出内容前报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，它的错误会直接返回。") },
+  fusion: { title: t("融合"), description: t("每个新用户轮次先由 Panel 模型并行给出意见，Judge 对比汇总，再由 Final 模型修改和回复；同一轮内的工具续调直接交给 Final 模型。") },
+  schedule: { title: t("定时"), description: t("按本机当前时间选择模型。开始时间包含、结束时间不包含；结束早于开始表示跨午夜，时段不能重叠。") },
+  failover: { title: t("故障转移"), description: t("原模型在输出内容前报任何错误，或 30 秒内没有输出时，按顺序改用备用模型；最后一个模型不设超时，它的错误会直接返回。") },
 };
-const routing = { data: null, loading: false, error: null, selected: null, draft: null };
+// `enter` plays the diagram's entrance once after the selection changes.
+const routing = { data: null, loading: false, error: null, selected: null, draft: null, enter: true };
 let routingRequest = 0;
 
 async function loadRoutes() {
@@ -2433,13 +2436,6 @@ function activeScheduleModel(route) {
   return (route.time_routes || []).find((slot) => covers(slot.start_minute, slot.end_minute, minute))?.model || route.final_model;
 }
 
-// Models in the order the route reaches them: the answering model first.
-function routePrecedence(route) {
-  if (route.kind === "fusion") return [route.final_model, route.judge_model, ...(route.panel_models || [])];
-  if (route.kind === "schedule") return [activeScheduleModel(route), ...(route.time_routes || []).map((slot) => slot.model), route.final_model];
-  return [route.source, ...(route.fallbacks || [])];
-}
-
 function routeSummary(route) {
   if (route.kind === "fusion") return t("{0} 个 Panel → Judge {1} → Final {2}", (route.panel_models || []).length, routeModelName(route.judge_model), routeModelName(route.final_model));
   if (route.kind === "schedule") return t("当前 {0} · {1} 个时段", routeModelName(activeScheduleModel(route)), (route.time_routes || []).length);
@@ -2448,24 +2444,25 @@ function routeSummary(route) {
 
 const routeTitle = (route) => (route.kind === "failover" && !route.id ? routeModelName(route.source) : route.model);
 
+function routeCaption(route) {
+  const kind = ROUTE_KINDS[route.kind].title;
+  if (route.enabled === false) return t("{0} · 已停用", kind);
+  if (route.kind === "fusion") return t("{0} · {1} 个模型", kind, new Set([...(route.panel_models || []), route.judge_model, route.final_model]).size);
+  if (route.kind === "schedule") return t("{0} · 现在 {1}", kind, routeModelName(activeScheduleModel(route)));
+  return t("{0} · {1} 个备用", kind, (route.fallbacks || []).length);
+}
+
 function providerById(id) {
   return (state.snapshot?.providers || []).find((provider) => provider.id === id);
 }
 
 function providerLogo(id, size) {
   const provider = providerById(id);
-  return provider ? providerIcon(provider, size) : h("span", { class: "svc-icon svc-icon-fallback route-logo-missing", "aria-hidden": "true", text: "?" });
+  return provider ? providerIcon(provider, size) : h("span", { class: "svc-icon svc-icon-fallback", "aria-hidden": "true", text: "?" });
 }
 
-// Overlapping provider logos (at most three) with the route kind as a badge.
-function routeIcon(kind, models) {
-  const providers = [...new Set(models.filter(Boolean).map(routeModelProvider).filter(Boolean))];
-  const shown = providers.slice(0, 3);
-  return h("span", { class: "route-icon", title: providers.length > shown.length ? providers.map(providerName).join("、") : null, "aria-hidden": "true" },
-    shown.length ? shown.map((id, index) => h("span", { class: `route-logo route-logo-${index}` }, providerLogo(id, 18))).reverse()
-      : h("span", { class: "route-logo route-logo-0 route-logo-kind", text: ROUTE_KINDS[kind].badge }),
-    h("span", { class: "route-badge", text: ROUTE_KINDS[kind].badge }));
-}
+// One SF Symbols-style glyph per route kind; the models live in the diagram.
+const routeGlyph = (kind, large = false) => h("span", { class: `route-glyph route-glyph-${kind}${large ? " is-large" : ""}`, "aria-hidden": "true" });
 
 // Built-in route groups: a fusion panel, a never-stuck chain across
 // providers, and one failover per model served by several providers.
@@ -2529,6 +2526,7 @@ async function openRoute(model) {
   const route = (routing.data?.routes || []).find((row) => row.model === model);
   routing.selected = model;
   routing.draft = route ? { kind: route.kind, route: structuredClone(route), oldModel: route.model, dirty: false } : null;
+  routing.enter = true;
   render({ animate: false });
 }
 
@@ -2539,6 +2537,7 @@ async function startDraft(kind, template) {
   try {
     routing.draft = newDraft(kind, template, ids, models);
     routing.selected = null;
+    routing.enter = true;
     render({ animate: false });
   } catch (error) {
     toast("bad", t("新建路由失败"), error.message);
@@ -2590,40 +2589,65 @@ function pickModels(title, current, multiple, onDone) {
   openSheet(title, h("div", { class: "picker" }, search, list, multiple ? h("div", { class: "form-actions" }, count, done) : null));
 }
 
-function modelNode(id, title, onPick, label) {
+function modelNode(id, title, onPick, label, primary = false) {
   const available = Boolean(routeModel(id));
   return h("button", {
-    class: `route-node ${available ? "" : "is-missing"}`.trim(), type: "button", title: t("{0}\n点击更换模型", id),
+    class: `route-node${available ? "" : " is-missing"}${primary ? " is-primary" : ""}`, type: "button", title: t("{0}\n点击更换模型", id),
     "aria-label": t("{0}：{1}，点击更换", label || title, routeModelName(id)), onclick: () => pickModels(title, [id], false, ([next]) => onPick(next)),
   },
-  providerLogo(routeModelProvider(id), 20),
+  providerLogo(routeModelProvider(id), 28),
   h("span", { class: "route-node-text" },
     h("span", { class: "route-node-name", text: routeModelName(id) }),
-    h("span", { class: "row-sub", text: available ? providerName(routeModelProvider(id)) : t("模型不可用") })));
+    h("span", { class: "row-sub", text: available ? providerName(routeModelProvider(id)) : t("模型不可用") })),
+  h("span", { class: "route-node-chevron", "aria-hidden": "true" }));
 }
 
-const addNode = (label, onclick, disabled = false) => h("button", { class: "route-add", type: "button", text: `+ ${label}`, onclick, disabled });
-const stageHead = (text) => h("div", { class: "route-stage", text });
-const flowArrow = (glyph, active = false) => h("span", { class: `route-arrow ${active ? "is-active" : ""}`.trim(), title: active ? t("当前时段") : null, "aria-hidden": "true", text: glyph });
-const iconButton = (text, label, onclick, disabled = false) => h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", text, "aria-label": label, title: label, onclick, disabled });
+const addNode = (label, onclick, disabled = false) => h("button", { class: "route-add", type: "button", onclick, disabled },
+  h("span", { class: "icon icon-plus", "aria-hidden": "true" }), h("span", { text: label }));
+const stageHead = (text, action = null) => h("div", { class: "route-stage" }, h("span", { text }), action);
+// A connector whose highlight travels toward the model that answers.
+const flowLink = (active = true, vertical = false) => h("span", { class: `route-link${vertical ? " is-vertical" : ""}${active ? " is-active" : ""}`, "aria-hidden": "true" },
+  h("span", { class: "route-link-line" }));
+const iconButton = (glyph, label, onclick, disabled = false) => h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": label, title: label, onclick, disabled },
+  h("span", { class: `icon icon-${glyph}`, "aria-hidden": "true" }));
 
 function fusionFlow(route) {
   const panels = route.panel_models || [];
   const editPanels = () => pickModels(t("Panel 模型"), panels, true, (next) => changeDraft((draft) => { draft.panel_models = next; }));
+  const column = (head, ...body) => h("div", { class: "route-column" }, head, h("div", { class: "route-column-body" }, ...body));
   return h("div", { class: "route-flow route-flow-fusion" },
-    h("div", { class: "route-column" }, stageHead(t("Panel · 并行（{0}）", panels.length)),
-      panels.map((id, index) => modelNode(id, t("Panel 模型 {0}", index + 1), (next) => changeDraft((draft) => {
+    column(stageHead(t("Panel · 并行（{0}）", panels.length), panels.length ? h("button", { class: "route-stage-action", type: "button", text: t("编辑"), "aria-label": t("编辑 Panel 模型"), onclick: editPanels }) : null),
+      panels.length ? h("div", { class: "route-fan" }, panels.map((id, index) => modelNode(id, t("Panel 模型 {0}", index + 1), (next) => changeDraft((draft) => {
         draft.panel_models = draft.panel_models.map((model, position) => (position === index ? next : model)).filter((model, position, all) => all.indexOf(model) === position);
-      }))),
-      addNode(panels.length ? t("编辑 Panel 模型") : t("选择 Panel 模型"), editPanels)),
-    flowArrow("\u2192"),
-    h("div", { class: "route-column" }, stageHead(t("Judge · 评审")), modelNode(route.judge_model, t("Judge 模型"), (next) => changeDraft((draft) => { draft.judge_model = next; }))),
-    flowArrow("\u2192"),
-    h("div", { class: "route-column" }, stageHead(t("Final · 作答")), modelNode(route.final_model, t("Final 模型"), (next) => changeDraft((draft) => { draft.final_model = next; }))));
+      })))) : addNode(t("选择 Panel 模型"), editPanels)),
+    flowLink(),
+    column(stageHead(t("Judge · 评审")), modelNode(route.judge_model, t("Judge 模型"), (next) => changeDraft((draft) => { draft.judge_model = next; }))),
+    flowLink(),
+    column(stageHead(t("Final · 作答")), modelNode(route.final_model, t("Final 模型"), (next) => changeDraft((draft) => { draft.final_model = next; }), null, true)));
 }
 
 const timeText = (minute) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 const parseTime = (value) => { const [hours, mins] = value.split(":").map(Number); return hours * 60 + mins; };
+
+// The 24-hour day with each slot as a segment and a marker for now.
+function scheduleTimeline(slots, minute) {
+  const at = (value) => `${((value / 1440) * 100).toFixed(3)}%`;
+  const bar = h("div", { class: "route-timeline-bar" });
+  for (const slot of slots) {
+    if (slot.start_minute === slot.end_minute) continue;
+    const active = covers(slot.start_minute, slot.end_minute, minute);
+    const pieces = slot.start_minute < slot.end_minute ? [[slot.start_minute, slot.end_minute]] : [[slot.start_minute, 1440], [0, slot.end_minute]];
+    for (const [from, to] of pieces) {
+      bar.append(h("span", {
+        class: `route-timeline-slot${active ? " is-active" : ""}`, title: `${timeText(slot.start_minute)}–${timeText(slot.end_minute)} · ${routeModelName(slot.model)}`,
+        vars: { "--from": at(from), "--to": at(to) },
+      }));
+    }
+  }
+  bar.append(h("span", { class: "route-timeline-now", title: t("现在 {0}", timeText(minute)), vars: { "--at": at(minute) } }));
+  return h("div", { class: "route-timeline" }, bar,
+    h("div", { class: "route-timeline-scale", "aria-hidden": "true" }, ["00:00", "06:00", "12:00", "18:00", "24:00"].map((text) => h("span", { text }))));
+}
 
 function scheduleFlow(route) {
   const slots = route.time_routes || [];
@@ -2634,21 +2658,26 @@ function scheduleFlow(route) {
     onchange: (event) => { if (event.target.value) changeDraft(() => { slot[key] = parseTime(event.target.value); }); },
   });
   return h("div", { class: "route-flow route-flow-schedule" },
-    stageHead(t("时段（本机时间）")), h("span"), stageHead(t("模型")), h("span"),
-    slots.map((slot, index) => [
-      h("div", { class: "route-times" }, timeInput(slot, "start_minute", t("时段 {0} 开始", index + 1)), "–", timeInput(slot, "end_minute", t("时段 {0} 结束", index + 1))),
-      flowArrow("\u2192", slot.start_minute !== slot.end_minute && covers(slot.start_minute, slot.end_minute, minute)),
-      modelNode(slot.model, t("时段 {0} 模型", index + 1), (next) => changeDraft(() => { slot.model = next; })),
-      iconButton("\u00d7", t("移除此时段"), () => changeDraft((draft) => { draft.time_routes.splice(index, 1); })),
-    ]),
-    h("div", { class: "route-span" }, addNode(t("添加时段"), () => changeDraft((draft) => {
+    scheduleTimeline(slots, minute),
+    h("div", { class: "route-slots" },
+      stageHead(t("时段（本机时间）")), h("span"), stageHead(t("模型")), h("span"),
+      slots.map((slot, index) => {
+        const active = slot.start_minute !== slot.end_minute && covers(slot.start_minute, slot.end_minute, minute);
+        return h("div", { class: `route-slot${active ? " is-active" : ""}` },
+          h("div", { class: "route-times" }, timeInput(slot, "start_minute", t("时段 {0} 开始", index + 1)), h("span", { text: "–" }), timeInput(slot, "end_minute", t("时段 {0} 结束", index + 1))),
+          flowLink(active),
+          modelNode(slot.model, t("时段 {0} 模型", index + 1), (next) => changeDraft(() => { slot.model = next; }), null, active),
+          iconButton("close", t("移除此时段"), () => changeDraft((draft) => { draft.time_routes.splice(index, 1); })));
+      }),
+      h("div", { class: `route-slot${anyActive ? "" : " is-active"}` },
+        h("span", { class: "route-other", text: t("其余时间") }),
+        flowLink(!anyActive),
+        modelNode(route.final_model, t("默认模型"), (next) => changeDraft((draft) => { draft.final_model = next; }), null, !anyActive),
+        h("span"))),
+    addNode(t("添加时段"), () => changeDraft((draft) => {
       const start = slots.length ? slots[slots.length - 1].end_minute : 540;
       draft.time_routes = [...slots, { start_minute: start, end_minute: (start + 240) % 1440, model: routeModelOptions()[0].id }];
-    }), slots.length >= MAX_SLOTS)),
-    h("span", { class: "route-other", text: t("其余时间") }),
-    flowArrow("\u2192", !anyActive),
-    modelNode(route.final_model, t("默认模型"), (next) => changeDraft((draft) => { draft.final_model = next; })),
-    h("span"));
+    }), slots.length >= MAX_SLOTS));
 }
 
 function failoverFlow(route) {
@@ -2658,15 +2687,19 @@ function failoverFlow(route) {
   });
   return h("div", { class: "route-flow route-flow-failover" },
     stageHead(t("原模型")),
-    modelNode(route.source, t("原模型"), (next) => changeDraft((draft) => { draft.source = next; })),
-    h("div", { class: "route-condition" }, flowArrow("\u2193"), h("span", { class: "row-sub", text: t("任何错误，或 30 秒内没有输出") })),
+    h("div", { class: "route-fallback" },
+      h("span", { class: "route-index is-source", "aria-hidden": "true" }),
+      modelNode(route.source, t("原模型"), (next) => changeDraft((draft) => { draft.source = next; }), null, true),
+      h("span", { class: "route-tools" })),
+    h("div", { class: "route-condition" }, flowLink(true, true), h("span", { class: "route-condition-text", text: t("任何错误，或 30 秒内没有输出") })),
     stageHead(t("备用模型（按顺序）")),
-    fallbacks.map((id, index) => h("div", { class: "route-fallback" },
+    fallbacks.length ? h("ol", { class: "route-fallbacks" }, fallbacks.map((id, index) => h("li", { class: "route-fallback" },
       h("span", { class: "route-index", text: String(index + 1) }),
       modelNode(id, t("备用模型 {0}", index + 1), (next) => changeDraft((draft) => { draft.fallbacks[index] = next; })),
-      iconButton("\u2191", t("上移备用模型 {0}", index + 1), () => move(index, -1), index === 0),
-      iconButton("\u2193", t("下移备用模型 {0}", index + 1), () => move(index, 1), index === fallbacks.length - 1),
-      iconButton("\u00d7", t("移除备用模型 {0}", index + 1), () => changeDraft((draft) => { draft.fallbacks.splice(index, 1); })))),
+      h("span", { class: "route-tools" },
+        iconButton("up", t("上移备用模型 {0}", index + 1), () => move(index, -1), index === 0),
+        iconButton("down", t("下移备用模型 {0}", index + 1), () => move(index, 1), index === fallbacks.length - 1),
+        iconButton("close", t("移除备用模型 {0}", index + 1), () => changeDraft((draft) => { draft.fallbacks.splice(index, 1); })))))) : null,
     fallbacks.length < MAX_FALLBACKS ? addNode(t("添加备用模型"), () => changeDraft((draft) => {
       const used = new Set([...fallbacks, route.source]);
       const ids = routeModelOptions().map((model) => model.id);
@@ -2783,22 +2816,36 @@ function routeEditor(draft) {
   const flow = draft.kind === "fusion" ? fusionFlow(route) : draft.kind === "schedule" ? scheduleFlow(route) : failoverFlow(route);
   const save = h("button", { class: "btn btn-primary", type: "button", "data-action": "", text: t("保存并应用"), disabled: state.busy || !draft.dirty });
   save.addEventListener("click", () => saveRoute(save));
+  const status = h("span", {
+    class: `route-status${saved && saved.enabled !== false && !draft.dirty ? " is-live" : ""}`,
+    text: !saved || draft.dirty ? t("未保存") : saved.enabled === false ? t("已停用") : t("生效中"),
+  });
   // Typing marks the draft dirty without re-rendering, so enable Save here.
   const editor = h("section", { class: "route-detail", "aria-label": saved ? routeTitle(saved) : t("新建{0}", kind.title) },
     h("header", { class: "route-head" },
-      routeIcon(draft.kind, routePrecedence(route)),
+      routeGlyph(draft.kind, true),
       h("div", { class: "route-head-main" },
-        h("h2", { class: "card-title", text: saved ? routeTitle(saved) : t("新建{0}", kind.title) }),
-        h("span", { class: "row-sub", title: kind.description, text: `${kind.title}${saved?.enabled === false ? t(" · 已停用") : ""}` })),
+        h("h2", { class: "route-title", text: saved ? routeTitle(saved) : t("新建{0}", kind.title) }),
+        h("div", { class: "route-meta" },
+          h("span", { text: kind.title }),
+          status)),
       more),
-    flow,
+    h("p", { class: "route-description", text: kind.description }),
+    h("div", { class: "route-canvas" }, stagger(flow)),
     h("div", { class: "form route-form" },
       routeNameField(route, draft.kind === "failover"),
       draft.kind === "fusion" ? fusionAdvanced(route) : null,
       h("div", { class: "form-actions" }, draft.oldModel ? null : h("button", { class: "btn btn-ghost", type: "button", text: t("放弃"), onclick: () => { routing.draft = null; render({ animate: false }); } }), save)));
-  editor.addEventListener("input", () => { save.disabled = state.busy; });
-  editor.addEventListener("change", () => { save.disabled = state.busy; });
-  return editor;
+  for (const event of ["input", "change"]) editor.addEventListener(event, () => {
+    save.disabled = state.busy || !draft.dirty;
+    if (draft.dirty) {
+      status.classList.remove("is-live");
+      status.textContent = t("未保存");
+    }
+  });
+  if (routing.enter && !reduceMotion.matches) editor.classList.add("is-entering");
+  routing.enter = false;
+  return stagger(editor);
 }
 
 RENDERERS.routing = () => {
@@ -2822,25 +2869,27 @@ RENDERERS.routing = () => {
       onclick: () => openRoute(route.model),
       onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRoute(route.model); } },
     },
-    routeIcon(route.kind, routePrecedence(route)),
-    h("div", { class: "svc-row-main" }, h("div", { class: "svc-row-name", text: routeTitle(route) })));
+    routeGlyph(route.kind),
+    h("div", { class: "svc-row-main" }, h("div", { class: "svc-row-name", text: routeTitle(route) }), h("div", { class: "svc-row-sub", text: routeCaption(route) })));
     return row;
   }));
   const suggestions = routeSuggestions(ids, routes);
   const create = popoverMenu(t("新建路由"), Object.entries(ROUTE_KINDS).map(([kind, meta]) => ({ label: t("新建{0}", meta.title), run: () => startDraft(kind, null) })), "btn btn-ghost btn-icon btn-sm");
-  create.querySelector("button").textContent = "+";
+  create.querySelector("button").replaceChildren(h("span", { class: "icon icon-plus", "aria-hidden": "true" }));
   const side = h("aside", { class: "svc-list" },
     h("header", { class: "svc-list-head" }, h("span", { text: t("路由") }), create),
     routes.length ? list : h("p", { class: "route-empty", text: t("还没有模型路由。") }),
     suggestions.length ? h("div", { class: "route-suggestions" },
       h("div", { class: "svc-list-head", text: t("推荐路由") }),
       suggestions.map((suggestion) => h("div", { class: "route-suggestion", title: `${ROUTE_KINDS[suggestion.kind].title} · ${routeSummary(suggestion)}` },
-        routeIcon(suggestion.kind, routePrecedence(suggestion)),
-        h("span", { class: "route-suggestion-name", text: ROUTE_PREFIX + suggestion.id }),
-        h("button", { class: "btn btn-sm", type: "button", text: t("启用"), "aria-label": t("启用 {0}{1}", ROUTE_PREFIX, suggestion.id), onclick: () => startDraft(suggestion.kind, suggestion) })))) : null);
+        routeGlyph(suggestion.kind),
+        h("div", { class: "svc-row-main" },
+          h("div", { class: "route-suggestion-name", text: ROUTE_PREFIX + suggestion.id }),
+          h("div", { class: "svc-row-sub", text: ROUTE_KINDS[suggestion.kind].title })),
+        h("button", { class: "btn btn-sm btn-tinted", type: "button", text: t("启用"), "aria-label": t("启用 {0}{1}", ROUTE_PREFIX, suggestion.id), onclick: () => startDraft(suggestion.kind, suggestion) })))) : null);
   const detail = routing.draft ? routeEditor(routing.draft)
     : h("section", { class: "route-detail" }, emptyState(t("新建模型路由"), t("融合、定时与故障转移都在这里配置，保存后立即应用到网关。")));
-  return h("div", { class: "svc card card-flush" }, side, detail);
+  return h("div", { class: "svc svc-routing card card-flush" }, side, detail);
 };
 
 // ---------- Agents ----------
@@ -2998,7 +3047,7 @@ RENDERERS.system = () => {
   ];
   return [
     exposureNotice(),
-    card(t("维护"), null, h("div", { class: "rows", style: { margin: "0 -22px -20px" } }, ...maintenance.map(([title, text, button]) => h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: title }), h("div", { class: "row-sub", text })), button)))),
+    card(t("维护"), null, h("div", { class: "rows", style: { margin: "0 -18px -16px" } }, ...maintenance.map(([title, text, button]) => h("div", { class: "row" }, h("div", { class: "row-main" }, h("div", { class: "row-title", text: title }), h("div", { class: "row-sub", text })), button)))),
     card(
       t("环境"),
       null,
@@ -3128,7 +3177,13 @@ async function loadKeys() {
 RENDERERS.keys = () => {
   if (!keysPage.data && !keysPage.loading && !keysPage.error) queueMicrotask(loadKeys);
   const name = textInput("name", "", { placeholder: t("例如：笔记本、同事 A"), maxlength: "64", "aria-label": t("密钥名称") });
-  const create = h("button", { class: "btn btn-primary btn-sm", type: "button", "data-action": "", text: t("生成密钥") });
+  const create = h("button", { class: "btn btn-primary", type: "button", "data-action": "", text: t("生成密钥") });
+  name.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      create.click();
+    }
+  });
   create.addEventListener("click", async () => {
     const value = name.value.trim();
     if (!value) {
@@ -3143,19 +3198,21 @@ RENDERERS.keys = () => {
   const createCard = card(
     t("生成访问密钥"),
     t("公网来源调用网关时须携带其中任一密钥（Authorization: Bearer 或 x-api-key）。本机与局域网设备无需密钥。修改后运行中的网关会自动生效。"),
-    h("div", { class: "form" }, field(t("名称"), name), keysPage.created
+    h("div", { class: "form" }, field(t("名称"), h("div", { class: "key-create" }, name, create)), keysPage.created
       ? h("div", { class: "notice", role: "status" },
         h("div", null,
           h("strong", { text: t("新密钥「{0}」只显示这一次", keysPage.created.name) }),
           h("div", { class: "row-sub mono", text: keysPage.created.key })),
         h("button", { class: "btn btn-sm", type: "button", text: t("复制"), onclick: () => copyText(keysPage.created.key) }))
       : null),
-    create,
   );
   let body;
   if (keysPage.error) body = h("p", { class: "issue", text: keysPage.error });
   else if (!keysPage.data) body = h("div", { class: "skeleton" });
-  else if (!keysPage.data.keys.length) body = emptyState(t("还没有访问密钥"), t("生成后即可从公网访问网关。"));
+  else if (!keysPage.data.keys.length) {
+    body = emptyState(t("还没有访问密钥"), t("生成后即可从公网访问网关。"));
+    body.prepend(h("span", { class: "empty-glyph", "aria-hidden": "true" }));
+  }
   else body = h("div", { class: "table-wrap" }, h("table", { class: "table" },
     h("thead", null, h("tr", null, ...[t("名称"), t("密钥"), t("创建时间"), ""].map((text) => h("th", { scope: "col", text })))),
     h("tbody", null, ...keysPage.data.keys.map((key) => {

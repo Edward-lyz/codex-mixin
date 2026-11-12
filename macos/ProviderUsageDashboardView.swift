@@ -92,6 +92,9 @@ private func providerLogoAssetName(_ providerID: String) -> String {
     if normalized.contains("opencode") { return "opencode" }
     if normalized.contains("openrouter") { return "openrouter" }
     if normalized.contains("aws") || normalized.contains("bedrock") { return "aws" }
+    if normalized == "agy" || normalized.hasPrefix("agy-") || normalized.contains("antigravity") { return "agy" }
+    if normalized.contains("claude") { return "claude" }
+    if normalized.contains("kiro") { return "kiro" }
     if normalized == "official" || normalized.contains("openai") || normalized.contains("chatgpt") { return "openai" }
     return "custom"
 }
@@ -121,14 +124,15 @@ func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSImage? {
     }
     if let image = dashboardBundledLogoCache.object(forKey: assetName as NSString) { return image }
     dashboardBundledLogoCache.countLimit = 16
+    let resourceDirectory = assetName == "agy" ? "AgentLogos" : "ProviderLogos"
     let directories = [
-        Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos", isDirectory: true),
-        Bundle.main.bundleURL.appendingPathComponent("ProviderLogos", isDirectory: true),
+        Bundle.main.resourceURL?.appendingPathComponent(resourceDirectory, isDirectory: true),
+        Bundle.main.bundleURL.appendingPathComponent(resourceDirectory, isDirectory: true),
     ]
     for directory in directories.compactMap({ $0 }) {
         let url = directory.appendingPathComponent("\(assetName).svg")
         if let image = NSImage(contentsOf: url) {
-            image.isTemplate = true
+            image.isTemplate = !["agy", "claude", "kiro"].contains(assetName)
             dashboardBundledLogoCache.setObject(image, forKey: assetName as NSString)
             return image
         }

@@ -1100,6 +1100,12 @@ private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? 
         assetName = "openrouter"
     } else if normalized.contains("aws") || normalized.contains("bedrock") {
         assetName = "aws"
+    } else if normalized == "agy" || normalized.hasPrefix("agy-") || normalized.contains("antigravity") {
+        assetName = "agy"
+    } else if normalized.contains("claude") {
+        assetName = "claude"
+    } else if normalized.contains("kiro") {
+        assetName = "kiro"
     } else if normalized.contains("openai") || normalized.contains("chatgpt") || provider.kind == .official {
         assetName = "openai"
     } else {
@@ -1113,9 +1119,10 @@ private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? 
     let cacheKey = "\(assetName):\(provider.kind == .official)" as NSString
     if let image = settingsBundledLogoCache.object(forKey: cacheKey) { return image }
     settingsBundledLogoCache.countLimit = 16
+    let resourceDirectory = assetName == "agy" ? "AgentLogos" : "ProviderLogos"
     let directories = [
-        Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos", isDirectory: true),
-        Bundle.main.bundleURL.appendingPathComponent("ProviderLogos", isDirectory: true),
+        Bundle.main.resourceURL?.appendingPathComponent(resourceDirectory, isDirectory: true),
+        Bundle.main.bundleURL.appendingPathComponent(resourceDirectory, isDirectory: true),
     ]
     for directory in directories.compactMap({ $0 }) {
         if let image = NSImage(contentsOf: directory.appendingPathComponent("\(assetName).svg")) {

@@ -287,10 +287,15 @@ pub(super) const TEMPLATE_AGENT_ICONS: &[&str] = &[
 /// macos/assets/providers/ATTRIBUTION.md), keyed by the `icon` field of
 /// `providers list --json`.
 pub(super) const PROVIDER_ICONS: &[(&str, &[u8])] = &[
+    ("agy", include_bytes!("../macos/assets/agents/agy.svg")),
     ("aws", include_bytes!("../macos/assets/providers/aws.svg")),
     (
         "baidu",
         include_bytes!("../macos/assets/providers/baidu.svg"),
+    ),
+    (
+        "claude",
+        include_bytes!("../macos/assets/providers/claude.svg"),
     ),
     (
         "custom",
@@ -300,6 +305,7 @@ pub(super) const PROVIDER_ICONS: &[(&str, &[u8])] = &[
         "deepseek",
         include_bytes!("../macos/assets/providers/deepseek.svg"),
     ),
+    ("kiro", include_bytes!("../macos/assets/providers/kiro.svg")),
     (
         "openai",
         include_bytes!("../macos/assets/providers/openai.svg"),
