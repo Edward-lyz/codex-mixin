@@ -1,9 +1,8 @@
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Controls;
-using Windows.Storage.Pickers;
-using Windows.System;
-using WinRT.Interop;
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using Microsoft.Win32;
 
 namespace CodexMixin;
 
@@ -12,7 +11,7 @@ public sealed partial class MainWindow
     private Task SettingsAsync(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        var app = (App)Microsoft.UI.Xaml.Application.Current;
+        var app = (App)Application.Current;
         var pageToken = pageRefresh!.Token;
         // Recovery and update controls are usable before any CLI query completes.
         var diagnostics = Row();
@@ -35,18 +34,18 @@ public sealed partial class MainWindow
         }));
         diagnostics.Children.Add(Button(Localized.Get("运行诊断"), () => ChangeAsync(Localized.Get("诊断"), ["doctor", "--json"])));
         diagnostics.Children.Add(Button(Localized.Get("重放上报"), () => ChangeAsync(Localized.Get("重放上报"), ["report-replay"])));
-        var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WinUI 3 / Windows App SDK", diagnostics);
+        var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WPF / .NET", diagnostics);
         var updateControls = UpdateControls(app.Updates, pageToken);
-        var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], Root.RequestedTheme switch { ElementTheme.Light => Localized.Get("浅色"), ElementTheme.Dark => Localized.Get("深色"), _ => Localized.Get("跟随系统") });
+        var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], app.ThemeMode == ThemeMode.Light ? Localized.Get("浅色") : app.ThemeMode == ThemeMode.Dark ? Localized.Get("深色") : Localized.Get("跟随系统"));
         AutomationProperties.SetAutomationId(theme, "theme-picker");
-        theme.SelectionChanged += (_, _) => app.SetTheme(theme.SelectedIndex switch { 1 => ElementTheme.Light, 2 => ElementTheme.Dark, _ => ElementTheme.Default });
+        theme.SelectionChanged += (_, _) => app.SetTheme(theme.SelectedIndex switch { 1 => ThemeMode.Light, 2 => ThemeMode.Dark, _ => ThemeMode.System });
         var startup = new CheckBox { Content = Localized.Get("登录 Windows 时启动界面"), IsChecked = NativeShell.StartupEnabled(), IsEnabled = !NativeShell.StartupBlocked() };
         startup.Click += (_, _) =>
         {
             try { NativeShell.SetStartup(startup.IsChecked == true); }
             catch (Exception error) { startup.IsChecked = NativeShell.StartupEnabled(); ShowNotice(Localized.Get("启动设置失败"), error.Message, InfoBarSeverity.Error); }
         };
-        var appearance = new StackPanel { Spacing = 16 }; appearance.Children.Add(theme); appearance.Children.Add(startup);
+        var appearance = new Stack { Spacing = 16 }; appearance.Children.Add(Field.Wrap(theme)); appearance.Children.Add(startup);
         appearance.Children.Add(Text(NativeShell.StartupBlocked() ? Localized.Get("启动项已被 Windows 禁用，请在系统「启动应用」中调整。") : Localized.Get("界面登录启动与网关自启分别管理。")));
         PageBody.Children.Add(Card(Localized.Get("外观与启动"), "", appearance));
         PageBody.Children.Add(about);
@@ -55,19 +54,14 @@ public sealed partial class MainWindow
         backup.Children.Add(Button(Localized.Get("导出配置"), async () =>
         {
             if (!await ConfirmAsync(Localized.Get("导出包含凭据的备份？"), Localized.Get("Base64 不是加密。备份包含供应商密钥，请保存到安全位置。"), Localized.Get("选择保存位置"))) return;
-            var picker = new FileSavePicker { SuggestedFileName = "codex-mixin-config" };
-            picker.FileTypeChoices.Add("Codex Mixin backup", new List<string> { ".b64" });
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
-            if (file != null) await ChangeAsync(Localized.Get("导出配置"), ["config", "export", file.Path]);
+            var picker = new SaveFileDialog { FileName = "codex-mixin-config", DefaultExt = ".b64", Filter = "Codex Mixin backup (*.b64)|*.b64" };
+            if (picker.ShowDialog(this) == true) await ChangeAsync(Localized.Get("导出配置"), ["config", "export", picker.FileName]);
         }));
         backup.Children.Add(Button(Localized.Get("导入配置"), async () =>
         {
-            var picker = new FileOpenPicker(); picker.FileTypeFilter.Add(".b64");
-            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSingleFileAsync();
-            if (file != null && await ConfirmAsync(Localized.Get("替换当前配置？"), Localized.Get("导入会替换现有供应商与密钥，并应用到已接入的客户端。"), Localized.Get("导入")))
-                await ChangeAsync(Localized.Get("导入配置"), ["config", "import", file.Path], apply: true);
+            var picker = new OpenFileDialog { Filter = "Codex Mixin backup (*.b64)|*.b64" };
+            if (picker.ShowDialog(this) == true && await ConfirmAsync(Localized.Get("替换当前配置？"), Localized.Get("导入会替换现有供应商与密钥，并应用到已接入的客户端。"), Localized.Get("导入")))
+                await ChangeAsync(Localized.Get("导入配置"), ["config", "import", picker.FileName], apply: true);
         }));
         PageBody.Children.Add(Card(Localized.Get("配置备份"), "", backup));
 
@@ -118,9 +112,10 @@ public sealed partial class MainWindow
         AutomationProperties.SetAutomationId(status, "app-update-status");
         var check = Button(Localized.Get("立即更新"), () => updates.CheckAsync());
         AutomationProperties.SetAutomationId(check, "check-app-updates");
-        var releases = Button(Localized.Get("官方发布页"), async () =>
+        var releases = Button(Localized.Get("官方发布页"), () =>
         {
-            if (!await Launcher.LaunchUriAsync(new Uri(AppRelease.ReleasesUrl))) throw new IOException(Localized.Get("无法打开发布页。"));
+            if (Process.Start(new ProcessStartInfo(AppRelease.ReleasesUrl) { UseShellExecute = true }) == null) throw new IOException(Localized.Get("无法打开发布页。"));
+            return Task.CompletedTask;
         });
         var automatic = new CheckBox
         {
@@ -143,7 +138,7 @@ public sealed partial class MainWindow
         RefreshUpdateState();
         var actions = Row();
         actions.Children.Add(check); actions.Children.Add(releases);
-        var body = new StackPanel { Spacing = 12 };
+        var body = new Stack { Spacing = 12 };
         body.Children.Add(status); body.Children.Add(automatic); body.Children.Add(actions);
         body.Children.Add(Text(Localized.Get("应用会自动下载、验证签名、安装并重新打开；网关原先运行时也会恢复。安装版可能出现系统 UAC 授权提示。请求进行中或草稿未保存时暂缓安装。")));
         return Card(Localized.Get("应用更新"), Localized.Format("GUI {0} · 完整应用包包含 GUI、CLI 和运行时", AppUpdates.GuiVersion), body);

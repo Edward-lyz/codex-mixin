@@ -1,12 +1,11 @@
 using System.Text.Json;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Automation.Peers;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Shapes;
 using Microsoft.Win32;
-using Windows.Foundation;
 
 namespace CodexMixin;
 
@@ -30,12 +29,12 @@ internal static class QuotaView
     private const double WarningRatio = 0.9;
     // One hue per ring so concentric windows stay distinguishable; red is
     // left out because it marks windows close to their limit.
-    private static readonly Windows.UI.Color[] RingColors =
+    private static readonly Color[] RingColors =
     [
-        Windows.UI.Color.FromArgb(255, 0x23, 0x83, 0xE2),
-        Windows.UI.Color.FromArgb(255, 0x2F, 0x9E, 0x72),
-        Windows.UI.Color.FromArgb(255, 0xD9, 0x73, 0x0D),
-        Windows.UI.Color.FromArgb(255, 0x90, 0x65, 0xB0),
+        Color.FromArgb(255, 0x23, 0x83, 0xE2),
+        Color.FromArgb(255, 0x2F, 0x9E, 0x72),
+        Color.FromArgb(255, 0xD9, 0x73, 0x0D),
+        Color.FromArgb(255, 0x90, 0x65, 0xB0),
     ];
 
     private static readonly Brush[] RingBrushes = RingColors.Select(color => (Brush)new SolidColorBrush(color)).ToArray();
@@ -54,23 +53,22 @@ internal static class QuotaView
         key.SetValue(PreferenceName, style == QuotaStyle.Bar ? "bar" : "ring");
     }
 
-    internal static SelectorBar StyleSwitch(QuotaStyle current, Action<QuotaStyle> changed)
+    internal static FrameworkElement StyleSwitch(QuotaStyle current, Action<QuotaStyle> changed)
     {
-        var selector = new SelectorBar { VerticalAlignment = VerticalAlignment.Center };
+        var selector = new Stack { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        var group = $"quota-style-{Guid.NewGuid():N}";
         foreach (var (style, label) in new[] { (QuotaStyle.Ring, Localized.Get("圆环")), (QuotaStyle.Bar, Localized.Get("条形")) })
         {
-            var option = new SelectorBarItem { Text = label, Tag = (int)style };
+            var option = new RadioButton
+            {
+                Content = label, GroupName = group, IsChecked = style == current,
+                Style = (Style)Application.Current.Resources["DefaultToggleButtonStyle"],
+                Padding = new Thickness(10, 3, 10, 3), MinHeight = 0, FontSize = 12
+            };
             AutomationProperties.SetName(option, Localized.Format("额度{0}展示", label));
-            selector.Items.Add(option);
-            if (style == current) selector.SelectedItem = option;
+            option.Checked += (_, _) => { Store(style); changed(style); };
+            selector.Children.Add(option);
         }
-        selector.SelectionChanged += (_, _) =>
-        {
-            if (selector.SelectedItem?.Tag is not int selected) return;
-            var style = (QuotaStyle)selected;
-            Store(style);
-            changed(style);
-        };
         return selector;
     }
 
@@ -79,11 +77,11 @@ internal static class QuotaView
     {
         var entries = rows.Select(Parse).ToArray();
         if (style == QuotaStyle.Bar) return Bars(entries);
-        var layout = new Grid { ColumnSpacing = 14 };
+        var layout = new SpacedGrid { ColumnSpacing = 14 };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         layout.Children.Add(Rings(entries));
-        var legend = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var legend = new Stack { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         for (var index = 0; index < entries.Length; index++) legend.Children.Add(LegendRow(entries[index], index));
         Grid.SetColumn(legend, 1); layout.Children.Add(legend);
         return layout;
@@ -127,14 +125,13 @@ internal static class QuotaView
     // Also colors usage chart series, so a provider keeps one hue per position.
     internal static Brush RingBrush(int index) => index < RingBrushes.Length
         ? RingBrushes[index]
-        : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
+        : (Brush)Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
     private static bool Warning(Entry entry) => entry.Ratio >= WarningRatio;
 
     private static Canvas Rings(Entry[] entries)
     {
         var canvas = new Canvas { Width = RingDiameter, Height = RingDiameter, VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetAccessibilityView(canvas, AccessibilityView.Raw);
         const double center = RingDiameter / 2;
         var shown = Math.Min(entries.Length, MaximumRings);
         var stroke = shown == 0 ? RingStrokeMaximum : Math.Min(RingStrokeMaximum, (RingBand - RingGap * (shown - 1)) / shown);
@@ -168,7 +165,7 @@ internal static class QuotaView
                 });
                 var geometry = new PathGeometry();
                 geometry.Figures.Add(figure);
-                arc = new Microsoft.UI.Xaml.Shapes.Path { Data = geometry, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
+                arc = new System.Windows.Shapes.Path { Data = geometry, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
             }
             arc.Stroke = brush; arc.StrokeThickness = stroke;
             canvas.Children.Add(arc);
@@ -176,7 +173,7 @@ internal static class QuotaView
         // The center shows the tightest window, the one that runs out first.
         if (entries.Where(entry => entry.Ratio != null).MaxBy(entry => entry.Ratio) is { Ratio: { } ratio } tightest)
         {
-            var label = new TextBlock { Text = Percent(ratio), Style = Themed(Warning(tightest) ? "QuotaPercentCritical" : "QuotaPercent"), FontSize = 18, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Width = RingDiameter, TextAlignment = TextAlignment.Center };
+            var label = new TextBlock { Text = Percent(ratio), Style = Themed(Warning(tightest) ? "QuotaPercentCritical" : "QuotaPercent"), FontSize = 18, FontWeight = FontWeights.Bold, Width = RingDiameter, TextAlignment = TextAlignment.Center };
             AutomationProperties.SetAutomationId(label, "quota-ring-percent");
             Canvas.SetTop(label, center - 13);
             canvas.Children.Add(label);
@@ -184,37 +181,37 @@ internal static class QuotaView
         return canvas;
     }
 
-    private static StackPanel LegendRow(Entry entry, int index)
+    private static Stack LegendRow(Entry entry, int index)
     {
-        var heading = new Grid { ColumnSpacing = 6 };
+        var heading = new SpacedGrid { ColumnSpacing = 6 };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var swatch = new Ellipse { Width = 7, Height = 7, Fill = RingBrush(index), VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(swatch);
-        var label = new TextBlock { Text = entry.Label, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
+        var label = new TextBlock { Text = entry.Label, FontSize = 12, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
         Grid.SetColumn(label, 1); heading.Children.Add(label);
-        var percent = new TextBlock { Text = entry.Ratio is { } ratio ? Percent(ratio) : "—", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var percent = new TextBlock { Text = entry.Ratio is { } ratio ? Percent(ratio) : "—", FontSize = 12, FontWeight = FontWeights.SemiBold };
         percent.Style = Themed(Warning(entry) ? "QuotaPercentCritical" : "QuotaPercent");
         Grid.SetColumn(percent, 2); heading.Children.Add(percent);
-        var row = new StackPanel { Spacing = 1 };
+        var row = new Stack { Spacing = 1 };
         row.Children.Add(heading);
         row.Children.Add(ValueText(entry));
         return row;
     }
 
-    private static StackPanel Bars(Entry[] entries)
+    private static Stack Bars(Entry[] entries)
     {
-        var body = new StackPanel { Spacing = 12 };
+        var body = new Stack { Spacing = 12 };
         foreach (var entry in entries)
         {
-            var heading = new Grid { ColumnSpacing = 8 };
+            var heading = new SpacedGrid { ColumnSpacing = 8 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            heading.Children.Add(new TextBlock { Text = entry.Label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            heading.Children.Add(new TextBlock { Text = entry.Label, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
             var value = ValueText(entry);
             Grid.SetColumn(value, 1); heading.Children.Add(value);
-            var row = new StackPanel { Spacing = 6 };
+            var row = new Stack { Spacing = 6 };
             row.Children.Add(heading);
             if (entry.Ratio is { } ratio) row.Children.Add(Bar(entry, ratio));
             body.Children.Add(row);
@@ -238,14 +235,14 @@ internal static class QuotaView
             Maximum = 100,
             Value = Math.Clamp(ratio, 0, 1) * 100,
             IsIndeterminate = false,
-            ShowError = Warning(entry),
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        if (Warning(entry)) bar.SetResourceReference(Control.ForegroundProperty, "SystemFillColorCriticalBrush");
         AutomationProperties.SetName(bar, Localized.Format("{0}已用比例", entry.Label));
         return bar;
     }
 
     private static string Percent(double ratio) => $"{Math.Round(ratio * 100):0}%";
 
-    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+    private static Style Themed(string key) => (Style)Application.Current.Resources[key];
 }

@@ -1,8 +1,10 @@
 using System.Text.Json;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Media;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using SharpVectors.Converters;
+using SharpVectors.Renderers.Wpf;
 
 namespace CodexMixin;
 
@@ -10,21 +12,16 @@ internal static class Marks
 {
     // UI-thread-only; keys are the fixed set of packaged provider/agent icons.
     private static readonly Dictionary<string, ImageSource> sources = [];
+    private static readonly WpfDrawingSettings svgSettings = new() { IncludeRuntime = false, TextAsGeometry = true };
+
     internal static FrameworkElement Agent(string id)
     {
         if (id.Length == 0 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
             throw new InvalidOperationException(Localized.Get("CLI 返回了无效 Agent ID。"));
         foreach (var extension in new[] { "png", "svg" })
-        {
-            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "agents", $"{id}.{extension}");
-            if (!File.Exists(path)) continue;
-            var uri = new Uri($"ms-appx:///Assets/agents/{id}.{extension}");
-            var key = $"agents/{id}.{extension}";
-            if (!sources.TryGetValue(key, out var source))
-                sources[key] = source = extension == "svg" ? new SvgImageSource(uri) : new BitmapImage(uri);
-            return new Image { Source = source, Width = 32, Height = 32 };
-        }
-        return new SymbolIcon(Symbol.Contact) { Width = 32, Height = 32 };
+            if (Source($"agents/{id}.{extension}") is { } source)
+                return new Image { Source = source, Width = 32, Height = 32 };
+        return new FontIcon { Glyph = "\uE77B", FontSize = 28, Width = 32, Height = 32, TextAlignment = TextAlignment.Center };
     }
 
     internal static Image Provider(JsonElement provider, double size = 28)
@@ -32,12 +29,22 @@ internal static class Marks
         var name = Json.Text(provider, "icon");
         var agy = name == "agy" || Json.OptionalText(provider, "preset_id") == "agy";
         if (!new[] { "aws", "baidu", "claude", "custom", "deepseek", "kiro", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
-        var key = agy ? "agents/agy.png" : $"providers/{name}.svg";
-        if (!sources.TryGetValue(key, out var source))
+        return new Image { Source = Source(agy ? "agents/agy.png" : $"providers/{name}.svg"), Width = size, Height = size };
+    }
+
+    private static ImageSource? Source(string key)
+    {
+        if (sources.TryGetValue(key, out var cached)) return cached;
+        var path = Path.Combine(AppContext.BaseDirectory, "Assets", key);
+        if (!File.Exists(path)) return null;
+        ImageSource source;
+        if (key.EndsWith(".svg", StringComparison.Ordinal))
         {
-            var uri = new Uri($"ms-appx:///Assets/{key}");
-            sources[key] = source = key.EndsWith(".png", StringComparison.Ordinal) ? new BitmapImage(uri) : new SvgImageSource(uri);
+            using var reader = new FileSvgReader(svgSettings);
+            source = new DrawingImage(reader.Read(path));
         }
-        return new Image { Source = source, Width = size, Height = size };
+        else source = new BitmapImage(new Uri(path));
+        source.Freeze();
+        return sources[key] = source;
     }
 }

@@ -80,12 +80,17 @@ internal sealed class NativeShell : IDisposable
         return ShellNotifyIcon(1, ref notification);
     }
 
-    internal void Hide() => ShowWindow(window, 0);
+
+    // Window bounds are physical pixels; WPF positions in DIPs per monitor.
+    internal static void Place(nint handle, System.Drawing.Rectangle bounds)
+    {
+        if (!SetWindowPos(handle, 0, bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x14))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
 
     internal static void ConfigurePopupFrame(nint handle)
     {
-        // WinUI can retain the sizing frame after SetBorderAndTitleBar(false,
-        // false). Remove it after all presenter options have set their styles.
+        // Borderless popups keep no caption or sizing frame.
         const int windowStyle = -16;
         const long captionAndSizingFrame = 0x00c40000;
         var style = GetWindowLongPtr(handle, windowStyle);
@@ -94,18 +99,18 @@ internal sealed class NativeShell : IDisposable
         if (!SetWindowPos(handle, 0, 0, 0, 0, 0, 0x37))
             throw new Win32Exception(Marshal.GetLastWin32Error());
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
-        const int borderColorAttribute = 34;
-        const uint noBorder = 0xfffffffe;
-        var color = noBorder;
-        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, borderColorAttribute, ref color, sizeof(uint)));
+        // Windows 11 rounds the popup like a system flyout and draws its border along the curve.
+        const int cornerPreferenceAttribute = 33;
+        var round = 2u;
+        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(handle, cornerPreferenceAttribute, ref round, sizeof(uint)));
     }
 
-    internal static Windows.Graphics.RectInt32 ConsoleBounds() => CenteredBounds(1440, 960, 0.92);
+    internal static System.Drawing.Rectangle ConsoleBounds() => CenteredBounds(1440, 960, 0.92);
 
     // Side windows fill at most the work area so their lower controls stay on screen.
-    internal static Windows.Graphics.RectInt32 SideWindowBounds() => CenteredBounds(1120, 800, 1);
+    internal static System.Drawing.Rectangle SideWindowBounds() => CenteredBounds(1120, 800, 1);
 
-    private static Windows.Graphics.RectInt32 CenteredBounds(int preferredWidth, int preferredHeight, double fill)
+    private static System.Drawing.Rectangle CenteredBounds(int preferredWidth, int preferredHeight, double fill)
     {
         GetCursorPos(out var position);
         var monitor = MonitorFromPoint(position, 2);
@@ -115,7 +120,7 @@ internal sealed class NativeShell : IDisposable
         var scale = dpi / 96.0;
         var width = Math.Min((int)(preferredWidth * scale), (int)((info.Work.Right - info.Work.Left) * fill));
         var height = Math.Min((int)(preferredHeight * scale), (int)((info.Work.Bottom - info.Work.Top) * fill));
-        return new Windows.Graphics.RectInt32(info.Work.Left + (info.Work.Right - info.Work.Left - width) / 2,
+        return new System.Drawing.Rectangle(info.Work.Left + (info.Work.Right - info.Work.Left - width) / 2,
             info.Work.Top + (info.Work.Bottom - info.Work.Top - height) / 2, width, height);
     }
 
@@ -135,14 +140,14 @@ internal sealed class NativeShell : IDisposable
         return new Rect { Left = cursor.X, Right = cursor.X, Top = cursor.Y, Bottom = cursor.Y };
     }
 
-    internal static Windows.Graphics.RectInt32 PanelBounds(int? requestedHeight = null)
+    internal static System.Drawing.Rectangle PanelBounds(int? requestedHeight = null)
     {
         var anchor = TrayAnchor();
         var position = new Point { X = (anchor.Left + anchor.Right) / 2, Y = (anchor.Top + anchor.Bottom) / 2 };
         var monitor = MonitorFromPoint(position, 2);
         var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
         if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        // AppWindow bounds are physical pixels, while the layout uses 96-DPI units.
+        // Window bounds are physical pixels, while the layout uses 96-DPI units.
         Marshal.ThrowExceptionForHR(GetDpiForMonitor(monitor, 0, out var dpi, out _));
         var margin = (int)(8 * dpi / 96.0);
         var width = Math.Min((int)(360 * dpi / 96.0), info.Work.Right - info.Work.Left - 2 * margin);
@@ -166,7 +171,7 @@ internal sealed class NativeShell : IDisposable
             TaskbarEdge.Bottom => info.Work.Bottom - height - margin,
             _ => position.Y - height / 2
         };
-        return new Windows.Graphics.RectInt32(
+        return new System.Drawing.Rectangle(
             Math.Clamp(x, info.Work.Left + margin, info.Work.Right - width - margin),
             Math.Clamp(y, info.Work.Top + margin, info.Work.Bottom - height - margin), width, height);
     }

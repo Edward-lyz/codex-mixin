@@ -1,4 +1,4 @@
-// Run with sharp@0.35.5 available through NODE_PATH. WinUI's SVG subset
+// Run with sharp@0.35.5 available through NODE_PATH. The Windows SVG renderer
 // omits the filters used by these logos; retain the original SVGs for macOS.
 const path = require("node:path");
 const sharp = require("sharp");

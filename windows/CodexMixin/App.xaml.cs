@@ -1,17 +1,18 @@
 using Microsoft.Win32;
-using Microsoft.UI.Xaml;
-using Microsoft.Windows.AppLifecycle;
-using System.Runtime.InteropServices;
+using System.IO.Pipes;
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Threading;
 
 namespace CodexMixin;
 
-// WinUI requires a public application entry type; all application logic stays internal.
+// The XAML compiler requires a public application type; all application logic stays internal.
 public partial class App : Application
 {
     private const string ConsoleWindowKey = "console";
-    private const string InstanceKey = "CodexMixin.Windows";
-    private const int CatastrophicFailure = unchecked((int)0x8000FFFF);
-    private const int InstanceRegistrationAttempts = 5;
+    // Per-user, per-session names: the mutex marks the primary instance, the pipe carries later launches' arguments.
+    private static readonly string InstanceKey = $"CodexMixin.Windows.{Environment.UserName}.{System.Diagnostics.Process.GetCurrentProcess().SessionId}";
+    private Mutex? instanceMutex;
     private readonly Dictionary<string, MainWindow> windows = [];
     private CliClient? cli;
     private Operations? operations;
@@ -20,22 +21,16 @@ public partial class App : Application
     private TrayWindow? tray;
     private bool exiting;
     private string? notifiedUpdate;
-    private ElementTheme theme = ElementTheme.Default;
 
     internal CliClient Client => cli ??= CliClient.Locate();
     internal Operations Operations => operations ??= new Operations(Client);
     internal AppUpdates Updates => updates ??= new AppUpdates(() => Client);
-    internal ElementTheme Theme => theme;
     internal bool IsUpdating => updates?.Installing == true;
-    internal bool HasVisibleWindows => windows.Values.Any(target => target.AppWindow.IsVisible);
+    internal bool HasVisibleWindows => windows.Values.Any(target => target.IsVisible);
     internal bool HasDraftChanges => windows.Values.Any(target => target.HasDraftChanges);
     internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
-    internal void SetTheme(ElementTheme value)
-    {
-        theme = value;
-        foreach (var target in windows.Values) target.SetTheme(value);
-        tray?.SetTheme(value);
-    }
+    // Fluent resources follow Application.ThemeMode in every window.
+    internal void SetTheme(ThemeMode value) => ThemeMode = value;
 
     internal void SetUpdateInputBlocked(bool blocked)
     {
@@ -58,7 +53,7 @@ public partial class App : Application
         if (updates != null) await updates.StopAsync();
         tray?.Shutdown();
         foreach (var target in windows.Values.ToArray()) target.Shutdown();
-        Exit();
+        Shutdown();
     }
 
     // Lightweight mode: only the CLI gateway stays resident. The login launch
@@ -124,7 +119,7 @@ public partial class App : Application
         tray?.HidePanel();
         // Models, agents, usage, context, and routing share one console window;
         // settings keeps its own window.
-        var key = MainWindow.IsConsolePage(page) ? ConsoleWindowKey : page;
+        var key = CodexMixin.MainWindow.IsConsolePage(page) ? ConsoleWindowKey : page;
         if (!windows.TryGetValue(key, out var target))
         {
             target = new MainWindow(page);
@@ -138,39 +133,35 @@ public partial class App : Application
 
     public App()
     {
-        UnhandledException += (_, args) =>
-        {
-            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");
-            Directory.CreateDirectory(directory);
-            File.WriteAllText(Path.Combine(directory, "native-error.txt"), args.Exception.ToString());
-        };
+        DispatcherUnhandledException += (_, args) => WriteCrash(args.Exception);
+        AppDomain.CurrentDomain.UnhandledException += (_, args) => WriteCrash(args.ExceptionObject);
         InitializeComponent();
     }
 
-    protected override async void OnLaunched(LaunchActivatedEventArgs args)
+    private static void WriteCrash(object error)
     {
-        var background = Environment.GetCommandLineArgs().Contains("--background");
-        if (background && LightweightModeSet()) { Exit(); return; }
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "native-error.txt"), error.ToString());
+    }
+
+    protected override void OnStartup(StartupEventArgs args)
+    {
+        base.OnStartup(args);
+        ThemeMode = ThemeMode.System;
+        var background = args.Args.Contains("--background");
+        if (background && LightweightModeSet()) { Shutdown(); return; }
         SetLightweightMode(false);
-        var instance = await FindMainInstanceAsync();
-        if (!instance.IsCurrent)
+        instanceMutex = new Mutex(true, InstanceKey, out var primary);
+        if (!primary)
         {
-            await instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
-            Exit();
+            instanceMutex.Dispose();
+            instanceMutex = null;
+            ForwardToPrimary(string.Join(' ', args.Args));
+            Shutdown();
             return;
         }
-        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        instance.Activated += (_, activation) => dispatcher.TryEnqueue(() =>
-        {
-            var arguments = activation.Data switch
-            {
-                Windows.ApplicationModel.Activation.ICommandLineActivatedEventArgs command => command.Operation.Arguments,
-                Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch => launch.Arguments,
-                _ => ""
-            };
-            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|routing|fusion|settings|overview|usage|context)\b");
-            OpenPage(match.Success ? match.Groups[1].Value : "providers");
-        });
+        _ = ListenForActivationsAsync();
         try { OpenPage("providers", show: !background); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
         // Prime only the compact panel; do not load the hidden console/model editor.
@@ -189,24 +180,46 @@ public partial class App : Application
         _ = Updates.CheckAsync(automatic: true);
     }
 
-    private static async Task<AppInstance> FindMainInstanceAsync()
+    protected override void OnExit(ExitEventArgs args)
     {
-        for (var attempt = 0; ; attempt++)
+        instanceMutex?.ReleaseMutex();
+        instanceMutex?.Dispose();
+        base.OnExit(args);
+    }
+
+    private static void ForwardToPrimary(string arguments)
+    {
+        // The primary may still be starting its listener; a short timeout keeps a stuck primary from hanging this launch.
+        try
+        {
+            using var pipe = new NamedPipeClientStream(".", InstanceKey, PipeDirection.Out, PipeOptions.CurrentUserOnly);
+            pipe.Connect(5000);
+            using var writer = new StreamWriter(pipe);
+            writer.WriteLine(arguments);
+        }
+        catch (Exception error) when (error is TimeoutException or IOException)
+        {
+            Console.Error.WriteLine($"Could not reach the running Codex Mixin: {error.Message}");
+        }
+    }
+
+    private async Task ListenForActivationsAsync()
+    {
+        while (!exiting)
         {
             try
             {
-                return AppInstance.FindOrRegisterForKey(InstanceKey);
+                await using var pipe = new NamedPipeServerStream(InstanceKey, PipeDirection.In, 1,
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await pipe.WaitForConnectionAsync();
+                using var reader = new StreamReader(pipe);
+                var arguments = await reader.ReadLineAsync() ?? "";
+                var match = Regex.Match(arguments, @"--page=(providers|agents|routing|fusion|settings|overview|usage|context)\b");
+                OpenPage(match.Success ? match.Groups[1].Value : "providers");
             }
-            catch (COMException error) when (
-                error.HResult == CatastrophicFailure
-                && attempt + 1 < InstanceRegistrationAttempts)
+            catch (Exception error) when (error is IOException or ArgumentException)
             {
-                // Unpackaged AppLifecycle registration intermittently returns
-                // E_UNEXPECTED while short-lived activation processes exit.
-                // Retry only that transient HRESULT for a bounded period.
-                Console.Error.WriteLine(
-                    $"Retrying Windows instance registration after {error.HResult:X8}");
-                await Task.Delay(TimeSpan.FromMilliseconds(100 * (1 << attempt)));
+                Console.Error.WriteLine($"Windows activation failed: {error.Message}");
             }
         }
     }

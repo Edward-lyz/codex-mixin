@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Microsoft.UI.Dispatching;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
@@ -13,7 +13,7 @@ namespace CodexMixin;
 internal sealed class NativeUpdater : IDisposable
 {
     private readonly AppUpdates owner;
-    private readonly DispatcherQueue dispatcher;
+    private readonly Dispatcher dispatcher;
     private readonly QueryCallback canShutdown;
     private readonly InstallCallback runInstaller;
     private readonly NotifyCallback shutdown;
@@ -30,13 +30,13 @@ internal sealed class NativeUpdater : IDisposable
     internal NativeUpdater(AppUpdates owner)
     {
         this.owner = owner;
-        dispatcher = DispatcherQueue.GetForCurrentThread();
+        dispatcher = Dispatcher.CurrentDispatcher;
         canShutdown = CanShutdown;
-        notFound = () => dispatcher.TryEnqueue(() => owner.FinishUpdate(Localized.Get("更新源暂时没有可安装的新版本，请稍后重试。")));
+        notFound = () => dispatcher.InvokeAsync(() => owner.FinishUpdate(Localized.Get("更新源暂时没有可安装的新版本，请稍后重试。")));
         runInstaller = RunInstaller;
-        shutdown = () => dispatcher.TryEnqueue(async () => await ((App)Microsoft.UI.Xaml.Application.Current).ExitAllAsync());
-        failed = () => dispatcher.TryEnqueue(() => { Installing = false; ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Get("更新失败；下载、签名或安装前检查未通过，请重试。更新日志位于界面日志目录。")); });
-        cancelled = () => dispatcher.TryEnqueue(() => { Installing = false; ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Get("更新已取消，可稍后重试。")); });
+        shutdown = () => dispatcher.InvokeAsync(async () => await ((App)System.Windows.Application.Current).ExitAllAsync());
+        failed = () => dispatcher.InvokeAsync(() => { Installing = false; ((App)System.Windows.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Get("更新失败；下载、签名或安装前检查未通过，请重试。更新日志位于界面日志目录。")); });
+        cancelled = () => dispatcher.InvokeAsync(() => { Installing = false; ((App)System.Windows.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Get("更新已取消，可稍后重试。")); });
     }
 
     internal void Initialize()
@@ -59,32 +59,32 @@ internal sealed class NativeUpdater : IDisposable
 
     private int CanShutdown()
     {
-        // WinSparkle invokes this on a worker. Never touch WinUI from that thread.
+        // WinSparkle invokes this on a worker. Never touch WPF from that thread.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var token = deadline.Token;
         var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!dispatcher.TryEnqueue(async () =>
+        _ = dispatcher.InvokeAsync(async () =>
         {
             try
             {
                 var permission = await owner.PrepareInstallAsync(token);
                 token.ThrowIfCancellationRequested();
                 gatewayRunning = permission.Running;
-                background = !((App)Microsoft.UI.Xaml.Application.Current).HasVisibleWindows;
+                background = !((App)System.Windows.Application.Current).HasVisibleWindows;
                 Installing = permission.Allowed;
-                ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(permission.Allowed);
+                ((App)System.Windows.Application.Current).SetUpdateInputBlocked(permission.Allowed);
                 if (!permission.Allowed) owner.FinishUpdate(owner.Status);
                 completion.TrySetResult(permission.Allowed ? 1 : 0);
             }
-            catch (Exception error) { Installing = false; ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Format("暂缓安装：{0}", error.Message)); completion.TrySetResult(0); }
-        })) return 0;
+            catch (Exception error) { Installing = false; ((App)System.Windows.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Format("暂缓安装：{0}", error.Message)); completion.TrySetResult(0); }
+        });
         try { return completion.Task.WaitAsync(token).GetAwaiter().GetResult(); }
         catch (OperationCanceledException)
         {
-            dispatcher.TryEnqueue(() =>
+            dispatcher.InvokeAsync(() =>
             {
                 Installing = false;
-                ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(false);
+                ((App)System.Windows.Application.Current).SetUpdateInputBlocked(false);
                 owner.FinishUpdate(Localized.Get("安装前状态检查超时，请重试。"));
             });
             return 0;
@@ -123,7 +123,7 @@ internal sealed class NativeUpdater : IDisposable
         }
         catch (Exception error)
         {
-            dispatcher.TryEnqueue(() => { Installing = false; ((App)Microsoft.UI.Xaml.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Format("启动安装失败：{0}", error.Message)); });
+            dispatcher.InvokeAsync(() => { Installing = false; ((App)System.Windows.Application.Current).SetUpdateInputBlocked(false); owner.FinishUpdate(Localized.Format("启动安装失败：{0}", error.Message)); });
             return -1; // WINSPARKLE_RETURN_ERROR; never execute an unchecked file.
         }
     }

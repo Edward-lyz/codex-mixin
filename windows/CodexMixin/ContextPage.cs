@@ -1,10 +1,9 @@
 using System.Text;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
-using Windows.Foundation;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Controls;
+using System.Windows.Media;
+using System.Windows.Shapes;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
 
 namespace CodexMixin;
 
@@ -74,7 +73,7 @@ public sealed partial class MainWindow
         ToolTipService.SetToolTip(ApplyChanges, Localized.Get("保存更改后自动重启运行中的网关并生效。"));
         TrackDraft(enabled);
 
-        var body = new StackPanel { Spacing = 12 };
+        var body = new Stack { Spacing = 12 };
         body.Children.Add(enabled);
         return Card(Localized.Get("上下文引擎"), "", body);
     }
@@ -83,7 +82,7 @@ public sealed partial class MainWindow
     {
         var totals = stats.Totals;
         var cache = totals.Cache;
-        var tiles = new Grid { ColumnSpacing = 12 };
+        var tiles = new SpacedGrid { ColumnSpacing = 12 };
         var metrics = new (string Title, string Value, string Note)[]
         {
             (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages))),
@@ -96,8 +95,8 @@ public sealed partial class MainWindow
         {
             tiles.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var (title, value, note) = metrics[index];
-            var tileBody = new StackPanel { Spacing = 2 };
-            tileBody.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            var tileBody = new Stack { Spacing = 2 };
+            tileBody.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = FontWeights.SemiBold });
             if (!string.IsNullOrWhiteSpace(note))
                 tileBody.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
             var tile = Card(title, "", tileBody);
@@ -136,7 +135,7 @@ public sealed partial class MainWindow
             }
         }
         inspector.Unloaded += (_, _) => { archiveQuery?.Cancel(); };
-        var archive = new StackPanel { Spacing = 8 };
+        var archive = new Stack { Spacing = 8 };
         ToolTipService.SetToolTip(archive, Localized.Format("归档库：{0}", stats.DatabasePath));
         if (stats.Sessions.Length == 0)
         {
@@ -144,12 +143,15 @@ public sealed partial class MainWindow
         }
         else
         {
-            archive.Children.Add(new Border { Child = Sessions(stats.Sessions, session => { _ = InspectAsync(session); }), Style = Themed("ListCard") });
+            var sessionTable = new Stack();
+            sessionTable.Children.Add(TableHeader(new[] { "会话", "压缩", "节省" }.Select(Localized.Get).ToArray()));
+            sessionTable.Children.Add(Sessions(stats.Sessions, session => { _ = InspectAsync(session); }));
+            archive.Children.Add(new Border { Child = sessionTable, Style = Themed("ListCard") });
         }
 
-        var body = new StackPanel { Spacing = 12 };
+        var body = new Stack { Spacing = 12 };
         body.Children.Add(tiles);
-        var workspace = new Grid { ColumnSpacing = 16 };
+        var workspace = new SpacedGrid { ColumnSpacing = 16 };
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
         workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
         var sessionCard = Card(Localized.Get("按会话统计"), "", archive);
@@ -171,34 +173,26 @@ public sealed partial class MainWindow
         return body;
     }
 
-    private static ListView Sessions(ContextSession[] sessions, Action<ContextSession> select)
+    private static VirtualList Sessions(ContextSession[] sessions, Action<ContextSession> select)
     {
-        var headers = new[] { Localized.Get("会话"), Localized.Get("压缩"), Localized.Get("节省") };
-        var list = new ListView
+        var list = new VirtualList
         {
-            SelectionMode = ListViewSelectionMode.Single,
-            Height = Math.Min(320, 44 + sessions.Length * 52),
-            Header = TableHeader(headers),
-            ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"],
+            SelectionMode = SelectionMode.Single,
+            Height = Math.Min(276, sessions.Length * 52 + 4),
             ItemContainerStyle = Themed("ModelRowContainer"),
             ItemsSource = Enumerable.Range(0, sessions.Length).ToArray()
         };
         AutomationProperties.SetAutomationId(list, "context-sessions");
         list.SelectionChanged += (_, _) => { if (list.SelectedItem is int index) select(sessions[index]); };
-        list.ContainerContentChanging += (_, args) =>
-        {
-            if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
-            content.Content = args.InRecycleQueue ? null : Session(sessions[(int)args.Item]);
-            args.Handled = true;
-        };
+        list.Prepared += (container, item) => container.Content = Session(sessions[(int)item]);
         return list;
     }
 
     private UIElement ContextArchiveView(ContextSession session, ContextArchive archive)
     {
-        var body = new StackPanel { Spacing = 16 };
+        var body = new Stack { Spacing = 16 };
         body.Children.Add(Text(Localized.Format("当前视图 {0} token · 已节省 {1} token", UsageView.Compact(session.ViewTokens), UsageView.Compact(session.SavedTokens))));
-        body.Children.Add(new TextBlock { Text = Localized.Get("上下文增长"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = Localized.Get("上下文增长"), FontWeight = FontWeights.SemiBold });
         var messages = archive.History.ToDictionary(row => row.Reference);
         var blocks = archive.Blocks.ToDictionary(row => row.Id);
         var sizes = messages.ToDictionary(row => row.Key, row => row.Value.Bytes);
@@ -250,7 +244,7 @@ public sealed partial class MainWindow
             Text = Localized.Get("按消息顺序累计 JSON UTF-8 体积。当前视图表示现有压缩的分布，不代表历史模型 token 用量；不含摘要包装文本。"),
             Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap
         });
-        body.Children.Add(new TextBlock { Text = Localized.Get("压缩概览"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        body.Children.Add(new TextBlock { Text = Localized.Get("压缩概览"), FontWeight = FontWeights.SemiBold });
         foreach (var block in archive.Blocks.Where(block => block.SupersededBy is null))
             body.Children.Add(ContextCompression(block, messages));
         if (archive.Blocks.Length == 0) body.Children.Add(Text(Localized.Get("此会话尚无压缩块。")));
@@ -260,10 +254,10 @@ public sealed partial class MainWindow
         if (earlier.Length > 0)
         {
             var history = new Expander { Header = Localized.Format("历史压缩（{0}）", earlier.Length), HorizontalAlignment = HorizontalAlignment.Stretch };
-            history.Expanding += (_, _) =>
+            history.Expanded += (_, _) =>
             {
                 if (history.Content is not null) return;
-                var cards = new StackPanel { Spacing = 12 };
+                var cards = new Stack { Spacing = 12 };
                 foreach (var block in earlier) cards.Children.Add(ContextCompression(block, messages));
                 history.Content = cards;
             };
@@ -274,7 +268,7 @@ public sealed partial class MainWindow
 
     private static Border ContextCompression(ContextArchiveBlock block, Dictionary<string, ContextArchiveMessage> messages)
     {
-        var sources = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var sources = new Stack { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         var covered = block.References.Select(reference => messages.GetValueOrDefault(reference)
             ?? new ContextArchiveMessage(reference, 0, 0, "other", null));
         var groups = covered.GroupBy(message => (message.Kind, message.Tool))
@@ -287,13 +281,13 @@ public sealed partial class MainWindow
                 "user" => Localized.Get("用户消息"), "assistant" => Localized.Get("助手消息"), "function_call" => Localized.Get("工具调用"),
                 "function_call_output" => Localized.Get("工具结果"), "reasoning" => Localized.Get("推理"), _ => Localized.Get("其他")
             };
-            var symbol = kind switch { "user" => Symbol.Contact, "assistant" => Symbol.Message,
-                "function_call" => Symbol.Setting, "function_call_output" => Symbol.Document, _ => Symbol.More };
-            var chip = new Grid { ColumnSpacing = 6 };
+            var glyph = kind switch { "user" => "\uE77B", "assistant" => "\uE8BD",
+                "function_call" => "\uE713", "function_call_output" => "\uE8A5", _ => "\uE712" };
+            var chip = new SpacedGrid { ColumnSpacing = 6 };
             chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
             chip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             chip.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var icon = new SymbolIcon { Symbol = symbol, Width = 14, Height = 14 };
+            var icon = new FontIcon { Glyph = glyph, FontSize = 14 };
             chip.Children.Add(icon);
             var title = new TextBlock { Text = label, Style = Themed("Caption"), TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(title, 1); chip.Children.Add(title);
@@ -304,30 +298,29 @@ public sealed partial class MainWindow
             sources.Children.Add(chip);
         }
         if (groups.Length > 5) sources.Children.Add(new TextBlock { Text = Localized.Format("其他 {0} 条", groups.Skip(5).Sum(group => group.Count())), Style = Themed("Caption") });
-        var flow = new Grid { ColumnSpacing = 10 };
+        var flow = new SpacedGrid { ColumnSpacing = 10 };
         flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(124) });
         flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
         flow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         flow.Children.Add(sources);
-        var brace = new TextBlock { Text = "}", FontSize = 72, FontWeight = Microsoft.UI.Text.FontWeights.ExtraLight,
+        var brace = new TextBlock { Text = "}", FontSize = 72, FontWeight = FontWeights.ExtraLight,
             Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
-        AutomationProperties.SetAccessibilityView(brace, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
         Grid.SetColumn(brace, 1); flow.Children.Add(brace);
-        var output = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var output = new Stack { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         output.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(block.Topic) ? Localized.Get("精简摘要") : block.Topic,
-            TextWrapping = TextWrapping.Wrap, MaxLines = 2, TextTrimming = TextTrimming.CharacterEllipsis,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            TextWrapping = TextWrapping.Wrap, MaxHeight = 40, TextTrimming = TextTrimming.CharacterEllipsis,
+            FontWeight = FontWeights.SemiBold });
         output.Children.Add(new TextBlock { Text = Localized.Format("{0} 条内容 → 1 条摘要", block.References.Length), Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap });
         output.Children.Add(new TextBlock { Text = block.Summary[..Math.Min(240, block.Summary.Length)],
-            Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis });
+            Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap, MaxHeight = 52, TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(output, 2); flow.Children.Add(output);
         var detail = new Expander { Header = Localized.Get("查看摘要"), HorizontalAlignment = HorizontalAlignment.Stretch };
-        detail.Expanding += (_, _) =>
+        detail.Expanded += (_, _) =>
         {
             if (detail.Content is not null) return;
-            detail.Content = new TextBlock { Text = block.Summary, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
+            detail.Content = new TextBox { Text = block.Summary, TextWrapping = TextWrapping.Wrap, IsReadOnly = true, BorderThickness = new Thickness(0), Background = Brushes.Transparent };
         };
-        var body = new StackPanel { Spacing = 12 };
+        var body = new Stack { Spacing = 12 };
         body.Children.Add(flow); body.Children.Add(detail);
         return new Border { Child = body, Padding = new Thickness(12), Style = Themed("ListCard") };
     }
@@ -356,7 +349,7 @@ public sealed partial class MainWindow
 
     private static Border TableRow(UIElement[] cells, bool divider)
     {
-        var grid = new Grid { ColumnSpacing = 10 };
+        var grid = new SpacedGrid { ColumnSpacing = 10 };
         for (var index = 0; index < cells.Length; index++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ContextColumns[index], GridUnitType.Star) });

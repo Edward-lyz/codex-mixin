@@ -1,8 +1,8 @@
 using System.Text.Json;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 
 namespace CodexMixin;
 
@@ -127,7 +127,7 @@ public sealed partial class MainWindow
         }
         var models = routes.Select(route => Json.Text(route, "model")).ToArray();
         var editor = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Top };
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single };
+        var list = new ListView { SelectionMode = SelectionMode.Single };
         AutomationProperties.SetAutomationId(list, "route-list");
         foreach (var route in routes)
         {
@@ -171,24 +171,25 @@ public sealed partial class MainWindow
             Open(item);
         };
 
-        var newMenu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
+        var newMenu = new ContextMenu();
         foreach (var kind in new[] { "fusion", "schedule", "failover" })
         {
             var (title, _, description) = RouteKind(kind);
-            var item = new MenuFlyoutItem { Text = Localized.Format("新建{0}", title) };
+            var item = new MenuItem { Header = Localized.Format("新建{0}", title) };
             AutomationProperties.SetAutomationId(item, $"route-new-{kind}");
             ToolTipService.SetToolTip(item, description);
             item.Click += async (_, _) => await Draft(kind, null);
             newMenu.Items.Add(item);
         }
-        var create = new DropDownButton { Content = IconLabel("\uE710", Localized.Get("新建")), Flyout = newMenu };
+        var create = new Button { Content = IconLabel("\uE710", Localized.Get("新建")) };
+        Menus.Attach(create, newMenu);
         AutomationProperties.SetAutomationId(create, "route-new");
         AutomationProperties.SetName(create, Localized.Get("新建路由"));
         var sideHeader = new Grid();
         sideHeader.Children.Add(new TextBlock { Text = Localized.Get("路由"), Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, VerticalAlignment = VerticalAlignment.Center });
         create.HorizontalAlignment = HorizontalAlignment.Right;
         sideHeader.Children.Add(create);
-        var side = new StackPanel { Spacing = 8 };
+        var side = new Stack { Spacing = 8 };
         side.Children.Add(sideHeader);
         side.Children.Add(routes.Length == 0 ? new TextBlock { Text = Localized.Get("还没有模型路由。"), Style = Themed("SecondaryText") } : list);
 
@@ -200,7 +201,7 @@ public sealed partial class MainWindow
             foreach (var suggestion in suggestions)
             {
                 var kind = Json.Text(suggestion, "kind");
-                var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(4, 2, 0, 2) };
+                var row = new SpacedGrid { ColumnSpacing = 10, Margin = new Thickness(4, 2, 0, 2) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -218,7 +219,7 @@ public sealed partial class MainWindow
             }
         }
 
-        var layout = new Grid { ColumnSpacing = 16 };
+        var layout = new SpacedGrid { ColumnSpacing = 16 };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         layout.Children.Add(new Border { Style = Themed("Card"), Padding = new Thickness(12), VerticalAlignment = VerticalAlignment.Top, Child = side });
@@ -233,7 +234,7 @@ public sealed partial class MainWindow
 
     private UIElement RouteRow(JsonElement route)
     {
-        var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(0, 6, 0, 6) };
+        var row = new SpacedGrid { ColumnSpacing = 10, Margin = new Thickness(0, 6, 0, 6) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.Children.Add(RouteIcon(Json.Text(route, "kind"), RoutePrecedence(route)));
@@ -275,13 +276,13 @@ public sealed partial class MainWindow
         var saved = route ?? default;
         var oldModel = isSaved ? Json.Text(saved, "model") : null;
         var (title, _, description) = RouteKind(kind);
-        var body = new StackPanel { Spacing = 18 };
-        var header = new Grid { ColumnSpacing = 12 };
+        var body = new Stack { Spacing = 18 };
+        var header = new SpacedGrid { ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(RouteIcon(kind, route is { } shown ? RoutePrecedence(shown) : []));
-        var heading = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        var heading = new Stack { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         heading.Children.Add(new TextBlock { Text = isSaved ? RouteTitle(saved) : Localized.Format("新建{0}", title), Style = Themed("BodyStrongTextBlockStyle"), FontSize = 18, TextTrimming = TextTrimming.CharacterEllipsis });
         var kindLabel = new TextBlock { Text = title, Style = Themed("Caption") };
         ToolTipService.SetToolTip(kindLabel, description);
@@ -290,8 +291,8 @@ public sealed partial class MainWindow
         header.Children.Add(heading);
         if (oldModel != null)
         {
-            var menu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
-            var delete = new MenuFlyoutItem { Text = Localized.Get("删除路由…"), Icon = new FontIcon { Glyph = "\uE74D" } };
+            var menu = new ContextMenu();
+            var delete = new MenuItem { Header = Localized.Get("删除路由…"), Icon = new FontIcon { Glyph = "\uE74D", FontSize = 14 } };
             AutomationProperties.SetAutomationId(delete, "route-delete");
             delete.Click += async (_, _) =>
             {
@@ -304,7 +305,8 @@ public sealed partial class MainWindow
                 catch (Exception error) { ShowNotice(Localized.Get("删除模型路由失败"), error.Message, InfoBarSeverity.Error); }
             };
             menu.Items.Add(delete);
-            var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = menu, Style = Themed("FlatButton"), VerticalAlignment = VerticalAlignment.Top };
+            var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Style = Themed("FlatButton"), VerticalAlignment = VerticalAlignment.Top };
+            Menus.Attach(more, menu);
             AutomationProperties.SetAutomationId(more, "route-more");
             AutomationProperties.SetName(more, Localized.Get("更多"));
             ToolTipService.SetToolTip(more, Localized.Get("更多"));
@@ -312,8 +314,8 @@ public sealed partial class MainWindow
             header.Children.Add(more);
         }
         body.Children.Add(header);
-        var flow = new StackPanel { Spacing = 8 };
-        var form = new StackPanel { Spacing = 12 };
+        var flow = new Stack { Spacing = 8 };
+        var form = new Stack { Spacing = 12 };
         body.Children.Add(flow);
         body.Children.Add(form);
         var build = kind switch
@@ -349,10 +351,10 @@ public sealed partial class MainWindow
     }
 
     /// The name field and the model Codex selects for it.
-    private TextBox RouteNameField(StackPanel form, string value, bool optional, Func<string> fallback)
+    private TextBox RouteNameField(Stack form, string value, bool optional, Func<string> fallback)
     {
         var name = Input(Localized.Get("名称"), value);
-        if (optional) name.PlaceholderText = Localized.Get("可选；留空则直接接管原模型");
+        if (optional) Placeholder.Set(name, Localized.Get("可选；留空则直接接管原模型"));
         AutomationProperties.SetAutomationId(name, "route-name");
         var entry = new TextBlock { Style = Themed("SecondaryText") };
         void ShowEntry()
@@ -362,7 +364,7 @@ public sealed partial class MainWindow
         }
         name.TextChanged += (_, _) => { ShowEntry(); MarkDirty(); };
         ShowEntry();
-        form.Children.Add(name);
+        form.Children.Add(Field.Wrap(name));
         form.Children.Add(entry);
         return name;
     }
@@ -388,11 +390,11 @@ public sealed partial class MainWindow
     /// A model shown as a clickable node: provider logo, model name and provider.
     private Button ModelNode(string id, string[] ids, Action<Button> onClick, string? automationId = null)
     {
-        var content = new Grid { ColumnSpacing = 10 };
+        var content = new SpacedGrid { ColumnSpacing = 10 };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.Children.Add(new Border { Style = Themed("LogoChip"), Width = 26, Height = 26, VerticalAlignment = VerticalAlignment.Center, Child = ProviderLogo(ModelProvider(id), 18) });
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var text = new Stack { VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = ModelName(id), TextTrimming = TextTrimming.CharacterEllipsis });
         var available = ids.Contains(id);
         text.Children.Add(new TextBlock { Text = available ? ProviderName(ModelProvider(id)) : Localized.Get("模型不可用"), Style = Themed(available ? "Caption" : "CriticalCaption") });
@@ -436,12 +438,13 @@ public sealed partial class MainWindow
     private void PickModels(FrameworkElement anchor, string title, string[] ids, IReadOnlyList<string> selected, bool multi, Action<string[]> changed, Action closed)
     {
         var chosen = selected.ToList();
-        var flyout = new Flyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft };
-        var search = new AutoSuggestBox { PlaceholderText = Localized.Get("搜索模型"), QueryIcon = new SymbolIcon(Symbol.Find) };
+        var flyout = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
+        var search = new TextBox();
+        Placeholder.Set(search, Localized.Get("搜索模型"));
         AutomationProperties.SetAutomationId(search, "route-model-search");
         AutomationProperties.SetName(search, Localized.Get("搜索模型"));
         var caption = new TextBlock { Style = Themed("Caption") };
-        var items = new StackPanel { Spacing = 2 };
+        var items = new Stack { Spacing = 2 };
         var boxes = new List<(CheckBox Box, string Id)>();
         void Count()
         {
@@ -457,13 +460,13 @@ public sealed partial class MainWindow
                 || ProviderName(ModelProvider(id)).Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
             foreach (var group in shown.GroupBy(ModelProvider))
             {
-                var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 8, 0, 2) };
+                var heading = new Stack { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(4, 8, 0, 2) };
                 heading.Children.Add(ProviderLogo(group.Key, 14));
                 heading.Children.Add(new TextBlock { Text = ProviderName(group.Key), Style = Themed("ColumnHeader") });
                 items.Children.Add(heading);
                 foreach (var id in group)
                 {
-                    var label = new StackPanel();
+                    var label = new Stack();
                     label.Children.Add(new TextBlock { Text = ModelName(id), TextTrimming = TextTrimming.CharacterEllipsis });
                     if (ModelName(id) != id) label.Children.Add(new TextBlock { Text = id, Style = Themed("Mono") });
                     if (multi)
@@ -482,7 +485,7 @@ public sealed partial class MainWindow
                     }
                     else
                     {
-                        var row = new Grid { ColumnSpacing = 8 };
+                        var row = new SpacedGrid { ColumnSpacing = 8 };
                         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                         row.Children.Add(label);
@@ -493,7 +496,7 @@ public sealed partial class MainWindow
                         }
                         var item = new Button { Content = row, Style = Themed("MenuRow") };
                         AutomationProperties.SetName(item, ModelName(id));
-                        item.Click += (_, _) => { changed([id]); flyout.Hide(); };
+                        item.Click += (_, _) => { changed([id]); flyout.IsOpen = false; };
                         items.Children.Add(item);
                     }
                 }
@@ -502,7 +505,7 @@ public sealed partial class MainWindow
             Count();
         }
         search.TextChanged += (_, _) => Fill();
-        var content = new StackPanel { Spacing = 8, Width = 320 };
+        var content = new Stack { Spacing = 8, Width = 320 };
         var top = new Grid();
         top.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle") });
         caption.HorizontalAlignment = HorizontalAlignment.Right; caption.VerticalAlignment = VerticalAlignment.Center;
@@ -510,15 +513,19 @@ public sealed partial class MainWindow
         content.Children.Add(top);
         content.Children.Add(search);
         content.Children.Add(new ScrollViewer { MaxHeight = 360, Content = items, Padding = new Thickness(0, 0, 12, 0) });
-        flyout.Content = content;
+        var surface = new Border { Child = content, Padding = new Thickness(12), Margin = new Thickness(0, 4, 0, 0), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8) };
+        surface.SetResourceReference(Border.BackgroundProperty, "SolidBackgroundFillColorQuarternaryBrush");
+        surface.SetResourceReference(Border.BorderBrushProperty, "SurfaceStrokeColorFlyoutBrush");
+        flyout.Child = surface;
         flyout.Closed += (_, _) => closed();
         Fill();
-        flyout.ShowAt(anchor);
+        flyout.IsOpen = true;
+        search.Focus();
     }
 
     // ---- Fusion: Panel (parallel) → Judge → Final -----------------------------
 
-    private Func<Dictionary<string, object?>> FusionEditor(StackPanel flow, StackPanel form, JsonElement saved, bool hasSource, bool isSaved,
+    private Func<Dictionary<string, object?>> FusionEditor(Stack flow, Stack form, JsonElement saved, bool hasSource, bool isSaved,
         string[] ids, string[] models)
     {
         var defaults = ids.Take(3).ToArray();
@@ -528,7 +535,7 @@ public sealed partial class MainWindow
         void Render()
         {
             flow.Children.Clear();
-            var grid = new Grid { ColumnSpacing = 12, RowSpacing = 6 };
+            var grid = new SpacedGrid { ColumnSpacing = 12, RowSpacing = 6 };
             foreach (var width in new[] { 1.2, 0, 1, 0, 1 })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width == 0 ? GridLength.Auto : new GridLength(width, GridUnitType.Star) });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -539,7 +546,7 @@ public sealed partial class MainWindow
             Place(StageHeader(Localized.Get("Final · 作答")), 4, 0);
             void EditPanels(Button anchor) => PickModels(anchor, Localized.Get("Panel 模型"), ids, panels, true,
                 picked => { panels = picked.ToList(); MarkDirty(); }, Render);
-            var column = new StackPanel { Spacing = 6 };
+            var column = new Stack { Spacing = 6 };
             foreach (var panel in panels) column.Children.Add(ModelNode(panel, ids, EditPanels));
             var add = AddNode(panels.Count == 0 ? Localized.Get("选择 Panel 模型") : Localized.Get("编辑 Panel 模型"), EditPanels);
             AutomationProperties.SetAutomationId(add, "route-panels");
@@ -561,12 +568,12 @@ public sealed partial class MainWindow
         var name = RouteNameField(form, hasSource ? Json.OptionalText(saved, "id") ?? "fusion" : UniqueRouteName("fusion", models), false, () => "");
         if (hasSource && !isSaved && models.Contains(VirtualRoutePrefix + name.Text)) name.Text = UniqueRouteName(name.Text, models);
         var panelTools = hasSource && saved.TryGetProperty("panel_tools", out var tools) && tools.ValueKind == JsonValueKind.Object ? tools : default;
-        var minimum = new NumberBox { Header = Localized.Get("最少成功 Panel"), Minimum = 1, Maximum = MaxPanels, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "min_successful", 1) };
-        var timeout = new NumberBox { Header = Localized.Get("单模型超时（秒）"), Minimum = 1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline, Value = OptionalNumber(saved, "timeout_ms", 300_000) / 1000.0 };
+        var minimum = Field.Labeled(new NumberBox { Minimum = 1, Maximum = MaxPanels, Value = OptionalNumber(saved, "min_successful", 1) }, Localized.Get("最少成功 Panel"));
+        var timeout = Field.Labeled(new NumberBox { Minimum = 1, Value = OptionalNumber(saved, "timeout_ms", 300_000) / 1000.0 }, Localized.Get("单模型超时（秒）"));
         var intermediate = new CheckBox { Content = Localized.Get("在回答中显示 Panel / Judge 中间结果"), IsChecked = OptionalFlag(saved, "show_intermediate_results", true) };
         var readOnlyTools = new CheckBox { Content = Localized.Get("允许 Panel 使用进程内只读工具"), IsChecked = OptionalFlag(panelTools, "enabled", true) };
-        var advanced = new StackPanel { Spacing = 12 };
-        foreach (var element in new FrameworkElement[] { minimum, timeout, intermediate, readOnlyTools }) { advanced.Children.Add(element); TrackDraft(element); }
+        var advanced = new Stack { Spacing = 12 };
+        foreach (var element in new FrameworkElement[] { minimum, timeout, intermediate, readOnlyTools }) { advanced.Children.Add(Field.Wrap(element)); TrackDraft(element); }
         form.Children.Add(new Expander { Header = Localized.Get("高级选项"), Content = advanced, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch });
         return () =>
         {
@@ -590,7 +597,7 @@ public sealed partial class MainWindow
 
     // ---- Schedule: time slots → model, then the default ------------------------
 
-    private Func<Dictionary<string, object?>> ScheduleEditor(StackPanel flow, StackPanel form, JsonElement saved, bool hasSource, bool isSaved,
+    private Func<Dictionary<string, object?>> ScheduleEditor(Stack flow, Stack form, JsonElement saved, bool hasSource, bool isSaved,
         string[] ids, string[] models)
     {
         var fallback = hasSource ? Json.Text(saved, "final_model") : ids[0];
@@ -600,7 +607,7 @@ public sealed partial class MainWindow
         void Render()
         {
             flow.Children.Clear();
-            var grid = new Grid { ColumnSpacing = 10, RowSpacing = 6 };
+            var grid = new SpacedGrid { ColumnSpacing = 10, RowSpacing = 6 };
             foreach (var width in new[] { 0, 0, 0, 0, 1.0, 0 })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width == 0 ? GridLength.Auto : new GridLength(width, GridUnitType.Star) });
             var row = 0;
@@ -615,11 +622,11 @@ public sealed partial class MainWindow
                 var slot = slots[index];
                 row++;
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var begin = new TimePicker { Time = TimeSpan.FromMinutes(slot.Start), ClockIdentifier = "24HourClock", MinWidth = 0 };
-                var finish = new TimePicker { Time = TimeSpan.FromMinutes(slot.End), ClockIdentifier = "24HourClock", MinWidth = 0 };
+                var begin = new TimePicker { Time = TimeSpan.FromMinutes(slot.Start) };
+                var finish = new TimePicker { Time = TimeSpan.FromMinutes(slot.End) };
                 AutomationProperties.SetName(begin, Localized.Format("时段 {0} 开始", index + 1)); AutomationProperties.SetName(finish, Localized.Format("时段 {0} 结束", index + 1));
-                begin.TimeChanged += (_, args) => { slots[slotIndex] = slots[slotIndex] with { Start = (int)args.NewTime.TotalMinutes }; MarkDirty(); };
-                finish.TimeChanged += (_, args) => { slots[slotIndex] = slots[slotIndex] with { End = (int)args.NewTime.TotalMinutes }; MarkDirty(); };
+                begin.TimeChanged += (_, _) => { slots[slotIndex] = slots[slotIndex] with { Start = (int)begin.Time.TotalMinutes }; MarkDirty(); };
+                finish.TimeChanged += (_, _) => { slots[slotIndex] = slots[slotIndex] with { End = (int)finish.Time.TotalMinutes }; MarkDirty(); };
                 Place(begin, 0);
                 Place(new TextBlock { Text = "–", VerticalAlignment = VerticalAlignment.Center }, 1);
                 Place(finish, 2);
@@ -673,7 +680,7 @@ public sealed partial class MainWindow
 
     // ---- Failover: source, then fallbacks in order ------------------------------
 
-    private Func<Dictionary<string, object?>> FailoverEditor(StackPanel flow, StackPanel form, JsonElement saved, bool hasSource, bool isSaved,
+    private Func<Dictionary<string, object?>> FailoverEditor(Stack flow, Stack form, JsonElement saved, bool hasSource, bool isSaved,
         string[] ids, string[] models, string? oldModel)
     {
         string source;
@@ -695,7 +702,7 @@ public sealed partial class MainWindow
             flow.Children.Add(StageHeader(Localized.Get("原模型")));
             flow.Children.Add(ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
                 picked => { source = picked[0]; MarkDirty(); }, Render), "route-source"));
-            var arrow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(14, 0, 0, 0) };
+            var arrow = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(14, 0, 0, 0) };
             arrow.Children.Add(FlowArrow("\uE74B"));
             arrow.Children.Add(new TextBlock { Text = Localized.Get("429 · 5xx · 连接失败 · 超时，且尚未输出"), Style = Themed("Caption") });
             flow.Children.Add(arrow);
@@ -703,7 +710,7 @@ public sealed partial class MainWindow
             for (var index = 0; index < fallbacks.Count; index++)
             {
                 var position = index;
-                var row = new Grid { ColumnSpacing = 6 };
+                var row = new SpacedGrid { ColumnSpacing = 6 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 foreach (var _ in Enumerable.Range(0, 3)) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });

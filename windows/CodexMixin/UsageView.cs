@@ -1,9 +1,9 @@
 using System.Text.Json;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Shapes;
 
 namespace CodexMixin;
 
@@ -24,9 +24,9 @@ internal static class UsageView
     internal static readonly string SucceededSeries = Localized.Get("成功");
     internal static readonly string FailedSeries = Localized.Get("失败");
 
-    private static readonly Brush CachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x2B, 0xA8, 0x9C));
-    private static readonly Brush UncachedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x23, 0x83, 0xE2));
-    private static readonly Brush OutputBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x90, 0x65, 0xB0));
+    private static readonly Brush CachedBrush = new SolidColorBrush(Color.FromArgb(255, 0x2B, 0xA8, 0x9C));
+    private static readonly Brush UncachedBrush = new SolidColorBrush(Color.FromArgb(255, 0x23, 0x83, 0xE2));
+    private static readonly Brush OutputBrush = new SolidColorBrush(Color.FromArgb(255, 0x90, 0x65, 0xB0));
 
     private static long Count(JsonElement row, string key) =>
         row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : 0;
@@ -77,7 +77,7 @@ internal static class UsageView
                 slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail(Localized.Format("{0} / {1} 次失败", Compact(current.Errors), Compact(current.Attempts))),
                 warning: (current.ErrorPercent ?? 0) >= 5),
         };
-        var grid = new Grid { ColumnSpacing = 12 };
+        var grid = new SpacedGrid { ColumnSpacing = 12 };
         for (var index = 0; index < cards.Length; index++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -91,13 +91,13 @@ internal static class UsageView
 
     private static Border Kpi(string title, string value, (string Text, int Sign)? delta, Tone tone, double[] trend, UIElement detail, bool warning = false)
     {
-        var body = new Grid { RowSpacing = 4 };
+        var body = new SpacedGrid { RowSpacing = 4 };
         for (var row = 0; row < 3; row++) body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         body.Children.Add(new TextBlock { Text = title, Style = Themed("Caption") });
-        var number = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var figure = new TextBlock { Text = value, FontSize = 22, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var number = new Stack { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var figure = new TextBlock { Text = value, FontSize = 22, FontWeight = FontWeights.SemiBold };
         if (warning) figure.Style = Themed("QuotaPercentCritical");
         number.Children.Add(figure);
         if (delta is { } change)
@@ -135,7 +135,7 @@ internal static class UsageView
             var width = args.NewSize.Width;
             var points = new PointCollection();
             for (var index = 0; index < values.Length; index++)
-                points.Add(new Windows.Foundation.Point(index * width / (values.Length - 1), 30 - values[index] / max * 28));
+                points.Add(new Point(index * width / (values.Length - 1), 30 - values[index] / max * 28));
             line.Points = points;
         };
         return host;
@@ -144,9 +144,10 @@ internal static class UsageView
     /// Cached, uncached and output shares of the token total.
     private static UIElement ShareBar(UsageStats stats)
     {
-        var bar = new Grid { Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 5, 0, 5) };
+        var bar = new Grid { Height = 6, Margin = new Thickness(0, 5, 0, 5) };
+        bar.SizeChanged += (_, _) => bar.Clip = new RectangleGeometry(new Rect(bar.RenderSize), 3, 3);
         var parts = new (long Value, Brush Brush, string Name)[] { (stats.Cached, CachedBrush, Localized.Get("缓存输入")), (stats.Uncached, UncachedBrush, Localized.Get("未缓存输入")), (stats.Output, OutputBrush, Localized.Get("输出")) };
-        if (stats.Tokens == 0) { bar.Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongFillColorDisabledBrush"]; return bar; }
+        if (stats.Tokens == 0) { bar.Background = (Brush)Application.Current.Resources["ControlStrongFillColorDisabledBrush"]; return bar; }
         foreach (var (value, brush, _) in parts.Where(part => part.Value > 0))
         {
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(value, GridUnitType.Star) });
@@ -179,7 +180,7 @@ internal static class UsageView
         else if (requests)
         {
             series = [SucceededSeries, FailedSeries];
-            brushes = [(Brush)Microsoft.UI.Xaml.Application.Current.Resources["AccentFillColorDefaultBrush"], (Brush)Microsoft.UI.Xaml.Application.Current.Resources["SystemFillColorCriticalBrush"]];
+            brushes = [(Brush)Application.Current.Resources["AccentFillColorDefaultBrush"], (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"]];
             values = slot => [slot.Total.Requests, slot.Total.Errors];
         }
         else
@@ -190,13 +191,13 @@ internal static class UsageView
         }
         var cells = slots.Select(values).ToArray();
         var max = Math.Max(1, cells.Length == 0 ? 1 : cells.Max(row => row.Sum()));
-        var plot = new Grid { Height = PlotHeight + 20, ColumnSpacing = slots.Length > 24 ? 2 : 4 };
+        var plot = new SpacedGrid { Height = PlotHeight + 20, ColumnSpacing = slots.Length > 24 ? 2 : 4 };
         var labelEvery = (int)Math.Ceiling(slots.Length / 8.0);
         for (var index = 0; index < slots.Length; index++)
         {
             var slot = slots[index];
             plot.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var bars = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
+            var bars = new Stack { VerticalAlignment = VerticalAlignment.Bottom };
             // The first series sits at the base of the stack.
             for (var seriesIndex = series.Length - 1; seriesIndex >= 0; seriesIndex--)
             {
@@ -204,7 +205,7 @@ internal static class UsageView
                 if (value > 0) bars.Children.Add(new Border { Height = Math.Max(1, value * PlotHeight / max), Background = brushes[seriesIndex] });
             }
             if (bars.Children.Count > 0) ((Border)bars.Children[0]).CornerRadius = new CornerRadius(2, 2, 0, 0);
-            var column = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+            var column = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
             column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(PlotHeight) });
             column.RowDefinitions.Add(new RowDefinition { Height = new GridLength(20) });
             column.Children.Add(bars);
@@ -222,23 +223,23 @@ internal static class UsageView
             lines.Add(Localized.Format("请求 {0} · 失败 {1} · 缓存命中 {2}", Compact(slot.Total.Attempts), Compact(slot.Total.Errors), Percent(slot.Total.CacheHitPercent)));
             lines.Add(selected?.Start == slot.Start ? Localized.Get("再次点击显示全部回复") : Localized.Get("点击只看这段时间的回复"));
             ToolTipService.SetToolTip(column, string.Join("\n", lines));
-            column.Tapped += (_, _) => onSelect(selected?.Start == slot.Start ? null : slot);
+            column.MouseLeftButtonUp += (_, _) => onSelect(selected?.Start == slot.Start ? null : slot);
             Grid.SetColumn(column, index);
             plot.Children.Add(column);
         }
         var total = cells.Sum(row => row.Sum());
         var header = new Grid();
         header.Children.Add(new TextBlock { Text = Localized.Format("{0} · 合计 {1}", (requests ? Localized.Get("请求次数") : "Tokens"), Compact(total)), Style = Themed("Caption") });
-        var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14, HorizontalAlignment = HorizontalAlignment.Right };
+        var legend = new Stack { Orientation = Orientation.Horizontal, Spacing = 14, HorizontalAlignment = HorizontalAlignment.Right };
         for (var index = 0; index < series.Length; index++)
         {
-            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var item = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
             item.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(2), Background = brushes[index], VerticalAlignment = VerticalAlignment.Center });
             item.Children.Add(new TextBlock { Text = SeriesName(series[index], providerNames), Style = Themed("Caption") });
             legend.Children.Add(item);
         }
         header.Children.Add(legend);
-        var body = new StackPanel { Spacing = 8 };
+        var body = new Stack { Spacing = 8 };
         body.Children.Add(header);
         body.Children.Add(plot);
         return body;
@@ -254,7 +255,7 @@ internal static class UsageView
 
     private static Brush SeriesBrush(int index) => index < SeriesColors
         ? QuotaView.RingBrush(index)
-        : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
+        : (Brush)Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
     /// Table lines for the shown replies, grouped by session when asked.
     /// Sessions keep the order of their newest reply.
@@ -280,39 +281,35 @@ internal static class UsageView
         Line(Headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("ColumnHeader") }).ToArray(), false);
 
     /// Virtualized rows; containers are recycled, so only visible rows are built.
-    internal static ListView Turns(UsageTableRow[] rows, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession, Action<string> onToggle)
+    internal static VirtualList Turns(UsageTableRow[] rows, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession, Action<string> onToggle)
     {
-        var list = new ListView
+        var list = new VirtualList
         {
-            SelectionMode = ListViewSelectionMode.None, Height = Math.Min(14, Math.Max(rows.Length, 1)) * (RowHeight + 1) + 4,
-            ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"],
+            SelectionMode = SelectionMode.Single, Focusable = false, Height = Math.Min(14, Math.Max(rows.Length, 1)) * (RowHeight + 1) + 4,
             ItemContainerStyle = Themed("ModelRowContainer"),
             ItemsSource = Enumerable.Range(0, rows.Length).ToArray()
         };
         AutomationProperties.SetAutomationId(list, "usage-turns");
-        list.ContainerContentChanging += (_, args) =>
+        list.Prepared += (container, item) =>
         {
-            if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
-            if (args.InRecycleQueue) { content.Content = null; args.Handled = true; return; }
-            var row = rows[(int)args.Item];
-            content.Content = row.Turn is { } turn ? Turn(turn, providerNames, onSession) : Group(row, onToggle);
-            args.Handled = true;
+            var row = rows[(int)item];
+            container.Content = row.Turn is { } turn ? Turn(turn, providerNames, onSession) : Group(row, onToggle);
         };
         return list;
     }
 
     private static UIElement Group(UsageTableRow row, Action<string> onToggle)
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        var content = new Stack { Orientation = Orientation.Horizontal, Spacing = 10 };
         content.Children.Add(new FontIcon { Glyph = row.Expanded ? "\uE70D" : "\uE76C", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
-        content.Children.Add(new TextBlock { Text = row.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, MaxWidth = 360, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = row.Title, FontWeight = FontWeights.SemiBold, MaxWidth = 360, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
         var summary = Localized.Format("{0} 条 · {1} tokens · 缓存命中 {2}", row.Count, Compact(row.Stats.Tokens), Percent(row.Stats.CacheHitPercent));
         content.Children.Add(new TextBlock { Text = summary, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
         if (row.Stats.Errors > 0)
             content.Children.Add(new TextBlock { Text = Localized.Format("{0} 失败", row.Stats.Errors), Style = Themed("CriticalCaption"), VerticalAlignment = VerticalAlignment.Center });
         var button = new Button
         {
-            Style = Themed("MenuRow"), Content = content, Height = RowHeight, Padding = new Thickness(16, 0, 16, 0), CornerRadius = new CornerRadius(0)
+            Style = Themed("MenuRow"), Content = content, Height = RowHeight, Padding = new Thickness(16, 0, 16, 0)
         };
         AutomationProperties.SetName(button, $"{row.Title} {summary}");
         button.Click += (_, _) => onToggle(row.Session);
@@ -323,8 +320,9 @@ internal static class UsageView
     {
         var session = Json.Text(turn, "session");
         var sessionTitle = Json.OptionalText(turn, "session_display") ?? session;
-        var sessionButton = new HyperlinkButton
+        var sessionButton = new Button
         {
+            Style = Themed("LinkButton"),
             Content = new TextBlock { Text = sessionTitle, TextTrimming = TextTrimming.CharacterEllipsis },
             Padding = new Thickness(0), FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
@@ -334,7 +332,7 @@ internal static class UsageView
         sessionButton.Click += (_, _) => onSession(session);
 
         var failed = UsageStats.IsFailed(turn);
-        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var status = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
         status.Children.Add(new Ellipse { Style = Themed(failed ? "DotCritical" : "DotOn"), VerticalAlignment = VerticalAlignment.Center });
         status.Children.Add(new TextBlock { Text = failed ? Localized.Get("失败") : Localized.Get("成功"), Style = Themed(failed ? "CriticalCaption" : "Caption") });
         if (failed) ToolTipService.SetToolTip(status, Json.OptionalText(turn, "error") ?? Localized.Get("上游请求失败"));
@@ -342,7 +340,7 @@ internal static class UsageView
         var providerId = Json.Text(turn, "provider_id");
         var providerName = providerNames.GetValueOrDefault(providerId, providerId);
         var modelId = Json.Text(turn, "upstream_model_id");
-        var model = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var model = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
         model.Children.Add(new TextBlock { Text = modelId, TextTrimming = TextTrimming.CharacterEllipsis });
         var tip = $"{providerName} · {modelId}";
         if (UsageStats.IsSubstituted(turn))
@@ -377,7 +375,7 @@ internal static class UsageView
 
     private static Border Line(UIElement[] cells, bool divider)
     {
-        var grid = new Grid { ColumnSpacing = 10 };
+        var grid = new SpacedGrid { ColumnSpacing = 10 };
         for (var index = 0; index < cells.Length; index++)
         {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ColumnWeights[index], GridUnitType.Star) });
@@ -393,5 +391,5 @@ internal static class UsageView
         };
     }
 
-    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+    private static Style Themed(string key) => (Style)Application.Current.Resources[key];
 }
