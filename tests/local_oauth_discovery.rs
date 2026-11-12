@@ -154,6 +154,12 @@ fn hung_login_shell_leaves_no_helper_process_behind() {
     )
     .unwrap();
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // The shell is read only for an installed Claude CLI.
+    let bin = root.path().join("home/.local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let cli = bin.join("claude");
+    std::fs::write(&cli, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
 
     let output = common::cli(root.path())
         .env("SHELL", &shell)
