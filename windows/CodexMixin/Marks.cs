@@ -24,12 +24,14 @@ internal static class Marks
         return new FontIcon { Glyph = "\uE77B", FontSize = 28, Width = 32, Height = 32, TextAlignment = TextAlignment.Center };
     }
 
-    internal static Image Provider(JsonElement provider, double size = 28)
+    internal static FrameworkElement Provider(JsonElement provider, double size = 28)
     {
         var name = Json.Text(provider, "icon");
         var agy = name == "agy" || Json.OptionalText(provider, "preset_id") == "agy";
         if (!new[] { "aws", "baidu", "claude", "custom", "deepseek", "kiro", "openai", "opencode", "openrouter" }.Contains(name)) name = "custom";
-        return new Image { Source = Source(agy ? "agents/agy.png" : $"providers/{name}.svg"), Width = size, Height = size };
+        if ((Source(agy ? "agents/agy.png" : $"providers/{name}.svg") ?? Source("providers/custom.svg")) is { } source)
+            return new Image { Source = source, Width = size, Height = size };
+        return new FontIcon { Glyph = "\uE753", FontSize = size * 0.8, Width = size, Height = size, TextAlignment = TextAlignment.Center };
     }
 
     private static ImageSource? Source(string key)

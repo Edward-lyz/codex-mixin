@@ -17,6 +17,11 @@ namespace CodexMixin;
 public sealed partial class MainWindow : Window
 {
     private readonly CancellationTokenSource lifetime = new();
+    private Stack PageBody = new() { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private OperationWindow? operationOutput;
+    private Action? sortModels;
+    private Func<Task>? refreshSettings;
+
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(30) };
     private CliClient? cli;
     private Operations? operations;
@@ -65,6 +70,7 @@ public sealed partial class MainWindow : Window
     {
         this.page = page;
         InitializeComponent();
+        PageBodyHost.Content = PageBody;
         XamlText.Translate(Content);
         ProviderList.ItemContainerStyle = Themed("ModelRowContainer");
         ProviderList.Prepared += RenderProviderRow;
@@ -92,6 +98,7 @@ public sealed partial class MainWindow : Window
             pageRefresh?.Cancel();
             pageRefresh?.Dispose();
             shell?.Dispose();
+            operationOutput?.Dismiss();
         };
         Root.Loaded += (_, _) => InitializeView();
         IsVisibleChanged += (_, _) => OnViewStateChanged();
@@ -196,25 +203,22 @@ public sealed partial class MainWindow : Window
         var providers = page == "providers";
         ProviderSidebar.Visibility = providers ? Visibility.Visible : Visibility.Collapsed;
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
-        // Console pages sit on a layer beside the navigation pane; the settings window fills its client area.
-        ContentLayer.BorderThickness = console ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
-        ContentLayer.CornerRadius = console ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
-        StatusLayer.BorderThickness = console ? new Thickness(1, 0, 0, 0) : new Thickness(0);
+        ContentLayer.BorderThickness = new Thickness(0, 1, 0, 0);
+        ContentLayer.CornerRadius = new CornerRadius(0);
+        StatusLayer.BorderThickness = new Thickness(0);
         DraftSummary.Visibility = ApplyChanges.Visibility = page is "providers" or "routing" or "context" ? Visibility.Visible : Visibility.Collapsed;
-        var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
-        PageTitle.Visibility = header;
+        PageTitle.Visibility = Visibility.Visible;
         ApplyWidthLayout();
         UpdateRefreshTimer();
     }
 
-    // Narrow windows keep navigation as icons and give the page more room, like Windows Settings.
+    // Keep the console tabs in the toolbar and adapt the inner provider split.
     private void ApplyWidthLayout()
     {
         var compact = Root.ActualWidth > 0 && Root.ActualWidth < 1100;
-        NavPane.Width = compact ? 48 : 212;
-        ConsoleTabs.Tag = compact ? "compact" : null;
+        ConsoleTabs.Tag = null;
         SettingsLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var item in ConsoleTabs.Items.OfType<TabItem>()) item.ToolTip = compact ? item.Header : null;
+        foreach (var item in ConsoleTabs.Items.OfType<TabItem>()) item.ToolTip = item.Header;
         SidebarColumn.Width = new GridLength(page == "providers" ? compact ? 224 : 264 : 0);
         PageLayout.Margin = compact ? new Thickness(24, 20, 24, 12) : new Thickness(32, 24, 32, 16);
     }
@@ -336,7 +340,7 @@ public sealed partial class MainWindow : Window
             finally { selectingProvider = false; }
         }
         providerId = id;
-        RenderSelectedProvider();
+        await RenderSelectedProviderAsync();
     }
 
     private async void OnAddProvider(object sender, RoutedEventArgs args)
@@ -368,7 +372,7 @@ public sealed partial class MainWindow : Window
         {
             connectionSelected = connection;
             UpdateRefreshTimer();
-            RenderSelectedProvider();
+            await RenderSelectedProviderAsync();
         }
         SyncProviderTab();
     }
@@ -470,11 +474,13 @@ public sealed partial class MainWindow : Window
             ShowNotice(title, error.Message, InfoBarSeverity.Error);
             if (error is CliFailure { Committed: true })
             {
-                PageBody.Children.Clear();
-                try { await LoadPageAsync(cancellation.Token); }
+                try
+                {
+                    if (page == "settings" && refreshSettings != null) await refreshSettings();
+                    else await LoadPageAsync(cancellation.Token);
+                }
                 catch (Exception refreshError)
                 {
-                    PageBody.Children.Clear();
                     Notice.Message += Localized.Format("\n状态刷新失败：{0}", refreshError.Message);
                 }
             }
@@ -511,14 +517,26 @@ public sealed partial class MainWindow : Window
     {
         await ConnectCliAsync(token);
         var service = operations ?? throw new InvalidOperationException(Localized.Get("CLI 尚未连接，请先刷新。"));
-        var progress = new Progress<string>(message => StatusText.Text = message);
-        var output = await service.ChangeAsync(args, token, secrets, progress, apply);
+        operationOutput?.Dismiss();
+        var outputWindow = new OperationWindow(this, label, () => activeCancellation?.Cancel());
+        operationOutput = outputWindow;
+        OutputDetails.Visibility = Visibility.Visible;
+        outputWindow.Show();
+        var progress = new Progress<string>(message => { StatusText.Text = message; outputWindow.Report(message); });
+        string output;
+        try { output = await service.ChangeAsync(args, token, secrets, progress, apply); }
+        catch (Exception error) { outputWindow.Finish(error.Message, failed: true); throw; }
+        outputWindow.Finish(string.IsNullOrWhiteSpace(output) ? Localized.Get("操作完成。") : output.Trim());
         draftDirty = false;
         if (apply) ShowSummary(Localized.Get("配置已同步"));
-        ShowNotice(label, string.IsNullOrWhiteSpace(output) ? Localized.Get("操作完成。") : output.Trim(), InfoBarSeverity.Success);
+        ShowNotice(label, Localized.Get("操作完成，可查看操作详情。"), InfoBarSeverity.Success);
         // A tray-only startup has not loaded the console; do not build a hidden model page.
         if (!initialized) return;
-        try { await LoadPageAsync(token); if (apply) ShowSummary(Localized.Get("配置已同步")); }
+        try
+        {
+            if (page == "settings" && refreshSettings != null) await refreshSettings();
+            else await LoadPageAsync(token);
+            if (apply) ShowSummary(Localized.Get("配置已同步")); }
         catch (Exception error)
         {
             ShowSummary(Localized.Get("配置已保存，状态刷新失败"));
@@ -535,12 +553,17 @@ public sealed partial class MainWindow : Window
         pageRefresh?.Cancel();
         pageRefresh?.Dispose();
         pageRefresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        PageBody.Children.Clear();
+        var nextBody = new Stack { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+        PageBody = nextBody;
+        sortModels = null;
+        refreshSettings = null;
         draftDirty = false;
         pendingApply = null;
         ApplyChanges.IsEnabled = false;
         ApplyChanges.Content = Localized.Get("应用更改");
-        ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
+        ProviderHeaderTile.Visibility = Visibility.Visible;
+        ProviderHeaderIcon.Content = new FontIcon { Glyph = PageGlyph(), FontSize = 22 };
+        StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
         ShowSummary(Localized.Get("未修改"));
         ToolTipService.SetToolTip(PageTitle, null);
         PageTitle.Text = page switch
@@ -553,18 +576,34 @@ public sealed partial class MainWindow : Window
             "settings" => Localized.Get("设置"),
             _ => Localized.Get("概览")
         };
-        switch (page)
+        try
         {
-            case "providers": await ProvidersAsync(token); break;
-            case "agents": await AgentsAsync(token); break;
-            case "usage": await UsageAsync(token); break;
-            case "context": await ContextAsync(token); break;
-            case "routing": await RoutingAsync(token); break;
-            case "settings": await SettingsAsync(token); break;
-            default: await OverviewAsync(token); break;
+            switch (page)
+            {
+                case "providers": await ProvidersAsync(token); break;
+                case "agents": await AgentsAsync(token); break;
+                case "usage": await UsageAsync(token); break;
+                case "context": await ContextAsync(token); break;
+                case "routing": await RoutingAsync(token); break;
+                case "settings": await SettingsAsync(token); break;
+                default: await OverviewAsync(token); break;
+            }
+            token.ThrowIfCancellationRequested();
+            pageLoaded = true;
+            PageBodyHost.Content = nextBody;
         }
-        token.ThrowIfCancellationRequested();
-        pageLoaded = true;
+        catch (Exception error)
+        {
+            pageLoaded = false;
+            pendingApply = null;
+            sortModels = null;
+            refreshSettings = null;
+            ApplyChanges.IsEnabled = false;
+            nextBody.Children.Clear();
+            nextBody.Children.Add(Card(Localized.Get("页面读取失败"), error.Message));
+            PageBodyHost.Content = nextBody;
+            throw;
+        }
     }
 
     private CliClient Client => cli ?? throw new InvalidOperationException(Localized.Get("CLI 尚未连接，请刷新。"));
@@ -671,7 +710,7 @@ public sealed partial class MainWindow : Window
             PageBody.Children.Add(Button(Localized.Get("新增服务商"), AddProviderAsync, true));
             return;
         }
-        RenderSelectedProvider();
+        await RenderSelectedProviderAsync();
         // Render the local snapshot first; benchmark IPC is not on the navigation path.
         _ = RefreshTimingsAsync(pageRefresh!.Token);
     }
@@ -693,7 +732,7 @@ public sealed partial class MainWindow : Window
         container.Content = new Border { Child = tile, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) };
     }
 
-    private async void RenderSelectedProvider()
+    private async Task RenderSelectedProviderAsync()
     {
         if (providerId == null) return;
         var provider = providerRows.GetValueOrDefault(providerId);
@@ -719,7 +758,11 @@ public sealed partial class MainWindow : Window
                 if (Json.Text(provider, "kind") == "official")
                 {
                     PageBody.Children.Add(Card(Localized.Get("连接配置"), Localized.Get("官方服务商由 Codex OAuth 管理，连接参数只读。")));
-                    pendingApply = null; ApplyChanges.IsEnabled = false; return;
+                    var echHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+                    PageBody.Children.Add(echHost);
+                    pendingApply = null; ApplyChanges.IsEnabled = false;
+                    await LoadSettingAsync(echHost, Localized.Get("官方连接 · ECH"), EchCardAsync, pageRefresh!.Token);
+                    return;
                 }
                 if (connectionDrafts.TryGetValue(providerId, out var draft))
                 {
@@ -794,11 +837,16 @@ public sealed partial class MainWindow : Window
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
+        var sortColumn = -1;
+        var descending = false;
+        var headers = new List<Button>();
         var header = Columns();
         var labels = new[] { Localized.Get("加入"), Localized.Get("顺序"), Localized.Get("模型"), Localized.Get("首 Token"), Localized.Get("生成速度"), Localized.Get("上下文"), Localized.Get("倍率"), Localized.Get("能力") };
         for (var index = 0; index < labels.Length; index++)
         {
-            var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 3 and <= 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
+            var label = new Button { Content = labels[index], Style = Themed("FlatButton"), Padding = new Thickness(0, 4, 0, 4), MinWidth = 0,
+                HorizontalAlignment = index is >= 3 and <= 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
+            headers.Add(label);
             Grid.SetColumn(label, index); header.Children.Add(label);
         }
         Fit(header);
@@ -886,7 +934,7 @@ public sealed partial class MainWindow : Window
                 if (choice == ContentDialogResult.Primary && (!double.IsFinite(number.Value) || number.Value <= 0 || number.Value != Math.Truncate(number.Value)))
                     throw new InvalidOperationException(Localized.Get("上下文 Token 数必须是正整数。"));
                 contexts[modelId] = choice == ContentDialogResult.Secondary ? double.NaN : number.Value;
-                ShowContext(); MarkDirty();
+                ShowContext(); MarkDirty(); Filter();
             });
             context.Content = contextLabel; context.Style = Themed("FlatButton");
             context.Padding = new Thickness(4, 2, 4, 2); context.HorizontalAlignment = HorizontalAlignment.Right; context.MinHeight = 0;
@@ -961,15 +1009,68 @@ public sealed partial class MainWindow : Window
             draggedModel = null;
         };
         list.ItemsSource = modelIds;
+        double? Number(JsonElement row, string key)
+        {
+            if (!row.TryGetProperty(key, out var value)) return null;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) && double.IsFinite(number)) return number;
+            if (value.ValueKind != JsonValueKind.String) return null;
+            var text = value.GetString()?.Trim();
+            if (key == "ratio") text = text?.TrimEnd('x', 'X', '×').Trim();
+            return double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out number) && double.IsFinite(number) ? number : null;
+        }
+        double? SortValue(string modelId)
+        {
+            var model = modelsById[modelId].Model;
+            timings.TryGetValue($"{id}/{modelId}", out var timing);
+            return sortColumn switch
+            {
+                0 => selected.Contains(modelId) ? 1 : 0,
+                1 => selected.Contains(modelId) ? selected.IndexOf(modelId) + 1 : null,
+                3 => timing.ValueKind == JsonValueKind.Object ? Number(timing, "ttft_ms") : null,
+                4 => timing.ValueKind == JsonValueKind.Object ? Number(timing, "tps") : null,
+                5 => contexts.TryGetValue(modelId, out var context) && double.IsFinite(context) ? context : Number(model, "context_window"),
+                6 => Number(model, "ratio"),
+                7 => new[] { "supports_image", "supports_thinking", "supports_function_tools", "supports_tool_search", "supports_web_search" }
+                    .Sum((field) => model.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.True ? 1 : 0),
+                _ => null
+            };
+        }
+        int Compare(string left, string right)
+        {
+            int result;
+            if (sortColumn == 2) result = StringComparer.OrdinalIgnoreCase.Compare(left, right);
+            else
+            {
+                var l = SortValue(left); var r = SortValue(right);
+                // Unknown values stay last in either direction.
+                if (l == null || r == null) return l == r ? StringComparer.OrdinalIgnoreCase.Compare(left, right) : l == null ? 1 : -1;
+                result = l.Value.CompareTo(r.Value);
+            }
+            if (result != 0) return descending ? -result : result;
+            return StringComparer.OrdinalIgnoreCase.Compare(left, right);
+        }
         void Filter()
         {
             var text = search.Text;
             var mode = filter.SelectedIndex;
-            list.ItemsSource = modelIds.Where(modelId => modelId.Contains(text, StringComparison.OrdinalIgnoreCase) &&
-                (mode == 0 || selected.Contains(modelId) == (mode == 1)))
-                .OrderBy(modelId => modelOrder == "manual" && selected.Contains(modelId) ? selected.IndexOf(modelId) : int.MaxValue)
-                .ToArray();
+            var visible = modelIds.Where(modelId => modelId.Contains(text, StringComparison.OrdinalIgnoreCase) &&
+                (mode == 0 || selected.Contains(modelId) == (mode == 1)));
+            list.ItemsSource = (sortColumn < 0 ? visible.OrderBy(modelId => modelOrder == "manual" && selected.Contains(modelId) ? selected.IndexOf(modelId) : int.MaxValue)
+                : visible.Order(Comparer<string>.Create(Compare))).ToArray();
         }
+        for (var index = 0; index < headers.Count; index++)
+        {
+            var column = index;
+            headers[index].Click += (_, _) =>
+            {
+                descending = sortColumn == column && !descending;
+                sortColumn = column;
+                for (var item = 0; item < headers.Count; item++) headers[item].Content = labels[item] + (item == column ? descending ? " ↓" : " ↑" : "");
+                Filter();
+            };
+        }
+        sortModels = () => { if (sortColumn is 3 or 4) Filter(); };
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         order.SelectionChanged += (_, _) => { modelOrder = order.SelectedIndex == 1 ? "manual" : "family"; MarkDirty(); Filter(); };
         Filter();
@@ -1092,6 +1193,7 @@ public sealed partial class MainWindow : Window
             timings[key] = row;
             if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
         }
+        sortModels?.Invoke();
         if (draftDirty) return;
         if (results.Length == 0) { ShowSummary(Localized.Get("当前服务商暂无测速结果")); return; }
         var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
@@ -1427,11 +1529,14 @@ public sealed partial class MainWindow : Window
     private async Task UsageAsync(CancellationToken token)
     {
         var range = Choice(Localized.Get("统计范围"), [Localized.Get("今天"), Localized.Get("7 天"), Localized.Get("30 天")], Localized.Get("7 天"));
-        var metric = Choice(Localized.Get("图表指标"), ["Tokens", Localized.Get("请求次数")], "Tokens");
+        var metric = Choice(Localized.Get("图表指标"), ["Tokens", Localized.Get("请求次数"), Localized.Get("预估费用（USD）")], "Tokens");
         var grouping = Choice(Localized.Get("图表分组"), [Localized.Get("构成"), Localized.Get("按 Provider 拆分")], Localized.Get("构成"));
-        foreach (var picker in new[] { range, metric, grouping }) picker.MinWidth = 150;
-        var filters = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
-        filters.Children.Add(Field.Wrap(range)); filters.Children.Add(Field.Wrap(metric)); filters.Children.Add(Field.Wrap(grouping));
+        var providerFilter = Choice(Localized.Get("供应商"), [Localized.Get("全部供应商")], Localized.Get("全部供应商"));
+        string[] providerFilterIds = [""];
+        foreach (var picker in new[] { range, metric, grouping, providerFilter }) picker.MinWidth = 150;
+        var filters = new WrapPanel { Orientation = Orientation.Horizontal };
+        filters.Children.Add(Field.Wrap(range)); filters.Children.Add(Field.Wrap(metric)); filters.Children.Add(Field.Wrap(grouping)); filters.Children.Add(Field.Wrap(providerFilter));
+        foreach (FrameworkElement field in filters.Children) field.Margin = new Thickness(0, 0, 12, 8);
         var usageBody = new Stack { Spacing = 12 };
         JsonElement[] daily = [], previous = [], turns = [];
         JsonElement[]? slotTurns = null;
@@ -1441,6 +1546,8 @@ public sealed partial class MainWindow : Window
         string? session = null;
         var expanded = new HashSet<string>();
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
+        bool InProvider(JsonElement row) => providerFilter.SelectedIndex <= 0 ||
+            Json.Text(row, "provider_id") == providerFilterIds[providerFilter.SelectedIndex];
 
         var status = Choice(Localized.Get("状态"), [Localized.Get("全部"), Localized.Get("成功"), Localized.Get("失败")], Localized.Get("全部"));
         var model = Choice(Localized.Get("模型"), [Localized.Get("全部模型")], Localized.Get("全部模型"));
@@ -1450,8 +1557,11 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetAutomationId(status, "usage-status"); AutomationProperties.SetAutomationId(model, "usage-model");
         AutomationProperties.SetAutomationId(grouped, "usage-group-session");
         var chips = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Bottom };
-        var tableBar = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
-        foreach (var element in new FrameworkElement[] { status, model, substituted, grouped, chips }) tableBar.Children.Add(Field.Wrap(element));
+        var tableBar = new WrapPanel();
+        foreach (var element in new FrameworkElement[] { status, model, substituted, grouped, chips })
+        {
+            var field = Field.Wrap(element); field.Margin = new Thickness(0, 0, 12, 8); tableBar.Children.Add(field);
+        }
         var updatingFilters = false;
 
         var summaryHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
@@ -1479,7 +1589,7 @@ public sealed partial class MainWindow : Window
         void RenderTurns()
         {
             var scoped = (slot == null ? turns : slotTurns ?? [])
-                .Where(turn => session == null || Json.Text(turn, "session") == session).ToArray();
+                .Where(InProvider).Where(turn => session == null || Json.Text(turn, "session") == session).ToArray();
             var substitutions = scoped.Count(UsageStats.IsSubstituted);
             substituted.Visibility = substitutions > 0 ? Visibility.Visible : Visibility.Collapsed;
             substituted.Content = Localized.Format("仅看模型替换（{0}）", substitutions);
@@ -1508,7 +1618,7 @@ public sealed partial class MainWindow : Window
                 chips.Children.Add(Chip(Localized.Format("会话 {0}", title), () => { session = null; RenderTurns(); }));
             }
             tableNote.Text = slot != null && slotTurns == null ? Localized.Get("正在读取这段时间的回复…")
-                : Localized.Format("显示 {0} 条回复", shown.Length) + (slot == null && session == null && turns.Length >= 500 ? Localized.Get("（只列出最近 500 条；点击图表柱子查看某段时间的全部回复）") : "");
+                : Localized.Format("显示 {0} 条回复", shown.Length) + (slot == null && session == null && turns.Length >= 5000 ? Localized.Get("（只列出最近 5000 条；点击图表柱子缩小时间范围）") : "");
             if (shown.Length == 0) { turnsHost.Content = Text(slot != null && slotTurns == null ? "" : Localized.Get("没有符合条件的回复。")); return; }
             var rows = UsageView.Rows(shown, grouped.IsChecked == true, expanded);
             var table = new Stack();
@@ -1540,9 +1650,18 @@ public sealed partial class MainWindow : Window
         }
         void RenderCharts()
         {
-            var chart = UsageView.Chart(slots, providerNames, metric.SelectedIndex == 1, grouping.SelectedIndex == 1, slot, selected => _ = SelectSlot(selected));
+            var chart = UsageView.Chart(slots, providerNames, metric.SelectedIndex == 1, grouping.SelectedIndex == 1, metric.SelectedIndex == 2, slot, selected => _ = SelectSlot(selected));
             var card = Card(Days() == 1 ? Localized.Get("用量趋势 · 按小时") : Localized.Get("用量趋势 · 按天（UTC）"), "", chart);
             chartsHost.Content = card;
+        }
+        void RebuildScope()
+        {
+            slot = null; slotTurns = null; session = null;
+            var current = daily.Where(InProvider).ToArray();
+            slots = UsageBuckets.Slots(current, turns.Where(InProvider).ToArray(), Days(), DateTimeOffset.Now);
+            summaryHost.Content = UsageView.Summary(UsageStats.Sum(current.Select(UsageStats.Daily)),
+                UsageStats.Sum(previous.Where(InProvider).Select(UsageStats.Daily)), slots);
+            RenderCharts(); RenderTurns();
         }
         async Task ReadUsage(CancellationToken cancellation)
         {
@@ -1553,7 +1672,7 @@ public sealed partial class MainWindow : Window
             {
                 var snapshots = await Task.WhenAll(
                     Client.QueryAsync(["usage", "--daily", "--json", "--days", Arg(days * 2)], cancellation),
-                    Client.QueryAsync(["usage", "--turns", "--json", "--days", Arg(days), "--limit", "500"], cancellation),
+                    Client.QueryAsync(["usage", "--turns", "--json", "--days", Arg(days), "--limit", "5000"], cancellation),
                     Client.QueryAsync(["providers", "list", "--json"], cancellation));
                 var now = DateTimeOffset.Now;
                 (daily, previous) = UsageBuckets.SplitPeriods(Json.Rows(snapshots[0]), days, now);
@@ -1568,8 +1687,14 @@ public sealed partial class MainWindow : Window
                     var name = Json.Text(provider, "display_name");
                     return byName[name] == 1 ? name : $"{name} ({Json.Text(provider, "id")})";
                 });
-                session = null; slot = null; slotTurns = null;
+                foreach (var id in daily.Concat(previous).Concat(turns).Select(row => Json.Text(row, "provider_id")).Distinct())
+                    providerNames.TryAdd(id, id);
+                var keepProvider = providerFilter.SelectedIndex > 0 ? providerFilterIds[providerFilter.SelectedIndex] : "";
                 updatingFilters = true;
+                providerFilterIds = new[] { "" }.Concat(providerNames.Keys.OrderBy(id => providerNames[id], StringComparer.Ordinal)).ToArray();
+                providerFilter.Items.Clear(); providerFilter.Items.Add(Localized.Get("全部供应商"));
+                foreach (var id in providerFilterIds.Skip(1)) providerFilter.Items.Add(providerNames[id]);
+                providerFilter.SelectedIndex = Math.Max(0, Array.IndexOf(providerFilterIds, keepProvider));
                 var models = turns.Select(turn => Json.Text(turn, "upstream_model_id")).Distinct().Order(StringComparer.Ordinal).ToArray();
                 var keep = model.SelectedIndex > 0 && models.Contains((string)model.SelectedItem) ? (string)model.SelectedItem : null;
                 model.Items.Clear(); model.Items.Add(Localized.Get("全部模型"));
@@ -1577,21 +1702,23 @@ public sealed partial class MainWindow : Window
                 model.SelectedItem = keep ?? Localized.Get("全部模型");
                 updatingFilters = false;
                 if (usageBody.Children.Count != 3) Attach();
-                summaryHost.Content = UsageView.Summary(UsageStats.Sum(daily.Select(UsageStats.Daily)), UsageStats.Sum(previous.Select(UsageStats.Daily)), slots);
-                RenderCharts(); RenderTurns();
+                RebuildScope();
                 pageLoaded = true;
             }
             catch (CliFailure) when (cancellation.IsCancellationRequested) { throw; }
             catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card(Localized.Get("用量不可用"), error.Message)); }
         }
         range.SelectionChanged += async (_, _) => await ExecuteUiAsync(Localized.Get("读取用量"), ReadUsage, readOnly: true);
+        providerFilter.SelectionChanged += (_, _) => { if (!updatingFilters) RebuildScope(); };
         metric.SelectionChanged += (_, _) => RenderCharts();
         grouping.SelectionChanged += (_, _) => RenderCharts();
         status.SelectionChanged += (_, _) => { if (!updatingFilters) RenderTurns(); };
         model.SelectionChanged += (_, _) => { if (!updatingFilters) RenderTurns(); };
         substituted.Click += (_, _) => RenderTurns();
         grouped.Click += (_, _) => RenderTurns();
-        PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
+        PageBody.Children.Add(filters);
+        PageBody.Children.Add(Text(Localized.Get("费用按模型公开单价估算（USD），不代表实际账单；无可用估算时显示 —。")));
+        PageBody.Children.Add(usageBody);
         await ReadUsage(token);
     }
 
@@ -1628,10 +1755,21 @@ public sealed partial class MainWindow : Window
         return picker;
     }
 
-    private Border Card(string title, string description, UIElement? content = null)
+    private string PageGlyph() => page switch
+    {
+        "providers" => "\uE753", "agents" => "\uE99A", "usage" => "\uE9D2",
+        "context" => "\uE81C", "routing" => "\uE8F1", _ => "\uE713"
+    };
+
+    private Border Card(string title, string description, UIElement? content = null, string? glyph = null)
     {
         var body = new Stack { Spacing = 12 };
-        body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), TextWrapping = TextWrapping.Wrap });
+        var heading = new DockPanel();
+        var icon = new FontIcon { Glyph = glyph ?? PageGlyph(), FontSize = 17, Width = 24, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+        icon.SetResourceReference(Control.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
+        DockPanel.SetDock(icon, Dock.Left); heading.Children.Add(icon);
+        heading.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+        body.Children.Add(heading);
         if (!string.IsNullOrWhiteSpace(description))
             body.Children.Add(new TextBlock
             {
@@ -1648,6 +1786,7 @@ public sealed partial class MainWindow : Window
         Content = content,
         CloseButtonText = Localized.Get("取消"),
         Owner = this,
+        IconGlyph = PageGlyph(),
         DefaultButton = ContentDialogButton.Primary
     };
 
@@ -1665,8 +1804,27 @@ public sealed partial class MainWindow : Window
         return await ShowDialogAsync(dialog) == ContentDialogResult.Primary;
     }
 
+    private void OnOutputDetails(object sender, RoutedEventArgs args)
+    {
+        operationOutput?.Show();
+        operationOutput?.Activate();
+    }
+
     private void ShowNotice(string title, string message, InfoBarSeverity severity)
     {
-        Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true;
+        var firstLine = message.Split('\n', 2)[0].Trim();
+        if (message.Length > 180 || message.Contains('\n'))
+        {
+            if (operationOutput == null || !operationOutput.IsRunning)
+            {
+                operationOutput?.Dismiss();
+                operationOutput = new OperationWindow(this, title, () => activeCancellation?.Cancel());
+                operationOutput.Finish(message, severity == InfoBarSeverity.Error);
+            }
+            OutputDetails.Visibility = Visibility.Visible;
+        }
+        Notice.Title = title;
+        Notice.Message = firstLine.Length > 180 ? firstLine[..180] + "…" : firstLine;
+        Notice.Severity = severity; Notice.IsOpen = true;
     }
 }

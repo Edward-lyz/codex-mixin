@@ -288,10 +288,16 @@ async fn start_model_benchmarks(
     }
     let targets = state
         .catalog
-        .benchmark_targets(&request.providers, &request.models)?;
+        .benchmark_targets(&request.providers, &request.models)
+        .await?;
     let snapshot = state
         .benchmarks
-        .start(targets, timeout, request.target_output_tokens)
+        .start(
+            targets,
+            timeout,
+            request.target_output_tokens,
+            std::sync::Arc::clone(&state.gateway),
+        )
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,

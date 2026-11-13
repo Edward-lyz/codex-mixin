@@ -41,11 +41,13 @@ internal static class UsageView
         return $"{value:0}";
     }
 
+    internal static string Money(double value) => value.ToString("$0.0000", System.Globalization.CultureInfo.InvariantCulture);
+
     private static string Percent(double? value) => value is { } percent ? $"{percent:0.0}%" : "—";
 
     private enum Tone { Neutral, HigherIsBetter, LowerIsBetter }
 
-    private static (string Text, int Sign)? RelativeDelta(long current, long previous)
+    private static (string Text, int Sign)? RelativeDelta(double current, double previous)
     {
         if (previous <= 0) return null;
         var change = (current - (double)previous) / previous * 100;
@@ -66,6 +68,10 @@ internal static class UsageView
         var hasPrevious = previous.Attempts > 0;
         var cards = new UIElement[]
         {
+            Kpi(Localized.Get("预估费用（USD）"), current.Costed > 0 ? Money(current.Cost) : "—",
+                current.Costed > 0 && previous.Costed > 0 && current.Unpriced == 0 && previous.Unpriced == 0 ? RelativeDelta(current.Cost, previous.Cost) : null, Tone.Neutral,
+                slots.Select(slot => slot.Total.Cost).ToArray(),
+                Detail(Localized.Get("按模型公开单价估算"))),
             Kpi(Localized.Get("请求次数"), Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
                 slots.Select(slot => (double)slot.Total.Attempts).ToArray(), Detail(current.Errors > 0 ? Localized.Format("其中失败 {0}", Compact(current.Errors)) : " ")),
             Kpi("Tokens", Compact(current.Tokens), hasPrevious ? RelativeDelta(current.Tokens, previous.Tokens) : null, Tone.Neutral,
@@ -77,13 +83,20 @@ internal static class UsageView
                 slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail(Localized.Format("{0} / {1} 次失败", Compact(current.Errors), Compact(current.Attempts))),
                 warning: (current.ErrorPercent ?? 0) >= 5),
         };
-        var grid = new SpacedGrid { ColumnSpacing = 12 };
-        for (var index = 0; index < cards.Length; index++)
+        var grid = new SpacedGrid { ColumnSpacing = 12, RowSpacing = 12 };
+        foreach (var card in cards) grid.Children.Add(card);
+        void Layout(double width)
         {
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            Grid.SetColumn((FrameworkElement)cards[index], index);
-            grid.Children.Add(cards[index]);
+            var columns = Math.Clamp((int)(width / 230), 1, cards.Length);
+            if (grid.ColumnDefinitions.Count == columns) return;
+            grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
+            for (var column = 0; column < columns; column++) grid.ColumnDefinitions.Add(new ColumnDefinition());
+            for (var row = 0; row < (cards.Length + columns - 1) / columns; row++) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var index = 0; index < cards.Length; index++)
+            { Grid.SetColumn(cards[index], index % columns); Grid.SetRow(cards[index], index / columns); }
         }
+        Layout(1000);
+        grid.SizeChanged += (_, args) => Layout(args.NewSize.Width);
         return grid;
     }
 
@@ -161,21 +174,28 @@ internal static class UsageView
 
     /// Stacked bars per slot: token composition or succeeded/failed requests,
     /// or one segment per provider. Clicking a bar selects its slot.
-    internal static UIElement Chart(UsageSlot[] slots, IReadOnlyDictionary<string, string> providerNames, bool requests, bool split,
+    internal static UIElement Chart(UsageSlot[] slots, IReadOnlyDictionary<string, string> providerNames, bool requests, bool split, bool cost,
         UsageSlot? selected, Action<UsageSlot?> onSelect)
     {
-        long Metric(UsageStats stats) => requests ? stats.Attempts : stats.Tokens;
+        double Metric(UsageStats stats) => cost ? stats.Cost : requests ? stats.Attempts : stats.Tokens;
+        string FormatMetric(double value) => cost ? Money(value) : Compact(value);
         string[] series;
         Brush[] brushes;
-        Func<UsageSlot, long[]> values;
+        Func<UsageSlot, double[]> values;
         if (split)
         {
-            var totals = new Dictionary<string, long>();
+            var totals = new Dictionary<string, double>();
             foreach (var slot in slots)
                 foreach (var (provider, stats) in slot.ByProvider) totals[provider] = totals.GetValueOrDefault(provider) + Metric(stats);
             series = totals.Where(pair => pair.Value > 0).OrderByDescending(pair => pair.Value).Select(pair => pair.Key).ToArray();
             brushes = series.Select((_, index) => SeriesBrush(index)).ToArray();
             values = slot => series.Select(provider => Metric(slot.ByProvider.GetValueOrDefault(provider))).ToArray();
+        }
+        else if (cost)
+        {
+            series = [Localized.Get("预估费用（USD）")];
+            brushes = [(Brush)Application.Current.Resources["AccentFillColorDefaultBrush"]];
+            values = slot => [slot.Total.Cost];
         }
         else if (requests)
         {
@@ -190,7 +210,8 @@ internal static class UsageView
             values = slot => [slot.Total.Cached, slot.Total.Uncached, slot.Total.Output];
         }
         var cells = slots.Select(values).ToArray();
-        var max = Math.Max(1, cells.Length == 0 ? 1 : cells.Max(row => row.Sum()));
+        var max = cells.Length == 0 ? 1 : cells.Max(row => row.Sum());
+        if (max <= 0) max = 1;
         var plot = new SpacedGrid { Height = PlotHeight + 20, ColumnSpacing = slots.Length > 24 ? 2 : 4 };
         var labelEvery = (int)Math.Ceiling(slots.Length / 8.0);
         for (var index = 0; index < slots.Length; index++)
@@ -229,7 +250,7 @@ internal static class UsageView
         }
         var total = cells.Sum(row => row.Sum());
         var header = new Grid();
-        header.Children.Add(new TextBlock { Text = Localized.Format("{0} · 合计 {1}", (requests ? Localized.Get("请求次数") : "Tokens"), Compact(total)), Style = Themed("Caption") });
+        header.Children.Add(new TextBlock { Text = Localized.Format("{0} · 合计 {1}", (cost ? Localized.Get("预估费用（USD）") : requests ? Localized.Get("请求次数") : "Tokens"), cost && slots.All(slot => slot.Total.Costed == 0) ? "—" : FormatMetric(total)), Style = Themed("Caption") });
         var legend = new Stack { Orientation = Orientation.Horizontal, Spacing = 14, HorizontalAlignment = HorizontalAlignment.Right };
         for (var index = 0; index < series.Length; index++)
         {
@@ -274,8 +295,8 @@ internal static class UsageView
         return rows.ToArray();
     }
 
-    private static readonly string[] Headers = [Localized.Get("时间"), Localized.Get("状态"), Localized.Get("会话"), Localized.Get("模型"), Localized.Get("未缓存"), Localized.Get("命中缓存"), Localized.Get("输出"), Localized.Get("思考"), Localized.Get("首字"), Localized.Get("速度")];
-    private static readonly double[] ColumnWeights = [1.2, 0.7, 1.1, 2.2, 0.8, 1.1, 0.7, 0.7, 0.7, 0.8];
+    private static readonly string[] Headers = [Localized.Get("时间"), Localized.Get("状态"), Localized.Get("会话"), Localized.Get("模型"), Localized.Get("未缓存"), Localized.Get("命中缓存"), Localized.Get("输出"), Localized.Get("思考"), Localized.Get("首字"), Localized.Get("速度"), Localized.Get("费用（USD）")];
+    private static readonly double[] ColumnWeights = [1.2, 0.7, 1.1, 2.2, 0.8, 1.1, 0.7, 0.7, 0.7, 0.8, 0.9];
 
     internal static UIElement TableHeader() =>
         Line(Headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("ColumnHeader") }).ToArray(), false);
@@ -304,6 +325,7 @@ internal static class UsageView
         content.Children.Add(new FontIcon { Glyph = row.Expanded ? "\uE70D" : "\uE76C", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(new TextBlock { Text = row.Title, FontWeight = FontWeights.SemiBold, MaxWidth = 360, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
         var summary = Localized.Format("{0} 条 · {1} tokens · 缓存命中 {2}", row.Count, Compact(row.Stats.Tokens), Percent(row.Stats.CacheHitPercent));
+        summary += " · " + (row.Stats.Costed > 0 ? Money(row.Stats.Cost) : "—");
         content.Children.Add(new TextBlock { Text = summary, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
         if (row.Stats.Errors > 0)
             content.Children.Add(new TextBlock { Text = Localized.Format("{0} 失败", row.Stats.Errors), Style = Themed("CriticalCaption"), VerticalAlignment = VerticalAlignment.Center });
@@ -369,6 +391,7 @@ internal static class UsageView
             reasoning,
             new TextBlock { Text = Number(turn, "ttft_ms") is { } ttft ? $"{ttft:0} ms" : "—" },
             new TextBlock { Text = Number(turn, "output_tps") is { } tps ? $"{tps:0.0} t/s" : "—" },
+            new TextBlock { Text = !failed && Number(turn, "estimated_cost_usd") is { } estimate ? Money(estimate) : "—" },
         };
         return Line(cells, true);
     }

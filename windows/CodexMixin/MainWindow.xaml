@@ -10,26 +10,26 @@
  </WindowChrome.WindowChrome>
  <ContentControl x:Name="OperationScope" IsTabStop="False" Focusable="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
   <Grid x:Name="Root" Background="Transparent">
-    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
       <Image Source="pack://siteoforigin:,,,/Assets/app_icon.png" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality"/>
       <TextBlock Text="Codex Mixin" Margin="12,0,0,0" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
     </StackPanel>
-    <Grid x:Name="NavPane" Grid.Row="1" Grid.RowSpan="2" Width="212" Margin="4,0,4,8">
-      <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <TabControl x:Name="ConsoleTabs" Style="{StaticResource NavTabs}" ItemContainerStyle="{StaticResource NavTab}" SelectionChanged="OnConsoleTab" AutomationProperties.AutomationId="console-pages">
+    <Grid x:Name="NavPane" Grid.Row="1" Grid.ColumnSpan="2" Margin="16,4,16,12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TabControl x:Name="ConsoleTabs" HorizontalAlignment="Center" Style="{StaticResource NavTabs}" ItemContainerStyle="{StaticResource NavTab}" SelectionChanged="OnConsoleTab" AutomationProperties.AutomationId="console-pages">
         <TabItem Header="模型与服务" Tag="providers" AutomationProperties.AutomationId="console-providers-tab"/>
         <TabItem Header="Agent 接入" Tag="agents" AutomationProperties.AutomationId="console-agents-tab"/>
         <TabItem Header="用量明细" Tag="usage" AutomationProperties.AutomationId="console-usage-tab"/>
         <TabItem Header="上下文" Tag="context" AutomationProperties.AutomationId="console-context-tab"/>
         <TabItem Header="模型路由" Tag="routing" AutomationProperties.AutomationId="console-routing-tab"/>
       </TabControl>
-      <Button Grid.Row="1" Style="{StaticResource NavButton}" Tag="settings" Click="OnNavButton" AutomationProperties.Name="设置与诊断">
+      <Button Grid.Column="1" Style="{StaticResource NavButton}" Tag="settings" Click="OnNavButton" AutomationProperties.Name="设置与诊断">
         <StackPanel Orientation="Horizontal"><local:FontIcon Glyph="&#xE713;"/><TextBlock x:Name="SettingsLabel" Text="设置与诊断" Margin="14,0,0,0" VerticalAlignment="Center"/></StackPanel>
       </Button>
     </Grid>
-    <ContentControl x:Name="PageShell" Grid.Row="1" Grid.Column="1" IsTabStop="False" Focusable="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <ContentControl x:Name="PageShell" Grid.Row="2" Grid.ColumnSpan="2" IsTabStop="False" Focusable="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
       <Border x:Name="ContentLayer" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="264"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -73,7 +73,7 @@
           </local:SpacedGrid>
           <local:InfoBar x:Name="Notice" Grid.Row="1" IsClosable="True"/>
           <ScrollViewer x:Name="PageScroll" Grid.Row="2" AutomationProperties.AutomationId="page-scroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-            <local:Stack x:Name="PageBody" Spacing="12" HorizontalAlignment="Stretch"/>
+            <ContentControl x:Name="PageBodyHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
           </ScrollViewer>
           <local:SpacedGrid Grid.Row="3" ColumnSpacing="12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -84,12 +84,15 @@
       </Grid>
       </Border>
     </ContentControl>
-    <Border x:Name="StatusLayer" Grid.Row="2" Grid.Column="1" Padding="16,6" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
+    <Border x:Name="StatusLayer" Grid.Row="3" Grid.ColumnSpan="2" Padding="16,6" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
       <local:SpacedGrid ColumnSpacing="10">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <local:ProgressRing x:Name="Activity" Width="14" Height="14" Visibility="Collapsed"/>
         <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="operation-status" AutomationProperties.LiveSetting="Polite" Grid.Column="1" Text="正在连接 CLI…" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
-        <Button x:Name="CancelAction" Grid.Column="2" Content="取消操作" Style="{StaticResource LinkButton}" Padding="6,2" Visibility="Collapsed" Click="OnCancel"/>
+        <StackPanel Grid.Column="2" Orientation="Horizontal">
+        <Button x:Name="OutputDetails" Content="操作详情" Style="{StaticResource LinkButton}" Padding="6,2" Visibility="Collapsed" Click="OnOutputDetails"/>
+        <Button x:Name="CancelAction" Content="取消操作" Style="{StaticResource LinkButton}" Padding="6,2" Visibility="Collapsed" Click="OnCancel"/>
+        </StackPanel>
       </local:SpacedGrid>
     </Border>
   </Grid>

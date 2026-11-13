@@ -611,6 +611,7 @@ impl GatewayExecutor {
                 downstream_model: plan.downstream_model,
                 headers,
                 native_messages: plan.native_messages,
+                authorized_control_plane: false,
             },
         )
         .await;
@@ -644,6 +645,7 @@ impl GatewayExecutor {
                 downstream_model: plan.downstream_model,
                 headers,
                 native_messages: plan.native_messages,
+                authorized_control_plane: false,
             },
         )
         .await

@@ -176,7 +176,7 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabControl">
-              <StackPanel IsItemsHost="True" Margin="0,4,0,0" KeyboardNavigation.DirectionalNavigation="Cycle" />
+              <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle" />
             </ControlTemplate>
           </Setter.Value>
         </Setter>
@@ -184,13 +184,13 @@
       <Style x:Key="NavTab" TargetType="TabItem">
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
         <Setter Property="FocusVisualStyle" Value="{DynamicResource DefaultControlFocusVisualStyle}" />
-        <Setter Property="Margin" Value="0,0,0,4" />
+        <Setter Property="Margin" Value="2,0" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabItem">
               <Border x:Name="Chrome" Height="36" Background="Transparent" CornerRadius="{DynamicResource ControlCornerRadius}">
                 <Grid>
-                  <Rectangle x:Name="Pill" Width="3" Height="16" RadiusX="1.5" RadiusY="1.5" HorizontalAlignment="Left" Fill="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
+                  <Rectangle x:Name="Pill" Width="24" Height="3" RadiusX="1.5" RadiusY="1.5" VerticalAlignment="Bottom" HorizontalAlignment="Center" Fill="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
                   <StackPanel Orientation="Horizontal" Margin="14,0,12,0">
                     <TextBlock x:Name="Glyph" FontFamily="{DynamicResource SymbolThemeFontFamily}" FontSize="16" VerticalAlignment="Center" />
                     <ContentPresenter x:Name="Label" ContentSource="Header" Margin="14,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
@@ -209,7 +209,7 @@
                   <Setter TargetName="Pill" Property="Visibility" Value="Visible" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource TextFillColorDisabledBrush}" /></Trigger>
-                <!-- Narrow windows keep only the icons; MainWindow marks the pane with Tag="compact". -->
+                <!-- Compact labels remain available for hosts that opt into icon-only navigation. -->
                 <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=TabControl}}" Value="compact">
                   <Setter TargetName="Label" Property="Visibility" Value="Collapsed" />
                 </DataTrigger>

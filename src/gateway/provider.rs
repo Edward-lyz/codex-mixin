@@ -34,6 +34,8 @@ pub(crate) struct ProviderResponseRequest<'a> {
     pub(crate) downstream_model: Option<&'a str>,
     pub(crate) headers: &'a axum::http::HeaderMap,
     pub(crate) native_messages: Option<&'a (crate::anthropic::MessageRequest, Value)>,
+    // Only the authenticated benchmark control plane sets this; never read from a wire body.
+    pub(crate) authorized_control_plane: bool,
 }
 
 struct ProviderRequestContext<'a> {
@@ -50,6 +52,18 @@ struct ProviderRequestContext<'a> {
     headers: &'a axum::http::HeaderMap,
 }
 
+async fn authorize_provider_request(
+    executor: &GatewayExecutor,
+    provider: &ProviderRuntime,
+    headers: &axum::http::HeaderMap,
+    authorized_control_plane: bool,
+) -> Result<(), GatewayError> {
+    if authorized_control_plane {
+        return Ok(());
+    }
+    executor.require_ducx_client(provider, headers).await
+}
+
 pub(crate) async fn stream_provider_response(
     executor: &GatewayExecutor,
     request: ProviderResponseRequest<'_>,
@@ -63,6 +77,7 @@ pub(crate) async fn stream_provider_response(
         downstream_model,
         headers,
         native_messages,
+        authorized_control_plane,
     } = request;
     let provider = executor
         .providers
@@ -150,7 +165,7 @@ pub(crate) async fn stream_provider_response(
             }
         }
     }
-    executor.require_ducx_client(provider, headers).await?;
+    authorize_provider_request(executor, provider, headers, authorized_control_plane).await?;
     let mut restored = Vec::new();
     for (field, setting, value) in updates {
         let parent = if body.get(field).is_some_and(Value::is_object) {
