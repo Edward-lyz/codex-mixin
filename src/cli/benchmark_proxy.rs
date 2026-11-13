@@ -13,6 +13,7 @@ pub(super) async fn benchmark_start(
     providers: Vec<String>,
     models: Vec<String>,
 ) -> anyhow::Result<()> {
+    super::service::ensure_ready().await?;
     proxy_benchmark_request(
         reqwest::Method::POST,
         Some(json!({

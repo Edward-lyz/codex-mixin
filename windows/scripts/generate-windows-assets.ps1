@@ -125,6 +125,7 @@ New-IcoFile -InputPath $appPng -OutputPath (Join-Path $repo "windows\assets\app_
 $providers = Join-Path $repo "windows\assets\providers"
 New-Item -ItemType Directory -Force -Path $providers | Out-Null
 Copy-Item -Path (Join-Path $repo "macos\assets\providers\*.svg") -Destination $providers -Force
+Copy-Item -LiteralPath (Join-Path $repo "macos\assets\providers\ATTRIBUTION.md") -Destination $providers -Force
 $agents = Join-Path $repo "windows\assets\agents"
 New-Item -ItemType Directory -Force -Path $agents | Out-Null
 Copy-Item -Path (Join-Path $repo "macos\assets\agents\*.svg"), (Join-Path $repo "macos\assets\agents\*.png") -Destination $agents -Force

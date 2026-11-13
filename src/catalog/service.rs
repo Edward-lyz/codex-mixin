@@ -138,20 +138,72 @@ impl CatalogService {
         Ok(models)
     }
 
-    pub(crate) fn benchmark_targets(
+    pub(crate) async fn benchmark_targets(
         &self,
         provider_filters: &[String],
         model_filters: &[String],
     ) -> Result<Vec<BenchmarkTarget>, GatewayError> {
+        let official_requested =
+            provider_filters.is_empty() || provider_filters.iter().any(|id| id == "official");
+        let official_models = if official_requested && self.config.accept_codex_oauth {
+            let config = Arc::clone(&self.config);
+            tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
+                if !crate::provider::official_auth_available(&config.codex_auth_path)? {
+                    return Ok(Vec::new());
+                }
+                let cache =
+                    crate::config::stored_config_path().with_file_name("official-models.json");
+                let catalog = match load_template_catalog(Some(&cache))? {
+                    Some(catalog) => Some(catalog),
+                    None => load_template_catalog(None)?,
+                };
+                if let Some(account) = catalog
+                    .as_ref()
+                    .and_then(|value| value.get("codex_mixin_account_id"))
+                    .and_then(Value::as_str)
+                    && crate::provider::official_account_id(&config.codex_auth_path)?.as_deref()
+                        != Some(account)
+                {
+                    return Ok(Vec::new());
+                }
+                let available = catalog
+                    .as_ref()
+                    .and_then(|value| value.get("models"))
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|model| model.get("slug").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                match &config.official_selected_models {
+                    Some(selected) => Ok(selected
+                        .iter()
+                        .filter(|model| available.contains(model))
+                        .cloned()
+                        .collect()),
+                    None => Ok(available),
+                }
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("official catalog loader failed: {error}"))??
+        } else {
+            Vec::new()
+        };
         for provider_id in provider_filters {
-            if self.providers.provider(provider_id).is_none() {
+            if provider_id != "official" && self.providers.provider(provider_id).is_none() {
                 return Err(GatewayError::BadRequest(format!(
                     "unknown benchmark provider: {provider_id}"
                 )));
             }
+            if provider_id == "official" && official_models.is_empty() {
+                return Err(GatewayError::BadRequest(
+                    "official benchmark requires an enabled OAuth account and selected models"
+                        .to_owned(),
+                ));
+            }
         }
         for model in model_filters {
-            if self.providers.resolve(model).is_none() {
+            if self.providers.resolve(model).is_none() && !official_models.contains(model) {
                 return Err(GatewayError::BadRequest(format!(
                     "benchmark model is not routable: {model}"
                 )));
@@ -181,9 +233,21 @@ impl CatalogService {
                     provider_id: provider.id().to_owned(),
                     provider_name: provider.display_name().to_owned(),
                     upstream_model_id: resolved.upstream_model_id.to_owned(),
-                    provider: provider.clone(),
+                    provider: Some(provider.clone()),
                 });
             }
+        }
+        for model in official_models {
+            if !model_filters.is_empty() && !model_filters.contains(&model) {
+                continue;
+            }
+            targets.push(BenchmarkTarget {
+                catalog_slug: model.clone(),
+                provider_id: "official".to_owned(),
+                provider_name: "OpenAI".to_owned(),
+                upstream_model_id: model,
+                provider: None,
+            });
         }
         Ok(targets)
     }

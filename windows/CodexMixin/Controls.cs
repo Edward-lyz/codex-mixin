@@ -398,6 +398,7 @@ internal enum ContentDialogButton { None, Primary, Secondary, Close }
 // Modal Fluent window with the WinUI ContentDialog button contract (automation ids PrimaryButton/SecondaryButton/CloseButton).
 internal sealed class ContentDialog
 {
+    public string IconGlyph { get; set; } = "\uE713";
     public string Title { get; set; } = "";
     public object? Content { get; set; }
     public string? PrimaryButtonText { get; set; }
@@ -418,7 +419,8 @@ internal sealed class ContentDialog
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
             MinWidth = 360,
-            MaxWidth = 680,
+            MaxWidth = Math.Min(680, SystemParameters.WorkArea.Width - 32),
+            MaxHeight = Math.Max(240, SystemParameters.WorkArea.Height - 48),
         };
         if (Owner is { IsVisible: true } owner)
         {
@@ -445,7 +447,11 @@ internal sealed class ContentDialog
         var body = new Stack { Spacing = 16, Padding = new Thickness(24, 20, 24, 24) };
         var heading = new TextBlock { Text = Title, TextWrapping = TextWrapping.Wrap };
         heading.SetResourceReference(FrameworkElement.StyleProperty, "SubtitleTextBlockStyle");
-        body.Children.Add(heading);
+        var headingRow = new DockPanel();
+        var icon = new FontIcon { Glyph = IconGlyph, FontSize = 24, Width = 32, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
+        icon.SetResourceReference(Control.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
+        DockPanel.SetDock(icon, Dock.Left); headingRow.Children.Add(icon); headingRow.Children.Add(heading);
+        body.Children.Add(headingRow);
         body.Children.Add(Content as UIElement ?? new TextBlock { Text = Content?.ToString(), TextWrapping = TextWrapping.Wrap });
         var footer = new Border { Padding = new Thickness(24), BorderThickness = new Thickness(0, 1, 0, 0), Child = buttons };
         footer.SetResourceReference(Border.BackgroundProperty, "SolidBackgroundFillColorBaseBrush");
@@ -453,7 +459,7 @@ internal sealed class ContentDialog
         var layout = new DockPanel();
         DockPanel.SetDock(footer, Dock.Bottom);
         layout.Children.Add(footer);
-        layout.Children.Add(body);
+        layout.Children.Add(new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
         window.Content = layout;
         window.ShowDialog();
         return result;

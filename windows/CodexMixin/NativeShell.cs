@@ -194,58 +194,11 @@ internal sealed class NativeShell : IDisposable
         if (message == TrayMessage)
         {
             var notification = unchecked((uint)lParam.ToInt64()) & 0xffff;
-            if (notification is 0x400 or 0x401) command("overview"); // NIN_SELECT / NIN_KEYSELECT
-            if (notification == 0x7b) ShowMenu(wParam); // WM_CONTEXTMENU
+            if (notification is 0x400 or 0x401 or 0x7b) command("overview"); // Left, keyboard, and right click share the themed panel.
             if (notification == 0x405) command("updates"); // NIN_BALLOONUSERCLICK
             return 0;
         }
         return DefSubclassProc(hwnd, message, wParam, lParam);
-    }
-
-    private void ShowMenu(nuint coordinates)
-    {
-        var menu = CreatePopupMenu();
-        if (menu == 0) { command("tray-error"); return; }
-        try
-        {
-            AppendMenu(menu, 0, 1, Localized.Get("打开控制台…"));
-            AppendMenu(menu, 0, 2, Localized.Get("启动网关"));
-            AppendMenu(menu, 0, 3, Localized.Get("停止网关"));
-            AppendMenu(menu, 0x800, 0, "");
-            AppendMenu(menu, 0, 4, Localized.Get("设置"));
-            AppendMenu(menu, 0, 9, Localized.Get("检查更新…"));
-            AppendMenu(menu, 0, 7, Localized.Get("模型路由…"));
-            AppendMenu(menu, 0, 8, Localized.Get("上下文设置…"));
-            AppendMenu(menu, 0x800, 0, "");
-            AppendMenu(menu, 0, 10, Localized.Get("轻量模式"));
-            AppendMenu(menu, 0, 5, Localized.Get("彻底退出 Mixin"));
-            var position = new Point
-            {
-                X = unchecked((short)(coordinates & 0xffff)),
-                Y = unchecked((short)((coordinates >> 16) & 0xffff))
-            };
-            if (position.X == -1 && position.Y == -1)
-            {
-                var anchor = TrayAnchor();
-                position = new Point { X = (anchor.Left + anchor.Right) / 2, Y = anchor.Bottom };
-            }
-            SetForegroundWindow(window);
-            var selected = TrackPopupMenu(menu, 0x100 | 0x2, position.X, position.Y, 0, window, 0);
-            PostMessage(window, 0, 0, 0);
-            if (selected != 0) command(selected switch
-            {
-                1 => "console",
-                2 => "start",
-                3 => "stop",
-                4 => "settings",
-                7 => "routing",
-                8 => "context",
-                9 => "updates",
-                10 => "lightweight",
-                _ => "exit"
-            });
-        }
-        finally { DestroyMenu(menu); }
     }
 
     internal static bool StartupEnabled()
@@ -324,12 +277,7 @@ internal sealed class NativeShell : IDisposable
     [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
-    [DllImport("user32.dll")] private static extern nint CreatePopupMenu();
-    [DllImport("user32.dll", EntryPoint = "AppendMenuW", CharSet = CharSet.Unicode)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool AppendMenu(nint menu, uint flags, nuint id, string text);
-    [DllImport("user32.dll")] private static extern uint TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint window, nint rect);
     [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out Point position);
-    [DllImport("user32.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyMenu(nint menu);
-    [DllImport("user32.dll", EntryPoint = "PostMessageW")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint window, int attribute, ref uint value, int size);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)] private static extern nint GetWindowLongPtr(nint window, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern nint SetWindowLongPtr(nint window, int index, nint value);

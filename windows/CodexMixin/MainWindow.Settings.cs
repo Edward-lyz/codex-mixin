@@ -33,7 +33,7 @@ public sealed partial class MainWindow
             await OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"));
         }));
         diagnostics.Children.Add(Button(Localized.Get("运行诊断"), () => ChangeAsync(Localized.Get("诊断"), ["doctor", "--json"])));
-        var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WPF / .NET", diagnostics);
+        var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WPF / .NET", diagnostics, glyph: "\uE946");
         var updateControls = UpdateControls(app.Updates, pageToken);
         var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], app.ThemeMode == ThemeMode.Light ? Localized.Get("浅色") : app.ThemeMode == ThemeMode.Dark ? Localized.Get("深色") : Localized.Get("跟随系统"));
         AutomationProperties.SetAutomationId(theme, "theme-picker");
@@ -46,7 +46,7 @@ public sealed partial class MainWindow
         };
         var appearance = new Stack { Spacing = 16 }; appearance.Children.Add(Field.Wrap(theme)); appearance.Children.Add(startup);
         appearance.Children.Add(Text(NativeShell.StartupBlocked() ? Localized.Get("启动项已被 Windows 禁用，请在系统「启动应用」中调整。") : Localized.Get("界面登录启动与网关自启分别管理。")));
-        PageBody.Children.Add(Card(Localized.Get("外观与启动"), "", appearance));
+        PageBody.Children.Add(Card(Localized.Get("外观与启动"), "", appearance, glyph: "\uE790"));
         PageBody.Children.Add(about);
         PageBody.Children.Add(updateControls);
         var backup = Row();
@@ -62,36 +62,43 @@ public sealed partial class MainWindow
             if (picker.ShowDialog(this) == true && await ConfirmAsync(Localized.Get("替换当前配置？"), Localized.Get("导入会替换现有供应商与密钥，并应用到已接入的客户端。"), Localized.Get("导入")))
                 await ChangeAsync(Localized.Get("导入配置"), ["config", "import", picker.FileName], apply: true);
         }));
-        PageBody.Children.Add(Card(Localized.Get("配置备份"), "", backup));
+        PageBody.Children.Add(Card(Localized.Get("配置备份"), "", backup, glyph: "\uE8B7"));
 
         var service = new ContentControl();
         var network = new ContentControl();
         PageBody.Children.Add(service);
         PageBody.Children.Add(network);
-        _ = LoadSettingAsync(service, Localized.Get("网关自启"), async cancellation =>
+        Task RefreshService() => LoadSettingAsync(service, Localized.Get("网关自启"), async cancellation =>
         {
             var autostart = await app.Client.QueryAsync(["service", "autostart", "status", "--json"], cancellation);
             var buttons = Row();
             buttons.Children.Add(Button(Localized.Get("启用网关自启"), () => ChangeAsync(Localized.Get("启用网关自启"), ["service", "autostart", "enable", "--json"])));
             buttons.Children.Add(Button(Localized.Get("关闭网关自启"), () => ChangeAsync(Localized.Get("关闭网关自启"), ["service", "autostart", "disable", "--json"])));
-            return Card(Localized.Get("网关自启"), Json.Flag(autostart, "enabled") ? Localized.Get("已启用") : Localized.Get("已关闭"), buttons);
+            return Card(Localized.Get("网关自启"), Json.Flag(autostart, "enabled") ? Localized.Get("已启用") : Localized.Get("已关闭"), buttons, glyph: "\uE7E8");
         }, pageToken);
-        _ = LoadSettingAsync(network, Localized.Get("官方连接 · ECH"), async cancellation =>
-        {
-            var ech = await app.Client.QueryAsync(["ech", "status", "--json"], cancellation);
-            var buttons = Row();
-            buttons.Children.Add(Button(Localized.Get("检测 ECH"), () => ChangeAsync(Localized.Get("检测 ECH"), ["ech", "test", "--json"])));
-            buttons.Children.Add(Button(Localized.Get("启用 ECH"), () => ChangeAsync(Localized.Get("启用 ECH"), ["ech", "enable"])));
-            buttons.Children.Add(Button(Localized.Get("关闭 ECH"), () => ChangeAsync(Localized.Get("关闭 ECH"), ["ech", "disable"])));
-            return Card(Localized.Get("官方连接 · ECH"), $"{(Json.Flag(ech, "enabled") ? Localized.Get("已启用") : Localized.Get("已关闭"))} · {Json.OptionalText(ech, "fallback_reason") ?? Localized.Get("未发生自动关闭")}", buttons);
-        }, pageToken);
+        Task RefreshNetwork() => LoadSettingAsync(network, Localized.Get("官方连接 · ECH"), EchCardAsync, pageToken);
+        refreshSettings = () => Task.WhenAll(RefreshService(), RefreshNetwork());
+        _ = refreshSettings();
         return Task.CompletedTask;
+    }
+
+    private async Task<UIElement> EchCardAsync(CancellationToken cancellation)
+    {
+        var ech = await ((App)Application.Current).Client.QueryAsync(["ech", "status", "--json"], cancellation);
+        var enabled = Json.Flag(ech, "enabled");
+        var buttons = Row();
+        buttons.Children.Add(Button(Localized.Get("检测 ECH"), () => ChangeAsync(Localized.Get("检测 ECH"), ["ech", "test", "--json"])));
+        buttons.Children.Add(Button(Localized.Get("启用 ECH"), () => ChangeAsync(Localized.Get("启用 ECH"), ["ech", "enable"])));
+        buttons.Children.Add(Button(Localized.Get("关闭 ECH"), () => ChangeAsync(Localized.Get("关闭 ECH"), ["ech", "disable"])));
+        return Card(Localized.Get("官方连接 · ECH"),
+            (enabled ? Localized.Get("已启用") : Localized.Get("已关闭")) + " · " +
+            (Json.OptionalText(ech, "fallback_reason") ?? Json.Text(ech, "doh_url")), buttons, glyph: "\uE72E");
     }
 
     private async Task LoadSettingAsync(ContentControl host, string title,
         Func<CancellationToken, Task<UIElement>> read, CancellationToken token)
     {
-        host.Content = Card(title, Localized.Get("正在读取…"));
+        host.Content ??= Card(title, Localized.Get("正在读取…"));
         try
         {
             var content = await read(token);
@@ -140,6 +147,6 @@ public sealed partial class MainWindow
         var body = new Stack { Spacing = 12 };
         body.Children.Add(status); body.Children.Add(automatic); body.Children.Add(actions);
         body.Children.Add(Text(Localized.Get("应用会自动下载、验证签名、安装并重新打开；网关原先运行时也会恢复。安装版可能出现系统 UAC 授权提示。请求进行中或草稿未保存时暂缓安装。")));
-        return Card(Localized.Get("应用更新"), Localized.Format("GUI {0} · 完整应用包包含 GUI、CLI 和运行时", AppUpdates.GuiVersion), body);
+        return Card(Localized.Get("应用更新"), Localized.Format("GUI {0} · 完整应用包包含 GUI、CLI 和运行时", AppUpdates.GuiVersion), body, glyph: "\uE895");
     }
 }

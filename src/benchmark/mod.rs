@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::config::stored_config_path;
 use crate::protocol::sse::SseDecoder;
-use crate::provider::{ProviderProtocol, ProviderQuotaParser, ProviderRuntime};
+use crate::provider::{ProviderQuotaParser, ProviderRuntime};
 
 mod manager;
 mod runner;

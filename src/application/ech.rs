@@ -30,10 +30,6 @@ pub fn status() -> anyhow::Result<EchStatus> {
 
 pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
     mutate_stored_config(|stored| {
-        ensure!(
-            !stored.providers.is_empty(),
-            "provider configuration is missing"
-        );
         stored.official_ech_proxy = enabled;
         stored.official_ech_fallback_reason = None;
         Ok(())
@@ -60,10 +56,6 @@ pub fn save_probe_result(probes: &[EchProbe]) -> anyhow::Result<bool> {
             .join("; ")
     });
     mutate_stored_config(|stored| {
-        ensure!(
-            !stored.providers.is_empty(),
-            "provider configuration is missing"
-        );
         stored.official_ech_proxy = enabled;
         stored.official_ech_fallback_reason = reason;
         Ok(())

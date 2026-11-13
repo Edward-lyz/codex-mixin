@@ -21,7 +21,12 @@ internal sealed class Operations(CliClient cli)
             var output = await cli.RunAsync(args, cancellation, secrets, progress);
             saved = elapsed.ElapsedMilliseconds;
             if (!apply) return output;
-            try { await cli.RunAsync(["config", "apply"], cancellation, progress: progress); applied = true; }
+            try
+            {
+                var applyOutput = await cli.RunAsync(["config", "apply"], cancellation, progress: progress);
+                if (!string.IsNullOrWhiteSpace(applyOutput)) output += "\n" + applyOutput;
+                applied = true;
+            }
             catch (Exception error) when (error is CliFailure or OperationCanceledException)
             {
                 throw new CliFailure(Localized.Format("配置已保存，但应用配置失败：{0}", error.Message), true, (error as CliFailure)?.ExitCode);

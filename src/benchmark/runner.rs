@@ -3,12 +3,12 @@ use super::types::*;
 use super::*;
 
 pub(super) async fn benchmark_model(
-    client: &Client,
+    gateway: &crate::gateway::GatewayExecutor,
     target: &BenchmarkTarget,
     timeout: Duration,
     target_output_tokens: u64,
 ) -> anyhow::Result<ModelBenchmarkResult> {
-    let attempt = benchmark_request(client, target, timeout, target_output_tokens).await;
+    let attempt = benchmark_request(gateway, target, timeout, target_output_tokens).await;
     let completed_at = unix_millis()?;
     match attempt {
         Ok(metrics) => Ok(ModelBenchmarkResult {
@@ -114,130 +114,74 @@ pub(super) fn used_quota_from_json(
 }
 
 pub(super) async fn benchmark_request(
-    client: &Client,
+    gateway: &crate::gateway::GatewayExecutor,
     target: &BenchmarkTarget,
     timeout: Duration,
     target_output_tokens: u64,
 ) -> Result<BenchmarkMetrics, BenchmarkAttemptFailure> {
     let started = Instant::now();
     let deadline = started + timeout;
-    let provider = &target.provider;
-    let protocol = provider.protocol_for_model(&target.upstream_model_id);
     let upstream_output_budget = if target_output_tokens == 1 {
         BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS
     } else {
         target_output_tokens
     };
-    let mut body = match protocol {
-        ProviderProtocol::AnthropicMessages => json!({
-            "model": target.upstream_model_id,
-            "max_tokens": upstream_output_budget,
-            "stream": true,
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": BENCHMARK_PROMPT}]
-            }]
-        }),
-        ProviderProtocol::OpenAiChat => json!({
-            "model": target.upstream_model_id,
-            "max_tokens": upstream_output_budget,
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "messages": [{"role": "user", "content": BENCHMARK_PROMPT}]
-        }),
-        ProviderProtocol::OpenAiResponses => json!({
-            "model": target.upstream_model_id,
-            "max_output_tokens": upstream_output_budget,
-            "stream": true,
-            "input": BENCHMARK_PROMPT
-        }),
-        ProviderProtocol::GoogleGemini => json!({
-            "contents": [{
-                "role": "user",
-                "parts": [{"text": BENCHMARK_PROMPT}]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": upstream_output_budget
-            }
-        }),
-    };
-    if provider.uses_session_affinity() {
-        body["metadata"] = json!({
-            "user_id": format!("benchmark-{}", Uuid::new_v4().simple())
-        });
-    }
-    let request = provider.apply_auth_for_protocol(
-        client
-            .post(
-                provider
-                    .api_url_for_model(&target.upstream_model_id)
-                    .into_owned(),
-            )
-            .header("accept", "text/event-stream"),
-        protocol,
+    // The official backend removes max_output_tokens. A bounded instruction also
+    // allows it to finish and report real usage instead of generating endlessly.
+    let mut body = json!({
+        "model": target.upstream_model_id,
+        "max_output_tokens": upstream_output_budget,
+        "stream": true,
+        "store": false,
+        "instructions": "Follow the user's short benchmark request.",
+        "input": [{"role": "user", "content": [{"type": "input_text", "text":
+            format!("Write exactly {upstream_output_budget} unrelated short lowercase English words separated by spaces, then stop. Do not explain.")}]}]
+    });
+    let mut headers = reqwest::header::HeaderMap::new();
+    let session = Uuid::new_v4().to_string();
+    headers.insert(
+        "session-id",
+        reqwest::header::HeaderValue::from_str(&session)
+            .map_err(|error| attempt_failure(false, error.to_string(), started, None))?,
     );
-    let request = if protocol == ProviderProtocol::AnthropicMessages {
-        provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref())
-    } else {
-        request
-    };
-    let request = request.json(&body);
-    let response = match timeout_at(deadline, request.send()).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            return Err(attempt_failure(false, error.to_string(), started, None));
+    let routing = crate::gateway::stable_oneapi_routing(&headers, &body)
+        .map_err(|error| attempt_failure(false, error.to_string(), started, None))?;
+    let send = async {
+        if target.provider.is_none() {
+            return gateway
+                .stream_official(&headers, body)
+                .await
+                .map(|(stream, _)| stream);
         }
+        crate::gateway::stream_provider_response(
+            gateway,
+            crate::gateway::ProviderResponseRequest {
+                body: &mut body,
+                catalog_slug: &target.catalog_slug,
+                provider_id: &target.provider_id,
+                upstream_model_id: &target.upstream_model_id,
+                routing: routing.as_ref(),
+                downstream_model: None,
+                headers: &headers,
+                native_messages: None,
+                authorized_control_plane: true,
+            },
+        )
+        .await
+    };
+    let mut stream = match timeout_at(deadline, send).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) => return Err(attempt_failure(false, error.to_string(), started, None)),
         Err(_) => return Err(attempt_failure(true, "request timed out", started, None)),
     };
-    let status = response.status();
-    if !status.is_success() {
-        let body = match timeout_at(deadline, response.text()).await {
-            Ok(Ok(body)) => body,
-            Ok(Err(error)) => error.to_string(),
-            Err(_) => {
-                return Err(attempt_failure(
-                    true,
-                    "request timed out while reading the error response",
-                    started,
-                    None,
-                ));
-            }
-        };
-        return Err(attempt_failure(
-            false,
-            format!("upstream returned {status}: {body}"),
-            started,
-            None,
-        ));
-    }
-
     let mut first_token_at = None;
     let mut last_token_at = None;
-    let mut output_tokens = None;
-    let mut openai_finished = false;
     let mut decoder = SseDecoder::default();
-    let mut stream = response.bytes_stream();
     loop {
         let chunk = match timeout_at(deadline, stream.next()).await {
             Ok(Some(Ok(chunk))) => chunk,
-            Ok(Some(Err(error))) => {
-                return Err(attempt_failure(
-                    false,
-                    error.to_string(),
-                    started,
-                    first_token_at,
-                ));
-            }
+            Ok(Some(Err(error))) => match error {},
             Ok(None) => {
-                if matches!(
-                    protocol,
-                    ProviderProtocol::OpenAiChat
-                        | ProviderProtocol::OpenAiResponses
-                        | ProviderProtocol::GoogleGemini
-                ) && openai_finished
-                {
-                    return finish_metrics(started, first_token_at, last_token_at, output_tokens);
-                }
                 return Err(attempt_failure(
                     false,
                     "upstream stream ended without a terminal event",
@@ -254,11 +198,8 @@ pub(super) async fn benchmark_request(
                 ));
             }
         };
-        let chunk_received_at = Instant::now();
+        let received_at = Instant::now();
         for event in decoder.push(&chunk) {
-            if protocol == ProviderProtocol::OpenAiChat && event.data == "[DONE]" {
-                return finish_metrics(started, first_token_at, last_token_at, output_tokens);
-            }
             let payload: Value = serde_json::from_str(&event.data).map_err(|error| {
                 attempt_failure(
                     false,
@@ -267,205 +208,45 @@ pub(super) async fn benchmark_request(
                     first_token_at,
                 )
             })?;
-            match protocol {
-                ProviderProtocol::AnthropicMessages => {
-                    match payload.get("type").and_then(Value::as_str) {
-                        Some("message_start") => {
-                            if let Some(tokens) = payload
-                                .pointer("/message/usage/output_tokens")
-                                .and_then(Value::as_u64)
-                            {
-                                output_tokens = Some(tokens);
-                            }
-                        }
-                        Some("content_block_start") => {
-                            let content_block =
-                                payload.get("content_block").unwrap_or(&Value::Null);
-                            let has_content = ["text", "thinking"].iter().any(|field| {
-                                content_block
-                                    .get(field)
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|value| !value.is_empty())
-                            });
-                            if has_content {
-                                first_token_at.get_or_insert(chunk_received_at);
-                                last_token_at = Some(chunk_received_at);
-                            }
-                        }
-                        Some("content_block_delta") => {
-                            let delta = payload.get("delta").unwrap_or(&Value::Null);
-                            let has_delta = ["text", "thinking"].iter().any(|field| {
-                                delta
-                                    .get(field)
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|value| !value.is_empty())
-                            });
-                            if has_delta {
-                                first_token_at.get_or_insert(chunk_received_at);
-                                last_token_at = Some(chunk_received_at);
-                            }
-                        }
-                        Some("message_delta") => {
-                            if let Some(tokens) = payload
-                                .pointer("/usage/output_tokens")
-                                .and_then(Value::as_u64)
-                            {
-                                output_tokens = Some(tokens);
-                            }
-                        }
-                        Some("message_stop") => {
-                            return finish_metrics(
-                                started,
-                                first_token_at,
-                                last_token_at,
-                                output_tokens,
-                            );
-                        }
-                        Some("error") => {
-                            let message = payload
-                                .pointer("/error/message")
-                                .and_then(Value::as_str)
-                                .unwrap_or("upstream returned an error event");
-                            return Err(attempt_failure(false, message, started, first_token_at));
-                        }
-                        _ => {}
+            match payload.get("type").and_then(Value::as_str) {
+                Some(kind) if kind.ends_with(".delta") => {
+                    if payload
+                        .get("delta")
+                        .and_then(Value::as_str)
+                        .is_some_and(|delta| !delta.is_empty())
+                    {
+                        first_token_at.get_or_insert(received_at);
+                        last_token_at = Some(received_at);
                     }
                 }
-                ProviderProtocol::OpenAiChat => {
-                    if let Some(message) = payload.pointer("/error/message").and_then(Value::as_str)
-                    {
-                        return Err(attempt_failure(false, message, started, first_token_at));
-                    }
-                    if let Some(usage) = payload.get("usage")
-                        && let Some(tokens) = usage.get("completion_tokens").and_then(Value::as_u64)
-                    {
-                        output_tokens = Some(tokens);
-                        if tokens > 0 {
-                            openai_finished = true;
-                        }
-                    }
-                    if let Some(choice) = payload
-                        .get("choices")
-                        .and_then(Value::as_array)
-                        .and_then(|choices| choices.first())
-                    {
-                        let delta = choice.get("delta").unwrap_or(&Value::Null);
-                        let has_delta =
-                            ["content", "reasoning_content", "reasoning"]
-                                .iter()
-                                .any(|field| {
-                                    delta
-                                        .get(field)
-                                        .and_then(Value::as_str)
-                                        .is_some_and(|value| !value.is_empty())
-                                });
-                        if has_delta {
-                            first_token_at.get_or_insert(chunk_received_at);
-                            last_token_at = Some(chunk_received_at);
-                        }
-                        if choice
-                            .get("finish_reason")
-                            .and_then(Value::as_str)
-                            .is_some()
-                        {
-                            openai_finished = true;
-                        }
-                    }
+                Some("response.completed" | "response.incomplete") => {
+                    return finish_metrics(
+                        started,
+                        first_token_at,
+                        last_token_at,
+                        payload
+                            .pointer("/response/usage/output_tokens")
+                            .and_then(Value::as_u64),
+                    );
                 }
-                ProviderProtocol::OpenAiResponses => {
-                    if let Some(message) = payload.pointer("/error/message").and_then(Value::as_str)
-                    {
-                        return Err(attempt_failure(false, message, started, first_token_at));
-                    }
-                    match payload.get("type").and_then(Value::as_str) {
-                        // A reasoning model can stream reasoning deltas only, so every
-                        // streamed delta counts as upstream output.
-                        Some(event) if event.ends_with(".delta") => {
-                            if payload
-                                .get("delta")
-                                .and_then(Value::as_str)
-                                .is_some_and(|delta| !delta.is_empty())
-                            {
-                                first_token_at.get_or_insert(chunk_received_at);
-                                last_token_at = Some(chunk_received_at);
-                            }
-                        }
-                        // The benchmark prompt runs until the output budget ends it, so
-                        // a truncated response finishes like a completed one.
-                        Some("response.completed" | "response.incomplete") => {
-                            output_tokens = payload
-                                .pointer("/response/usage/output_tokens")
-                                .and_then(Value::as_u64)
-                                .or(output_tokens);
-                            return finish_metrics(
-                                started,
-                                first_token_at,
-                                last_token_at,
-                                output_tokens,
-                            );
-                        }
-                        Some("response.failed") => {
-                            let message = payload
-                                .pointer("/response/error/message")
-                                .or_else(|| payload.pointer("/error/message"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("upstream returned a terminal error");
-                            return Err(attempt_failure(false, message, started, first_token_at));
-                        }
-                        _ => {}
-                    }
-                }
-                ProviderProtocol::GoogleGemini => {
-                    let inner = payload.get("response").unwrap_or(&payload);
-                    if let Some(message) = inner
-                        .pointer("/error/message")
+                Some("response.failed" | "error") => {
+                    let message = payload
+                        .pointer("/response/error/message")
                         .or_else(|| payload.pointer("/error/message"))
                         .and_then(Value::as_str)
-                    {
-                        return Err(attempt_failure(false, message, started, first_token_at));
-                    }
-                    if let Some(candidate) = inner
-                        .get("candidates")
-                        .and_then(Value::as_array)
-                        .and_then(|c| c.first())
-                    {
-                        if let Some(parts) = candidate
-                            .pointer("/content/parts")
-                            .and_then(Value::as_array)
-                        {
-                            for part in parts {
-                                if let Some(text) = part.get("text").and_then(Value::as_str)
-                                    && !text.is_empty()
-                                {
-                                    first_token_at.get_or_insert(chunk_received_at);
-                                    last_token_at = Some(chunk_received_at);
-                                }
-                            }
-                        }
-                        if let Some(finish_reason) =
-                            candidate.get("finishReason").and_then(Value::as_str)
-                            && !finish_reason.is_empty()
-                            && finish_reason != "FINISH_REASON_UNSPECIFIED"
-                        {
-                            openai_finished = true;
-                        }
-                    }
-                    if let Some(usage) = inner.get("usageMetadata")
-                        && let Some(count) =
-                            usage.get("candidatesTokenCount").and_then(Value::as_u64)
-                    {
-                        output_tokens = Some(count);
-                    }
+                        .unwrap_or("upstream returned an error event");
+                    return Err(attempt_failure(false, message, started, first_token_at));
                 }
+                _ => {}
             }
             if target_output_tokens == 1
-                && let Some(first_token_at) = first_token_at
+                && let Some(first) = first_token_at
             {
-                let total = first_token_at.duration_since(started);
+                let elapsed = first.duration_since(started).as_millis() as u64;
                 return Ok(BenchmarkMetrics {
-                    ttft_ms: total.as_millis() as u64,
+                    ttft_ms: elapsed,
                     generation_ms: None,
-                    total_ms: total.as_millis() as u64,
+                    total_ms: elapsed,
                     output_tokens: 1,
                     tps: None,
                 });

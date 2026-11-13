@@ -4,7 +4,7 @@ namespace CodexMixin;
 
 /// Counters for one period. `Requests` are replies that reported usage and
 /// `Errors` are failed replies, so every rate shares the attempt total.
-internal readonly record struct UsageStats(long Requests, long Errors, long Cached, long Uncached, long Output, long HitRead, long HitPrompt)
+internal readonly record struct UsageStats(long Requests, long Errors, long Cached, long Uncached, long Output, long HitRead, long HitPrompt, double Cost = 0, long Costed = 0, long Unpriced = 0)
 {
     internal long Attempts => Requests + Errors;
     internal long Tokens => Cached + Uncached + Output;
@@ -14,12 +14,17 @@ internal readonly record struct UsageStats(long Requests, long Errors, long Cach
     public static UsageStats operator +(UsageStats left, UsageStats right) => new(
         checked(left.Requests + right.Requests), checked(left.Errors + right.Errors),
         checked(left.Cached + right.Cached), checked(left.Uncached + right.Uncached), checked(left.Output + right.Output),
-        checked(left.HitRead + right.HitRead), checked(left.HitPrompt + right.HitPrompt));
+        checked(left.HitRead + right.HitRead), checked(left.HitPrompt + right.HitPrompt),
+        left.Cost + right.Cost, checked(left.Costed + right.Costed), checked(left.Unpriced + right.Unpriced));
 
     internal static UsageStats Sum(IEnumerable<UsageStats> items) => items.Aggregate(default(UsageStats), (sum, item) => sum + item);
 
     private static long Count(JsonElement row, string key) =>
         row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetInt64() : 0;
+
+    private static double? CostEstimate(JsonElement row) =>
+        row.TryGetProperty("estimated_cost_usd", out var value) && value.ValueKind == JsonValueKind.Number
+        && value.TryGetDouble(out var cost) && double.IsFinite(cost) && cost >= 0 ? cost : null;
 
     private static bool Reports(JsonElement row, string key) =>
         row.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Number;
@@ -30,8 +35,12 @@ internal readonly record struct UsageStats(long Requests, long Errors, long Cach
         var cached = Count(row, "cache_read_tokens");
         var uncached = Count(row, "input_tokens") + Count(row, "cache_creation_tokens");
         var reports = Reports(row, "cache_hit_percent");
-        return new(Count(row, "request_count"), Count(row, "error_count"), cached, uncached, Count(row, "output_tokens"),
-            reports ? cached : 0, reports ? cached + uncached : 0);
+        var requests = Count(row, "request_count");
+        var cost = CostEstimate(row);
+        var unpriced = cost.HasValue ? Math.Min(requests, Count(row, "unpriced_request_count")) : requests;
+        return new(requests, Count(row, "error_count"), cached, uncached, Count(row, "output_tokens"),
+            reports ? cached : 0, reports ? cached + uncached : 0, cost ?? 0,
+            cost.HasValue ? requests - unpriced : 0, unpriced);
     }
 
     /// One reply from `usage --turns --json`.
@@ -41,8 +50,10 @@ internal readonly record struct UsageStats(long Requests, long Errors, long Cach
         var cached = Count(turn, "cache_read_tokens");
         var uncached = Count(turn, "input_tokens") + Count(turn, "cache_creation_tokens");
         var reports = Reports(turn, "cache_hit_percent");
+        var cost = failed ? null : CostEstimate(turn);
         return new(failed ? 0 : 1, failed ? 1 : 0, cached, uncached, Count(turn, "output_tokens"),
-            reports ? cached : 0, reports ? cached + uncached : 0);
+            reports ? cached : 0, reports ? cached + uncached : 0,
+            cost ?? 0, cost.HasValue ? 1 : 0, !failed && !cost.HasValue ? 1 : 0);
     }
 
     internal static bool IsFailed(JsonElement turn) => Json.OptionalText(turn, "status") == "failed";

@@ -5,7 +5,7 @@ use super::*;
 const MAX_CONCURRENT_PROVIDER_GROUPS: usize = 4;
 
 struct BenchmarkProviderGroup {
-    provider: ProviderRuntime,
+    provider: Option<ProviderRuntime>,
     targets: std::collections::VecDeque<BenchmarkTarget>,
     quota_before: Option<f64>,
     cost: ProviderBenchmarkCost,
@@ -66,6 +66,7 @@ impl ModelBenchmarkManager {
         targets: Vec<BenchmarkTarget>,
         timeout: Duration,
         target_output_tokens: u64,
+        gateway: Arc<crate::gateway::GatewayExecutor>,
     ) -> anyhow::Result<ModelBenchmarkSnapshot> {
         if timeout.is_zero() || timeout > Duration::from_secs(300) {
             anyhow::bail!("model benchmark timeout must be between 1 and 300 seconds");
@@ -86,7 +87,12 @@ impl ModelBenchmarkManager {
         let single_currency = if unique_providers.len() == 1 {
             targets
                 .first()
-                .and_then(|target| target.provider.quota_currency())
+                .and_then(|target| {
+                    target
+                        .provider
+                        .as_ref()
+                        .and_then(ProviderRuntime::quota_currency)
+                })
                 .map(str::to_owned)
         } else {
             None
@@ -120,7 +126,13 @@ impl ModelBenchmarkManager {
         tokio::spawn(async move {
             let _running_reset = RunningReset(Arc::clone(&manager.running));
             if let Err(error) = manager
-                .run(task_snapshot, targets, timeout, target_output_tokens)
+                .run(
+                    task_snapshot,
+                    targets,
+                    timeout,
+                    target_output_tokens,
+                    gateway,
+                )
                 .await
             {
                 tracing::error!(error = %error, "model benchmark stopped unexpectedly");
@@ -141,6 +153,7 @@ impl ModelBenchmarkManager {
         targets: Vec<BenchmarkTarget>,
         timeout: Duration,
         target_output_tokens: u64,
+        gateway: Arc<crate::gateway::GatewayExecutor>,
     ) -> anyhow::Result<()> {
         let client = crate::platform::proxy::auto_proxy(Client::builder()).build()?;
         let target_order = targets
@@ -148,31 +161,31 @@ impl ModelBenchmarkManager {
             .enumerate()
             .map(|(index, target)| (target.catalog_slug.clone(), index))
             .collect::<std::collections::HashMap<_, _>>();
-        let mut grouped_targets: Vec<(ProviderRuntime, Vec<BenchmarkTarget>)> = Vec::new();
+        let mut groups: Vec<BenchmarkProviderGroup> = Vec::new();
         for target in targets {
-            if let Some((_, group_targets)) = grouped_targets
+            if let Some(group) = groups
                 .iter_mut()
-                .find(|(provider, _)| provider.id() == target.provider_id)
+                .find(|group| group.cost.provider_id == target.provider_id)
             {
-                group_targets.push(target);
+                group.targets.push_back(target);
             } else {
-                grouped_targets.push((target.provider.clone(), vec![target]));
+                groups.push(BenchmarkProviderGroup {
+                    cost: ProviderBenchmarkCost {
+                        provider_id: target.provider_id.clone(),
+                        currency: target
+                            .provider
+                            .as_ref()
+                            .and_then(ProviderRuntime::quota_currency)
+                            .map(str::to_owned),
+                        estimated_cost: None,
+                        error: None,
+                    },
+                    provider: target.provider.clone(),
+                    targets: std::collections::VecDeque::from([target]),
+                    quota_before: None,
+                });
             }
         }
-        let mut groups = grouped_targets
-            .into_iter()
-            .map(|(provider, targets)| BenchmarkProviderGroup {
-                cost: ProviderBenchmarkCost {
-                    provider_id: provider.id().to_owned(),
-                    currency: provider.quota_currency().map(str::to_owned),
-                    estimated_cost: None,
-                    error: None,
-                },
-                provider,
-                targets: targets.into(),
-                quota_before: None,
-            })
-            .collect::<Vec<_>>();
 
         let quota_providers = groups
             .iter()
@@ -216,11 +229,11 @@ impl ModelBenchmarkManager {
 
             let mut results =
                 futures_util::stream::iter(batch.into_iter().map(|(group_index, target)| {
-                    let client = &client;
+                    let gateway = &gateway;
                     async move {
                         (
                             group_index,
-                            benchmark_model(client, &target, timeout, target_output_tokens).await,
+                            benchmark_model(gateway, &target, timeout, target_output_tokens).await,
                         )
                     }
                 }))
@@ -327,9 +340,12 @@ impl ModelBenchmarkManager {
 
 async fn fetch_benchmark_quota(
     client: &Client,
-    provider: &ProviderRuntime,
+    provider: &Option<ProviderRuntime>,
     phase: &str,
 ) -> Result<f64, String> {
+    let Some(provider) = provider else {
+        return Err("official subscription cost is not available from a quota endpoint".to_owned());
+    };
     if provider.quota_url().is_none() {
         return Err("quota endpoint is not configured".to_owned());
     }

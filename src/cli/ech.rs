@@ -1,4 +1,4 @@
-use codex_mixin::application::ech;
+use codex_mixin::application::{ech, error::OperationError};
 
 use super::args::EchCommand;
 
@@ -33,22 +33,28 @@ pub(super) async fn run(command: EchCommand) -> anyhow::Result<()> {
             let enabled = ech::save_probe_result(&probes)?;
             super::progress_step("Applying official GPT ECH setting");
             super::service::restart_managed().await.map_err(|error| {
-                anyhow::anyhow!("ECH setting saved, but gateway restart failed: {error:#}")
+                OperationError::AfterCommit {
+                    stage: "gateway restart",
+                    source: error,
+                }
             })?;
             if enabled {
                 println!("official GPT ECH enabled; relay exit is not verified");
             } else {
-                println!(
-                    "ECH unavailable: automatically disabled; ordinary network settings restored"
-                );
+                return Err(OperationError::AfterCommit {
+                    stage: "ECH enable",
+                    source: anyhow::anyhow!("ECH unavailable: automatically disabled; ordinary network settings restored. {}",
+                        probes.iter().filter_map(|probe| probe.error.as_deref()).collect::<Vec<_>>().join("; ")),
+                }.into());
             }
         }
         EchCommand::Disable => {
             ech::set_enabled(false)?;
             super::service::restart_managed().await.map_err(|error| {
-                anyhow::anyhow!(
-                    "ECH disabled in saved config, but gateway restart failed: {error:#}"
-                )
+                OperationError::AfterCommit {
+                    stage: "gateway restart",
+                    source: error,
+                }
             })?;
             println!("official GPT ECH disabled");
         }
