@@ -59,7 +59,11 @@ impl MapperState {
             let name = name.to_owned();
             events.extend(self.finish_text(AssistantMessagePhase::Commentary));
             let output_index = self.output.len();
-            let item_id = format!("fc_{}", Uuid::new_v4().simple());
+            let item_id = format!(
+                "{}_{}",
+                self.tool_names.item_id_prefix(&name),
+                Uuid::new_v4().simple()
+            );
             let mut item = json!({"id":item_id,"call_id":id,"status":"in_progress"});
             if self.tool_names.is_custom(&name) {
                 item["type"] = json!("custom_tool_call");

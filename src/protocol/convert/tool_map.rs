@@ -84,6 +84,16 @@ impl ToolNameMap {
         self.custom_tools.contains(upstream_name)
     }
 
+    /// Responses item-id prefix the official API requires for this tool's
+    /// call item: `ctc` for freeform calls, `fc` for everything else.
+    pub fn item_id_prefix(&self, upstream_name: &str) -> &'static str {
+        if self.is_custom(upstream_name) {
+            "ctc"
+        } else {
+            "fc"
+        }
+    }
+
     pub fn insert_tool_search(
         &mut self,
         upstream_name: String,

@@ -33,7 +33,6 @@ public sealed partial class MainWindow
             await OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"));
         }));
         diagnostics.Children.Add(Button(Localized.Get("运行诊断"), () => ChangeAsync(Localized.Get("诊断"), ["doctor", "--json"])));
-        diagnostics.Children.Add(Button(Localized.Get("重放上报"), () => ChangeAsync(Localized.Get("重放上报"), ["report-replay"])));
         var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WPF / .NET", diagnostics);
         var updateControls = UpdateControls(app.Updates, pageToken);
         var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], app.ThemeMode == ThemeMode.Light ? Localized.Get("浅色") : app.ThemeMode == ThemeMode.Dark ? Localized.Get("深色") : Localized.Get("跟随系统"));

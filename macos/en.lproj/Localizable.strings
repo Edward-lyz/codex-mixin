@@ -340,7 +340,6 @@
 "console.usage.noSlotReplies" = "No reply details for this period. Details cover about the latest 100,000 replies; older days keep daily totals only.";
 
 "console.page.routing" = "Model Routing";
-"routing.menuTitle" = "Model Routing…";
 "routing.title" = "Model Routing";
 "routing.new" = "New Route";
 "routing.untitled" = "Untitled";

@@ -488,8 +488,9 @@ async fn spawn_session(
             "--setting-sources",
             "",
             "--disable-slash-commands",
-            // Unlike --bare, safe mode keeps subscription OAuth and explicit MCP.
-            "--safe-mode",
+            // Safe mode would keep OAuth but also drop --mcp-config, leaving the
+            // model without tools; --strict-mcp-config and empty setting sources
+            // already isolate the process from user customizations.
             "--no-chrome",
             "--settings",
             r#"{"disableAllHooks":true,"autoMemoryEnabled":false,"autoCompactEnabled":false,"promptSuggestionEnabled":false}"#,

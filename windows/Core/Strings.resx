@@ -1676,9 +1676,6 @@ Click to change model</value>
   <data name="重启网关" xml:space="preserve">
     <value>Restart gateway</value>
   </data>
-  <data name="重放上报" xml:space="preserve">
-    <value>Resend reports</value>
-  </data>
   <data name="重新探测已加入模型的能力" xml:space="preserve">
     <value>Re-probe capabilities of added models</value>
   </data>

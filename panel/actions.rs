@@ -124,8 +124,6 @@ pub(super) enum PanelAction {
     EchEnable,
     EchDisable,
     EchTest,
-    /// Re-report every local session (DUCX repair path).
-    ReportReplay,
     Update,
     DoctorFix,
     RefreshCodexCatalog,
@@ -362,21 +360,12 @@ impl PanelAction {
     pub(super) fn prints_json(&self) -> bool {
         matches!(
             self,
-            Self::ProviderTest { .. } | Self::EchTest | Self::ReportReplay | Self::KeyCreate { .. }
+            Self::ProviderTest { .. } | Self::EchTest | Self::KeyCreate { .. }
         )
     }
 
-    /// CLI calls in order; a failure stops the sequence. Only the manual
-    /// report runs several steps, mirroring the macOS app: reset upload
-    /// credentials, restart for a fresh DUCX warmup, then replay sessions.
+    /// CLI calls in order; a failure stops the sequence.
     pub(super) fn invocations(&self) -> Result<Vec<CliInvocation>, String> {
-        if matches!(self, Self::ReportReplay) {
-            return Ok(vec![
-                CliInvocation::fixed(&["report-replay", "--prepare-warmup"]),
-                CliInvocation::fixed(&["service", "restart"]),
-                CliInvocation::fixed(&["report-replay", "--all-sessions", "--json"]),
-            ]);
-        }
         let invocation = self.invocation()?;
         if matches!(
             self,
@@ -571,9 +560,6 @@ impl PanelAction {
             Self::EchEnable => Ok(CliInvocation::fixed(&["ech", "enable"])),
             Self::EchDisable => Ok(CliInvocation::fixed(&["ech", "disable"])),
             Self::EchTest => Ok(CliInvocation::fixed(&["ech", "test", "--json"])),
-            Self::ReportReplay => {
-                Err("manual report runs several steps; use invocations()".to_owned())
-            }
             Self::Update => Ok(CliInvocation::fixed(&["update"])),
             Self::DoctorFix => Ok(CliInvocation::fixed(&["doctor", "--fix", "--quick"])),
             Self::RefreshCodexCatalog => Ok(CliInvocation::fixed(&["refresh-codex-catalog"])),

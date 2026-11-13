@@ -333,8 +333,6 @@ try {
     & $WinApp ui invoke 运行诊断 -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '诊断完成' --contains --timeout 90000
     $null = & $cli --no-tui --json-errors doctor --json | ConvertFrom-Json
-    & $WinApp ui invoke 重放上报 -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '重放上报完成' --contains --timeout 90000
     # Normal HTTP uses the dead fixture proxy; an update check must surface its error.
     & $WinApp ui wait-for check-app-updates -w $settingsWindow --property IsEnabled --value True --timeout 90000
     & $WinApp ui invoke check-app-updates -w $settingsWindow

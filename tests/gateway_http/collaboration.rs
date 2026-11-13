@@ -187,6 +187,40 @@ async fn keeps_official_http_envelopes_when_the_request_succeeds() {
 }
 
 #[tokio::test]
+async fn official_route_replays_provider_custom_tool_calls_with_ctc_ids() {
+    let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(5),
+    )
+    .await;
+    let body = json!({"model":"gpt-5.5", "stream":true, "input":[
+        {"type":"custom_tool_call", "id":"fc_provider", "call_id":"call_patch",
+            "name":"apply_patch", "input":"*** Begin Patch", "status":"completed"},
+        {"type":"custom_tool_call_output", "call_id":"call_patch", "output":"ok"},
+        {"type":"custom_tool_call", "id":"ctc_native", "call_id":"call_native",
+            "name":"apply_patch", "input":"*** Begin Patch", "status":"completed"},
+        {"type":"function_call", "id":"fc_function", "call_id":"call_shell",
+            "name":"shell", "arguments":"{}", "status":"completed"}
+    ]});
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+
+    let captured = official_requests.lock().unwrap();
+    let input = &captured[0]["input"];
+    assert_eq!(input[0]["id"], "ctc_provider");
+    assert_eq!(input[0]["call_id"], "call_patch");
+    assert_eq!(input[2]["id"], "ctc_native");
+    assert_eq!(input[3]["id"], "fc_function");
+}
+
+#[tokio::test]
 async fn retries_official_websocket_with_materialized_agent_messages() {
     let (gateway_url, official_requests, connections, _codex_home) =
         spawn_gateway_with_mock_official(

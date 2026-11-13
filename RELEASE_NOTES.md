@@ -1,4 +1,20 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.2
+
+### 体验优化
+
+- **移除「手动触发上报」入口**：macOS 菜单栏、Windows 设置页与 Web 面板不再提供手动上报按钮，用量上报继续自动进行；命令行保留 `report-replay` 供排查使用。
+- **macOS「高级」菜单去掉重复的「模型路由」**：模型路由统一从控制台的「模型路由」页进入。
+
+### BUG 修复
+
+- 修复通过 Codex 使用 Claude Code 订阅模型时，模型把工具调用以 `<invoke name="functions.exec">` 文本原样输出、无法真正执行命令的问题。Claude CLI 以安全模式启动时会忽略 MCP 配置，导致工具从未注册给模型；现在不再启用安全模式，隔离仍由严格 MCP 配置与空设置源保证。
+- 修复从第三方 Provider 路由切换到官方路由后整轮返回 400 的问题。Provider 路由为自由格式工具调用生成 `fc_` 前缀的 id，而官方接口要求 `ctc_` 前缀；现在新生成的调用直接使用 `ctc_`，历史中已有的 `fc_` 在发往官方时自动改写（#128）。
+
+### 致谢
+
+- @zzknwafu：反馈切到官方路由模型后 custom_tool_call id 前缀导致整轮 400 的问题（#128）。
+
 ## v0.8.1
 
 ### BUG 修复
@@ -318,6 +334,22 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.2
+
+### 體驗優化
+
+- **移除「手動觸發上報」入口**：macOS 選單列、Windows 設定頁與 Web 面板不再提供手動上報按鈕，用量上報持續自動進行；命令列保留 `report-replay` 供排查使用。
+- **macOS「進階」選單移除重複的「模型路由」**：模型路由統一從控制台的「模型路由」頁進入。
+
+### 問題修正
+
+- 修正透過 Codex 使用 Claude Code 訂閱模型時，模型把工具呼叫以 `<invoke name="functions.exec">` 文字原樣輸出、無法真正執行指令的問題。Claude CLI 以安全模式啟動時會忽略 MCP 設定，導致工具從未註冊給模型；現在不再啟用安全模式，隔離仍由嚴格 MCP 設定與空設定來源確保。
+- 修正從第三方 Provider 路由切換到官方路由後整輪回傳 400 的問題。Provider 路由為自由格式工具呼叫產生 `fc_` 前綴的 id，而官方介面要求 `ctc_` 前綴；現在新產生的呼叫直接使用 `ctc_`，歷史中既有的 `fc_` 在送往官方時自動改寫（#128）。
+
+### 致謝
+
+- @zzknwafu：回報切到官方路由模型後 custom_tool_call id 前綴導致整輪 400 的問題（#128）。
+
 ## v0.8.1
 
 ### BUG 修復
@@ -637,6 +669,22 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.2
+
+### Improvements
+
+- **Removed the "manual report" entry**: the macOS menu bar, Windows settings page and Web panel no longer offer a manual report button. Usage reporting keeps running automatically, and the `report-replay` command stays available for troubleshooting.
+- **No duplicate "Model Routing" in the macOS "Advanced" menu**: model routing is opened from the Model Routing page of the console only.
+
+### Bug fixes
+
+- Fixed Claude Code subscription models used through Codex printing tool calls as `<invoke name="functions.exec">` text instead of running them. The Claude CLI ignores MCP configuration in safe mode, so the tools were never registered with the model. Safe mode is no longer enabled; isolation still comes from strict MCP configuration and empty setting sources.
+- Fixed a whole turn failing with HTTP 400 after switching from a third-party provider route to the official route. Provider routes created `fc_` ids for freeform tool calls while the official API requires `ctc_`. New calls now use `ctc_`, and existing `fc_` ids in history are rewritten when sent to the official route (#128).
+
+### Thanks
+
+- @zzknwafu: reported the 400 caused by custom_tool_call id prefixes after switching to an official route model (#128).
+
 ## v0.8.1
 
 ### Bug fixes

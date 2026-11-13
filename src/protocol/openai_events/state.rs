@@ -384,7 +384,11 @@ impl MapperState {
             arguments = image_routes.mark_arguments(&arguments)?;
         }
         let output_index = self.output.len();
-        let item_id = format!("fc_{}", Uuid::new_v4().simple());
+        let item_id = format!(
+            "{}_{}",
+            self.tool_names.item_id_prefix(&name),
+            Uuid::new_v4().simple()
+        );
         let item = self.tool_item(&id, &name, &item_id, &arguments)?;
         self.output.push(item.clone());
         Ok(vec![

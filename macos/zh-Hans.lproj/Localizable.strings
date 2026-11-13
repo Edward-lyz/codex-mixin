@@ -340,7 +340,6 @@
 "console.usage.noSlotReplies" = "这个时段没有逐条明细。明细保留最近约 10 万条回复，更早的日期只保留按天汇总。";
 
 "console.page.routing" = "模型路由";
-"routing.menuTitle" = "模型路由…";
 "routing.title" = "模型路由";
 "routing.new" = "新建路由";
 "routing.untitled" = "未命名";

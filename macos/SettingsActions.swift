@@ -268,10 +268,6 @@ extension AppDelegate {
         }
     }
 
-    @objc func showModelRouting() {
-        showConsole(.routing)
-    }
-
     func makeModelRoutingModel() -> ModelRoutingModel {
         ModelRoutingModel(
             listHandler: { [weak self] in
@@ -305,71 +301,6 @@ extension AppDelegate {
                 if let progress { try await self.applyModelRouteChange(progress: progress) }
             }
         )
-    }
-
-    @objc func manuallyReportSessions() {
-        guard !serviceBusy else { return }
-        serviceBusy = true
-        Task { @MainActor in
-            defer { serviceBusy = false }
-            var replayStarted = false
-            do {
-                let estimate = try decodeDUCXReplayEstimate(
-                    try await runGateway([
-                        "report-replay",
-                        "--all-sessions",
-                        "--estimate",
-                        "--json",
-                    ])
-                )
-                guard confirm(
-                    title: "手动上报全部本地 Session？",
-                    message: "预计上报 \(estimate.estimatedSessions) 个会话，共 \(estimate.estimatedReports) 次。此功能仅用于自动上报数据异常时的修复。确认异常确实需要修复后再继续。"
-                ) else { return }
-                replayStarted = true
-                serviceStatus = "正在准备 DUCX 全量上报..."
-                serviceEndpoint = nil
-                let replayReport = try await runOperationProgress(
-                    title: "正在手动上报本地 Session",
-                    phases: [
-                        "清除旧上报凭据",
-                        "执行 DUCX warmup",
-                        "扫描并重放本地 Session",
-                        "完成",
-                    ],
-                    successTitle: "✓ 本地 Session 上报已处理",
-                    failureTitle: "✗ 本地 Session 上报失败",
-                    showFailureAlert: true,
-                    failureAlertTitle: "手动触发上报失败"
-                ) { progress in
-                    progress.advance(to: 0)
-                    _ = try await runGateway(["report-replay", "--prepare-warmup"])
-                    progress.advance(to: 1)
-                    let status = try await runGateway(["service", "restart", "--managed", "--json"])
-                    applyGatewayStatus(status)
-                    progress.advance(to: 2)
-                    let report = try await runGateway([
-                        "report-replay",
-                        "--all-sessions",
-                        "--json",
-                    ])
-                    appendDiagnosticLog("Manual DUCX report replay\n\(report)")
-                    let replayReport = try decodeDUCXReplayReport(report)
-                    progress.advance(to: 3)
-                    await refreshStatusNow()
-                    return replayReport
-                }
-                showDiagnosticReport(
-                    title: "DUCX 手动上报结果",
-                    report: formatDUCXReplayReport(replayReport)
-                )
-            } catch {
-                await refreshStatusNow()
-                if !replayStarted {
-                    showAlert(title: "手动上报预估失败", message: error.localizedDescription)
-                }
-            }
-        }
     }
 
     func applyModelRouteChange(progress: OperationProgress) async throws {

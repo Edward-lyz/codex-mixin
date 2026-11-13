@@ -113,15 +113,16 @@ impl UpstreamAccess {
 struct OfficialResponsesBody(Value);
 
 impl OfficialResponsesBody {
-    fn new(body: Value) -> Result<Self, GatewayError> {
-        if let Some(object) = body.as_object() {
+    fn new(mut body: Value) -> Result<Self, GatewayError> {
+        if let Some(object) = body.as_object_mut() {
             if object.contains_key("top_k") {
                 return Err(GatewayError::BadRequest("the official Responses API does not support topK; disable topK or choose a provider that supports it".to_owned()));
             }
-            if let Some(input) = object.get("input").and_then(Value::as_array) {
+            if let Some(input) = object.get_mut("input").and_then(Value::as_array_mut) {
                 for item in input {
                     if !is_foreign_reasoning(item) {
                         validate_agent_message_content(item)?;
+                        restore_custom_tool_call_id(item);
                     }
                 }
             }
@@ -186,10 +187,28 @@ pub(crate) fn normalize_official_responses_body(mut body: Value) -> Result<Value
             input.retain(|item| !is_foreign_reasoning(item));
             for item in input {
                 validate_agent_message_content(item)?;
+                restore_custom_tool_call_id(item);
             }
         }
     }
     Ok(body)
+}
+
+/// Provider routes carry freeform tool calls as function calls, so a replayed
+/// `custom_tool_call` can hold the upstream's `fc_` id. The official endpoint
+/// requires the `ctc_` prefix for this item type.
+fn restore_custom_tool_call_id(item: &mut Value) {
+    if item.get("type").and_then(Value::as_str) != Some("custom_tool_call") {
+        return;
+    }
+    let Some(id) = item.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    if id.starts_with("ctc_") {
+        return;
+    }
+    let suffix = id.strip_prefix("fc_").unwrap_or(id);
+    item["id"] = Value::String(format!("ctc_{suffix}"));
 }
 
 fn validate_agent_message_content(item: &Value) -> Result<(), GatewayError> {

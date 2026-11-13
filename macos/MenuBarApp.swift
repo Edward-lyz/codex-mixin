@@ -229,8 +229,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
             echMenuItem!,
-            actionItem(AppLocalization.string("routing.menuTitle"), #selector(showModelRouting), "point.3.connected.trianglepath.dotted"),
-            actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath"),
             actionItem("导入配置备份…", #selector(importConfigBackup), "square.and.arrow.down"),
             actionItem("导出配置备份…", #selector(exportConfigBackup), "square.and.arrow.up")
         ]))

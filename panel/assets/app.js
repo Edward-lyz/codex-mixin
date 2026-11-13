@@ -3117,7 +3117,7 @@ RENDERERS.system = () => {
 
 // ---------- Advanced ----------
 
-const advanced = { ech: null, echTest: null, report: null };
+const advanced = { ech: null, echTest: null };
 
 async function loadEch() {
   try {
@@ -3126,36 +3126,6 @@ async function loadEch() {
     if (error.status !== 401) advanced.ech = { error: error.message };
   }
   if (state.page === "advanced") render({ animate: false });
-}
-
-const DUCX_EVENTS = { "user-prompt-submit": t("用户请求"), "pre-tool-use": t("代码生成"), "post-tool-use": t("技能使用"), stop: t("Session 文件") };
-
-function replayReportView(report) {
-  const line = (item, label) => h("div", { class: "row" }, h("span", { class: `badge ${label === "OK" ? "badge-ok" : "badge-bad"}`, text: label }), h("div", { class: "row-main" }, h("div", { class: "row-title", text: `${DUCX_EVENTS[item.event] || item.event} · ${item.provider_id}` }), h("div", { class: "row-sub mono", text: item.error ? `${item.session_id} · ${item.error}` : item.session_id })));
-  return h(
-    "div",
-    { class: "form" },
-    h("dl", { class: "kv" }, ...[[t("本地 Session 新加入队列"), report.queued_from_local_sessions], [t("上传成功"), report.delivered?.length], [t("上传失败，等待最后一次重试"), report.retained?.length], [t("超过重试次数并丢弃"), report.discarded?.length]].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value, "0") })])),
-    h("div", { class: "rows card card-flush" }, ...(report.delivered || []).map((item) => line(item, "OK")), ...(report.retained || []).map((item) => line(item, "ERROR")), ...(report.discarded || []).map((item) => line(item, "DROP"))),
-  );
-}
-
-async function manualReport(button) {
-  button.classList.add("is-busy");
-  let estimate;
-  try {
-    estimate = await api("/api/report/estimate");
-  } catch (error) {
-    if (error.status !== 401) toast("bad", t("手动上报预估失败"), error.message);
-    return;
-  } finally {
-    button.classList.remove("is-busy");
-  }
-  const result = await runAction(button, "report_replay", null, {
-    ok: t("本地 Session 上报已处理"),
-    confirm: [t("手动上报全部本地 Session？"), t("预计上报 {0} 个会话，共 {1} 次。此功能仅用于自动上报数据异常时的修复，确认异常确实需要修复后再继续。", estimate.estimated_sessions, estimate.estimated_reports), t("开始上报")],
-  });
-  if (result?.json) openSheet(t("DUCX 手动上报结果"), replayReportView(result.json));
 }
 
 async function exportBackup(button) {
@@ -3318,15 +3288,12 @@ RENDERERS.advanced = () => {
       h("p", { class: "card-note", text: t("ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。") }),
     ),
   );
-  const report = h("button", { class: "btn", type: "button", "data-action": "", text: t("手动触发上报…") });
-  report.addEventListener("click", () => manualReport(report));
   const exportButton = h("button", { class: "btn", type: "button", text: t("导出配置备份…") });
   exportButton.addEventListener("click", () => exportBackup(exportButton));
   const importButton = h("button", { class: "btn", type: "button", "data-action": "", text: t("导入配置备份…") });
   importButton.addEventListener("click", () => importBackup(importButton));
   return [
     echCard,
-    card(t("手动上报"), t("清除旧上报凭据、执行 DUCX warmup，再扫描并重放全部本地 Session。仅在自动上报数据异常时使用。"), h("div", { class: "card-actions" }, report)),
     card(t("配置备份"), t("备份包含 Provider、模型选择、Fusion 与凭据；使用 Base64 编码但未加密，导入会替换当前配置并重启网关。"), h("div", { class: "card-actions" }, exportButton, importButton)),
   ];
 };

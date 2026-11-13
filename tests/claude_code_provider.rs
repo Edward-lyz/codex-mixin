@@ -19,6 +19,9 @@ const FAKE_CLAUDE: &str = r#"#!/usr/bin/env node
 const readline = require('readline');
 const args = process.argv.slice(2);
 if (args.includes('-p') || args.includes('--print')) throw Error('headless Claude must not run');
+// Safe mode makes the real CLI ignore --mcp-config, so the model never sees the
+// tools and prints its calls as plain text.
+if (args.includes('--safe-mode')) throw Error('safe mode ignores --mcp-config');
 const url = JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.mixin.url;
 let turns = 0;
 let rpc = 0;

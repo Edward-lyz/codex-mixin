@@ -20,8 +20,7 @@
 //! - `GET /api/context` -> `{settings, database_path, totals, sessions}` from
 //!   `context stats --json` and `context config get --json`; with `?session=key`,
 //!   returns `context export --compact --session=key` metadata on demand.
-//! - `GET /api/ech` -> `ech status --json`; `GET /api/report/estimate` ->
-//!   `report-replay --all-sessions --estimate --json`.
+//! - `GET /api/ech` -> `ech status --json`.
 //! - `GET /api/config/export` downloads a Base64 backup (not encrypted);
 //!   `POST /api/config/import` takes the backup bytes, imports them and
 //!   restarts the gateway.
@@ -123,7 +122,6 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/agents/versions", get(agent_versions))
         .route("/api/context", get(context_stats))
         .route("/api/ech", get(ech_status))
-        .route("/api/report/estimate", get(report_estimate))
         .route("/api/config/export", get(export_config))
         .route(
             "/api/config/import",
@@ -628,12 +626,6 @@ async fn action_stream(
 
 async fn ech_status() -> Result<Json<Value>, ApiError> {
     Ok(Json(run_json(&["ech", "status", "--json"]).await?))
-}
-
-async fn report_estimate() -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        run_json(&["report-replay", "--all-sessions", "--estimate", "--json"]).await?,
-    ))
 }
 
 fn backup_workspace() -> Result<tempfile::TempDir, ApiError> {
