@@ -512,3 +512,9 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
 ## 许可证
 
 本项目以 [CC BY-NC 4.0](LICENSE) 授权：可以自由使用、修改和再分发，需署名，不得用于商业目的。商业授权请联系作者。第三方声明见 [NOTICE](NOTICE)。
+
+---
+
+## Links
+
+- [Linux Do](https://linux.do/)
