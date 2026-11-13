@@ -38,4 +38,7 @@ rustix = { version = "1.1", features = ["process"] }
 system-configuration = "=0.8.0"
 
 [target."cfg(windows)".dependencies]
+win-handles-sys = "=0.1.1"
+windows-permissions = "=0.2.4"
 windows-registry = "=0.100.0"
+winsafe = { version = "=0.0.29", features = ["kernel", "taskschd"] }

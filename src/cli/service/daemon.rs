@@ -146,7 +146,7 @@ pub(crate) fn start_daemon(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    codex_mixin::platform::prepare_daemon_command(&mut command);
+    codex_mixin::platform::prepare_daemon_command(&mut command)?;
     let child = command.spawn()?;
     let pid = child.id();
     let mut actual_bind = None;

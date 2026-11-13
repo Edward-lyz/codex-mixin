@@ -290,7 +290,7 @@ pub(super) fn windows_task_arguments(spec: &StartupServiceSpec<'_>) -> anyhow::R
     ))
 }
 
-/// Structured scheduled-task fields returned by `Get-ScheduledTask`.
+/// Scheduled-task fields used to recognize the current gateway service.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub(super) struct WindowsTaskInfo {

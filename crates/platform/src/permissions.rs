@@ -31,60 +31,33 @@ pub fn restrict_owner_only_dir(path: &Path) -> anyhow::Result<()> {
 #[cfg(windows)]
 fn restrict_windows_acl(path: &Path, directory: bool) -> anyhow::Result<()> {
     use anyhow::Context;
-    use std::process::{Command, Stdio};
+    use windows_permissions::constants::{SeObjectType, SecurityInformation};
+    use windows_permissions::{LocalBox, SecurityDescriptor, utilities, wrappers};
+
     // A fresh DACL removes explicit grants too; disabling inheritance alone
     // leaves an existing Everyone/Users rule able to read private credentials.
-    const SCRIPT: &str = r#"
-$ErrorActionPreference = 'Stop'
-$owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$directory = $env:CODEX_MIXIN_ACL_DIRECTORY -eq 'true'
-if ($directory) {
-    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
-    $inheritance = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
-} else {
-    $acl = [System.Security.AccessControl.FileSecurity]::new()
-    $inheritance = [Security.AccessControl.InheritanceFlags]::None
-}
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($value in @($owner.Value, 'S-1-5-18', 'S-1-5-32-544')) {
-    $sid = [System.Security.Principal.SecurityIdentifier]::new($value)
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
-    $acl.AddAccessRule($rule)
-}
-# Set-Acl and icacls /restore can require SeSecurityPrivilege
-# for the untouched SACL. Persist only the DACL changes made above.
-if ($directory) {
-    ([System.IO.DirectoryInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
-} else {
-    ([System.IO.FileInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
-}
-"#;
-    let mut command = Command::new(super::system_powershell()?);
-    command
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            SCRIPT,
-        ])
-        // PowerShell 7's inherited module path can select incompatible modules
-        // in Windows PowerShell 5.1. Let the child build its native module path.
-        .env_remove("PSModulePath")
-        .env("CODEX_MIXIN_ACL_PATH", path)
-        .env(
-            "CODEX_MIXIN_ACL_DIRECTORY",
-            if directory { "true" } else { "false" },
-        )
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    super::prepare_background_command(&mut command);
-    let output = command.output().context("replace private Windows ACL")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "private Windows ACL replacement failed for {}: {}",
-        path.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(())
+    // Configuration reads call this repeatedly, so use native APIs rather than
+    // starting PowerShell for every directory and lock file on the query path.
+    let owner = utilities::current_process_sid().context("get current Windows user SID")?;
+    let inheritance = if directory { "OICI" } else { "" };
+    let descriptor: LocalBox<SecurityDescriptor> = format!(
+        "D:P(A;{inheritance};FA;;;{owner})(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;BA)"
+    )
+    .parse()
+    .context("build private Windows ACL")?;
+    let dacl = descriptor
+        .dacl()
+        .context("private Windows ACL is missing")?;
+    // Persist only the DACL, leaving the owner and SACL untouched. Protect it
+    // from inherited grants, including when repairing an existing file.
+    wrappers::SetNamedSecurityInfo(
+        path,
+        SeObjectType::SE_FILE_OBJECT,
+        SecurityInformation::Dacl | SecurityInformation::ProtectedDacl,
+        None,
+        None,
+        Some(dacl),
+        None,
+    )
+    .with_context(|| format!("replace private Windows ACL for {}", path.display()))
 }

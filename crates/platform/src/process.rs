@@ -20,7 +20,7 @@ pub fn prepare_background_tokio_command(command: &mut tokio::process::Command) {
     let _ = command;
 }
 
-pub fn prepare_daemon_command(command: &mut Command) {
+pub fn prepare_daemon_command(command: &mut Command) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -28,12 +28,31 @@ pub fn prepare_daemon_command(command: &mut Command) {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::io::AsRawHandle;
         use std::os::windows::process::CommandExt;
+        use win_handles_sys::{HandleFlags, set_handle_information};
+
+        // Rust's stable Command inherits all inheritable handles, including
+        // the CLI's original pipes even when the daemon's stdio is null.
+        // Keep those pipes owned by the CLI so its caller can observe EOF.
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        let stderr = std::io::stderr();
+        if !stdin.as_raw_handle().is_null() && stdin.as_raw_handle() as isize != -1 {
+            set_handle_information(&stdin, HandleFlags::INHERIT, HandleFlags::NONE)?;
+        }
+        if !stdout.as_raw_handle().is_null() && stdout.as_raw_handle() as isize != -1 {
+            set_handle_information(&stdout, HandleFlags::INHERIT, HandleFlags::NONE)?;
+        }
+        if !stderr.as_raw_handle().is_null() && stderr.as_raw_handle() as isize != -1 {
+            set_handle_information(&stderr, HandleFlags::INHERIT, HandleFlags::NONE)?;
+        }
 
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
     }
+    Ok(())
 }
 
 pub fn pid_is_running(pid: u32, expected_image_name: &str) -> std::io::Result<bool> {
@@ -128,23 +147,18 @@ fn terminate_windows_tree(pid: u32, force: bool) -> std::io::Result<bool> {
 
 #[cfg(windows)]
 fn windows_pid_is_running(pid: u32, expected_image_name: Option<&str>) -> std::io::Result<bool> {
-    let mut command = Command::new("tasklist");
-    command.args(["/FI", &format!("PID eq {pid}")]);
-    if let Some(image_name) = expected_image_name {
-        command.args(["/FI", &format!("IMAGENAME eq {image_name}")]);
+    use winsafe::{HPROCESSLIST, co};
+
+    let mut snapshot = HPROCESSLIST::CreateToolhelp32Snapshot(co::TH32CS::SNAPPROCESS, None)
+        .map_err(|error| std::io::Error::from_raw_os_error(error.raw() as i32))?;
+    for entry in snapshot.iter_processes() {
+        let entry = entry.map_err(|error| std::io::Error::from_raw_os_error(error.raw() as i32))?;
+        if entry.th32ProcessID == pid {
+            return Ok(expected_image_name
+                .is_none_or(|image_name| entry.szExeFile().eq_ignore_ascii_case(image_name)));
+        }
     }
-    command
-        .args(["/FO", "CSV", "/NH"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    prepare_background_command(&mut command);
-    let output = command.output()?;
-    Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-        line.split("\",\"")
-            .nth(1)
-            .and_then(|value| value.trim_matches('"').parse::<u32>().ok())
-            == Some(pid)
-    }))
+    Ok(false)
 }
 
 /// Start the child in its own process group so the whole tree can be killed

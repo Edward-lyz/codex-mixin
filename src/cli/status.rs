@@ -6,6 +6,7 @@ use std::time::Duration;
 /// status command retries before reporting the gateway as unavailable.
 const HEALTH_PROBE_ATTEMPTS: usize = 3;
 const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const HEALTH_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const HEALTH_PROBE_RETRY_DELAY: Duration = Duration::from_millis(400);
 
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
@@ -174,6 +175,13 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         None => "not_started",
     };
     let live_runtime = match runtime {
+        Some(runtime)
+            if metadata
+                .as_ref()
+                .is_some_and(|daemon| daemon.pid == runtime.pid) =>
+        {
+            (daemon_status == "running").then_some(runtime)
+        }
         Some(runtime) if pid_is_running(runtime.pid)? => Some(runtime),
         _ => None,
     };
@@ -187,7 +195,7 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         codex_mixin::config::client_address(bind)
     );
     let process_alive = live_runtime.is_some() || daemon_status == "running";
-    let (activity, health_error) = probe_gateway_health(&healthz).await?;
+    let (activity, health_error) = probe_gateway_health(&healthz, process_alive).await?;
     Ok(GatewaySnapshot {
         activity,
         daemon: metadata,
@@ -204,8 +212,15 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
 /// short timeout without having exited.
 async fn probe_gateway_health(
     healthz: &str,
+    process_alive: bool,
 ) -> anyhow::Result<(serde_json::Value, Option<String>)> {
     let client = reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(if process_alive {
+            HEALTH_PROBE_TIMEOUT
+        } else {
+            HEALTH_CONNECT_TIMEOUT
+        })
         .timeout(HEALTH_PROBE_TIMEOUT)
         .build()?;
     let mut last_error = None;
@@ -230,7 +245,16 @@ async fn probe_gateway_health(
                     )),
                 ));
             }
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                // Windows can spend seconds retrying a refused TCP connection.
+                // A missing listener with no live gateway needs no retry; keep
+                // the response deadline and retries for an existing busy one.
+                let retry = process_alive || !error.is_connect();
+                last_error = Some(error);
+                if !retry {
+                    break;
+                }
+            }
         }
         if attempt + 1 < HEALTH_PROBE_ATTEMPTS {
             tokio::time::sleep(HEALTH_PROBE_RETRY_DELAY).await;
