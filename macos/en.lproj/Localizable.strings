@@ -458,3 +458,6 @@
 
 "routing.enabled" = "Enabled";
 "routing.enabledFor" = "Enable %@";
+
+"update.backgroundInProgress" = "Background update in progress";
+"update.backgroundInProgressHelp" = "An update check or download is running in the background. Please check again shortly. Downloaded updates will install automatically when the gateway is idle.";

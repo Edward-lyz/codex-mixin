@@ -2,7 +2,7 @@
 members = ["crates/platform"]
 
 [workspace.package]
-version = "0.8.2"
+version = "0.8.3"
 edition = "2024"
 license = "CC-BY-NC-4.0"
 

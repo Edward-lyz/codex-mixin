@@ -458,3 +458,6 @@
 
 "routing.enabled" = "启用";
 "routing.enabledFor" = "启用 %@";
+
+"update.backgroundInProgress" = "后台更新进行中";
+"update.backgroundInProgressHelp" = "正在后台检查或下载更新。请稍后再次检查；已下载的更新会在网关空闲时自动安装。";

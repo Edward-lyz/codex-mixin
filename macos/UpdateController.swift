@@ -8,8 +8,28 @@ extension AppDelegate: SPUUpdaterDelegate {
 
     @MainActor
     @objc func checkForUpdatesFromMenu() {
-        guard let updater, !updater.sessionInProgress else { return }
-        updateDriver?.silent = false
+        guard let updater, let driver = updateDriver else { return }
+        // Hand a staged background update to Sparkle's standard UI instead
+        // of silently ignoring a manual check while the idle gate is pending.
+        if let reply = driver.pendingInstall {
+            driver.pendingInstall = nil
+            driver.silent = false
+            driver.showReady(toInstallAndRelaunch: reply)
+            return
+        }
+        if updater.sessionInProgress {
+            if driver.silent {
+                // Silent sessions have no standard window to bring forward.
+                showAlert(
+                    title: AppLocalization.string("update.backgroundInProgress"),
+                    message: AppLocalization.string("update.backgroundInProgressHelp")
+                )
+            } else {
+                driver.showUpdateInFocus()
+            }
+            return
+        }
+        driver.silent = false
         updater.checkForUpdates()
     }
 
@@ -46,7 +66,8 @@ extension AppDelegate: SPUUpdaterDelegate {
                 guard let bytes = output.data(using: .utf8),
                       let status = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
                       silentUpdatePolicy.canInstall(status: status),
-                      !Task.isCancelled, !serviceBusy
+                      !Task.isCancelled, !serviceBusy,
+                      driver.silent, driver.pendingInstall != nil
                 else { return }
                 driver.pendingInstall = nil
                 UserDefaults.standard.set(true, forKey: "preserveGatewayOnUpdateRelaunch")

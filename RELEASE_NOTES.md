@@ -1,4 +1,15 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.3
+
+### 体验优化
+
+- **Windows 性能大幅优化**：网关状态、服务商列表、额度刷新与启停减少本地等待，托盘与控制台同步受益。Windows CI 实测，运行状态查询由约 1.1 秒降至 25 毫秒，网关启停由数秒缩短至约 0.4 秒。
+
+### BUG 修复
+
+- 修复 macOS 点击「检查更新」无反应的问题。后台检查或下载期间会明确提示当前状态；已下载、等待安装的更新可直接显示安装提示。
+- 修复 Windows 网关已经启动后，调用方仍因输出管道未结束而持续等待的问题。
+
 ## v0.8.2
 
 ### 体验优化
@@ -334,6 +345,17 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.3
+
+### 體驗最佳化
+
+- **Windows 效能大幅最佳化**：閘道狀態、服務商清單、額度重新整理與啟停減少本機等待，系統匣與控制台同步受益。Windows CI 實測，執行狀態查詢由約 1.1 秒降至 25 毫秒，閘道啟停由數秒縮短至約 0.4 秒。
+
+### BUG 修復
+
+- 修復 macOS 點擊「檢查更新」無反應的問題。背景檢查或下載期間會明確提示目前狀態；已下載、等待安裝的更新可直接顯示安裝提示。
+- 修復 Windows 閘道已經啟動後，呼叫端仍因輸出管道未結束而持續等待的問題。
+
 ## v0.8.2
 
 ### 體驗優化
@@ -669,6 +691,17 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.3
+
+### Improvements
+
+- **Much faster Windows operations**: reduce local waits for gateway status, provider lists, quota refreshes, and gateway start/stop, benefiting both the tray and console. In Windows CI measurements, running-status queries dropped from about 1.1 seconds to 25 milliseconds, and gateway start/stop dropped from several seconds to about 0.4 seconds.
+
+### Bug fixes
+
+- Fix macOS “Check for Updates” doing nothing. Manual checks now show a status message during background checks or downloads, and an installation prompt when a downloaded update is waiting to install.
+- Fix callers continuing to wait for output pipes to close after the Windows gateway has already started.
+
 ## v0.8.2
 
 ### Improvements
