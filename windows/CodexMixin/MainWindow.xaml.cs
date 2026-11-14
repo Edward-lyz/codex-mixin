@@ -511,7 +511,7 @@ public sealed partial class MainWindow : Window
     }
 
     private async Task<bool> ChangeAsync(string label, string[] args, bool apply = false,
-        IReadOnlyDictionary<string, string>? secrets = null)
+        IReadOnlyDictionary<string, string>? secrets = null, bool backgroundBenchmark = false)
     {
         if (busy || exiting || !applyingDraft && !await ConfirmDiscardAsync(label)) return false;
         return await ExecuteUiAsync(label, async token =>
@@ -527,10 +527,11 @@ public sealed partial class MainWindow : Window
         string output;
         try { output = await service.ChangeAsync(args, token, secrets, progress, apply); }
         catch (Exception error) { outputWindow.Finish(error.Message, failed: true); throw; }
-        outputWindow.Finish(string.IsNullOrWhiteSpace(output) ? Localized.Get("操作完成。") : output.Trim());
+        outputWindow.Finish(backgroundBenchmark ? Localized.Get("测速已启动，进度和结果显示在模型列表。") : string.IsNullOrWhiteSpace(output) ? Localized.Get("操作完成。") : output.Trim());
+        if (backgroundBenchmark) outputWindow.Hide();
         draftDirty = false;
         if (apply) ShowSummary(Localized.Get("配置已同步"));
-        ShowNotice(label, Localized.Get("操作完成，可查看操作详情。"), InfoBarSeverity.Success);
+        ShowNotice(label, Localized.Get(backgroundBenchmark ? "测速已启动，进度和结果显示在模型列表。" : "操作完成，可查看操作详情。"), InfoBarSeverity.Success);
         // A tray-only startup has not loaded the console; do not build a hidden model page.
         if (!initialized) return;
         try
@@ -808,7 +809,7 @@ public sealed partial class MainWindow : Window
         var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(10, 7, 10, 7) };
         Menus.Attach(more, actions);
         AutomationProperties.SetName(more, Localized.Get("更多模型操作"));
-        var test = Button(Localized.Format("测试已加入的 {0} 个模型", selected.Count), () => ChangeAsync(Localized.Get("启动模型测速"), ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
+        var test = Button(Localized.Format("测试已加入的 {0} 个模型", selected.Count), () => ChangeAsync(Localized.Get("启动模型测速"), ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"], backgroundBenchmark: true), true);
         test.Content = IconLabel("\uE916", Localized.Format("测试已加入的 {0} 个模型", selected.Count));
         AutomationProperties.SetName(test, Localized.Format("测试已加入的 {0} 个模型", selected.Count));
         var order = new ComboBox { MinWidth = 128, VerticalAlignment = VerticalAlignment.Center };
@@ -818,6 +819,9 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(order, Localized.Get("拖动已加入模型，或使用行菜单调整顺序。更改在应用后生效。"));
         foreach (var tool in new FrameworkElement[] { search, filter, order, more, test }) toolbar.Children.Add(tool);
         modelBody.Children.Add(toolbar);
+        var progress = new TextBlock { Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetAutomationId(progress, "benchmark-progress");
+        modelBody.Children.Add(progress);
 
         // Shared by the header and every virtualized row so the columns stay aligned. Narrow tables
         // drop the order, speed and ratio columns so the model name keeps its room.
@@ -1079,6 +1083,7 @@ public sealed partial class MainWindow : Window
         void FitModelTable() => list.Height = ModelTableHeight(modelBody);
         modelBody.Loaded += (_, _) => FitModelTable();
         toolbar.SizeChanged += (_, _) => FitModelTable();
+        progress.SizeChanged += (_, _) => FitModelTable();
         ShowSummary(Localized.Get("正在读取测速结果…"));
         pendingApply = async () =>
         {
@@ -1101,7 +1106,8 @@ public sealed partial class MainWindow : Window
         var otherHeight = panel.Children.OfType<FrameworkElement>()
             .Where(child => child is not VirtualList && child.Visibility != Visibility.Collapsed)
             .Sum(child => child.ActualHeight);
-        return Math.Max(120, PageScroll.ActualHeight - otherHeight - panel.Spacing * 2 - 2);
+        var visibleChildren = panel.Children.OfType<FrameworkElement>().Count(child => child.Visibility != Visibility.Collapsed);
+        return Math.Max(120, PageScroll.ActualHeight - otherHeight - panel.Spacing * Math.Max(0, visibleChildren - 1) - 2);
     }
 
     internal void SetUpdateInputBlocked(bool blocked) => OperationScope.IsEnabled = !blocked;
@@ -1184,6 +1190,12 @@ public sealed partial class MainWindow : Window
     private void ApplyTimings(JsonElement snapshot)
     {
         if (page != "providers" || connectionSelected) return;
+        var progress = PageBody.Children.OfType<Stack>().SelectMany(panel => panel.Children.OfType<TextBlock>())
+            .FirstOrDefault(text => AutomationProperties.GetAutomationId(text) == "benchmark-progress");
+        void ShowBenchmark(string message)
+        {
+            if (progress != null) progress.Text = message;
+        }
         timings.Clear();
         foreach (var (ttft, tps) in timingCells.Values)
         {
@@ -1193,10 +1205,13 @@ public sealed partial class MainWindow : Window
         }
         if (snapshot.ValueKind == JsonValueKind.Null)
         {
+            timer.Interval = TimeSpan.FromSeconds(30);
+            ShowBenchmark(Localized.Get("当前服务商暂无测速结果"));
             if (!draftDirty) ShowSummary(Localized.Get("当前服务商暂无测速结果"));
             return;
         }
-        var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
+        var allResults = Json.Rows(Json.Field(snapshot, "results"));
+        var results = allResults.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
         foreach (var row in results)
         {
             var key = $"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}";
@@ -1204,19 +1219,31 @@ public sealed partial class MainWindow : Window
             if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
         }
         sortModels?.Invoke();
-        if (draftDirty) return;
-        if (results.Length == 0) { ShowSummary(Localized.Get("当前服务商暂无测速结果")); return; }
+        var status = Json.Text(snapshot, "status");
+        timer.Interval = TimeSpan.FromSeconds(status == "running" ? 2 : 30);
+        var total = Json.Field(snapshot, "total_models").GetInt32();
+        if (results.Length == 0 && status == "completed")
+        {
+            var empty = Localized.Get("当前服务商暂无测速结果");
+            ShowBenchmark(empty);
+            if (!draftDirty) ShowSummary(empty);
+            return;
+        }
         var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
         var prefix = Localized.Format("{0:yyyy年M月d日 HH:mm} · 超时 {1} 秒 · ", started, Json.Field(snapshot, "timeout_seconds"));
         var completed = results.Count(row => Json.Text(row, "status") == "completed");
         var timedOut = results.Count(row => Json.Text(row, "status") == "timed_out");
         var failed = results.Length - completed - timedOut;
-        switch (Json.Text(snapshot, "status"))
+        var message = status switch
         {
-            case "running": ShowSummary(Localized.Format("{0}正在测速 {1}/{2}", prefix, results.Length, Json.Field(snapshot, "total_models"))); break;
-            case "failed": ShowSummary(Localized.Format("{0}测速任务失败：{1}", prefix, Json.OptionalText(snapshot, "error") ?? Localized.Get("未知错误"))); break;
-            default: ShowSummary(Localized.Format("{0}测速完成：成功 {1}，超时 {2}，失败 {3}", prefix, completed, timedOut, failed)); break;
-        }
+            "running" => Localized.Format("{0}正在测速 {1}/{2} · 当前 {3}", prefix, allResults.Length, total, Json.OptionalText(snapshot, "current_model") ?? "—"),
+            "interrupted" => Localized.Format("{0}测速中断：已完成 {1}/{2}；网关已停止或重启。", prefix, allResults.Length, total),
+            "failed" => Localized.Format("{0}测速任务失败：{1}", prefix, Json.OptionalText(snapshot, "error") ?? Localized.Get("未知错误")),
+            "completed" => Localized.Format("{0}测速完成：成功 {1}，超时 {2}，失败 {3}", prefix, completed, timedOut, failed),
+            _ => Localized.Format("{0}测速状态未知：{1}", prefix, status)
+        };
+        ShowBenchmark(message);
+        if (!draftDirty) ShowSummary(message);
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
@@ -1514,7 +1541,7 @@ public sealed partial class MainWindow : Window
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
             var identity = new Stack { Orientation = Orientation.Horizontal, Spacing = 10 };
-            identity.Children.Add(new Border { Width = 28, Height = 28, Child = Marks.Agent(id) }); identity.Children.Add(text);
+            identity.Children.Add(new Border { Width = 32, Height = 32, VerticalAlignment = VerticalAlignment.Center, Child = Marks.Agent(id, 28) }); identity.Children.Add(text);
             heading.Children.Add(identity);
             var controls = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
             if (Json.Flag(version, "update"))
@@ -1553,6 +1580,7 @@ public sealed partial class MainWindow : Window
         UsageSlot[] slots = [];
         UsageSlot? slot = null;
         Dictionary<string, string> providerNames = [];
+        Dictionary<string, JsonElement> usageProviders = [];
         string? session = null;
         var expanded = new HashSet<string>();
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
@@ -1633,7 +1661,7 @@ public sealed partial class MainWindow : Window
             var rows = UsageView.Rows(shown, grouped.IsChecked == true, expanded);
             var table = new Stack();
             table.Children.Add(UsageView.TableHeader());
-            table.Children.Add(UsageView.Turns(rows, providerNames,
+            table.Children.Add(UsageView.Turns(rows, providerNames, usageProviders,
                 tag => { session = session == tag ? null : tag; RenderTurns(); },
                 tag => { if (!expanded.Remove(tag)) expanded.Add(tag); RenderTurns(); }));
             turnsHost.Content = new Border { Child = table, Style = Themed("ListCard") };
@@ -1690,6 +1718,7 @@ public sealed partial class MainWindow : Window
                 turns = Json.Rows(snapshots[1]).Where(turn => turn.TryGetProperty("at_ms", out var at) && at.GetInt64() >= firstMs).ToArray();
                 slots = UsageBuckets.Slots(daily, turns, days, now);
                 var listedProviders = Json.Rows(Json.Field(snapshots[2], "providers"));
+                usageProviders = listedProviders.ToDictionary(provider => Json.Text(provider, "id"));
                 var byName = listedProviders.GroupBy(provider => Json.Text(provider, "display_name"))
                     .ToDictionary(group => group.Key, group => group.Count());
                 providerNames = listedProviders.ToDictionary(provider => Json.Text(provider, "id"), provider =>
@@ -1771,14 +1800,26 @@ public sealed partial class MainWindow : Window
         "context" => "\uE81C", "routing" => "\uE8F1", _ => "\uE713"
     };
 
-    private Border Card(string title, string description, UIElement? content = null, string? glyph = null)
+    private Border Card(string title, string description, UIElement? content = null, string? glyph = null, string? glyphBrush = null)
     {
         var body = new Stack { Spacing = 10 };
         var heading = new DockPanel();
         if (glyph != null)
         {
-            var icon = new FontIcon { Glyph = glyph, FontSize = 14, Width = 18, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
-            icon.SetResourceReference(Control.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
+            FrameworkElement icon;
+            if (glyph == "leaf")
+            {
+                var leaf = new System.Windows.Shapes.Path { Data = System.Windows.Media.Geometry.Parse("M2,13 C1,7 5,2 13,2 C13,10 9,14 2,13 M2,13 L10,5"), Stretch = System.Windows.Media.Stretch.Uniform, StrokeThickness = 1.4, Width = 14, Height = 14 };
+                leaf.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, glyphBrush ?? "AccentTextFillColorPrimaryBrush");
+                icon = leaf;
+            }
+            else
+            {
+                var symbol = new FontIcon { Glyph = glyph, FontSize = 14, Width = 18 };
+                symbol.SetResourceReference(Control.ForegroundProperty, glyphBrush ?? "AccentTextFillColorPrimaryBrush");
+                icon = symbol;
+            }
+            icon.Margin = new Thickness(0, 0, 6, 0); icon.VerticalAlignment = VerticalAlignment.Center;
             DockPanel.SetDock(icon, Dock.Left); heading.Children.Add(icon);
         }
         heading.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });

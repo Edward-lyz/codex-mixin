@@ -89,22 +89,22 @@ public sealed partial class MainWindow
         var tiles = new SpacedGrid { ColumnSpacing = 12, RowSpacing = 12 };
         for (var column = 0; column < 2; column++) tiles.ColumnDefinitions.Add(new ColumnDefinition());
         for (var row = 0; row < 2; row++) tiles.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var metrics = new (string Title, string Value, string Note)[]
+        var metrics = new (string Title, string Value, string Note, string Glyph, string Brush)[]
         {
-            (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages))),
-            (Localized.Get("压缩次数"), UsageView.Compact(totals.Compressions), ""),
-            (Localized.Get("节省 tokens"), UsageView.Compact(totals.SavedTokens), Localized.Format("当前视图 {0}", UsageView.Compact(totals.ViewTokens))),
+            (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages)), "\uE7B8", "AccentTextFillColorPrimaryBrush"),
+            (Localized.Get("压缩次数"), UsageView.Compact(totals.Compressions), "", "\uE8CB", "AccentTextFillColorPrimaryBrush"),
+            (Localized.Get("节省 tokens"), UsageView.Compact(totals.SavedTokens), Localized.Format("当前视图 {0}", UsageView.Compact(totals.ViewTokens)), "leaf", "SystemFillColorSuccessBrush"),
             (Localized.Get("缓存命中"), cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
-                "")
+                "", "\uE945", "SystemFillColorCautionBrush")
         };
         for (var index = 0; index < metrics.Length; index++)
         {
-            var (title, value, note) = metrics[index];
+            var (title, value, note, glyph, brush) = metrics[index];
             var tileBody = new Stack { Spacing = 2 };
             tileBody.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = FontWeights.SemiBold });
             if (!string.IsNullOrWhiteSpace(note))
                 tileBody.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
-            var tile = Card(title, "", tileBody);
+            var tile = Card(title, "", tileBody, glyph, brush);
             Grid.SetColumn(tile, index % 2); Grid.SetRow(tile, index / 2);
             tiles.Children.Add(tile);
         }

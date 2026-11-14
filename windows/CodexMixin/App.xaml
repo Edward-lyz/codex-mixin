@@ -8,6 +8,21 @@
       <!-- Merged here so BasedOn lookups resolve at load; App.SetTheme switches it through ThemeMode. -->
       <ResourceDictionary.MergedDictionaries><ResourceDictionary Source="pack://application:,,,/PresentationFramework.Fluent;component/Themes/Fluent.xaml" /></ResourceDictionary.MergedDictionaries>
       <DataTemplate x:Key="VirtualRowTemplate"><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate>
+      <!-- Keep the list surface transparent when the page is temporarily disabled. -->
+      <Style TargetType="local:VirtualList">
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="local:VirtualList">
+              <ScrollViewer Background="Transparent" BorderThickness="0"
+                  Focusable="False" CanContentScroll="True"
+                  HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                  VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
+                <ItemsPresenter />
+              </ScrollViewer>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
       <Style x:Key="SecondaryText" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />

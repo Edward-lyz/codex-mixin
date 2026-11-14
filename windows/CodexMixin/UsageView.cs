@@ -68,18 +68,18 @@ internal static class UsageView
         var hasPrevious = previous.Attempts > 0;
         var cards = new UIElement[]
         {
-            Kpi(Localized.Get("预估费用（USD）"), current.Costed > 0 ? Money(current.Cost) : "—",
+            Kpi(Localized.Get("预估费用（USD）"), "$", "SystemFillColorSuccessBrush", current.Costed > 0 ? Money(current.Cost) : "—",
                 current.Costed > 0 && previous.Costed > 0 && current.Unpriced == 0 && previous.Unpriced == 0 ? RelativeDelta(current.Cost, previous.Cost) : null, Tone.Neutral,
                 slots.Select(slot => slot.Total.Cost).ToArray(),
                 Detail(Localized.Get("按模型公开单价估算"))),
-            Kpi(Localized.Get("请求次数"), Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
+            Kpi(Localized.Get("请求次数"), "\uE8CB", "AccentTextFillColorPrimaryBrush", Compact(current.Attempts), hasPrevious ? RelativeDelta(current.Attempts, previous.Attempts) : null, Tone.Neutral,
                 slots.Select(slot => (double)slot.Total.Attempts).ToArray(), Detail(current.Errors > 0 ? Localized.Format("其中失败 {0}", Compact(current.Errors)) : " ")),
-            Kpi("Tokens", Compact(current.Tokens), hasPrevious ? RelativeDelta(current.Tokens, previous.Tokens) : null, Tone.Neutral,
+            Kpi("Tokens", "\uE8F1", "AccentTextFillColorPrimaryBrush", Compact(current.Tokens), hasPrevious ? RelativeDelta(current.Tokens, previous.Tokens) : null, Tone.Neutral,
                 slots.Select(slot => (double)slot.Total.Tokens).ToArray(), ShareBar(current)),
-            Kpi(Localized.Get("缓存命中率"), Percent(current.CacheHitPercent), hasPrevious ? PointDelta(current.CacheHitPercent, previous.CacheHitPercent) : null, Tone.HigherIsBetter,
+            Kpi(Localized.Get("缓存命中率"), "\uE945", "SystemFillColorSuccessBrush", Percent(current.CacheHitPercent), hasPrevious ? PointDelta(current.CacheHitPercent, previous.CacheHitPercent) : null, Tone.HigherIsBetter,
                 slots.Where(slot => slot.Total.CacheHitPercent != null).Select(slot => slot.Total.CacheHitPercent!.Value).ToArray(),
                 Detail(current.CacheHitPercent == null ? " " : Localized.Format("命中 {0} tokens", Compact(current.HitRead)))),
-            Kpi(Localized.Get("错误率"), Percent(current.ErrorPercent), hasPrevious ? PointDelta(current.ErrorPercent, previous.ErrorPercent) : null, Tone.LowerIsBetter,
+            Kpi(Localized.Get("错误率"), "\uE7BA", "SystemFillColorCautionBrush", Percent(current.ErrorPercent), hasPrevious ? PointDelta(current.ErrorPercent, previous.ErrorPercent) : null, Tone.LowerIsBetter,
                 slots.Select(slot => slot.Total.ErrorPercent ?? 0).ToArray(), Detail(Localized.Format("{0} / {1} 次失败", Compact(current.Errors), Compact(current.Attempts))),
                 warning: (current.ErrorPercent ?? 0) >= 5),
         };
@@ -102,13 +102,25 @@ internal static class UsageView
 
     private static TextBlock Detail(string text) => new() { Text = text, Style = Themed("Caption") };
 
-    private static Border Kpi(string title, string value, (string Text, int Sign)? delta, Tone tone, double[] trend, UIElement detail, bool warning = false)
+    private static Border Kpi(string title, string glyph, string brush, string value, (string Text, int Sign)? delta, Tone tone, double[] trend, UIElement detail, bool warning = false)
     {
         var body = new SpacedGrid { RowSpacing = 4 };
         for (var row = 0; row < 3; row++) body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
-        body.Children.Add(new TextBlock { Text = title, Style = Themed("Caption") });
+        var heading = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var icon = new FontIcon { Glyph = glyph, FontSize = glyph == "$" ? 10 : 13 };
+        icon.SetResourceReference(TextBlock.ForegroundProperty, brush);
+        if (glyph == "$")
+        {
+            icon.FontFamily = new FontFamily("Segoe UI");
+            var circle = new Border { Width = 14, Height = 14, CornerRadius = new CornerRadius(7), BorderThickness = new Thickness(1), Child = icon };
+            circle.SetResourceReference(Border.BorderBrushProperty, brush);
+            heading.Children.Add(circle);
+        }
+        else heading.Children.Add(icon);
+        heading.Children.Add(new TextBlock { Text = title, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
+        body.Children.Add(heading);
         var number = new Stack { Orientation = Orientation.Horizontal, Spacing = 8 };
         var figure = new TextBlock { Text = value, FontSize = 22, FontWeight = FontWeights.SemiBold };
         if (warning) figure.Style = Themed("QuotaPercentCritical");
@@ -302,7 +314,7 @@ internal static class UsageView
         Line(Headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("ColumnHeader") }).ToArray(), false);
 
     /// Virtualized rows; containers are recycled, so only visible rows are built.
-    internal static VirtualList Turns(UsageTableRow[] rows, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession, Action<string> onToggle)
+    internal static VirtualList Turns(UsageTableRow[] rows, IReadOnlyDictionary<string, string> providerNames, IReadOnlyDictionary<string, JsonElement> providers, Action<string> onSession, Action<string> onToggle)
     {
         var list = new VirtualList
         {
@@ -314,7 +326,7 @@ internal static class UsageView
         list.Prepared += (container, item) =>
         {
             var row = rows[(int)item];
-            container.Content = row.Turn is { } turn ? Turn(turn, providerNames, onSession) : Group(row, onToggle);
+            container.Content = row.Turn is { } turn ? Turn(turn, providerNames, providers, onSession) : Group(row, onToggle);
         };
         return list;
     }
@@ -338,7 +350,7 @@ internal static class UsageView
         return new Border { Child = button, Style = Themed("RowDivider") };
     }
 
-    private static Border Turn(JsonElement turn, IReadOnlyDictionary<string, string> providerNames, Action<string> onSession)
+    private static Border Turn(JsonElement turn, IReadOnlyDictionary<string, string> providerNames, IReadOnlyDictionary<string, JsonElement> providers, Action<string> onSession)
     {
         var session = Json.Text(turn, "session");
         var sessionTitle = Json.OptionalText(turn, "session_display") ?? session;
@@ -362,15 +374,22 @@ internal static class UsageView
         var providerId = Json.Text(turn, "provider_id");
         var providerName = providerNames.GetValueOrDefault(providerId, providerId);
         var modelId = Json.Text(turn, "upstream_model_id");
-        var model = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
-        model.Children.Add(new TextBlock { Text = modelId, TextTrimming = TextTrimming.CharacterEllipsis });
+        var model = new DockPanel { LastChildFill = true };
+        if (providers.TryGetValue(providerId, out var provider))
+        {
+            var mark = Marks.Provider(provider, 14);
+            mark.Margin = new Thickness(0, 0, 6, 0);
+            DockPanel.SetDock(mark, Dock.Left); model.Children.Add(mark);
+        }
         var tip = $"{providerName} · {modelId}";
         if (UsageStats.IsSubstituted(turn))
         {
             var returned = Json.OptionalText(turn, "returned_model");
-            model.Children.Add(new TextBlock { Text = $"→ {returned}", Style = Themed("CautionCaption"), VerticalAlignment = VerticalAlignment.Center });
+            var replacement = new TextBlock { Text = $"→ {returned}", Style = Themed("CautionCaption"), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 100 };
+            DockPanel.SetDock(replacement, Dock.Right); model.Children.Add(replacement);
             tip += Localized.Format("\n上游实际返回 {0}", returned);
         }
+        model.Children.Add(new TextBlock { Text = modelId, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
         ToolTipService.SetToolTip(model, tip);
 
         var promptTokens = Count(turn, "input_tokens") + Count(turn, "cache_read_tokens") + Count(turn, "cache_creation_tokens");

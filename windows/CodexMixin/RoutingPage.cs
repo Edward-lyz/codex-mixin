@@ -380,10 +380,10 @@ public sealed partial class MainWindow
 
     private static TextBlock StageHeader(string text) => new() { Text = text, Style = Themed("ColumnHeader"), Margin = new Thickness(2, 0, 0, 2) };
 
-    private static FontIcon FlowArrow(string glyph, bool active = false)
+    private static FontIcon FlowArrow(string glyph, bool active = false, string? activeHint = null)
     {
         var arrow = new FontIcon { Glyph = glyph, Style = Themed(active ? "FlowArrowActive" : "FlowArrow"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        if (active) ToolTipService.SetToolTip(arrow, Localized.Get("当前时段"));
+        if (active) ToolTipService.SetToolTip(arrow, Localized.Get(activeHint ?? "当前时段"));
         return arrow;
     }
 
@@ -696,17 +696,67 @@ public sealed partial class MainWindow
             source = ids.FirstOrDefault(id => !models.Contains(id)) ?? throw new InvalidOperationException(Localized.Get("所有模型都已配置故障转移。"));
             fallbacks = [ids.FirstOrDefault(id => id != source) ?? ids[0]];
         }
+        var originalSource = source;
+        var originalFallbacks = fallbacks.ToArray();
+        var served = isSaved && OptionalFlag(saved, "enabled", true) && saved.TryGetProperty("activity", out var activity)
+            ? Json.OptionalText(activity, "served") : null;
+        bool? wideLayout = null;
         void Render()
         {
             flow.Children.Clear();
-            flow.Children.Add(StageHeader(Localized.Get("原模型")));
-            flow.Children.Add(ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
-                picked => { source = picked[0]; MarkDirty(); }, Render), "route-source"));
+            var wide = flow.ActualWidth >= 650;
+            wideLayout = wide;
+            var active = source == originalSource && fallbacks.SequenceEqual(originalFallbacks) ? served : null;
+            var targets = new Stack { Spacing = 8 };
+            if (wide)
+            {
+                var diagram = new SpacedGrid { ColumnSpacing = 10 };
+                diagram.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                diagram.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var lead = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+                Border DiagramNode(string label, string glyph)
+                {
+                    var content = new Stack { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+                    content.Children.Add(new FontIcon { Glyph = glyph, FontSize = 22 });
+                    content.Children.Add(new TextBlock { Text = label, HorizontalAlignment = HorizontalAlignment.Center, FontWeight = FontWeights.SemiBold });
+                    return new Border { Style = Themed("ListCard"), Width = 76, Height = 72, Child = content };
+                }
+                lead.Children.Add(DiagramNode(Localized.Get("客户端"), "\uE8A5"));
+                lead.Children.Add(FlowArrow("\uE72A", active != null, "最近一次响应"));
+                lead.Children.Add(DiagramNode("Mixin", "\uE8F1"));
+                diagram.Children.Add(lead);
+                Grid.SetColumn(targets, 1); diagram.Children.Add(targets);
+                flow.Children.Add(diagram);
+            }
+            else flow.Children.Add(targets);
+
+            Button MarkActive(Button node, string model)
+            {
+                if (active == null || model != active) return node;
+                node.SetResourceReference(Control.BorderBrushProperty, "AccentFillColorDefaultBrush");
+                node.BorderThickness = new Thickness(2);
+                ToolTipService.SetToolTip(node, Localized.Format("最近一次响应：{0}", ModelName(model)));
+                return node;
+            }
+            UIElement Directed(UIElement node, bool selected)
+            {
+                if (!wide) return node;
+                var row = new SpacedGrid { ColumnSpacing = 8 };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.Children.Add(FlowArrow("\uE72A", selected, "最近一次响应"));
+                Grid.SetColumn(node, 1); row.Children.Add(node);
+                return row;
+            }
+            targets.Children.Add(StageHeader(Localized.Get("原模型")));
+            if (active != null) targets.Children.Add(new TextBlock { Text = Localized.Format("最近一次响应：{0}", ModelName(active)), Style = Themed("Caption") });
+            targets.Children.Add(Directed(MarkActive(ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
+                picked => { source = picked[0]; MarkDirty(); }, Render), "route-source"), source), active == source));
             var arrow = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(14, 0, 0, 0) };
             arrow.Children.Add(FlowArrow("\uE74B"));
             arrow.Children.Add(new TextBlock { Text = Localized.Get("429 · 5xx · 连接失败 · 超时，且尚未输出"), Style = Themed("Caption") });
-            flow.Children.Add(arrow);
-            flow.Children.Add(StageHeader(Localized.Get("备用模型（按顺序）")));
+            targets.Children.Add(arrow);
+            targets.Children.Add(StageHeader(Localized.Get("备用模型（按顺序）")));
             for (var index = 0; index < fallbacks.Count; index++)
             {
                 var position = index;
@@ -715,8 +765,8 @@ public sealed partial class MainWindow
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 foreach (var _ in Enumerable.Range(0, 3)) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.Children.Add(new TextBlock { Text = $"{index + 1}", Style = Themed("Caption"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
-                var node = ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, Localized.Format("备用模型 {0}", position + 1), ids, [fallbacks[position]], false,
-                    picked => { fallbacks[position] = picked[0]; MarkDirty(); }, Render));
+                var node = MarkActive(ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, Localized.Format("备用模型 {0}", position + 1), ids, [fallbacks[position]], false,
+                    picked => { fallbacks[position] = picked[0]; MarkDirty(); }, Render)), fallbacks[index]);
                 Grid.SetColumn(node, 1); row.Children.Add(node);
                 void Move(int delta) { (fallbacks[position], fallbacks[position + delta]) = (fallbacks[position + delta], fallbacks[position]); MarkDirty(); Render(); }
                 var up = IconButton("\uE70E", Localized.Format("上移备用模型 {0}", index + 1), () => Move(-1), index > 0);
@@ -724,16 +774,17 @@ public sealed partial class MainWindow
                 var remove = IconButton("\uE711", Localized.Format("移除备用模型 {0}", index + 1), () => { fallbacks.RemoveAt(position); MarkDirty(); Render(); });
                 Grid.SetColumn(up, 2); Grid.SetColumn(down, 3); Grid.SetColumn(remove, 4);
                 row.Children.Add(up); row.Children.Add(down); row.Children.Add(remove);
-                flow.Children.Add(row);
+                targets.Children.Add(Directed(row, active == fallbacks[index]));
             }
             if (fallbacks.Count < MaxFallbacks)
-                flow.Children.Add(AddNode(Localized.Get("添加备用模型"), _ =>
+                targets.Children.Add(AddNode(Localized.Get("添加备用模型"), _ =>
                 {
                     var used = fallbacks.Append(source).ToHashSet();
                     fallbacks.Add(ids.FirstOrDefault(id => !used.Contains(id)) ?? ids[0]);
                     MarkDirty(); Render();
                 }));
         }
+        flow.SizeChanged += (_, args) => { if (wideLayout != (args.NewSize.Width >= 650)) Render(); };
         Render();
         var name = RouteNameField(form, hasSource ? Json.OptionalText(saved, "id") ?? "" : "", true, () => source);
         if (hasSource && !isSaved && name.Text.Length > 0 && models.Contains(VirtualRoutePrefix + name.Text)) name.Text = UniqueRouteName(name.Text, models);
