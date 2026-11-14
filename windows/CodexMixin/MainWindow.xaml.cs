@@ -17,7 +17,7 @@ namespace CodexMixin;
 public sealed partial class MainWindow : Window
 {
     private readonly CancellationTokenSource lifetime = new();
-    private Stack PageBody = new() { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private Stack PageBody = new() { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Stretch };
     private OperationWindow? operationOutput;
     private Action? sortModels;
     private Func<Task>? refreshSettings;
@@ -219,8 +219,8 @@ public sealed partial class MainWindow : Window
         ConsoleTabs.Tag = null;
         SettingsLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         foreach (var item in ConsoleTabs.Items.OfType<TabItem>()) item.ToolTip = item.Header;
-        SidebarColumn.Width = new GridLength(page == "providers" ? compact ? 224 : 264 : 0);
-        PageLayout.Margin = compact ? new Thickness(24, 20, 24, 12) : new Thickness(32, 24, 32, 16);
+        SidebarColumn.Width = new GridLength(page == "providers" ? compact ? 208 : 232 : 0);
+        PageLayout.Margin = compact ? new Thickness(16, 12, 16, 10) : new Thickness(20, 16, 20, 12);
     }
 
     /// Switches the console window to another console page. Unapplied provider
@@ -553,7 +553,7 @@ public sealed partial class MainWindow : Window
         pageRefresh?.Cancel();
         pageRefresh?.Dispose();
         pageRefresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        var nextBody = new Stack { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var nextBody = new Stack { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Stretch };
         PageBody = nextBody;
         sortModels = null;
         refreshSettings = null;
@@ -906,7 +906,7 @@ public sealed partial class MainWindow : Window
             var title = new Grid { VerticalAlignment = VerticalAlignment.Center };
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var name = new TextBlock { Text = modelId, Style = Themed("MonoPrimary"), MaxWidth = 280 };
+            var name = new TextBlock { Text = modelId, FontSize = 13, VerticalAlignment = VerticalAlignment.Center, MaxWidth = 280 };
             AutomationProperties.SetName(name, modelId);
             title.Children.Add(name);
             ToolTipService.SetToolTip(title, string.Join("\n", new[] { modelId, Json.OptionalText(model, "display_name"), Json.OptionalText(model, "description") }.Where(value => !string.IsNullOrEmpty(value)).Distinct()));
@@ -939,7 +939,7 @@ public sealed partial class MainWindow : Window
             context.Content = contextLabel; context.Style = Themed("FlatButton");
             context.Padding = new Thickness(4, 2, 4, 2); context.HorizontalAlignment = HorizontalAlignment.Right; context.MinHeight = 0;
             AutomationProperties.SetName(context, Localized.Format("{0} 上下文", modelId));
-            var capabilities = new Stack { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+            var capabilities = new Stack { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
             foreach (var (field, label, glyph) in new[] { ("supports_image", Localized.Get("图片输入"), "\uE8B9"), ("supports_thinking", "Thinking", "\uE82F"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
             {
                 var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
@@ -965,7 +965,7 @@ public sealed partial class MainWindow : Window
                 Child = row,
                 Style = Themed("RowPlain"),
                 Padding = new Thickness(12, 0, 12, 0),
-                Height = 40
+                Height = 30
             };
         };
         // Only models already added to Codex can be dragged; the row's DataContext is its model id.
@@ -1489,22 +1489,22 @@ public sealed partial class MainWindow : Window
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var title = new Stack { Orientation = Orientation.Horizontal, Spacing = 10 };
-            title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontSize = 15 });
+            title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontSize = 13, FontWeight = FontWeights.SemiBold });
             var versions = string.Join("  ", new[] { Json.OptionalText(version, "version") is { } cliVersion ? (Json.OptionalText(version, "app_version") != null ? $"CLI {cliVersion}" : cliVersion) : null,
                 Json.OptionalText(version, "app_version") is { } appVersion ? $"App {appVersion}" : null }.Where(value => value != null));
-            if (versions.Length > 0) title.Children.Add(new TextBlock { Text = versions, Style = Themed("Caption"), FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            if (versions.Length > 0) title.Children.Add(new TextBlock { Text = versions, Style = Themed("Caption"), FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
             var text = new Stack { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(title);
             var summary = new Stack { Orientation = Orientation.Horizontal, Spacing = 8 };
             summary.Children.Add(new System.Windows.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
             var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? Localized.Format("版本检查失败：{0}", failure) : null);
-            summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
+            summary.Children.Add(new TextBlock { Text = stateLabel, Style = Themed("Caption"), FontSize = 11, MaxWidth = 760 });
             if (connected && !Json.Flag(agent, "detected"))
-                summary.Children.Add(new TextBlock { Text = Localized.Get("未检测到安装程序"), Style = Themed("Caption"), FontSize = 13 });
+                summary.Children.Add(new TextBlock { Text = Localized.Get("未检测到安装程序"), Style = Themed("Caption"), FontSize = 11 });
             ToolTipService.SetToolTip(connectSwitch, problem ?? Json.Text(integration, "detail"));
             if (state != "unsupported") text.Children.Add(summary);
-            var identity = new Stack { Orientation = Orientation.Horizontal, Spacing = 16 };
-            identity.Children.Add(new Border { Width = 40, Height = 40, Child = Marks.Agent(id) }); identity.Children.Add(text);
+            var identity = new Stack { Orientation = Orientation.Horizontal, Spacing = 10 };
+            identity.Children.Add(new Border { Width = 28, Height = 28, Child = Marks.Agent(id) }); identity.Children.Add(text);
             heading.Children.Add(identity);
             var controls = new Stack { Orientation = Orientation.Horizontal, Spacing = 12 };
             if (Json.Flag(version, "update"))
@@ -1512,15 +1512,15 @@ public sealed partial class MainWindow : Window
             controls.Children.Add(connectSwitch);
             Grid.SetColumn(controls, 1); heading.Children.Add(controls);
             var rows = connected || Json.Flag(agent, "detected") ? detectedRows : undetected;
-            var entry = new Border { Child = heading, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
+            var entry = new Border { Child = heading, Padding = new Thickness(12, 9, 12, 9), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
             // Dividers sit above every row except the first, so the last row has no trailing line.
             if (rows.Children.Count > 0) entry.BorderThickness = new Thickness(0, 1, 0, 0);
             rows.Children.Add(entry);
         }
-        if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 1120 });
+        if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 880 });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = Localized.Format("显示未接入且未检测到的 {0} 个 Agent", undetected.Children.Count), Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
+            var section = new Expander { Header = Localized.Format("显示未接入且未检测到的 {0} 个 Agent", undetected.Children.Count), Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 880 };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
@@ -1763,11 +1763,14 @@ public sealed partial class MainWindow : Window
 
     private Border Card(string title, string description, UIElement? content = null, string? glyph = null)
     {
-        var body = new Stack { Spacing = 12 };
+        var body = new Stack { Spacing = 10 };
         var heading = new DockPanel();
-        var icon = new FontIcon { Glyph = glyph ?? PageGlyph(), FontSize = 17, Width = 24, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-        icon.SetResourceReference(Control.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
-        DockPanel.SetDock(icon, Dock.Left); heading.Children.Add(icon);
+        if (glyph != null)
+        {
+            var icon = new FontIcon { Glyph = glyph, FontSize = 14, Width = 18, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center };
+            icon.SetResourceReference(Control.ForegroundProperty, "AccentTextFillColorPrimaryBrush");
+            DockPanel.SetDock(icon, Dock.Left); heading.Children.Add(icon);
+        }
         heading.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
         body.Children.Add(heading);
         if (!string.IsNullOrWhiteSpace(description))

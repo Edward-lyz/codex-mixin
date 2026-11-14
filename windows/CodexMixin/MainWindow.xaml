@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="clr-namespace:CodexMixin"
     Title="Codex Mixin" Icon="pack://siteoforigin:,,,/Assets/app_icon.png"
-    MinWidth="760" MinHeight="560">
+    MinWidth="760" MinHeight="560" FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True">
  <!-- Content extends into the title bar; the Fluent theme supplies Mica behind it on Windows 11. -->
  <WindowChrome.WindowChrome>
   <WindowChrome CaptionHeight="40" GlassFrameThickness="-1" ResizeBorderThickness="6" CornerRadius="0" UseAeroCaptionButtons="True"/>
@@ -16,7 +16,7 @@
       <Image Source="pack://siteoforigin:,,,/Assets/app_icon.png" Width="16" Height="16" RenderOptions.BitmapScalingMode="HighQuality"/>
       <TextBlock Text="Codex Mixin" Margin="12,0,0,0" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
     </StackPanel>
-    <Grid x:Name="NavPane" Grid.Row="1" Grid.ColumnSpan="2" Margin="16,4,16,12">
+    <Grid x:Name="NavPane" Grid.Row="1" Grid.ColumnSpan="2" Margin="12,0,12,8">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <TabControl x:Name="ConsoleTabs" HorizontalAlignment="Center" Style="{StaticResource NavTabs}" ItemContainerStyle="{StaticResource NavTab}" SelectionChanged="OnConsoleTab" AutomationProperties.AutomationId="console-pages">
         <TabItem Header="模型与服务" Tag="providers" AutomationProperties.AutomationId="console-providers-tab"/>
@@ -26,15 +26,15 @@
         <TabItem Header="模型路由" Tag="routing" AutomationProperties.AutomationId="console-routing-tab"/>
       </TabControl>
       <Button Grid.Column="1" Style="{StaticResource NavButton}" Tag="settings" Click="OnNavButton" AutomationProperties.Name="设置与诊断">
-        <StackPanel Orientation="Horizontal"><local:FontIcon Glyph="&#xE713;"/><TextBlock x:Name="SettingsLabel" Text="设置与诊断" Margin="14,0,0,0" VerticalAlignment="Center"/></StackPanel>
+        <StackPanel Orientation="Horizontal"><local:FontIcon Glyph="&#xE713;"/><TextBlock x:Name="SettingsLabel" Text="设置与诊断" Margin="8,0,0,0" VerticalAlignment="Center"/></StackPanel>
       </Button>
     </Grid>
     <ContentControl x:Name="PageShell" Grid.Row="2" Grid.ColumnSpan="2" IsTabStop="False" Focusable="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
       <Border x:Name="ContentLayer" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
       <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="264"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="232"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <Border x:Name="ProviderSidebar" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
-          <local:SpacedGrid Margin="8,20,8,12" RowSpacing="8">
+          <local:SpacedGrid Margin="6,12,6,8" RowSpacing="8">
             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
             <local:SpacedGrid Margin="12,0,0,0" ColumnSpacing="2">
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -45,17 +45,17 @@
             <local:VirtualList x:Name="ProviderList" Grid.Row="1" SelectionMode="Single" BorderThickness="0" Background="Transparent" SelectionChanged="OnProviderSelected" AutomationProperties.AutomationId="provider-list"/>
           </local:SpacedGrid>
         </Border>
-        <local:SpacedGrid x:Name="PageLayout" Grid.Column="1" Margin="32,24,32,16" RowSpacing="16">
+        <local:SpacedGrid x:Name="PageLayout" Grid.Column="1" Margin="20,16,20,12" RowSpacing="12">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <local:SpacedGrid ColumnSpacing="16">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <local:SpacedGrid ColumnSpacing="14">
               <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <Border x:Name="ProviderHeaderTile" Style="{StaticResource IconTile}" Width="44" Height="44" Visibility="Collapsed">
-                <ContentControl x:Name="ProviderHeaderIcon" Width="28" Height="28" IsTabStop="False" Focusable="False"/>
+              <Border x:Name="ProviderHeaderTile" Style="{StaticResource IconTile}" Width="32" Height="32" Visibility="Collapsed">
+                <ContentControl x:Name="ProviderHeaderIcon" Width="22" Height="22" IsTabStop="False" Focusable="False"/>
               </Border>
               <local:Stack Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                <TextBlock x:Name="PageTitle" Text="模型与服务" Style="{DynamicResource TitleTextBlockStyle}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PageTitle" Text="模型与服务" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                 <Border x:Name="StatusBadge" Style="{StaticResource SuccessBadge}" Visibility="Collapsed" VerticalAlignment="Center"><TextBlock x:Name="StatusBadgeText" FontSize="11" FontWeight="SemiBold"/></Border>
                 <Border x:Name="OfficialBadge" Visibility="Collapsed" Style="{StaticResource SuccessBadge}" VerticalAlignment="Center"><TextBlock Text="官方" FontSize="11" FontWeight="SemiBold"/></Border>
               </local:Stack>
@@ -84,7 +84,7 @@
       </Grid>
       </Border>
     </ContentControl>
-    <Border x:Name="StatusLayer" Grid.Row="3" Grid.ColumnSpan="2" Padding="16,6" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
+    <Border x:Name="StatusLayer" Grid.Row="3" Grid.ColumnSpan="2" Padding="12,4" Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
       <local:SpacedGrid ColumnSpacing="10">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <local:ProgressRing x:Name="Activity" Width="14" Height="14" Visibility="Collapsed"/>

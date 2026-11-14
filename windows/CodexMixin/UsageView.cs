@@ -15,7 +15,7 @@ internal sealed record UsageTableRow(JsonElement? Turn, string Session, string T
 internal static class UsageView
 {
     private const double PlotHeight = 120;
-    private const double RowHeight = 34;
+    private const double RowHeight = 28;
     // Prompts below the gateway's 8192-token verdict size are too small for
     // provider caches, so their misses are not flagged.
     private const long CacheVerdictMinPrompt = 8_192;
@@ -87,7 +87,7 @@ internal static class UsageView
         foreach (var card in cards) grid.Children.Add(card);
         void Layout(double width)
         {
-            var columns = Math.Clamp((int)(width / 230), 1, cards.Length);
+            var columns = Math.Clamp((int)(width / 280), 1, cards.Length);
             if (grid.ColumnDefinitions.Count == columns) return;
             grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
             for (var column = 0; column < columns; column++) grid.ColumnDefinitions.Add(new ColumnDefinition());
@@ -132,7 +132,7 @@ internal static class UsageView
         var spark = Sparkline(trend);
         Grid.SetColumn(spark, 1); Grid.SetRowSpan(spark, 3);
         body.Children.Add(spark);
-        return new Border { Style = Themed("Card"), Padding = new Thickness(16, 12, 16, 12), Child = body };
+        return new Border { Style = Themed("Card"), Padding = new Thickness(12, 10, 12, 10), Child = body };
     }
 
     /// A trend line drawn to the space the card gives it.
