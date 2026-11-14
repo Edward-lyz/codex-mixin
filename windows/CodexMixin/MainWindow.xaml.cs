@@ -1255,7 +1255,7 @@ public sealed partial class MainWindow : Window
         var presets = Json.Rows(Json.Field(catalog, "presets"));
         var protocols = Json.Rows(Json.Field(catalog, "protocols"));
         var preset = Choice(Localized.Get("供应商类型"), presets.Select(row => Json.Text(row, "id")).ToArray(),
-            provider is { } stored ? Json.OptionalText(stored, "preset_id") ?? "custom" : Json.Text(catalog, "default_preset"));
+            provider is { } stored ? Json.OptionalText(stored, "preset_id") ?? "custom" : Json.Text(presets[0], "id"));
         preset.IsEnabled = provider == null;
         var id = Input(Localized.Get("供应商 ID"), provider is { } p ? Json.Text(p, "id") : "");
         id.IsEnabled = provider == null;

@@ -19,7 +19,7 @@ $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $action = New-ScheduledTaskAction -Execute $env:CODEX_MIXIN_TASK_EXECUTE -Argument $env:CODEX_MIXIN_TASK_ARGUMENTS
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -RestartCount 3 -RestartInterval ([TimeSpan]::FromMinutes(1))
 Register-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 "#;
 
@@ -27,9 +27,13 @@ const CONTROL_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 switch ($env:CODEX_MIXIN_TASK_OPERATION) {
   'start' { Start-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' }
-  'stop' { Stop-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' }
+  'stop' {
+    $task = Get-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\'
+    if ($task.State -eq 'Running') { Stop-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' }
+  }
   'remove' {
-    Stop-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\'
+    $task = Get-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\'
+    if ($task.State -eq 'Running') { Stop-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' }
     Unregister-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' -Confirm:$false
   }
 }
@@ -90,6 +94,7 @@ fn query() -> anyhow::Result<Option<WindowsTaskInfo>> {
         Err(error) => return Err(error).context("query gateway scheduled task"),
     };
     let definition = task.get_Definition()?;
+    let settings = definition.get_Settings()?;
     let actions = definition.get_Actions()?;
     let action_count = u32::try_from(actions.get_Count()?)?;
     let mut execute = String::new();
@@ -157,6 +162,9 @@ fn query() -> anyhow::Result<Option<WindowsTaskInfo>> {
         user_id,
         current_user,
         logon_trigger,
+        start_when_available: settings.get_StartWhenAvailable()?,
+        restart_count: settings.get_RestartCount()?,
+        restart_interval: settings.get_RestartInterval()?,
     }))
 }
 

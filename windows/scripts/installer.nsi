@@ -25,6 +25,7 @@ SetCompressorDictSize 32
 !define CLI_EXE "codex-mixin.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMixin"
 Var PreviousStartup
+Var RestoreGateway
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -65,6 +66,10 @@ VIAddVersionKey "LegalCopyright" "Copyright (C) 2026"
 
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
+LangString GatewayStateUnknown ${LANG_SIMPCHINESE} "无法读取原网关状态，安装已在修改文件前停止。"
+LangString GatewayStateUnknown ${LANG_ENGLISH} "Cannot determine the previous gateway state; installation stopped before changing files."
+LangString GatewayRestoreFailed ${LANG_SIMPCHINESE} "安装已完成，但无法重启网关。请打开 Codex Mixin 检查错误并重新启动网关。"
+LangString GatewayRestoreFailed ${LANG_ENGLISH} "Installation completed, but the gateway could not be restarted. Open Codex Mixin to inspect the error and start it again."
 
 Function .onInit
 !ifdef GEN_UNINSTALLER
@@ -111,7 +116,29 @@ Function StopRunning
   Sleep 600
 FunctionEnd
 
+Function CaptureGatewayState
+  StrCpy $RestoreGateway "0"
+  ReadRegStr $0 HKLM "${UNINST_KEY}" "InstallLocation"
+  ${If} $0 == ""
+    StrCpy $0 "$INSTDIR"
+  ${EndIf}
+  ${If} ${FileExists} "$0\${CLI_EXE}"
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File /oname=gateway-install-state.ps1 "${__FILEDIR__}\gateway-install-state.ps1"
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\gateway-install-state.ps1" -CliPath "$0\${CLI_EXE}"'
+    Pop $1
+    Pop $2
+    ${If} $1 == "0"
+      StrCpy $RestoreGateway "1"
+    ${ElseIf} $1 != "1"
+      Abort "$(GatewayStateUnknown)"
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
 Section "Install"
+  Call CaptureGatewayState
   Call RemovePrevious
   Call StopRunning
   SetOutPath "$INSTDIR"
@@ -148,6 +175,18 @@ Section "Install"
   WriteRegStr   HKLM "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
+  ${If} $RestoreGateway == "1"
+    DetailPrint "Restoring the gateway..."
+    nsExec::ExecToStack '"$INSTDIR\${CLI_EXE}" --no-tui --json-errors service start --managed --json'
+    Pop $0
+    Pop $1
+    ${If} $0 != "0"
+      DetailPrint "Installation completed, but the gateway could not be restarted."
+      IfSilent +2
+      MessageBox MB_ICONEXCLAMATION "$(GatewayRestoreFailed)"
+      SetErrorLevel 1
+    ${EndIf}
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"

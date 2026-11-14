@@ -260,6 +260,9 @@ jobs:
       - name: Test complete installer upgrade and startup preservation
         shell: pwsh
         run: ./windows/scripts/test-installer-upgrade.ps1 -Installer "dist/release/codex-mixin-${{ steps.version.outputs.value }}-windows-x86_64-setup.exe"
+      - name: Test gateway restoration and startup after installer upgrade
+        shell: pwsh
+        run: ./windows/scripts/test-installer-gateway.ps1 -Installer "dist/release/codex-mixin-${{ steps.version.outputs.value }}-windows-x86_64-setup.exe"
       - uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-windows
