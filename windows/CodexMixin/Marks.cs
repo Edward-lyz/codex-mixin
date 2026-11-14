@@ -15,7 +15,7 @@ internal static class Marks
     private static readonly Dictionary<string, bool> monochrome = [];
     private static readonly WpfDrawingSettings svgSettings = new() { IncludeRuntime = false, TextAsGeometry = true };
 
-    internal static FrameworkElement Agent(string id)
+    internal static FrameworkElement Agent(string id, double size = 32)
     {
         if (id.Length == 0 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-'))
             throw new InvalidOperationException(Localized.Get("CLI 返回了无效 Agent ID。"));
@@ -23,9 +23,9 @@ internal static class Marks
             if (Source($"agents/{id}.{extension}") is { } source)
             {
                 var key = $"agents/{id}.{extension}";
-                return IsMonochromeAgent(key, id) ? ThemedMark(source, 32) : new Image { Source = source, Width = 32, Height = 32 };
+                return IsMonochromeAgent(key, id) ? ThemedMark(source, size) : new Image { Source = source, Width = size, Height = size };
             }
-        return new FontIcon { Glyph = "\uE77B", FontSize = 28, Width = 32, Height = 32, TextAlignment = TextAlignment.Center };
+        return new FontIcon { Glyph = "\uE77B", FontSize = size * 0.875, Width = size, Height = size, TextAlignment = TextAlignment.Center };
     }
 
     internal static FrameworkElement Provider(JsonElement provider, double size = 28)

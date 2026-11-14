@@ -1761,4 +1761,14 @@ Click to change model</value>
   <data name="按模型公开单价估算" xml:space="preserve"><value>Based on public model prices</value></data>
   <data name="费用按模型公开单价估算（USD），不代表实际账单；无可用估算时显示 —。" xml:space="preserve"><value>Costs use public model prices in USD and may differ from your bill. Unavailable estimates show —.</value></data>
   <data name="页面读取失败" xml:space="preserve"><value>Unable to load page</value></data>
+  <data name="测速已启动，进度和结果显示在模型列表。" xml:space="preserve"><value>Benchmark started; progress and results appear in the model list.</value></data>
+  <data name="测速中断，网关已停止或重启；请重新测速。" xml:space="preserve"><value>Benchmark interrupted because the gateway stopped or restarted; run it again.</value></data>
+  <data name="{0}正在测速 {1}/{2} · 当前 {3}" xml:space="preserve"><value>{0}Benchmarking {1}/{2} · Current {3}</value></data>
+  <data name="{0}测速中断：已完成 {1}/{2}；网关已停止或重启。" xml:space="preserve"><value>{0}Benchmark interrupted: {1}/{2} finished; the gateway stopped or restarted.</value></data>
+  <data name="{0}测速状态未知：{1}" xml:space="preserve"><value>{0}Unknown benchmark status: {1}</value></data>
+  <data name="客户端" xml:space="preserve"><value>Client</value></data>
+  <data name="当前使用" xml:space="preserve"><value>Currently serving</value></data>
+  <data name="当前使用：{0}" xml:space="preserve"><value>Currently serving: {0}</value></data>
+  <data name="最近一次响应" xml:space="preserve"><value>Last response</value></data>
+  <data name="最近一次响应：{0}" xml:space="preserve"><value>Last response: {0}</value></data>
 </root>
