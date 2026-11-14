@@ -119,8 +119,9 @@ public sealed partial class MainWindow : Window
         // The model table virtualizes its rows, so it gets the visible height instead of the page scroller.
         PageScroll.SizeChanged += (_, _) =>
         {
-            foreach (var table in PageBody.Children.OfType<Stack>().SelectMany(panel => panel.Children.OfType<VirtualList>()))
-                table.Height = ModelTableHeight();
+            foreach (var panel in PageBody.Children.OfType<Stack>())
+                foreach (var table in panel.Children.OfType<VirtualList>())
+                    table.Height = ModelTableHeight(panel);
         };
     }
 
@@ -861,7 +862,7 @@ public sealed partial class MainWindow : Window
             foreach (var grid in grids) Fit(grid);
         };
 
-        var list = new VirtualList { SelectionMode = SelectionMode.Single, Height = ModelTableHeight(), Padding = new Thickness(0) };
+        var list = new VirtualList { SelectionMode = SelectionMode.Single, Height = 120, Padding = new Thickness(0) };
         list.ItemContainerStyle = Themed("ModelRowContainer");
         AutomationProperties.SetAutomationId(list, "model-table");
         list.Cleared += (container, _) =>
@@ -1075,6 +1076,9 @@ public sealed partial class MainWindow : Window
         order.SelectionChanged += (_, _) => { modelOrder = order.SelectedIndex == 1 ? "manual" : "family"; MarkDirty(); Filter(); };
         Filter();
         modelBody.Children.Add(list);
+        void FitModelTable() => list.Height = ModelTableHeight(modelBody);
+        modelBody.Loaded += (_, _) => FitModelTable();
+        toolbar.SizeChanged += (_, _) => FitModelTable();
         ShowSummary(Localized.Get("正在读取测速结果…"));
         pendingApply = async () =>
         {
@@ -1092,7 +1096,13 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Add(modelBody);
     }
 
-    private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
+    private double ModelTableHeight(Stack panel)
+    {
+        var otherHeight = panel.Children.OfType<FrameworkElement>()
+            .Where(child => child is not VirtualList && child.Visibility != Visibility.Collapsed)
+            .Sum(child => child.ActualHeight);
+        return Math.Max(120, PageScroll.ActualHeight - otherHeight - panel.Spacing * 2 - 2);
+    }
 
     internal void SetUpdateInputBlocked(bool blocked) => OperationScope.IsEnabled = !blocked;
 
