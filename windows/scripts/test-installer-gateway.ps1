@@ -83,6 +83,9 @@ try {
     # Exercise the registered startup action again without requiring a real reboot.
     & $cli --no-tui --json-errors service stop --managed --allow-codex-disconnect --json | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to stop the isolated gateway.' }
+    # A deliberate stop must not be treated as a failed task and restarted.
+    for ($second = 0; $second -lt 65; $second += 5) { Start-Sleep -Seconds 5 }
+    Assert-Gateway 'stopped'
     Start-ScheduledTask -TaskName $taskName -TaskPath '\'
     Assert-Gateway 'running'
 
