@@ -1771,4 +1771,11 @@ Click to change model</value>
   <data name="当前使用：{0}" xml:space="preserve"><value>Currently serving: {0}</value></data>
   <data name="最近一次响应" xml:space="preserve"><value>Last response</value></data>
   <data name="最近一次响应：{0}" xml:space="preserve"><value>Last response: {0}</value></data>
+  <data name="1  Panel 并行作答" xml:space="preserve"><value>1  Panel responses</value></data>
+  <data name="2  Judge 评审汇总" xml:space="preserve"><value>2  Judge review</value></data>
+  <data name="3  Final 修改与回复" xml:space="preserve"><value>3  Final response</value></data>
+  <data name="主模型" xml:space="preserve"><value>Primary</value></data>
+  <data name="备用 {0}" xml:space="preserve"><value>Backup {0}</value></data>
+  <data name="{0} · {1}&#10;点击更换模型" xml:space="preserve"><value>{0} · {1}
+Click to change model</value></data>
 </root>
