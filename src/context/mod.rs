@@ -1,6 +1,7 @@
 mod body;
 pub mod checkpoint;
 pub mod engine;
+mod fingerprint;
 pub mod guidance;
 mod store;
 pub mod tools;

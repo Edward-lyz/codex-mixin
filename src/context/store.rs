@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use serde_json::{Value, json};
 
 use super::body::{self, BodyTags};
+use super::fingerprint::fingerprint;
 use super::guidance::NudgeState;
 use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
@@ -14,6 +15,7 @@ const REASONING_FINGERPRINT_VERSION: i64 = 1;
 /// From this data version `messages.fingerprint` holds a SHA-256 of the
 /// normalized item instead of the normalized JSON itself.
 const HASHED_FINGERPRINT_VERSION: i64 = 2;
+const SEMANTIC_FINGERPRINT_VERSION: i64 = 3;
 /// The archive worker limits each pass to this many sessions.
 pub(crate) const MAINTENANCE_BATCH_SIZE: usize = 8;
 const BODY_BATCH_BYTES: usize = 4 * 1024 * 1024;
@@ -256,7 +258,7 @@ impl Store {
             .context("create context schema")?;
         if fresh {
             self.connection
-                .pragma_update(None, "user_version", HASHED_FINGERPRINT_VERSION)
+                .pragma_update(None, "user_version", SEMANTIC_FINGERPRINT_VERSION)
                 .context("save context data version")?;
         }
         self.upgrade_response_output()
@@ -292,27 +294,27 @@ impl Store {
         self.connection
             .execute("DELETE FROM leases WHERE expires_at <= ?1", [unix_now()])
             .context("clear expired context leases")?;
-        self.upgrade_hashed_fingerprints()?;
+        self.upgrade_fingerprints()?;
         Ok(())
     }
 
-    /// Rewrites archived JSON fingerprints as digests. Returns whether this
-    /// connection performed the upgrade.
-    fn upgrade_hashed_fingerprints(&self) -> Result<bool> {
+    /// Rehashes retained originals with the current comparison semantics.
+    /// Expired originals keep their legacy digest for verified replay matching.
+    fn upgrade_fingerprints(&self) -> Result<bool> {
         let version: i64 = self
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .context("read context data version")?;
-        if version >= HASHED_FINGERPRINT_VERSION {
+        if version >= SEMANTIC_FINGERPRINT_VERSION {
             return Ok(false);
         }
         let transaction =
             Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
-                .context("begin fingerprint digest upgrade")?;
+                .context("begin context fingerprint upgrade")?;
         let version: i64 = transaction
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .context("read context data version")?;
-        if version >= HASHED_FINGERPRINT_VERSION {
+        if version >= SEMANTIC_FINGERPRINT_VERSION {
             return Ok(false);
         }
         let mut last_rowid = 0_i64;
@@ -320,32 +322,52 @@ impl Store {
             let batch = {
                 let mut statement = transaction
                     .prepare_cached(
-                        "SELECT rowid, fingerprint FROM messages WHERE rowid > ?1 ORDER BY rowid LIMIT 512",
+                        "SELECT rowid FROM messages WHERE rowid > ?1 ORDER BY rowid LIMIT 512",
                     )
                     .context("prepare fingerprint digest batch")?;
                 statement
-                    .query_map([last_rowid], |row| {
-                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                    })
+                    .query_map([last_rowid], |row| row.get::<_, i64>(0))
                     .context("read fingerprint digest batch")?
                     .collect::<rusqlite::Result<Vec<_>>>()
                     .context("read fingerprint digest row")?
             };
-            let Some((rowid, _)) = batch.last() else {
+            let Some(rowid) = batch.last() else {
                 break;
             };
             last_rowid = *rowid;
             let mut update = transaction
                 .prepare_cached("UPDATE messages SET fingerprint = ?2 WHERE rowid = ?1")
                 .context("prepare fingerprint digest update")?;
-            for (rowid, normalized) in &batch {
+            let mut read = transaction.prepare_cached(
+                "SELECT fingerprint, item_json, body_codec, body_bytes, body_checksum, expired_at
+                 FROM messages WHERE rowid = ?1",
+            )?;
+            for rowid in &batch {
+                // Decode one body at a time; a batch can contain huge tool outputs.
+                let (legacy, stored, expired): (String, StoredBody, Option<i64>) = read
+                    .query_row([rowid], |row| {
+                        Ok((row.get(0)?, stored_body(row, 1)?, row.get(5)?))
+                    })
+                    .context("read archived fingerprint body")?;
+                let retained = expired.is_none()
+                    && !matches!(&stored.0, SqlValue::Text(raw) if raw.is_empty());
+                let digest = if retained {
+                    let raw = body::decode(stored.0, stored.1, stored.2, stored.3.as_deref())?;
+                    let item: Value =
+                        serde_json::from_str(&raw).context("parse archived fingerprint body")?;
+                    fingerprint(&item)?
+                } else if version < HASHED_FINGERPRINT_VERSION {
+                    fingerprint_digest(&legacy)
+                } else {
+                    continue;
+                };
                 update
-                    .execute(params![rowid, fingerprint_digest(normalized)])
+                    .execute(params![rowid, digest])
                     .context("store fingerprint digest")?;
             }
         }
         transaction
-            .pragma_update(None, "user_version", HASHED_FINGERPRINT_VERSION)
+            .pragma_update(None, "user_version", SEMANTIC_FINGERPRINT_VERSION)
             .context("save context data version")?;
         transaction
             .commit()
@@ -976,27 +998,8 @@ impl Store {
         if items.is_empty() {
             return Ok(());
         }
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT m.fingerprint FROM history h JOIN messages m
-               ON m.session_key = h.session_key AND m.reference = h.reference
-             WHERE h.session_key = ?1 AND h.position >= ?2 ORDER BY h.position",
-            )
-            .context("prepare context continuation suffix")?;
-        let suffix = statement
-            .query_map(params![key, prefix_len as i64], |row| {
-                row.get::<_, String>(0)
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .context("read context continuation suffix")?;
-        drop(statement);
+        let (_, common) = self.history_prefix(key, items, &fingerprint, prefix_len)?;
         let fingerprints = items.iter().map(&fingerprint).collect::<Result<Vec<_>>>()?;
-        let common = suffix
-            .iter()
-            .zip(&fingerprints)
-            .take_while(|(left, right)| left == right)
-            .count();
         if common == items.len() {
             return Ok(());
         }
@@ -1174,12 +1177,14 @@ impl Store {
     }
 
     /// Archived history length and the length of its common prefix with
-    /// `incoming` fingerprints. Rows are compared one at a time, so the
+    /// `incoming` items from `start_position`. Rows are compared one at a time, so the
     /// archived fingerprints are never held in memory together.
     pub fn history_prefix(
         &self,
         key: &str,
-        mut incoming: impl Iterator<Item = Result<String>>,
+        incoming: &[Value],
+        fingerprint: impl Fn(&Value) -> Result<String>,
+        start_position: usize,
     ) -> Result<(usize, usize)> {
         let history_len: i64 = self
             .connection
@@ -1198,13 +1203,14 @@ impl Store {
                 "SELECT m.fingerprint
                  FROM history h JOIN messages m
                    ON m.session_key = h.session_key AND m.reference = h.reference
-                 WHERE h.session_key = ?1 ORDER BY h.position",
+                 WHERE h.session_key = ?1 AND h.position >= ?2 ORDER BY h.position",
             )
             .context("prepare history prefix query")?;
         let mut rows = statement
-            .query(params![key])
+            .query(params![key, start_position as i64])
             .context("query context history prefix")?;
         let mut divergence = 0;
+        let mut incoming = incoming.iter();
         while let Some(row) = rows.next().context("read context history prefix row")? {
             let Some(next) = incoming.next() else { break };
             let archived = row
@@ -1212,8 +1218,23 @@ impl Store {
                 .context("read context history fingerprint")?
                 .as_str()
                 .context("context history fingerprint is not text")?;
-            if archived != next? {
-                break;
+            if archived != fingerprint(next)? {
+                // A v2 tombstone has no body to rehash. Its original wire
+                // representation can still prove equality without restoring
+                // or trusting an unverified replacement body.
+                let mut legacy = next.clone();
+                if let Some(object) = legacy.as_object_mut() {
+                    object.remove("id");
+                    object.remove("status");
+                    if object.get("type").and_then(Value::as_str) == Some("reasoning")
+                        && object.get("content").is_some_and(Value::is_null)
+                    {
+                        object.remove("content");
+                    }
+                }
+                if archived != fingerprint_digest(&serde_json::to_string(&legacy)?) {
+                    break;
+                }
             }
             divergence += 1;
         }
@@ -1309,7 +1330,7 @@ impl Store {
         fingerprint: impl Fn(&Value) -> Result<String>,
     ) -> Result<(SessionRow, bool)> {
         let mut session = self.ensure_session(key)?;
-        let (_, divergence) = self.history_prefix(key, items.iter().map(&fingerprint))?;
+        let (_, divergence) = self.history_prefix(key, items, &fingerprint, 0)?;
         let history = self.history(key)?;
         let kept: Vec<SegmentRow> = self
             .segments(key, session.revision)?

@@ -1,15 +1,13 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde::ser::SerializeMap;
-use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 
 use super::checkpoint;
+use super::fingerprint::fingerprint;
 use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
 use super::store::{SegmentRow, Store, TurnSample};
 use super::tools;
@@ -220,7 +218,7 @@ impl ContextEngine {
     /// items, plus the archived length.
     fn history_shape(&self, key: &str, items: &[Value]) -> Result<(usize, usize)> {
         let store = self.lock()?;
-        store.history_prefix(key, items.iter().map(fingerprint))
+        store.history_prefix(key, items, fingerprint, 0)
     }
 
     fn lock_anchors(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, String>>> {
@@ -311,8 +309,7 @@ impl ContextEngine {
                 session_display_name(&owner)
             );
         }
-        let (history_len, overlap) =
-            store.history_prefix(session, incoming.iter().map(fingerprint))?;
+        let (history_len, overlap) = store.history_prefix(session, incoming, fingerprint, 0)?;
         let full_replay =
             history_len > 0 && overlap == history_len || overlap > 0 && overlap < incoming.len();
         if full_replay {
@@ -999,61 +996,6 @@ fn forked_session(base: &str, persona: &str) -> String {
     format!("{base}{SESSION_SEPARATOR}sub:{persona}")
 }
 
-fn fingerprint(item: &Value) -> Result<String> {
-    let mut serializer = serde_json::Serializer::new(DigestWriter {
-        context: ring::digest::Context::new(&ring::digest::SHA256),
-    });
-    FingerprintValue(item)
-        .serialize(&mut serializer)
-        .context("serialize context fingerprint")?;
-    let digest = serializer.into_inner().context.finish();
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut hex = String::with_capacity(64);
-    for byte in digest.as_ref() {
-        hex.push(char::from(HEX[usize::from(*byte >> 4)]));
-        hex.push(char::from(HEX[usize::from(*byte & 0x0f)]));
-    }
-    Ok(hex)
-}
-
-struct DigestWriter {
-    context: ring::digest::Context,
-}
-
-impl Write for DigestWriter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.context.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-struct FingerprintValue<'a>(&'a Value);
-
-impl Serialize for FingerprintValue<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let Some(object) = self.0.as_object() else {
-            return self.0.serialize(serializer);
-        };
-        let omit_reasoning_content = object.get("type").and_then(Value::as_str)
-            == Some("reasoning")
-            && object.get("content").is_some_and(Value::is_null);
-        let mut map = serializer.serialize_map(None)?;
-        for (key, value) in object {
-            if key == "id" || key == "status" || (omit_reasoning_content && key == "content") {
-                continue;
-            }
-            map.serialize_entry(key, value)?;
-        }
-        map.end()
-    }
-}
 fn render_view(store: &Store, session: &str, segments: &[SegmentRow]) -> Result<Vec<Value>> {
     let mut items = Vec::new();
     for segment in segments {
