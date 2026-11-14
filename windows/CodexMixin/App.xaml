@@ -8,6 +8,21 @@
       <!-- Merged here so BasedOn lookups resolve at load; App.SetTheme switches it through ThemeMode. -->
       <ResourceDictionary.MergedDictionaries><ResourceDictionary Source="pack://application:,,,/PresentationFramework.Fluent;component/Themes/Fluent.xaml" /></ResourceDictionary.MergedDictionaries>
       <DataTemplate x:Key="VirtualRowTemplate"><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate>
+      <!-- Keep the list surface transparent when the page is temporarily disabled. -->
+      <Style TargetType="local:VirtualList">
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="local:VirtualList">
+              <ScrollViewer Background="Transparent" BorderThickness="0"
+                  Focusable="False" CanContentScroll="True"
+                  HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                  VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
+                <ItemsPresenter />
+              </ScrollViewer>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
       <Style x:Key="SecondaryText" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
@@ -16,7 +31,7 @@
         <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
         <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
-        <Setter Property="Padding" Value="16" />
+        <Setter Property="Padding" Value="12" />
       </Style>
       <!-- Code-built elements use these styles so their brushes follow the window theme. -->
       <Style x:Key="ListCard" TargetType="Border">
@@ -168,7 +183,7 @@
         <Setter Property="MinHeight" Value="0" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
       </Style>
-      <!-- Console navigation pane: the page TabControl drawn as Windows 11 navigation items. -->
+      <!-- Compact segmented navigation keeps page names visible at every window width. -->
       <Style x:Key="NavTabs" TargetType="TabControl">
         <Setter Property="KeyboardNavigation.TabNavigation" Value="Once" />
         <Setter Property="Background" Value="Transparent" />
@@ -176,7 +191,9 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabControl">
-              <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle" />
+              <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="18" Padding="3">
+                <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle" />
+              </Border>
             </ControlTemplate>
           </Setter.Value>
         </Setter>
@@ -184,16 +201,15 @@
       <Style x:Key="NavTab" TargetType="TabItem">
         <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
         <Setter Property="FocusVisualStyle" Value="{DynamicResource DefaultControlFocusVisualStyle}" />
-        <Setter Property="Margin" Value="2,0" />
+        <Setter Property="Margin" Value="1,0" /><Setter Property="FontSize" Value="12" />
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabItem">
-              <Border x:Name="Chrome" Height="36" Background="Transparent" CornerRadius="{DynamicResource ControlCornerRadius}">
+              <Border x:Name="Chrome" Height="28" Background="Transparent" CornerRadius="14">
                 <Grid>
-                  <Rectangle x:Name="Pill" Width="24" Height="3" RadiusX="1.5" RadiusY="1.5" VerticalAlignment="Bottom" HorizontalAlignment="Center" Fill="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Collapsed" />
-                  <StackPanel Orientation="Horizontal" Margin="14,0,12,0">
-                    <TextBlock x:Name="Glyph" FontFamily="{DynamicResource SymbolThemeFontFamily}" FontSize="16" VerticalAlignment="Center" />
-                    <ContentPresenter x:Name="Label" ContentSource="Header" Margin="14,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                  <StackPanel Orientation="Horizontal" Margin="12,0">
+                    <TextBlock x:Name="Glyph" Visibility="Collapsed" FontFamily="{DynamicResource SymbolThemeFontFamily}" FontSize="16" VerticalAlignment="Center" />
+                    <ContentPresenter x:Name="Label" ContentSource="Header" Margin="0" VerticalAlignment="Center" RecognizesAccessKey="True" />
                   </StackPanel>
                 </Grid>
               </Border>
@@ -206,12 +222,13 @@
                 <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" /></Trigger>
                 <Trigger Property="IsSelected" Value="True">
                   <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
-                  <Setter TargetName="Pill" Property="Visibility" Value="Visible" />
+                  <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{DynamicResource TextFillColorDisabledBrush}" /></Trigger>
                 <!-- Compact labels remain available for hosts that opt into icon-only navigation. -->
                 <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=TabControl}}" Value="compact">
                   <Setter TargetName="Label" Property="Visibility" Value="Collapsed" />
+                  <Setter TargetName="Glyph" Property="Visibility" Value="Visible" />
                 </DataTrigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
@@ -232,7 +249,9 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabControl">
-              <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle" />
+              <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="2">
+                <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.DirectionalNavigation="Cycle" />
+              </Border>
             </ControlTemplate>
           </Setter.Value>
         </Setter>
@@ -243,12 +262,8 @@
         <Setter Property="Template">
           <Setter.Value>
             <ControlTemplate TargetType="TabItem">
-              <Border x:Name="Chrome" Background="Transparent" Padding="10,6,10,4" CornerRadius="{DynamicResource ControlCornerRadius}">
-                <Grid>
-                  <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                  <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" RecognizesAccessKey="True" />
-                  <Rectangle x:Name="Underline" Grid.Row="1" Width="16" Height="3" Margin="0,4,0,0" RadiusX="1.5" RadiusY="1.5" Fill="{DynamicResource AccentFillColorDefaultBrush}" Visibility="Hidden" />
-                </Grid>
+              <Border x:Name="Chrome" Background="Transparent" Padding="12,4" CornerRadius="4">
+                <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" RecognizesAccessKey="True" />
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
@@ -256,8 +271,8 @@
                   <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
                 </Trigger>
                 <Trigger Property="IsSelected" Value="True">
-                  <Setter TargetName="Underline" Property="Visibility" Value="Visible" />
-                  <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                  <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
                   <Setter Property="FontWeight" Value="SemiBold" />
                 </Trigger>
               </ControlTemplate.Triggers>
@@ -286,6 +301,7 @@
       </Style>
       <Style TargetType="local:ToggleSwitch">
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
         <Setter Property="FocusVisualStyle" Value="{DynamicResource DefaultControlFocusVisualStyle}" />
         <Setter Property="Template">
           <Setter.Value>
@@ -294,7 +310,7 @@
                 <Grid Width="40" Height="20" VerticalAlignment="Center">
                   <Border x:Name="Track" CornerRadius="10" BorderThickness="1"
                       Background="{DynamicResource ToggleSwitchFillOff}" BorderBrush="{DynamicResource ToggleSwitchStrokeOff}" />
-                  <Ellipse x:Name="Knob" Width="12" Height="12" Margin="4,0" HorizontalAlignment="Left"
+                  <Ellipse x:Name="Knob" Width="16" Height="16" Margin="2,0" HorizontalAlignment="Left"
                       Fill="{DynamicResource ToggleSwitchKnobFillOff}" />
                 </Grid>
                 <ContentPresenter Margin="10,0,0,0" VerticalAlignment="Center" />
@@ -303,7 +319,7 @@
                 <Trigger Property="IsChecked" Value="True">
                   <Setter TargetName="Track" Property="Background" Value="{DynamicResource ToggleSwitchFillOn}" />
                   <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource ToggleSwitchStrokeOn}" />
-                  <Setter TargetName="Knob" Property="Fill" Value="{DynamicResource ToggleSwitchKnobFillOn}" />
+                  <Setter TargetName="Knob" Property="Fill" Value="White" />
                   <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">

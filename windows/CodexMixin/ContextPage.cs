@@ -44,10 +44,11 @@ public sealed partial class MainWindow
 
     private Border ContextSettingsCard(ContextSettings stored)
     {
-        var enabled = new CheckBox
+        var enabled = new ToggleSwitch
         {
             Content = Localized.Get("启用上下文引擎"),
-            IsChecked = stored.Enabled
+            IsOn = stored.Enabled,
+            HorizontalAlignment = HorizontalAlignment.Right
         };
         AutomationProperties.SetAutomationId(enabled, "context-enabled");
 
@@ -73,34 +74,38 @@ public sealed partial class MainWindow
         ToolTipService.SetToolTip(ApplyChanges, Localized.Get("保存更改后自动重启运行中的网关并生效。"));
         TrackDraft(enabled);
 
-        var body = new Stack { Spacing = 12 };
-        body.Children.Add(enabled);
-        return Card(Localized.Get("上下文引擎"), "", body);
+        var header = new SpacedGrid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.Children.Add(new TextBlock { Text = Localized.Get("上下文引擎"), Style = Themed("BodyStrongTextBlockStyle"), VerticalAlignment = VerticalAlignment.Center });
+        Grid.SetColumn(enabled, 1); header.Children.Add(enabled);
+        return new Border { Style = Themed("Card"), Child = header };
     }
 
     private UIElement ContextStatsCards(ContextStats stats, CancellationToken token)
     {
         var totals = stats.Totals;
         var cache = totals.Cache;
-        var tiles = new SpacedGrid { ColumnSpacing = 12 };
-        var metrics = new (string Title, string Value, string Note)[]
+        var tiles = new SpacedGrid { ColumnSpacing = 12, RowSpacing = 12 };
+        for (var column = 0; column < 2; column++) tiles.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var row = 0; row < 2; row++) tiles.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var metrics = new (string Title, string Value, string Note, string Glyph, string Brush)[]
         {
-            (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages))),
-            (Localized.Get("压缩次数"), UsageView.Compact(totals.Compressions), ""),
-            (Localized.Get("节省 tokens"), UsageView.Compact(totals.SavedTokens), Localized.Format("当前视图 {0}", UsageView.Compact(totals.ViewTokens))),
+            (Localized.Get("会话"), UsageView.Compact(totals.Sessions), Localized.Format("{0} 条归档消息", UsageView.Compact(totals.Messages)), "\uE7B8", "AccentTextFillColorPrimaryBrush"),
+            (Localized.Get("压缩次数"), UsageView.Compact(totals.Compressions), "", "\uE8CB", "AccentTextFillColorPrimaryBrush"),
+            (Localized.Get("节省 tokens"), UsageView.Compact(totals.SavedTokens), Localized.Format("当前视图 {0}", UsageView.Compact(totals.ViewTokens)), "leaf", "SystemFillColorSuccessBrush"),
             (Localized.Get("缓存命中"), cache.HitPercent is null ? "—" : $"{cache.HitPercent:0.0}%",
-                "")
+                "", "\uE945", "SystemFillColorCautionBrush")
         };
         for (var index = 0; index < metrics.Length; index++)
         {
-            tiles.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var (title, value, note) = metrics[index];
+            var (title, value, note, glyph, brush) = metrics[index];
             var tileBody = new Stack { Spacing = 2 };
             tileBody.Children.Add(new TextBlock { Text = value, FontSize = 24, FontWeight = FontWeights.SemiBold });
             if (!string.IsNullOrWhiteSpace(note))
                 tileBody.Children.Add(new TextBlock { Text = note, Style = Themed("Caption") });
-            var tile = Card(title, "", tileBody);
-            Grid.SetColumn(tile, index);
+            var tile = Card(title, "", tileBody, glyph, brush);
+            Grid.SetColumn(tile, index % 2); Grid.SetRow(tile, index / 2);
             tiles.Children.Add(tile);
         }
 
@@ -150,12 +155,13 @@ public sealed partial class MainWindow
         }
 
         var body = new Stack { Spacing = 12 };
-        body.Children.Add(tiles);
         var workspace = new SpacedGrid { ColumnSpacing = 16 };
-        workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
-        workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+        workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.25, GridUnitType.Star) });
+        workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.75, GridUnitType.Star) });
         var sessionCard = Card(Localized.Get("按会话统计"), "", archive);
-        workspace.Children.Add(sessionCard);
+        var overview = new Stack { Spacing = 12 };
+        overview.Children.Add(tiles); overview.Children.Add(sessionCard);
+        workspace.Children.Add(overview);
         Grid.SetColumn(inspector, 1); workspace.Children.Add(inspector);
         var narrowWorkspace = false;
         workspace.SizeChanged += (_, args) =>
@@ -166,7 +172,7 @@ public sealed partial class MainWindow
             workspace.RowDefinitions.Clear();
             if (narrow) { workspace.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); workspace.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); }
             Grid.SetColumn(inspector, narrow ? 0 : 1); Grid.SetRow(inspector, narrow ? 1 : 0);
-            Grid.SetColumnSpan(sessionCard, narrow ? 2 : 1); Grid.SetColumnSpan(inspector, narrow ? 2 : 1);
+            Grid.SetColumnSpan(overview, narrow ? 2 : 1); Grid.SetColumnSpan(inspector, narrow ? 2 : 1);
             inspector.Margin = narrow ? new Thickness(0, 16, 0, 0) : new Thickness(0);
         };
         body.Children.Add(workspace);
@@ -178,7 +184,7 @@ public sealed partial class MainWindow
         var list = new VirtualList
         {
             SelectionMode = SelectionMode.Single,
-            Height = Math.Min(276, sessions.Length * 52 + 4),
+            Height = Math.Min(330, sessions.Length * 34 + 4),
             ItemContainerStyle = Themed("ModelRowContainer"),
             ItemsSource = Enumerable.Range(0, sessions.Length).ToArray()
         };
@@ -360,7 +366,7 @@ public sealed partial class MainWindow
         return new Border
         {
             Child = grid,
-            Padding = new Thickness(16, 8, 16, 8),
+            Padding = new Thickness(12, 5, 12, 5),
             Style = Themed(divider ? "RowDivider" : "RowPlain"),
             BorderThickness = divider ? new Thickness(0, 1, 0, 0) : new Thickness(0)
         };

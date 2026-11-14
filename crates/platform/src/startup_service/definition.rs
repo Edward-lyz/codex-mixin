@@ -304,6 +304,9 @@ pub(super) struct WindowsTaskInfo {
     pub(super) user_id: String,
     pub(super) current_user: String,
     pub(super) logon_trigger: bool,
+    pub(super) start_when_available: bool,
+    pub(super) restart_count: i32,
+    pub(super) restart_interval: String,
 }
 
 pub(super) fn windows_task_is_current(
@@ -324,6 +327,9 @@ pub(super) fn windows_task_is_current(
         && task.run_level == "Limited"
         && task.logon_type == "Interactive"
         && task.logon_trigger
+        && task.start_when_available
+        && task.restart_count >= 3
+        && task.restart_interval == "PT1M"
         && same_user)
 }
 
