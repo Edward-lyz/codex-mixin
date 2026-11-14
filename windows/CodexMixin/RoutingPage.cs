@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 
 namespace CodexMixin;
 
@@ -387,27 +388,78 @@ public sealed partial class MainWindow
         return arrow;
     }
 
-    /// A model shown as a clickable node: provider logo, model name and provider.
+    // Connect the actual laid-out controls, so curves follow wrapping and resize.
+    private sealed class RouteLinks : FrameworkElement
+    {
+        private readonly (FrameworkElement From, FrameworkElement To, bool Active)[] links;
+        private static readonly DependencyProperty LineBrushProperty = DependencyProperty.Register(
+            "LineBrush", typeof(Brush), typeof(RouteLinks), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        private static readonly DependencyProperty ActiveBrushProperty = DependencyProperty.Register(
+            "ActiveBrush", typeof(Brush), typeof(RouteLinks), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+        internal RouteLinks(IEnumerable<(FrameworkElement From, FrameworkElement To, bool Active)> connections)
+        {
+            links = connections.ToArray();
+            IsHitTestVisible = false;
+            SetResourceReference(LineBrushProperty, "TextFillColorTertiaryBrush");
+            SetResourceReference(ActiveBrushProperty, "AccentTextFillColorPrimaryBrush");
+            foreach (var item in links.SelectMany(link => new[] { link.From, link.To }).Distinct())
+            {
+                item.SizeChanged += (_, _) => InvalidateVisual();
+                item.Loaded += (_, _) => InvalidateVisual();
+            }
+        }
+
+        protected override void OnRender(DrawingContext context)
+        {
+            base.OnRender(context);
+            foreach (var (from, to, active) in links)
+            {
+                if (!from.IsArrangeValid || !to.IsArrangeValid || from.ActualWidth <= 0 || to.ActualWidth <= 0) continue;
+                var start = from.TranslatePoint(new Point(from.ActualWidth, from.ActualHeight / 2), this);
+                var end = to.TranslatePoint(new Point(0, to.ActualHeight / 2), this);
+                var brush = (Brush?)GetValue(active ? ActiveBrushProperty : LineBrushProperty);
+                if (brush == null || end.X <= start.X) continue;
+                var pen = new Pen(brush, active ? 1.6 : 1);
+                var dx = end.X - start.X;
+                var path = new StreamGeometry();
+                using (var geometry = path.Open())
+                {
+                    geometry.BeginFigure(start, false, false);
+                    geometry.BezierTo(new Point(start.X + dx * 0.6, start.Y), new Point(end.X - dx * 0.6, end.Y), end, true, false);
+                    geometry.BeginFigure(new Point(end.X - 5, end.Y - 3), false, false);
+                    geometry.LineTo(end, true, false);
+                    geometry.LineTo(new Point(end.X - 5, end.Y + 3), true, false);
+                }
+                context.DrawGeometry(null, pen, path);
+            }
+        }
+    }
+
+    /// A compact clickable model node, matching the shared route diagrams.
     private Button ModelNode(string id, string[] ids, Action<Button> onClick, string? automationId = null)
     {
-        var content = new SpacedGrid { ColumnSpacing = 10 };
+        var content = new SpacedGrid { ColumnSpacing = 7 };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        content.Children.Add(new Border { Style = Themed("LogoChip"), Width = 26, Height = 26, VerticalAlignment = VerticalAlignment.Center, Child = ProviderLogo(ModelProvider(id), 18) });
-        var text = new Stack { VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = ModelName(id), TextTrimming = TextTrimming.CharacterEllipsis });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.Children.Add(ProviderLogo(ModelProvider(id), 16));
         var available = ids.Contains(id);
-        text.Children.Add(new TextBlock { Text = available ? ProviderName(ModelProvider(id)) : Localized.Get("模型不可用"), Style = Themed(available ? "Caption" : "CriticalCaption") });
+        var text = new TextBlock { Text = ModelName(id), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        if (!available) text.Style = Themed("CriticalCaption");
         Grid.SetColumn(text, 1);
         content.Children.Add(text);
+        var chevron = new FontIcon { Glyph = "\uE70D", FontSize = 10 };
+        chevron.SetResourceReference(Control.ForegroundProperty, "TextFillColorTertiaryBrush");
+        Grid.SetColumn(chevron, 2); content.Children.Add(chevron);
         var node = new Button
         {
             Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Padding = new Thickness(10, 6, 10, 6), MinWidth = 150
+            Padding = new Thickness(10, 4, 10, 4), MinWidth = 0, Height = 44
         };
         AutomationProperties.SetName(node, ModelName(id));
         if (automationId != null) AutomationProperties.SetAutomationId(node, automationId);
-        ToolTipService.SetToolTip(node, Localized.Format("{0}\n点击更换模型", id));
+        ToolTipService.SetToolTip(node, Localized.Format("{0} · {1}\n点击更换模型", id, available ? ProviderName(ModelProvider(id)) : Localized.Get("模型不可用")));
         node.Click += (_, _) => onClick(node);
         return node;
     }
@@ -535,33 +587,36 @@ public sealed partial class MainWindow
         void Render()
         {
             flow.Children.Clear();
-            var grid = new SpacedGrid { ColumnSpacing = 12, RowSpacing = 6 };
-            foreach (var width in new[] { 1.2, 0, 1, 0, 1 })
-                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width == 0 ? GridLength.Auto : new GridLength(width, GridUnitType.Star) });
+            var grid = new SpacedGrid { ColumnSpacing = 0, RowSpacing = 8 };
+            foreach (var width in new[] { 1.0, 0, 1, 0, 1 })
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width == 0 ? new GridLength(40) : new GridLength(width, GridUnitType.Star) });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             void Place(FrameworkElement element, int column, int row) { Grid.SetColumn(element, column); Grid.SetRow(element, row); grid.Children.Add(element); }
-            Place(StageHeader(Localized.Format("Panel · 并行（{0}）", panels.Count)), 0, 0);
-            Place(StageHeader(Localized.Get("Judge · 评审")), 2, 0);
-            Place(StageHeader(Localized.Get("Final · 作答")), 4, 0);
+            Place(StageHeader(Localized.Get("1  Panel 并行作答")), 0, 0);
+            Place(StageHeader(Localized.Get("2  Judge 评审汇总")), 2, 0);
+            Place(StageHeader(Localized.Get("3  Final 修改与回复")), 4, 0);
             void EditPanels(Button anchor) => PickModels(anchor, Localized.Get("Panel 模型"), ids, panels, true,
                 picked => { panels = picked.ToList(); MarkDirty(); }, Render);
             var column = new Stack { Spacing = 6 };
-            foreach (var panel in panels) column.Children.Add(ModelNode(panel, ids, EditPanels));
+            var panelNodes = panels.Select(panel => ModelNode(panel, ids, EditPanels)).ToArray();
+            foreach (var panel in panelNodes) column.Children.Add(panel);
             var add = AddNode(panels.Count == 0 ? Localized.Get("选择 Panel 模型") : Localized.Get("编辑 Panel 模型"), EditPanels);
             AutomationProperties.SetAutomationId(add, "route-panels");
             column.Children.Add(add);
             Place(column, 0, 1);
-            Place(FlowArrow("\uE72A"), 1, 1);
             var judgeNode = ModelNode(judge, ids, anchor => PickModels(anchor, Localized.Get("Judge 模型"), ids, [judge], false,
                 picked => { judge = picked[0]; MarkDirty(); }, Render), "route-judge");
             judgeNode.VerticalAlignment = VerticalAlignment.Center;
             Place(judgeNode, 2, 1);
-            Place(FlowArrow("\uE72A"), 3, 1);
             var finalNode = ModelNode(final, ids, anchor => PickModels(anchor, Localized.Get("Final 模型"), ids, [final], false,
                 picked => { final = picked[0]; MarkDirty(); }, Render), "route-final");
             finalNode.VerticalAlignment = VerticalAlignment.Center;
             Place(finalNode, 4, 1);
+            var links = panelNodes.Select(node => ((FrameworkElement)node, (FrameworkElement)judgeNode, false))
+                .Append((judgeNode, finalNode, false));
+            var connectors = new RouteLinks(links);
+            Grid.SetColumnSpan(connectors, 5); Grid.SetRowSpan(connectors, 2); grid.Children.Add(connectors);
             flow.Children.Add(grid);
         }
         Render();
@@ -707,74 +762,72 @@ public sealed partial class MainWindow
             var wide = flow.ActualWidth >= 650;
             wideLayout = wide;
             var active = source == originalSource && fallbacks.SequenceEqual(originalFallbacks) ? served : null;
-            var targets = new Stack { Spacing = 8 };
+            var targets = new Stack { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+            Grid? diagram = null;
+            Border? mixin = null;
+            var connections = new List<(FrameworkElement From, FrameworkElement To, bool Active)>();
             if (wide)
             {
-                var diagram = new SpacedGrid { ColumnSpacing = 10 };
+                diagram = new Grid();
                 diagram.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                diagram.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
                 diagram.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                var lead = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-                Border DiagramNode(string label, string glyph)
+                var lead = new Stack { Orientation = Orientation.Horizontal, Spacing = 22, VerticalAlignment = VerticalAlignment.Center };
+                Border DiagramNode(string label, UIElement icon, bool highlighted = false)
                 {
                     var content = new Stack { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-                    content.Children.Add(new FontIcon { Glyph = glyph, FontSize = 22 });
+                    content.Children.Add(icon);
                     content.Children.Add(new TextBlock { Text = label, HorizontalAlignment = HorizontalAlignment.Center, FontWeight = FontWeights.SemiBold });
-                    return new Border { Style = Themed("ListCard"), Width = 76, Height = 72, Child = content };
+                    var node = new Border { Style = Themed("ListCard"), Width = 96, Height = highlighted ? 92 : 72, Child = content };
+                    if (highlighted) node.SetResourceReference(Border.BorderBrushProperty, "AccentFillColorDefaultBrush");
+                    return node;
                 }
-                lead.Children.Add(DiagramNode(Localized.Get("客户端"), "\uE8A5"));
-                lead.Children.Add(FlowArrow("\uE72A", active != null, "最近一次响应"));
-                lead.Children.Add(DiagramNode("Mixin", "\uE8F1"));
+                var client = DiagramNode(Localized.Get("客户端"), new FontIcon { Glyph = "\uE7C3", FontSize = 20 });
+                var logo = new Image { Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://siteoforigin:,,,/Assets/app_icon.png")), Width = 36, Height = 36 };
+                mixin = DiagramNode("Mixin", logo, highlighted: true);
+                lead.Children.Add(client); lead.Children.Add(mixin);
+                connections.Add((client, mixin, active != null));
                 diagram.Children.Add(lead);
-                Grid.SetColumn(targets, 1); diagram.Children.Add(targets);
+                Grid.SetColumn(targets, 2); diagram.Children.Add(targets);
                 flow.Children.Add(diagram);
             }
             else flow.Children.Add(targets);
 
-            Button MarkActive(Button node, string model)
+            UIElement TargetRow(Button node, string model, string role, int? position = null)
             {
-                if (active == null || model != active) return node;
-                node.SetResourceReference(Control.BorderBrushProperty, "AccentFillColorDefaultBrush");
-                node.BorderThickness = new Thickness(2);
-                ToolTipService.SetToolTip(node, Localized.Format("最近一次响应：{0}", ModelName(model)));
-                return node;
-            }
-            UIElement Directed(UIElement node, bool selected)
-            {
-                if (!wide) return node;
                 var row = new SpacedGrid { ColumnSpacing = 8 };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(FlowArrow("\uE72A", selected, "最近一次响应"));
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var dot = new System.Windows.Shapes.Ellipse { Width = 6, Height = 6, VerticalAlignment = VerticalAlignment.Center, StrokeThickness = 1 };
+                dot.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, active == model ? "AccentTextFillColorPrimaryBrush" : "TextFillColorTertiaryBrush");
+                if (active == model) dot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, "AccentTextFillColorPrimaryBrush");
+                row.Children.Add(dot);
                 Grid.SetColumn(node, 1); row.Children.Add(node);
+                var roleText = new TextBlock { Text = role, Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(roleText, 2); row.Children.Add(roleText);
+                if (position is { } index)
+                {
+                    var controls = new Stack { Orientation = Orientation.Horizontal, Spacing = 2 };
+                    void Move(int delta) { (fallbacks[index], fallbacks[index + delta]) = (fallbacks[index + delta], fallbacks[index]); MarkDirty(); Render(); }
+                    controls.Children.Add(IconButton("\uE70E", Localized.Format("上移备用模型 {0}", index + 1), () => Move(-1), index > 0));
+                    controls.Children.Add(IconButton("\uE70D", Localized.Format("下移备用模型 {0}", index + 1), () => Move(1), index < fallbacks.Count - 1));
+                    controls.Children.Add(IconButton("\uE711", Localized.Format("移除备用模型 {0}", index + 1), () => { fallbacks.RemoveAt(index); MarkDirty(); Render(); }));
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    Grid.SetColumn(controls, 3); row.Children.Add(controls);
+                }
+                if (mixin != null) connections.Add((mixin, row, active == model));
                 return row;
             }
-            targets.Children.Add(StageHeader(Localized.Get("原模型")));
-            if (active != null) targets.Children.Add(new TextBlock { Text = Localized.Format("最近一次响应：{0}", ModelName(active)), Style = Themed("Caption") });
-            targets.Children.Add(Directed(MarkActive(ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
-                picked => { source = picked[0]; MarkDirty(); }, Render), "route-source"), source), active == source));
-            var arrow = new Stack { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(14, 0, 0, 0) };
-            arrow.Children.Add(FlowArrow("\uE74B"));
-            arrow.Children.Add(new TextBlock { Text = Localized.Get("429 · 5xx · 连接失败 · 超时，且尚未输出"), Style = Themed("Caption") });
-            targets.Children.Add(arrow);
-            targets.Children.Add(StageHeader(Localized.Get("备用模型（按顺序）")));
+            var primary = ModelNode(source, ids, anchor => PickModels(anchor, Localized.Get("原模型"), ids, [source], false,
+                picked => { source = picked[0]; MarkDirty(); }, Render), "route-source");
+            targets.Children.Add(TargetRow(primary, source, Localized.Get("主模型")));
             for (var index = 0; index < fallbacks.Count; index++)
             {
                 var position = index;
-                var row = new SpacedGrid { ColumnSpacing = 6 };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                foreach (var _ in Enumerable.Range(0, 3)) row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.Children.Add(new TextBlock { Text = $"{index + 1}", Style = Themed("Caption"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
-                var node = MarkActive(ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, Localized.Format("备用模型 {0}", position + 1), ids, [fallbacks[position]], false,
-                    picked => { fallbacks[position] = picked[0]; MarkDirty(); }, Render)), fallbacks[index]);
-                Grid.SetColumn(node, 1); row.Children.Add(node);
-                void Move(int delta) { (fallbacks[position], fallbacks[position + delta]) = (fallbacks[position + delta], fallbacks[position]); MarkDirty(); Render(); }
-                var up = IconButton("\uE70E", Localized.Format("上移备用模型 {0}", index + 1), () => Move(-1), index > 0);
-                var down = IconButton("\uE70D", Localized.Format("下移备用模型 {0}", index + 1), () => Move(1), index < fallbacks.Count - 1);
-                var remove = IconButton("\uE711", Localized.Format("移除备用模型 {0}", index + 1), () => { fallbacks.RemoveAt(position); MarkDirty(); Render(); });
-                Grid.SetColumn(up, 2); Grid.SetColumn(down, 3); Grid.SetColumn(remove, 4);
-                row.Children.Add(up); row.Children.Add(down); row.Children.Add(remove);
-                targets.Children.Add(Directed(row, active == fallbacks[index]));
+                var node = ModelNode(fallbacks[index], ids, anchor => PickModels(anchor, Localized.Format("备用模型 {0}", position + 1), ids, [fallbacks[position]], false,
+                    picked => { fallbacks[position] = picked[0]; MarkDirty(); }, Render));
+                targets.Children.Add(TargetRow(node, fallbacks[index], Localized.Format("备用 {0}", index + 1), index));
             }
             if (fallbacks.Count < MaxFallbacks)
                 targets.Children.Add(AddNode(Localized.Get("添加备用模型"), _ =>
@@ -783,6 +836,13 @@ public sealed partial class MainWindow
                     fallbacks.Add(ids.FirstOrDefault(id => !used.Contains(id)) ?? ids[0]);
                     MarkDirty(); Render();
                 }));
+            if (diagram != null)
+            {
+                var links = new RouteLinks(connections);
+                Grid.SetColumnSpan(links, 3); diagram.Children.Add(links);
+            }
+            if (active != null) flow.Children.Add(new TextBlock { Text = Localized.Format("最近一次响应：{0}", ModelName(active)), Style = Themed("Caption") });
+            flow.Children.Add(new TextBlock { Text = Localized.Get("429 · 5xx · 连接失败 · 超时，且尚未输出"), Style = Themed("Caption") });
         }
         flow.SizeChanged += (_, args) => { if (wideLayout != (args.NewSize.Width >= 650)) Render(); };
         Render();
