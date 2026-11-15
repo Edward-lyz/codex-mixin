@@ -259,7 +259,7 @@ async fn native_messages_thinking_normalization_preserves_block_metadata() {
 }
 
 #[tokio::test]
-async fn native_messages_bypasses_context_without_a_session_or_when_disabled() {
+async fn native_messages_bypasses_context_when_disabled_and_derives_a_session_when_enabled() {
     for enabled in [false, true] {
         let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
         let mut config = test_config(upstream_url);
@@ -277,7 +277,9 @@ async fn native_messages_bypasses_context_without_a_session_or_when_disabled() {
         let _ = response.text().await.unwrap();
         let captured = requests.lock().unwrap();
         assert_eq!(captured.len(), 1);
-        assert!(!captured[0].to_string().contains("mixin_context"));
+        // Without a session header the gateway derives one from the first user
+        // message, so an enabled engine manages the request too.
+        assert_eq!(captured[0].to_string().contains("mixin_context"), enabled);
     }
 }
 

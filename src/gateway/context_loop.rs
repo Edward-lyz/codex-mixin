@@ -878,6 +878,20 @@ fn prepare_context_input(
     }
 }
 
+/// Like [`context_session`], but only for clients that named their session.
+/// Checkpoints are bound to the session that issued them, so an identity derived
+/// from the conversation text must never issue or resolve one.
+pub(crate) fn explicit_context_session(
+    executor: &GatewayExecutor,
+    headers: &HeaderMap,
+    body: &Value,
+) -> Result<Option<String>, GatewayError> {
+    if super::stable_oneapi_routing(headers, body)?.is_none_or(|routing| routing.derived) {
+        return Ok(None);
+    }
+    context_session(executor, headers, body)
+}
+
 /// Session identity is the authenticated client plus the explicit thread or
 /// session the client sent. Backend account affinity must not merge archives.
 pub(crate) fn context_session(

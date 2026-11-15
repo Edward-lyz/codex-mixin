@@ -162,7 +162,8 @@ async fn expand_archived_checkpoints(
     if !has_checkpoint {
         return Ok(body);
     }
-    let Some(session) = crate::gateway::context_session(state.gateway.as_ref(), headers, &body)?
+    let Some(session) =
+        crate::gateway::explicit_context_session(state.gateway.as_ref(), headers, &body)?
     else {
         return Ok(body);
     };
@@ -191,7 +192,8 @@ pub(super) async fn context_checkpoint(
     if !engine.is_enabled() {
         return Ok(None);
     }
-    let Some(session) = crate::gateway::context_session(state.gateway.as_ref(), headers, body)?
+    let Some(session) =
+        crate::gateway::explicit_context_session(state.gateway.as_ref(), headers, body)?
     else {
         return Ok(None);
     };

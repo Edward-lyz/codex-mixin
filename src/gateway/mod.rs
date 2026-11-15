@@ -18,7 +18,7 @@ pub(crate) use cache_shape::{
 };
 pub(crate) use cache_usage::{DailyTokenUsage, ProviderTokenUsage, TokenUsageAggregator};
 pub(crate) use compaction::prepare_compaction_replay;
-pub(crate) use context_loop::{context_input, context_session};
+pub(crate) use context_loop::{context_input, explicit_context_session};
 pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{
@@ -35,4 +35,7 @@ pub(crate) struct UpstreamRouting {
     pub session_id: String,
     pub hash_key: String,
     pub context_hash_key: String,
+    /// True when the gateway derived the session from the conversation text
+    /// because the client sent no session identity.
+    pub derived: bool,
 }
