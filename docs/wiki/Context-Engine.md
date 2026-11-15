@@ -77,7 +77,7 @@ Mixin 使用自己的 Rust 连续 segment 模型、SQLite 归档、保护校验�
 
 ## 哪些请求会生效
 
-**接入 Mixin 网关，不代表一定经过上下文引擎。** 开关打开之外，请求还需要进入共享 Responses 上下文回路，提供可识别的会话标识，并携带数组形式的 input 或 `previous_response_id` 链式续接。
+**接入 Mixin 网关，不代表一定经过上下文引擎。** 开关打开之外，请求还需要进入共享 Responses 上下文回路，提供可识别的会话标识，并携带数组形式的 input 或 `previous_response_id` 链式续接。外部 API 调用没带 `thread-id`、`session-id`、`prompt_cache_key` 等会话头时，网关按首条用户消息并结合调用方密钥推导会话标识，不同密钥互不混用；同一段对话的多轮请求归入同一条归档。
 
 | 请求路线 | 当前覆盖情况 |
 | --- | --- |
@@ -85,7 +85,7 @@ Mixin 使用自己的 Rust 连续 segment 模型、SQLite 归档、保护校验�
 | Anthropic Messages 入站，转换为 Responses 后进入共享回路 | 满足上述条件时启用 |
 | Anthropic Messages 入站，上游也是原生 Anthropic Messages，使用普通自定义工具与受支持内容块 | 引擎启用且有会话标识时进入共享回路，保留原生 thinking、签名、beta 与请求选项 |
 | 原生 Messages 使用托管工具或当前无法映射的原生内容块 | 保留原始请求直通，不启用压缩 |
-| 缺少会话标识，或输入形式不满足引擎条件 | 跳过引擎，继续原请求路径 |
+| 没有会话头且推导不出会话标识（无用户文本），或输入形式不满足引擎条件 | 跳过引擎，继续原请求路径 |
 
 **在 Codex 内使用 Claude 模型可以走上下文引擎**：Codex → Responses → 上下文引擎 → 转换为 Messages → Claude。出站协议转换发生在进入引擎之后，模型名称不会决定是否绕过。
 

@@ -12,7 +12,7 @@ use crate::protocol::sse::SseDecoder;
 use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};
 use crate::provider::ProviderProtocol;
-use crate::usage::{TurnQuery, TurnStatus, TurnUsage, session_tag, unix_millis};
+use crate::usage::{ANONYMOUS_SESSION, TurnQuery, TurnStatus, TurnUsage, session_tag, unix_millis};
 
 /// Sessions retained for prefix diagnostics. Codex drives one session per
 /// conversation, so this only has to cover concurrently active threads.
@@ -43,23 +43,31 @@ pub(crate) struct CacheShapeTracker {
     pub(super) usage: Arc<TokenUsageAggregator>,
 }
 
+/// One upstream request that failed before any reply streamed.
+pub(crate) struct FailedTurn<'a> {
+    pub(crate) provider_id: &'a str,
+    pub(crate) catalog_slug: &'a str,
+    pub(crate) upstream_model_id: &'a str,
+    pub(crate) routing: Option<&'a UpstreamRouting>,
+    pub(crate) client: &'a str,
+    pub(crate) protocol: ProviderProtocol,
+    pub(crate) error: String,
+}
+
 impl CacheShapeTracker {
     /// Records an upstream request that failed before any reply streamed, so
     /// the usage page can show it with its status instead of dropping it.
-    pub(crate) fn record_failed_turn(
-        &self,
-        provider_id: &str,
-        catalog_slug: &str,
-        upstream_model_id: &str,
-        routing: Option<&UpstreamRouting>,
-        protocol: ProviderProtocol,
-        error: String,
-    ) {
+    pub(crate) fn record_failed_turn(&self, failed: FailedTurn<'_>) {
+        let FailedTurn {
+            provider_id,
+            catalog_slug,
+            upstream_model_id,
+            routing,
+            client,
+            protocol,
+            error,
+        } = failed;
         self.usage.record_failure(provider_id, upstream_model_id);
-        // Rows are grouped by client session; requests without one only count.
-        let Some(routing) = routing else {
-            return;
-        };
         let protocol = match protocol {
             ProviderProtocol::AnthropicMessages => super::shape::ANTHROPIC_MESSAGES,
             ProviderProtocol::OpenAiChat => super::shape::OPENAI_CHAT,
@@ -69,8 +77,11 @@ impl CacheShapeTracker {
         self.usage.record_turn(
             TurnUsage {
                 at_ms: unix_millis(),
-                session: session_tag(&routing.session_id),
+                session: session_tag(
+                    routing.map_or(ANONYMOUS_SESSION, |routing| &routing.session_id),
+                ),
                 session_display: None,
+                client: Some(client.to_owned()),
                 provider_id: provider_id.to_owned(),
                 catalog_slug: catalog_slug.to_owned(),
                 upstream_model_id: upstream_model_id.to_owned(),
@@ -201,9 +212,13 @@ pub(crate) fn record_provider_prefix(
     catalog_slug: &str,
     upstream_model_id: &str,
     routing: Option<&UpstreamRouting>,
+    client: &str,
     shape: CacheShape,
 ) -> Option<PrefixObservation> {
     let Some(routing) = routing else {
+        // No conversation identity (no session header and no user text to
+        // derive one from): the request still counts toward usage, but its
+        // prefix cannot be compared with any earlier request.
         tracing::debug!(
             provider_id,
             catalog_slug,
@@ -211,7 +226,22 @@ pub(crate) fn record_provider_prefix(
             protocol = shape.protocol,
             "provider request has no session key, so prefix cache tracking is unavailable"
         );
-        return None;
+        return Some(PrefixObservation {
+            session: session_tag(ANONYMOUS_SESSION),
+            client: client.to_owned(),
+            provider_id: provider_id.to_owned(),
+            catalog_slug: catalog_slug.to_owned(),
+            upstream_model_id: upstream_model_id.to_owned(),
+            protocol: shape.protocol,
+            state: PrefixState::ColdStart,
+            changed_regions: String::new(),
+            stable_prefix_bytes: 0,
+            total_bytes: shape.total_bytes(),
+            reused_turns: 0,
+            total_turns: shape.turns.len(),
+            usage: tracker.usage(),
+            started_at: Instant::now(),
+        });
     };
     // Fusion panels and judges share one Codex session while sending different
     // prompts, so the tracked key has to include the upstream model.
@@ -276,6 +306,7 @@ pub(crate) fn record_provider_prefix(
     }
     Some(PrefixObservation {
         session: session_tag(&routing.session_id),
+        client: client.to_owned(),
         provider_id: provider_id.to_owned(),
         catalog_slug: catalog_slug.to_owned(),
         upstream_model_id: upstream_model_id.to_owned(),
@@ -305,6 +336,7 @@ pub(super) const MIN_SERVED_FRACTION_OF_REUSABLE: f64 = 0.5;
 #[derive(Clone, Debug)]
 pub(crate) struct PrefixObservation {
     pub(super) session: String,
+    pub(super) client: String,
     pub(super) provider_id: String,
     pub(super) catalog_slug: String,
     pub(super) upstream_model_id: String,
@@ -553,6 +585,7 @@ impl UpstreamCacheObserver {
             at_ms: unix_millis(),
             session: observation.session.clone(),
             session_display: None,
+            client: Some(observation.client.clone()),
             provider_id: observation.provider_id.clone(),
             catalog_slug: observation.catalog_slug.clone(),
             upstream_model_id: observation.upstream_model_id.clone(),

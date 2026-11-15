@@ -269,14 +269,15 @@ pub(crate) async fn stream_provider_response(
     if let Err(error) = &result
         && let Some(reason) = upstream_failure_reason(error)
     {
-        executor.cache_shapes.record_failed_turn(
-            provider.id(),
+        executor.cache_shapes.record_failed_turn(super::FailedTurn {
+            provider_id: provider.id(),
             catalog_slug,
             upstream_model_id,
             routing,
+            client: &executor.client_identity(headers),
             protocol,
-            reason,
-        );
+            error: reason,
+        });
     }
     for (field, setting, previous, parent) in restored.into_iter().rev() {
         if let Some(parent) = parent {
@@ -459,6 +460,7 @@ async fn stream_anthropic_messages(
         catalog_slug,
         upstream_model_id,
         routing,
+        &executor.client_identity(headers),
         shape,
     );
     let upstream = observe_upstream_cache_usage(upstream, observation);
@@ -484,6 +486,7 @@ async fn stream_openai_chat(
         routing,
         body,
         advertised_thinking,
+        headers,
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
@@ -498,6 +501,7 @@ async fn stream_openai_chat(
         catalog_slug,
         upstream_model_id,
         routing,
+        &executor.client_identity(headers),
         CacheShape::from_openai_chat(&converted.request),
     );
     let upstream = executor
@@ -549,6 +553,7 @@ async fn stream_openai_responses(
         routing,
         body,
         advertised_thinking,
+        headers,
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
@@ -579,6 +584,7 @@ async fn stream_openai_responses(
         catalog_slug,
         upstream_model_id,
         routing,
+        &executor.client_identity(headers),
         CacheShape::from_openai_responses(body),
     );
     let request_body = std::mem::take(body);
@@ -924,6 +930,7 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         routing,
         body,
         advertised_thinking,
+        headers,
         ..
     } = ctx;
     let agy_native = executor.upstream.agy_native_headers(provider).await?;
@@ -949,6 +956,7 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         catalog_slug,
         upstream_model_id,
         routing,
+        &executor.client_identity(headers),
         CacheShape::from_gemini(payload.get("request").unwrap_or(&payload)),
     );
     if let Some(headers) = agy_native.as_ref() {
@@ -1105,7 +1113,7 @@ fn restore_reasoning(body: &mut Value, original: Option<ReasoningRestore>) {
 
 /// Short ledger summary for failures that reached or tried to reach the
 /// upstream; local validation errors are not upstream replies.
-fn upstream_failure_reason(error: &GatewayError) -> Option<String> {
+pub(crate) fn upstream_failure_reason(error: &GatewayError) -> Option<String> {
     match error {
         GatewayError::UpstreamStatus { status, .. } => Some(format!("HTTP {}", status.as_u16())),
         GatewayError::Upstream(_) => Some("upstream error".to_owned()),

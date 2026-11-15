@@ -202,7 +202,8 @@ pub(crate) fn stable_oneapi_routing(
         .or(x_session_id)
         .or(session_id)
         .map(str::to_owned)
-        .or_else(|| claude_metadata_session(body));
+        .or_else(|| claude_metadata_session(body))
+        .or_else(|| derived_conversation_session(headers, body));
     Ok(session_id.map(|session_id| {
         let hash_key =
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string();
@@ -212,6 +213,78 @@ pub(crate) fn stable_oneapi_routing(
             session_id,
         }
     }))
+}
+
+/// Characters of the first user message that feed a derived conversation identity.
+const CONVERSATION_ANCHOR_CHARS: usize = 1024;
+
+/// Session identity for callers that send no session header. API clients
+/// resend the whole conversation on every turn, so its first user message
+/// names the conversation across turns. The system prompt stays out of the
+/// key because it often carries timestamps; the context engine already forks
+/// archives per persona. The key is salted with the caller's credential so
+/// two API keys never share a conversation, upstream affinity or archive.
+/// Covers Responses (`input`), Messages (`messages`) and Gemini (`contents`)
+/// bodies; None when no user text exists.
+fn derived_conversation_session(
+    headers: &axum::http::HeaderMap,
+    body: &serde_json::Value,
+) -> Option<String> {
+    use serde_json::Value;
+
+    let items = body
+        .get("input")
+        .or_else(|| body.get("messages"))
+        .or_else(|| body.get("contents"))?;
+    let mut anchor = String::new();
+    match items {
+        Value::String(text) => push_text(&mut anchor, &Value::String(text.clone())),
+        Value::Array(items) => {
+            let first_user = items
+                .iter()
+                .find(|item| item.get("role").and_then(Value::as_str) == Some("user"))?;
+            push_text(
+                &mut anchor,
+                first_user
+                    .get("content")
+                    .or_else(|| first_user.get("parts"))?,
+            );
+        }
+        _ => return None,
+    }
+    if anchor.trim().is_empty() {
+        return None;
+    }
+    for credential in ["authorization", "x-api-key", "x-goog-api-key"] {
+        if let Some(value) = headers.get(credential) {
+            anchor.push('\0');
+            anchor.push_str(&String::from_utf8_lossy(value.as_bytes()));
+        }
+    }
+    Some(uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, anchor.as_bytes()).to_string())
+}
+
+/// Appends the text of a string, a block array, or one block, up to the
+/// anchor budget and ignoring non-text blocks.
+fn push_text(anchor: &mut String, value: &serde_json::Value) {
+    let remaining = CONVERSATION_ANCHOR_CHARS.saturating_sub(anchor.chars().count());
+    if remaining == 0 {
+        return;
+    }
+    match value {
+        serde_json::Value::String(text) => anchor.extend(text.chars().take(remaining)),
+        serde_json::Value::Array(blocks) => {
+            for block in blocks {
+                push_text(anchor, block);
+            }
+        }
+        serde_json::Value::Object(block) => {
+            if let Some(text) = block.get("text") {
+                push_text(anchor, text);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn claude_metadata_session(body: &serde_json::Value) -> Option<String> {

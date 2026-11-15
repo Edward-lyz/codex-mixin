@@ -3,7 +3,7 @@
 # dist/docker/{amd64,arm64}/codex-mixin (see the release workflow).
 FROM alpine:3.22
 ARG TARGETARCH
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata tini \
     && adduser -D -h /data codex
 COPY dist/docker/${TARGETARCH}/codex-mixin /usr/local/bin/codex-mixin
 USER codex
@@ -12,6 +12,10 @@ WORKDIR /data
 VOLUME ["/data"]
 # 8317: gateway API. 8318: web control panel (its token is printed to the logs).
 EXPOSE 8317 8318
+# `service start` forks the gateway daemon and the panel stays in the
+# foreground, so PID 1 must reap orphans and forward signals itself. tini does
+# that, which makes `docker run --init` / compose `init: true` unnecessary.
+ENTRYPOINT ["/sbin/tini", "--"]
 # The gateway runs as a daemon; the panel stays in the foreground so the
 # container lives as long as the panel and `docker logs` shows the panel URL.
 CMD ["sh", "-c", "codex-mixin service start --bind 0.0.0.0:8317 && exec codex-mixin panel --bind 0.0.0.0:8318"]

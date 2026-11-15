@@ -966,7 +966,7 @@ function usageCard() {
 
 const usagePage = {
   days: "7", provider: "", chart: "tokens", split: false,
-  status: "all", model: "", substitutions: false, grouped: false, expanded: new Set(),
+  status: "all", model: "", client: "", substitutions: false, grouped: false, expanded: new Set(),
   session: "", slot: null, slotTurns: null, slotLoading: false, shown: 100,
   data: null, loading: false, error: null,
 };
@@ -1242,6 +1242,7 @@ function turnRow(turn) {
       title: usagePage.session ? t("显示全部会话") : t("只看这个会话"),
       onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
     })),
+    h("td", { class: "nowrap", text: turn.client || "\u2014" }),
     h("td", { class: "turn-model" },
       h("span", { text: turn.upstream_model_id }),
       h("span", { class: "row-sub", text: ` · ${providerName(turn.provider_id)}` }),
@@ -1256,7 +1257,7 @@ function turnRow(turn) {
     h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }));
 }
 
-const TURN_COLUMNS = [t("时间"), t("状态"), t("会话"), t("模型"), t("未缓存输入"), t("命中缓存"), t("输出"), t("费用"), t("思考 Token"), t("首字"), t("速度")];
+const TURN_COLUMNS = [t("时间"), t("状态"), t("会话"), t("客户端"), t("模型"), t("未缓存输入"), t("命中缓存"), t("输出"), t("费用"), t("思考 Token"), t("首字"), t("速度")];
 
 function turnsTable(turns) {
   if (!turns.length) return emptyState(t("没有匹配的回复"), t("调整上方筛选，或选择其他时间范围。"));
@@ -1286,7 +1287,7 @@ function turnsTable(turns) {
   const rest = usagePage.grouped ? 0 : turns.length - usagePage.shown;
   return h("div", null,
     h("div", { class: "table-wrap" }, h("table", { class: "table turns" },
-      h("thead", null, h("tr", null, ...TURN_COLUMNS.map((text, index) => h("th", { class: index > 3 ? "r" : null, scope: "col", text })))),
+      h("thead", null, h("tr", null, ...TURN_COLUMNS.map((text, index) => h("th", { class: index > 4 ? "r" : null, scope: "col", text })))),
       body)),
     rest > 0 ? h("div", { class: "turns-more" }, h("button", {
       class: "btn btn-ghost btn-sm", type: "button", text: t("显示更多（还有 {0} 条）", rest),
@@ -1297,6 +1298,8 @@ function turnsTable(turns) {
 function usageFilters(turns, substitutions) {
   const models = [...new Set(turns.map((turn) => turn.upstream_model_id).filter(Boolean))].sort();
   if (usagePage.model && !models.includes(usagePage.model)) usagePage.model = "";
+  const clients = [...new Set(turns.map((turn) => turn.client).filter(Boolean))].sort();
+  if (usagePage.client && !clients.includes(usagePage.client)) usagePage.client = "";
   if (!substitutions) usagePage.substitutions = false;
   const rerender = (patch) => { Object.assign(usagePage, patch, { shown: TURN_PAGE }); render({ animate: false }); };
   const toggle = (label, key) => h("label", { class: "chip" },
@@ -1307,6 +1310,9 @@ function usageFilters(turns, substitutions) {
     h("select", { class: "select select-sm", "aria-label": t("模型"), onchange: (event) => rerender({ model: event.target.value }) },
       h("option", { value: "", text: t("全部模型"), selected: !usagePage.model }),
       models.map((id) => h("option", { value: id, text: id, selected: usagePage.model === id }))),
+    clients.length > 1 ? h("select", { class: "select select-sm", "aria-label": t("客户端"), onchange: (event) => rerender({ client: event.target.value }) },
+      h("option", { value: "", text: t("全部客户端"), selected: !usagePage.client }),
+      clients.map((name) => h("option", { value: name, text: name, selected: usagePage.client === name }))) : null,
     substitutions ? toggle(t("仅看模型替换（{0}）", substitutions), "substitutions") : null,
     toggle(t("按会话分组"), "grouped"),
     usagePage.slot ? chip(usagePage.slot.label, () => selectUsageSlot(usagePage.slot)) : null,
@@ -1350,6 +1356,7 @@ RENDERERS.usage = () => {
     .filter((turn) => !usagePage.session || turn.session === usagePage.session)
     .filter((turn) => usagePage.status === "all" || (usagePage.status === "failed") === turnFailed(turn))
     .filter((turn) => !usagePage.model || turn.upstream_model_id === usagePage.model)
+    .filter((turn) => !usagePage.client || turn.client === usagePage.client)
     .filter((turn) => !usagePage.substitutions || turnSubstituted(turn));
   const chartControls = h("div", { class: "usage-toolbar" },
     segmented([["tokens", "Tokens"], ["requests", t("请求")], ["cost", t("费用")]], usagePage.chart, (chart) => { usagePage.chart = chart; render({ animate: false }); }, t("图表指标")),

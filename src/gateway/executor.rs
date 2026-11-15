@@ -590,6 +590,7 @@ impl GatewayExecutor {
             model,
             model,
             routing.as_ref(),
+            &self.client_identity(headers),
             CacheShape::from_openai_responses(body),
         ))
     }
