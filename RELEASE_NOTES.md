@@ -1,4 +1,20 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.4
+
+### 体验优化
+
+- **用量按客户端区分**：用量明细新增「客户端」列和筛选，每条回复记录发起请求的访问密钥名称，可以按密钥查看各自的用量。
+- **Windows 控制台界面统一**：控制台排版、深色模式与模型表格宽度自适应做了统一调整，模型路由流程图与 macOS 保持一致，模型测速会显示实时进度。
+- **Docker 镜像更稳**：镜像内置 tini，不再需要 `--init` 或 `init: true`。
+
+### BUG 修复
+
+- 修复外部 API 调用（`/v1/chat/completions`、`/v1/responses`、`/v1/messages`）没有带会话头时，用量页不统计、上下文页没有记录的问题。现在网关按首条用户消息并结合调用方密钥推导会话，不同密钥互不混用；无法推导会话的请求归在「API」会话下计数。开启上下文引擎后，这类调用也会参与上下文管理（#131）。
+- 修复原生 Anthropic Messages 上游的直连请求不记录用量和失败的问题，包括 413 压缩图片重试后的失败（#131）。
+- 修复 Docker 在全新数据卷上首次启动时，因尚未配置服务商而直接退出的问题（`provider configuration is missing`）。现在面板会保持运行，在面板里添加第一个服务商后，网关自动在 8317 端口启动（#132）。
+- 修复 Codex 回放历史时因元数据差异导致已有摘要丢失的问题。
+- 修复 Windows 开机和升级后网关没有恢复运行的问题。
+
 ## v0.8.3
 
 ### 体验优化
@@ -345,6 +361,22 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.4
+
+### 體驗最佳化
+
+- **用量按用戶端區分**：用量明細新增「用戶端」欄和篩選，每筆回覆記錄發起請求的存取金鑰名稱，可以按金鑰查看各自的用量。
+- **Windows 控制台介面統一**：控制台排版、深色模式與模型表格寬度自適應做了統一調整，模型路由流程圖與 macOS 保持一致，模型測速會顯示即時進度。
+- **Docker 映像更穩**：映像內建 tini，不再需要 `--init` 或 `init: true`。
+
+### BUG 修復
+
+- 修復外部 API 呼叫（`/v1/chat/completions`、`/v1/responses`、`/v1/messages`）沒有帶會話標頭時，用量頁不統計、上下文頁沒有記錄的問題。現在閘道按首則使用者訊息並結合呼叫端金鑰推導會話，不同金鑰互不混用；無法推導會話的請求歸在「API」會話下計數。開啟上下文引擎後，這類呼叫也會參與上下文管理（#131）。
+- 修復原生 Anthropic Messages 上游的直連請求不記錄用量和失敗的問題，包括 413 壓縮圖片重試後的失敗（#131）。
+- 修復 Docker 在全新資料卷上首次啟動時，因尚未設定服務商而直接結束的問題（`provider configuration is missing`）。現在面板會保持執行，在面板裡新增第一個服務商後，閘道自動在 8317 連接埠啟動（#132）。
+- 修復 Codex 回放歷史時因中繼資料差異導致既有摘要遺失的問題。
+- 修復 Windows 開機和升級後閘道沒有恢復執行的問題。
+
 ## v0.8.3
 
 ### 體驗最佳化
@@ -691,6 +723,22 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.4
+
+### Improvements
+
+- **Usage by client**: the usage details gain a Client column and filter. Each reply records the name of the access key that sent the request, so usage can be read per key.
+- **Consistent Windows console UI**: console typography, dark mode and model table width now adapt consistently, the model routing diagrams match macOS, and model benchmarks show live progress.
+- **A steadier Docker image**: the image bundles tini, so `--init` or `init: true` is no longer needed.
+
+### Bug fixes
+
+- Fixed external API calls (`/v1/chat/completions`, `/v1/responses`, `/v1/messages`) without a session header being missing from the usage page and the context page. The gateway now derives a session from the first user message combined with the caller's key, so different keys never share one; requests that cannot yield a session are counted under an "API" session. With the context engine enabled, these calls also take part in context management (#131).
+- Fixed direct requests to native Anthropic Messages upstreams not recording usage or failures, including failures after the 413 compressed-image retry (#131).
+- Fixed Docker exiting on first start with a fresh data volume because no provider was configured yet (`provider configuration is missing`). The panel now keeps running, and the gateway starts on port 8317 once you add the first provider in the panel (#132).
+- Fixed Codex history replay losing existing summaries because of metadata differences.
+- Fixed the Windows gateway not coming back after startup or upgrade.
+
 ## v0.8.3
 
 ### Improvements
