@@ -158,7 +158,7 @@ async fn proxy_custom_responses_ws(
             .filter(|engine| engine.is_enabled())
     };
     let context_session = if context_engine.is_some() {
-        crate::gateway::context_session(state.gateway.as_ref(), headers, &body)?
+        crate::gateway::explicit_context_session(state.gateway.as_ref(), headers, &body)?
     } else {
         None
     };

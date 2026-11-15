@@ -194,24 +194,27 @@ pub(crate) fn stable_oneapi_routing(
                 context_namespace.as_bytes(),
             )
             .to_string(),
+            derived: false,
         }));
     }
 
-    let session_id = opencode_session
+    let explicit = opencode_session
         .or(prompt_cache_key)
         .or(x_session_id)
         .or(session_id)
         .map(str::to_owned)
-        .or_else(|| claude_metadata_session(body))
-        .or_else(|| derived_conversation_session(headers, body));
-    Ok(session_id.map(|session_id| {
-        let hash_key =
-            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string();
-        super::UpstreamRouting {
-            context_hash_key: hash_key.clone(),
-            hash_key,
-            session_id,
-        }
+        .or_else(|| claude_metadata_session(body));
+    let derived = explicit.is_none();
+    let Some(session_id) = explicit.or_else(|| derived_conversation_session(headers, body)) else {
+        return Ok(None);
+    };
+    let hash_key =
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string();
+    Ok(Some(super::UpstreamRouting {
+        context_hash_key: hash_key.clone(),
+        hash_key,
+        session_id,
+        derived,
     }))
 }
 
@@ -240,6 +243,14 @@ fn derived_conversation_session(
     match items {
         Value::String(text) => push_text(&mut anchor, &Value::String(text.clone())),
         Value::Array(items) => {
+            // A replayed compaction checkpoint is bound to the session that
+            // issued it. Deriving a new identity would make it unreadable.
+            if items
+                .iter()
+                .any(crate::context::checkpoint::is_checkpoint_item)
+            {
+                return None;
+            }
             let first_user = items
                 .iter()
                 .find(|item| item.get("role").and_then(Value::as_str) == Some("user"))?;
