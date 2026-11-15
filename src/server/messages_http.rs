@@ -143,7 +143,9 @@ pub(super) async fn messages_body(
         )
         .await;
     }
-    let hash_key = routing.map(|routing| routing.hash_key);
+    let hash_key = routing.as_ref().map(|routing| routing.hash_key.clone());
+    let client = state.gateway.client_identity(&headers);
+    let shape = crate::gateway::CacheShape::from_anthropic(&request);
     let mut passthrough_body = native_passthrough.then(|| {
         let mut raw = std::mem::take(&mut body);
         raw["model"] = json!(upstream_model_id);
@@ -159,49 +161,47 @@ pub(super) async fn messages_body(
             &mut passthrough_body,
         )
         .await;
-    let upstream = match first {
-        Ok(upstream) => upstream,
+    let attempt = match first {
         Err(error @ GatewayError::UpstreamStatus { status, .. })
             if status == StatusCode::PAYLOAD_TOO_LARGE =>
         {
             if let Some(original) = passthrough_body.take() {
                 body = original;
             }
-            let (fallback_body, stats) = crate::images::normalize_anthropic_images_blocking(
-                body,
-                crate::images::ImageCompressionProfile::PayloadFallback,
-            )
-            .await?;
-            if stats.normalized_images == 0 || stats.saved_bytes == 0 {
-                return Err(error);
-            }
-            tracing::warn!(
-                provider_id = provider.id(),
+            let send = NativeSend {
+                state: &state,
+                provider,
                 upstream_model_id,
-                normalized_images = stats.normalized_images,
-                saved_image_bytes = stats.saved_bytes,
-                "retrying Anthropic Messages request after 413 with aggressively compressed images"
-            );
-            let fallback_request =
-                normalize_message_request(&fallback_body, upstream_model_id, native_protocol)?;
-            let mut passthrough_body = native_passthrough.then(|| {
-                let mut raw = fallback_body;
-                raw["model"] = json!(upstream_model_id);
-                raw
-            });
-            state
-                .upstream
-                .anthropic_stream_with_web_search_retry(
-                    provider,
-                    fallback_request,
-                    hash_key.as_deref(),
-                    client_beta.as_deref(),
-                    &mut passthrough_body,
-                )
-                .await?
+                native_protocol,
+                native_passthrough,
+                hash_key: hash_key.as_deref(),
+                client_beta: client_beta.as_deref(),
+            };
+            send.retry_with_compressed_images(body, error).await?
         }
-        Err(error) => return Err(error),
+        other => other,
     };
+    let upstream = attempt.inspect_err(|error| {
+        record_native_failure(
+            &state,
+            provider.id(),
+            resolved.catalog_slug,
+            upstream_model_id,
+            routing.as_ref(),
+            &client,
+            error,
+        );
+    })?;
+    let observation = crate::gateway::record_provider_prefix(
+        &state.cache_shapes,
+        provider.id(),
+        resolved.catalog_slug,
+        upstream_model_id,
+        routing.as_ref(),
+        &client,
+        shape,
+    );
+    let upstream = crate::gateway::observe_upstream_cache_usage(upstream, observation).boxed();
     let stream = relay_anthropic_stream(upstream);
     let body = Body::from_stream(stream);
     Response::builder()
@@ -426,6 +426,90 @@ fn normalize_content_block(block: &Value, native: bool) -> Result<ContentBlock, 
     ContentBlock::deserialize(block).map_err(|error| {
         GatewayError::BadRequest(format!("invalid Anthropic content block: {error}"))
     })
+}
+
+/// Inputs shared by the direct Messages send and its 413 retry.
+struct NativeSend<'a> {
+    state: &'a AppState,
+    provider: &'a crate::provider::ProviderRuntime,
+    upstream_model_id: &'a str,
+    native_protocol: bool,
+    native_passthrough: bool,
+    hash_key: Option<&'a str>,
+    client_beta: Option<&'a str>,
+}
+
+impl NativeSend<'_> {
+    /// Resends a request the upstream rejected as too large with its images
+    /// compressed; returns the original rejection when nothing shrank.
+    async fn retry_with_compressed_images(
+        &self,
+        body: Value,
+        rejected: GatewayError,
+    ) -> Result<Result<AnthropicByteStream, GatewayError>, GatewayError> {
+        let (fallback_body, stats) = crate::images::normalize_anthropic_images_blocking(
+            body,
+            crate::images::ImageCompressionProfile::PayloadFallback,
+        )
+        .await?;
+        if stats.normalized_images == 0 || stats.saved_bytes == 0 {
+            return Ok(Err(rejected));
+        }
+        tracing::warn!(
+            provider_id = self.provider.id(),
+            upstream_model_id = self.upstream_model_id,
+            normalized_images = stats.normalized_images,
+            saved_image_bytes = stats.saved_bytes,
+            "retrying Anthropic Messages request after 413 with aggressively compressed images"
+        );
+        let fallback_request = normalize_message_request(
+            &fallback_body,
+            self.upstream_model_id,
+            self.native_protocol,
+        )?;
+        let mut passthrough_body = self.native_passthrough.then(|| {
+            let mut raw = fallback_body;
+            raw["model"] = json!(self.upstream_model_id);
+            raw
+        });
+        Ok(self
+            .state
+            .upstream
+            .anthropic_stream_with_web_search_retry(
+                self.provider,
+                fallback_request,
+                self.hash_key,
+                self.client_beta,
+                &mut passthrough_body,
+            )
+            .await)
+    }
+}
+
+/// Direct Messages requests skip the shared provider path, so their upstream
+/// failures are counted here.
+fn record_native_failure(
+    state: &AppState,
+    provider_id: &str,
+    catalog_slug: &str,
+    upstream_model_id: &str,
+    routing: Option<&crate::gateway::UpstreamRouting>,
+    client: &str,
+    error: &GatewayError,
+) {
+    if let Some(reason) = crate::gateway::upstream_failure_reason(error) {
+        state
+            .cache_shapes
+            .record_failed_turn(crate::gateway::FailedTurn {
+                provider_id,
+                catalog_slug,
+                upstream_model_id,
+                routing,
+                client,
+                protocol: ProviderProtocol::AnthropicMessages,
+                error: reason,
+            });
+    }
 }
 
 fn relay_anthropic_stream(

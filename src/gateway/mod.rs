@@ -13,7 +13,7 @@ mod responses;
 mod router;
 
 pub(crate) use cache_shape::{
-    CacheShape, CacheShapeTracker, PrefixObservation, UpstreamCacheObserver,
+    CacheShape, CacheShapeTracker, FailedTurn, PrefixObservation, UpstreamCacheObserver,
     observe_upstream_cache_usage, record_provider_prefix,
 };
 pub(crate) use cache_usage::{DailyTokenUsage, ProviderTokenUsage, TokenUsageAggregator};
@@ -21,7 +21,9 @@ pub(crate) use compaction::prepare_compaction_replay;
 pub(crate) use context_loop::{context_input, context_session};
 pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
-pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};
+pub(crate) use provider::{
+    ProviderResponseRequest, stream_provider_response, upstream_failure_reason,
+};
 pub(crate) use responses::collect_response_stream;
 pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,

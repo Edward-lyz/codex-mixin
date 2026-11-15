@@ -622,8 +622,13 @@ impl TokenUsageAggregator {
                 );
             }
         }
+        let anonymous = crate::usage::session_tag(crate::usage::ANONYMOUS_SESSION);
         for turn in &mut turns {
-            turn.session_display = titles.get(&turn.session).cloned().flatten();
+            turn.session_display = if turn.session == anonymous {
+                Some(crate::usage::ANONYMOUS_SESSION_LABEL.to_owned())
+            } else {
+                titles.get(&turn.session).cloned().flatten()
+            };
         }
         turns
     }

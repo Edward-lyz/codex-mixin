@@ -6,7 +6,10 @@
 [上下文引擎使用指南 / Wiki 源稿](wiki/Context-Engine.md)。
 
 **适用路径**：引擎运行于共享 Responses 请求回路，需要会话标识与支持的 input
-或链式续接。原生 Anthropic Messages 请求在启用引擎、有会话标识且内容可映射时
+或链式续接。外部 API 调用（chat/completions、responses、messages）没带
+`thread-id`、`session-id`、`prompt_cache_key` 等会话头时，网关按对话开头（首条用户消息）
+推导稳定会话（按首条用户消息并按调用方密钥隔离），同一段对话的多轮请求归入同一条归档，并同时进入用量明细。
+原生 Anthropic Messages 请求在启用引擎、有会话标识且内容可映射时
 也接入该回路，保留 thinking 签名、beta、原生选项与 Messages 响应。托管工具和
 无法保真映射的原生内容块继续直通，不启用压缩。因此开启全局开关不代表所有请求都参与；
 下文的 compact 接管特指 Responses compact / compaction_trigger。

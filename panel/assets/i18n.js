@@ -132,6 +132,8 @@ const EN = {
  "时间": "Time",
  "状态": "Status",
  "会话": "Session",
+ "客户端": "Client",
+ "全部客户端": "All clients",
  "模型": "Model",
  "命中缓存": "Cache hits",
  "思考 Token": "Reasoning tokens",

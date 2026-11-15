@@ -12,6 +12,6 @@ mod tracking;
 
 pub(crate) use shape::CacheShape;
 pub(crate) use tracking::{
-    CacheShapeTracker, PrefixObservation, UpstreamCacheObserver, contains_output_delta,
+    CacheShapeTracker, FailedTurn, PrefixObservation, UpstreamCacheObserver, contains_output_delta,
     observe_upstream_cache_usage, record_provider_prefix, stream_failure,
 };

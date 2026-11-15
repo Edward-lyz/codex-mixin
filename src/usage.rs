@@ -53,10 +53,11 @@ CREATE INDEX IF NOT EXISTS token_usage_turns_at ON token_usage_turns (at_ms);";
 
 /// Ledger columns added after the first release; older ledgers gain them on the
 /// next write and read them as completed replies until then.
-const TURN_STATUS_COLUMNS: [(&str, &str); 3] = [
+const TURN_STATUS_COLUMNS: [(&str, &str); 4] = [
     ("status", "TEXT NOT NULL DEFAULT 'completed'"),
     ("error", "TEXT"),
     ("estimated_cost_usd", "REAL"),
+    ("client", "TEXT"),
 ];
 
 /// Longest upstream failure summary kept per reply.
@@ -98,6 +99,10 @@ pub(crate) struct TurnUsage {
     pub(crate) session: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) session_display: Option<String>,
+    /// Authenticated gateway client (the API key's name) that sent the
+    /// request, so usage can be read per key as well as per provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) client: Option<String>,
     pub(crate) provider_id: String,
     pub(crate) catalog_slug: String,
     pub(crate) upstream_model_id: String,
@@ -164,6 +169,13 @@ pub(crate) fn first_day_start_ms(days: u64) -> u64 {
     let today = unix_millis() / DAY_MS;
     today.saturating_sub(days.saturating_sub(1)) * DAY_MS
 }
+
+/// Session id for requests that carry no conversation identity. They are
+/// grouped under one label so the usage page still lists them.
+pub(crate) const ANONYMOUS_SESSION: &str = "anonymous-api";
+
+/// Label the usage page shows for [`ANONYMOUS_SESSION`] rows.
+pub(crate) const ANONYMOUS_SESSION_LABEL: &str = "API";
 
 pub(crate) fn session_tag(session_id: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -362,13 +374,14 @@ fn query_turns(
     } else {
         "NULL"
     };
+    let client_column = if has("client") { "client" } else { "NULL" };
     // Inserts run on the blocking pool and may land out of order, so order by
     // the reply timestamp rather than the row id.
     let mut statement = connection.prepare(&format!(
         "SELECT at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
                 protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
                 output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps,
-                {status_columns}, {cost_column}
+                {status_columns}, {cost_column}, {client_column}
          FROM token_usage_turns
          WHERE (?1 IS NULL OR at_ms >= ?1) AND (?2 IS NULL OR provider_id = ?2)
                AND (?3 IS NULL OR at_ms < ?3)
@@ -395,6 +408,7 @@ fn query_turns(
                 at_ms: row.get(0)?,
                 session: row.get(1)?,
                 session_display: None,
+                client: row.get(19)?,
                 provider_id,
                 catalog_slug: row.get(3)?,
                 upstream_model_id: row.get(4)?,
@@ -459,9 +473,9 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
             at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
             protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
             output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps, status, error,
-            estimated_cost_usd
+            estimated_cost_usd, client
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                   ?19)",
+                   ?19, ?20)",
         params![
             turn.at_ms,
             turn.session,
@@ -482,6 +496,7 @@ fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
             turn.status.as_str(),
             turn.error,
             turn.estimated_cost_usd,
+            turn.client,
         ],
     )?;
     connection.execute(
