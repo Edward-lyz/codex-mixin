@@ -8,7 +8,7 @@
 
 ## 产品原则：CLI 是核心，GUI 是外壳
 
-Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WPF App 和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
+Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。`desktop/CodexMixin` 的 Avalonia + TKCode.Arc 桌面控制台、macOS 原生菜单栏与 Web 控制面板是同一能力的交互外壳，不是独立业务实现。共享桌面控制台复用 `windows/Core` 的严格 CLI contract adapter；平台窗口、托盘和更新留在 GUI 壳中。
 
 - 新增业务必须先提供可在 `--no-tui` 下使用的 CLI 入口及可验证的 Rust 用例；自动化调用需要稳定 JSON 输出与结构化错误。无 GUI 环境也必须能配置、运行、诊断和恢复。
 - “CLI 是核心”不等于把业务都塞进 `src/cli/`。参数、输入、渲染与退出码属于 CLI；业务规则、提交顺序和可复用能力属于 `application` 及下层模块。
@@ -38,7 +38,7 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 | `crates/platform/` | OS adapter | 路径、权限、进程、终端、系统服务、安装与签名的平台差异 |
 | `src/catalog/` | 模型目录 | 来源合并、生成、缓存；不参与请求发送或 UI |
 | `src/benchmark/`、`src/web_search/`、`src/images/`、`src/ech/` | 专用能力 | 按 `src/AGENTS.md` 处理探测、媒体或连接；不引用上层控制面 |
-| `macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
+| `desktop/`、`macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
 
 `crates/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达（`check_arch.sh` 检查）。`tests/` 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
 

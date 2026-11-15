@@ -460,4 +460,6 @@
 "routing.enabledFor" = "Enable %@";
 
 "update.backgroundInProgress" = "Background update in progress";
+"console.closeBeforeQuit" = "Save your changes and close the console first.";
+"console.closeBeforeUpdate" = "Save your changes and close the console before updating the app.";
 "update.backgroundInProgressHelp" = "An update check or download is running in the background. Please check again shortly. Downloaded updates will install automatically when the gateway is idle.";

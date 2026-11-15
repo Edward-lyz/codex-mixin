@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var providerUsageDashboardView: ProviderUsageDashboardView?
     var echMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
+    var arcConsoleProcess: Process?
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
     var consoleContainer: ConsoleContainerController?

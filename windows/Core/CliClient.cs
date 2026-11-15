@@ -27,19 +27,20 @@ internal sealed class CliClient(string executable)
     {
         // Only trust the package or a repository ancestor, never PATH/current directory.
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        var packaged = Path.Combine(directory.FullName, "codex-mixin.exe");
+        var executableName = OperatingSystem.IsWindows() ? "codex-mixin.exe" : "codex-mixin";
+        var packaged = Path.Combine(directory.FullName, executableName);
         if (File.Exists(packaged)) return new(packaged);
         for (var current = directory; current != null; current = current.Parent)
         {
             if (!File.Exists(Path.Combine(current.FullName, "Cargo.toml"))) continue;
             foreach (var configuration in new[] { "release", "debug" })
             {
-                var candidate = Path.Combine(current.FullName, "target", configuration, "codex-mixin.exe");
+                var candidate = Path.Combine(current.FullName, "target", configuration, executableName);
                 if (File.Exists(candidate)) return new(candidate);
             }
             break;
         }
-        throw new FileNotFoundException(Localized.Get("找不到 codex-mixin.exe。请使用完整发布包，或先构建 Rust CLI。"));
+        throw new FileNotFoundException(Localized.Get("找不到 Rust CLI。请使用完整发布包，或先构建 Rust CLI。"));
     }
 
     internal async Task<JsonElement> QueryAsync(string[] args, CancellationToken cancellation, TimeSpan? timeout = null)
@@ -144,7 +145,14 @@ internal sealed class CliClient(string executable)
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout ?? TimeSpan.FromMinutes(20));
         using var process = new Process { StartInfo = start };
-        if (!process.Start()) throw new CliFailure(Localized.Get("无法启动 Rust CLI。"));
+        try
+        {
+            if (!process.Start()) throw new CliFailure(Localized.Get("无法启动 Rust CLI。"));
+        }
+        catch (System.ComponentModel.Win32Exception error)
+        {
+            throw new CliFailure(Localized.Get("无法启动 Rust CLI。") + " " + error.Message);
+        }
         // GUI callers must never inherit a terminal input handle. DUCX uses
         // this distinction to open its visible QR login window.
         process.StandardInput.Close();

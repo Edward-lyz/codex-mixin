@@ -8,6 +8,11 @@ extension AppDelegate: SPUUpdaterDelegate {
 
     @MainActor
     @objc func checkForUpdatesFromMenu() {
+        guard arcConsoleProcess?.isRunning != true else {
+            showAlert(title: AppLocalization.string("console.windowTitle"),
+                      message: AppLocalization.string("console.closeBeforeUpdate"))
+            return
+        }
         guard let updater, let driver = updateDriver else { return }
         // Hand a staged background update to Sparkle's standard UI instead
         // of silently ignoring a manual check while the idle gate is pending.
@@ -59,6 +64,7 @@ extension AppDelegate: SPUUpdaterDelegate {
     }
 
     private func tickAutomaticUpdate() async {
+        guard arcConsoleProcess?.isRunning != true else { return }
         guard let updater, let driver = updateDriver, !serviceBusy else { return }
         if let reply = driver.pendingInstall {
             do {
@@ -66,6 +72,7 @@ extension AppDelegate: SPUUpdaterDelegate {
                 guard let bytes = output.data(using: .utf8),
                       let status = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
                       silentUpdatePolicy.canInstall(status: status),
+                      arcConsoleProcess?.isRunning != true,
                       !Task.isCancelled, !serviceBusy,
                       driver.silent, driver.pendingInstall != nil
                 else { return }

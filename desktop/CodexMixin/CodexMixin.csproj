@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>codex_mixin_ui</AssemblyName>
+    <RootNamespace>CodexMixin</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <DefineConstants Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.5" />
+    <PackageReference Include="TKCode.Arc" Version="1.1.0" />
+    <PackageReference Include="TKCode.Arc.Blocks" Version="1.1.0" />
+    <PackageReference Include="TKCode.Arc.Workflow" Version="1.1.0" />
+    <PackageReference Include="TKCode.Arc.AdvancedCharts" Version="1.1.0" />
+    <Compile Include="../../windows/Core/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../windows/Core/Strings.resx" LogicalName="CodexMixin.Strings.resources" />
+    <AvaloniaResource Include="../../panel/assets/logo.png" Link="Assets/logo.png" />
+    <Content Include="../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">
+    <Content Include="../../windows/build/winsparkle/WinSparkle.dll;../../windows/build/winsparkle/WinSparkle.PublicKey.txt;../../windows/build/winsparkle/WinSparkle.LICENSE.txt;../../windows/build/winsparkle/WinSparkle.Expat.LICENSE.txt" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../windows/scripts/install-update.ps1" Link="install-update.ps1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

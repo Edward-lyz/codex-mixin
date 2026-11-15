@@ -159,7 +159,7 @@ curl http://127.0.0.1:8317/v1/models                      # 返回模型列表�
 
 ## 界面
 
-macOS 提供原生菜单栏与控制台，Windows 提供 WPF 控制台与托盘，Linux 使用 CLI 和 Web 面板。三端功能一致。
+macOS、Windows 和 Linux 共用 Avalonia + TKCode.Arc 桌面控制台，提供统一的弹簧动效、明暗主题、路由画布和用量图表。macOS 保留原生菜单栏与 Sparkle 更新，Windows 提供原生托盘菜单；无桌面环境可使用 CLI 和 Web 面板。构建方式见 [桌面 UI](desktop/README.md)。
 
 <table>
   <tr>

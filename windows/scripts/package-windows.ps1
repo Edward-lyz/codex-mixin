@@ -106,7 +106,7 @@ if ($SkipCliTests -and -not $prebuiltCli) {
   throw "SkipCliTests requires CliPath so the skipped tests cover the packaged binary"
 }
 
-Write-Host "== Preparing Rust CLI and native WPF UI =="
+Write-Host "== Preparing Rust CLI and Arc desktop UI =="
 Push-Location $repo
 try {
   & (Join-Path $PSScriptRoot "generate-windows-assets.ps1")
@@ -121,8 +121,9 @@ try {
   if (-not $uiPublish) {
     $uiPublish = Join-Path $repo "windows\build\publish"
     if (Test-Path -LiteralPath $uiPublish) { Remove-Item -LiteralPath $uiPublish -Recurse -Force }
-    dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -p:Version=$numericVersion -o $uiPublish
-    if ($LASTEXITCODE -ne 0) { throw "WPF publish failed" }
+    & (Join-Path $PSScriptRoot "fetch-winsparkle.ps1")
+    dotnet publish desktop/CodexMixin/CodexMixin.csproj -c Release -r win-x64 --self-contained true -p:Version=$numericVersion -o $uiPublish
+    if ($LASTEXITCODE -ne 0) { throw "Arc desktop publish failed" }
   }
 } finally { Pop-Location }
 Write-Host "== Assembling app directory: $Output =="

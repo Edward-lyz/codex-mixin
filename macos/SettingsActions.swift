@@ -26,96 +26,30 @@ extension AppDelegate {
         showConsole(consoleContainer?.currentPage ?? lastConsolePage)
     }
 
-    /// The console reuses the provider settings window: its controller keeps
-    /// owning draft prompts and close confirmation, while the window content
-    /// becomes a page container that adds the agent and usage pages.
+    /// AppKit keeps the system menu and updater; Arc owns the shared console.
     func showConsole(_ page: ConsolePage) {
         lastConsolePage = page
-        ensureProviderSettingsController()
-        guard let controller = providerSettingsWindowController,
-              let window = controller.window
-        else { return }
-        if consoleContainer == nil, let providerPage = window.contentViewController {
-            let agentModel = makeAgentManagementModel()
-            let usageModel = ConsoleUsageModel(loader: { [weak self] days, turnLimit in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                async let daily = self.runGateway(["usage", "--daily", "--json", "--days", "\(days)"])
-                async let turns = self.runGateway([
-                    "usage", "--turns", "--json", "--days", "\(days)", "--limit", "\(turnLimit)",
-                ])
-                async let providerList = self.runGateway(["providers", "list", "--json"])
-                let providers = try decodeProviderList(try await providerList).providers
-                let byName = Dictionary(grouping: providers, by: \.displayName)
-                let names = Dictionary(uniqueKeysWithValues: providers.map { provider in
-                    (provider.id, byName[provider.displayName]?.count == 1
-                        ? provider.displayName : "\(provider.displayName) (\(provider.id))")
-                })
-                let websites = providers.reduce(into: [String: String]()) { result, provider in
-                    result[provider.id] = provider.websiteURL
-                }
-                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns), names, websites)
-            }, slotLoader: { [weak self] interval in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                let toMilliseconds = { (date: Date) in Int64(date.timeIntervalSince1970 * 1000) }
-                return try parseTurnUsage(try await self.runGateway([
-                    "usage", "--turns", "--json", "--limit", "5000",
-                    "--since-ms", "\(toMilliseconds(interval.start))",
-                    "--until-ms", "\(toMilliseconds(interval.end))",
-                ]))
-            })
-            let contextModel = ContextSettingsModel(loader: { [weak self] in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                return try parseContextSettings(
-                    try await self.runGateway(["context", "config", "get", "--json"])
-                )
-            }, statsLoader: { [weak self] in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                return try parseContextStats(
-                    try await self.runGateway(["context", "stats", "--json"])
-                )
-            }, saver: { [weak self] arguments in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                do {
-                    return try parseContextSettings(try await self.runGateway(arguments))
-                } catch {
-                    throw ContextSettingsError.from(error)
-                }
-            }, archiveLoader: { [weak self] session in
-                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
-                return try ContextArchive(try await self.runGateway(["context", "export", "--compact", "--session=\(session)"]))
-            })
-            let routingModel = makeModelRoutingModel()
-            let container = ConsoleContainerController(
-                pages: [
-                    .providers: { providerPage },
-                    .agents: { makeAgentManagementPageController(model: agentModel) },
-                    .usage: { NSHostingController(rootView: AnyView(ConsoleUsageView(model: usageModel))) },
-                    .context: { NSHostingController(
-                        rootView: AnyView(ContextSettingsView(model: contextModel))
-                    ) },
-                    .routing: { NSHostingController(rootView: AnyView(ModelRoutingView(model: routingModel))) },
-                ],
-                onShow: { page in
-                    switch page {
-                    case .agents: await agentModel.refresh()
-                    case .usage: await usageModel.refresh()
-                    case .context: await contextModel.reloadOnShow()
-                    case .routing: await routingModel.reloadOnShow()
-                    case .providers: break
-                    }
-                }
-            )
-            // Swapping the content controller resizes the window to the new
-            // view's empty frame, so keep the provider window's frame.
-            let frame = window.frame
-            window.contentViewController = container
-            window.setFrame(frame, display: false)
-            window.title = AppLocalization.string("console.windowTitle")
-            container.installToolbar(in: window)
-            consoleContainer = container
+        let key: String
+        switch page {
+        case .providers: key = "providers"
+        case .agents: key = "agents"
+        case .usage: key = "usage"
+        case .context: key = "context"
+        case .routing: key = "routing"
         }
-        controller.present()
-        consoleContainer?.show(page)
+        let process = Process()
+        process.executableURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/codex_mixin_ui")
+        process.arguments = ["--hosted", "--page=\(key)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            if arcConsoleProcess?.isRunning != true { arcConsoleProcess = process }
+        } catch {
+            showAlert(title: AppLocalization.string("console.windowTitle"),
+                      message: localizedErrorDescription(error))
+        }
     }
 
     private func ensureProviderSettingsController() {

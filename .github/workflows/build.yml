@@ -104,6 +104,9 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
@@ -173,7 +176,9 @@ jobs:
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "$VERSION" dist/release
       - name: Package Linux installer
         if: matrix.os == 'linux'
-        run: ./scripts/package-linux-deb.sh "${{ matrix.target }}" "${{ matrix.deb_arch }}" "$VERSION" dist/release
+        run: |
+          ./desktop/package-linux.sh "${{ matrix.target }}" "$VERSION" dist/release
+          ./scripts/package-linux-deb.sh "${{ matrix.target }}" "${{ matrix.deb_arch }}" "$VERSION" dist/release
       - name: Package macOS installer
         if: matrix.os == 'macos'
         run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "$VERSION" dist/release

@@ -78,7 +78,7 @@ jobs:
 
   native:
     if: ${{ !inputs.artifacts_run_id }}
-    name: WPF build and adapter tests
+    name: Arc desktop build and adapter tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -114,8 +114,9 @@ jobs:
           ).Groups[1].Value
           if (-not $version) { throw 'Cargo package version is missing' }
           $numericVersion = ($version -split '-', 2)[0]
-          dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release `
-            -p:Platform=x64 -p:Version=$numericVersion -o windows/build/publish
+          ./windows/scripts/fetch-winsparkle.ps1
+          dotnet publish desktop/CodexMixin/CodexMixin.csproj -c Release `
+            -r win-x64 --self-contained true -p:Version=$numericVersion -o windows/build/publish
       - uses: actions/upload-artifact@v7
         with:
           name: windows-native-ui

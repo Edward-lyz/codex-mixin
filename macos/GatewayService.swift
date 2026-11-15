@@ -221,6 +221,11 @@ extension AppDelegate {
     /// under the CLI's own login startup, and the menu app's login launch
     /// exits at once until the user opens the app again.
     @objc func enterLightweightMode() {
+        guard arcConsoleProcess?.isRunning != true else {
+            showAlert(title: AppLocalization.string("console.windowTitle"),
+                      message: AppLocalization.string("console.closeBeforeQuit"))
+            return
+        }
         guard isRunning else {
             showAlert(
                 title: AppLocalization.string("lightweight.failedTitle"),
@@ -257,6 +262,11 @@ extension AppDelegate {
     /// Quit is a real quit: the gateway stops even when a client still routes
     /// through it.
     private func quitApplication() {
+        guard arcConsoleProcess?.isRunning != true else {
+            showAlert(title: AppLocalization.string("console.windowTitle"),
+                      message: AppLocalization.string("console.closeBeforeQuit"))
+            return
+        }
         serviceBusy = true
         serviceStatus = "正在停止本地网关并退出..."
         serviceEndpoint = nil

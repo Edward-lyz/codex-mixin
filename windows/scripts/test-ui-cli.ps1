@@ -47,6 +47,27 @@ foreach ($entry in $isolatedEnvironment.GetEnumerator()) {
 $null = [IO.Directory]::CreateDirectory($env:HOME)
 $null = [IO.Directory]::CreateDirectory($env:CODEX_HOME)
 
+function Wait-UiIdle {
+    # RunActionAsync disables refresh while it runs and the page reloads; idle means both finished.
+    & $WinApp ui wait-for shell-refresh -a $app.Id --property IsEnabled --value True --timeout 90000
+}
+function Open-Provider {
+    & $WinApp ui click provider-card-ui-local -a $app.Id
+    & $WinApp ui wait-for provider-models-save -a $app.Id --timeout 15000
+}
+function Select-Option([string]$Select, [string]$Text) {
+    & $WinApp ui click $Select -a $app.Id
+    $option = & $WinApp ui search $Text -a $app.Id --json | ConvertFrom-Json
+    if (@($option.matches).Count -eq 0) { throw "Option '$Text' was not offered by $Select" }
+    # Arc popups draw options themselves; click the last match, the one inside the open popup.
+    & $WinApp ui click $option.matches[-1].selector -a $app.Id
+}
+
+function Invoke-AppExit {
+    & $WinApp ui invoke shell-menu -a $app.Id
+    & $WinApp ui invoke shell-quit -a $app.Id
+}
+
 try {
     $stage = 'local upstream'
     # A disposable loopback fixture, never a paid provider or a user credential.
@@ -70,79 +91,67 @@ try {
     @{ gui = $guiVersion; cli = $interface.version } | ConvertTo-Json | Set-Content "$evidence\versions.json"
     $appStartedAt = [DateTime]::Now
     $app = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -PassThru
-    & $WinApp ui wait-for operation-status -a $app.Id --timeout 60000
-    & $WinApp ui wait-for operation-status -a $app.Id --value '连接 CLI完成' --contains --timeout 90000
+    & $WinApp ui wait-for provider-add-card -a $app.Id --timeout 90000
+    & $WinApp ui wait-for 刷新 -a $app.Id --property IsEnabled --value True --timeout 90000
     & $WinApp ui send-keys escape -a $app.Id --via send-input
     & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\initial-tree.json"
     & $WinApp ui screenshot -a $app.Id --output "$evidence\initial.png"
-    $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
-    & $WinApp ui invoke $add.matches[0].selector -a $app.Id
-    & $WinApp ui wait-for PrimaryButton -a $app.Id --timeout 5000
+    # With no provider the Arc add card starts expanded.
+    & $WinApp ui wait-for provider-new-preset -a $app.Id --timeout 10000
     & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\add-provider-tree.json"
     & $WinApp ui screenshot -a $app.Id --output "$evidence\add-provider.png"
-    $completed.Add('launch, real CLI connection, interactive desktop and provider dialog')
+    $completed.Add('launch, real CLI connection, interactive desktop and provider form')
 
     $stage = 'provider cancel and save'
-    & $WinApp ui invoke CloseButton -a $app.Id
+    # Abandon a half-filled form through the shell's discard confirmation.
+    & $WinApp ui set-value provider-new-id cancelled-provider -a $app.Id
+    & $WinApp ui invoke 刷新 -a $app.Id
+    & $WinApp ui invoke 取消 -a $app.Id
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     if (@($listed.providers).Count -ne 0) { throw 'Cancel created a provider' }
-    $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
-    & $WinApp ui invoke $add.matches[0].selector -a $app.Id
-    & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
-    $option = & $WinApp ui search 'custom' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    # WPF also exposes open ComboBox items through the popup window as wrapper peers
-    # without SelectionItemPattern; click the visible item like a user would.
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
-    $field = & $WinApp ui search '供应商 ID' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector ui-local -a $app.Id
-    $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector 'UI local provider' -a $app.Id
-    & $WinApp ui set-value provider-base-url $upstreamUrl -a $app.Id
-    & $WinApp ui invoke '协议（custom）' -a $app.Id --action expand
-    $option = & $WinApp ui search 'open_ai_chat' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
-    $field = & $WinApp ui search 'API Key' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector ui-fixture-key -a $app.Id
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
+    Select-Option provider-new-preset 'Custom'
+    & $WinApp ui set-value provider-new-id ui-local -a $app.Id
+    & $WinApp ui set-value provider-new-name 'UI local provider' -a $app.Id
+    & $WinApp ui set-value provider-new-base-url $upstreamUrl -a $app.Id
+    Select-Option provider-new-protocol 'Chat Completions'
+    & $WinApp ui set-value provider-new-key ui-fixture-key -a $app.Id
+    & $WinApp ui invoke provider-new-save -a $app.Id
+    Wait-UiIdle
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
-    if ($provider.display_name -ne 'UI local provider' -or $provider.base_url -ne $upstreamUrl) { throw 'UI provider save differs from CLI state' }
+    if ($null -eq $provider -or $provider.display_name -ne 'UI local provider' -or $provider.base_url -ne $upstreamUrl) { throw 'UI provider save differs from CLI state' }
     if ($provider.protocol -ne 'open_ai_chat' -or $provider.api_path -ne '/v1/chat/completions') { throw 'Explicit Chat protocol did not select its default API endpoint' }
     $completed.Add($stage)
 
     $stage = 'model selection, search, context and apply'
+    Open-Provider
     & $WinApp ui wait-for model-table -a $app.Id --timeout 15000
     foreach ($model in @($provider.selected_models | Where-Object { $_ -ne 'shared' })) {
-        & $WinApp ui invoke "$model 加入 Codex" -a $app.Id --action toggle
+        & $WinApp ui invoke "model-check-$model" -a $app.Id --action toggle
     }
-    if ('shared' -notin $provider.selected_models) { & $WinApp ui invoke 'shared 加入 Codex' -a $app.Id --action toggle }
-    $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector shared -a $app.Id
-    & $WinApp ui wait-for $field.matches[0].selector -a $app.Id --value shared --timeout 5000
-    & $WinApp ui invoke 'shared 上下文' -a $app.Id
-    $field = & $WinApp ui search '上下文 Token 数' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector 16384 -a $app.Id
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
+    if ('shared' -notin $provider.selected_models) { & $WinApp ui invoke model-check-shared -a $app.Id --action toggle }
+    & $WinApp ui set-value provider-model-search shared -a $app.Id
+    & $WinApp ui wait-for provider-model-search -a $app.Id --value shared --timeout 5000
+    & $WinApp ui set-value model-context-shared 16384 -a $app.Id
+    & $WinApp ui invoke provider-models-save -a $app.Id
+    Wait-UiIdle
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
     if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared' -or $provider.model_context_overrides.shared -ne 16384) { throw 'Model draft was not persisted by the UI' }
     $completed.Add($stage)
 
     $stage = 'provider edit and refresh'
-    & $WinApp ui invoke provider-connection-tab -a $app.Id --action select
-    & $WinApp ui wait-for provider-base-url -a $app.Id --timeout 10000
-    $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector 'UI local edited' -a $app.Id
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存供应商完成' --contains --timeout 90000
+    Open-Provider
+    & $WinApp ui click provider-connection-ui-local -a $app.Id
+    & $WinApp ui wait-for provider-edit-base-url -a $app.Id --timeout 10000
+    & $WinApp ui set-value provider-edit-name 'UI local edited' -a $app.Id
+    & $WinApp ui invoke provider-edit-save -a $app.Id
+    Wait-UiIdle
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     if (@($listed.providers | Where-Object id -eq 'ui-local')[0].display_name -ne 'UI local edited') { throw 'Provider edit was not saved' }
-    & $WinApp ui invoke provider-models-tab -a $app.Id --action select
     & $WinApp ui invoke 刷新 -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新完成' --contains --timeout 90000
+    Wait-UiIdle
+    Open-Provider
     & $WinApp ui screenshot -a $app.Id --output "$evidence\models.png"
     $completed.Add($stage)
 
@@ -151,28 +160,30 @@ try {
     try {
         [IO.File]::WriteAllText($env:CODEX_GATEWAY_CONFIG, '{')
         & $WinApp ui invoke 刷新 -a $app.Id
-        & $WinApp ui wait-for operation-status -a $app.Id --value '刷新失败' --timeout 90000
+        # The shell reports the CLI failure in its status line; the page must not claim success.
+        & $WinApp ui wait-for operation-status -a $app.Id --timeout 90000
         & $WinApp ui screenshot -a $app.Id --output "$evidence\cli-error.png"
     }
     finally { [IO.File]::WriteAllBytes($env:CODEX_GATEWAY_CONFIG, $configBytes) }
     & $WinApp ui invoke 刷新 -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新完成' --contains --timeout 90000
+    Wait-UiIdle
+    & $WinApp ui wait-for provider-card-ui-local -a $app.Id --timeout 30000
     $completed.Add($stage)
 
     $stage = 'model discovery, capability probe and benchmark'
-    & $WinApp ui invoke 更多模型操作 -a $app.Id
-    & $WinApp ui invoke 刷新模型列表 -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '刷新模型完成' --contains --timeout 90000
-    & $WinApp ui invoke 更多模型操作 -a $app.Id
-    & $WinApp ui invoke 重新探测已加入模型的能力 -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '探测模型能力完成' --contains --timeout 90000
+    Open-Provider
+    & $WinApp ui invoke provider-models-discover -a $app.Id
+    Wait-UiIdle
+    Open-Provider
+    & $WinApp ui invoke provider-models-probe -a $app.Id
+    Wait-UiIdle
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
     if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared') { throw 'Discovery or probe changed the selected models' }
     & $cli --no-tui --json-errors service start
-    & $WinApp ui invoke 更多模型操作 -a $app.Id
-    & $WinApp ui invoke '测试已加入的 1 个模型' -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '启动模型测速完成' --contains --timeout 90000
+    Open-Provider
+    & $WinApp ui invoke provider-models-benchmark -a $app.Id
+    Wait-UiIdle
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     do {
         $benchmark = & $cli --no-tui --json-errors benchmark status | ConvertFrom-Json
@@ -186,67 +197,58 @@ try {
     $completed.Add($stage)
 
     $stage = 'Codex mode, cancel, connect and disconnect'
-    & $WinApp ui invoke console-agents-tab -a $app.Id --action select
+    & $WinApp ui send-keys ctrl+2 -a $app.Id --via send-input
     & $WinApp ui wait-for agent-summary -a $app.Id --timeout 30000
-    & $WinApp ui invoke agent-undetected -a $app.Id --action expand
-    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
-    & $WinApp ui wait-for PrimaryButton -a $app.Id --timeout 10000
-    & $WinApp ui invoke CloseButton -a $app.Id
+    & $WinApp ui click agent-undetected -a $app.Id
+    & $WinApp ui click agent-card-codex -a $app.Id
+    & $WinApp ui wait-for agent-codex-mode -a $app.Id --timeout 10000
+    Select-Option agent-codex-mode '仅自定义模型'
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
-    if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Cancelled Codex connection mutated CLI state' }
-    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
-    & $WinApp ui invoke 接入模式 -a $app.Id --action expand
-    $option = & $WinApp ui search '仅自定义模型' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '接入 Agent完成' --contains --timeout 90000
+    if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Choosing a Codex mode mutated CLI state' }
+    & $WinApp ui invoke agent-switch-codex -a $app.Id --action toggle
+    Wait-UiIdle
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
     $codex = @($agents.agents | Where-Object id -eq 'codex')[0]
     if ($codex.integration.state -ne 'managed' -or $codex.integration.mode -ne 'custom_only') { throw 'Codex switch failed to save the selected mode' }
     & $WinApp ui screenshot -a $app.Id --output "$evidence\agents.png"
-    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
-    & $WinApp ui invoke CloseButton -a $app.Id
+    & $WinApp ui click agent-card-codex -a $app.Id
+    & $WinApp ui invoke agent-switch-codex -a $app.Id --action toggle
+    & $WinApp ui invoke 取消 -a $app.Id
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
     if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'managed') { throw 'Cancelled disconnect removed Codex integration' }
-    & $WinApp ui invoke 'Codex 接入' -a $app.Id --action toggle
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '断开 Agent完成' --contains --timeout 90000
+    & $WinApp ui invoke agent-switch-codex -a $app.Id --action toggle
+    & $WinApp ui invoke 确认 -a $app.Id
+    Wait-UiIdle
     $agents = & $cli --no-tui --json-errors agent list --json | ConvertFrom-Json
     if (@($agents.agents | Where-Object id -eq 'codex')[0].integration.state -ne 'unmanaged') { throw 'Codex disconnect did not restore unmanaged state' }
     $completed.Add($stage)
 
     $stage = 'context toggle and save'
-    & $WinApp ui invoke console-context-tab -a $app.Id --action select
-    # The settings card appears before the statistics query finishes. Presence
-    # alone does not mean PageShell has been re-enabled for automation edits.
-    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
-    & $WinApp ui wait-for context-enabled -a $app.Id --property IsEnabled --value True --timeout 30000
+    # The console is one window; the shell shortcut Ctrl+4 opens the context page.
+    & $WinApp ui send-keys ctrl+4 -a $app.Id --via send-input
+    & $WinApp ui wait-for context-enabled -a $app.Id --timeout 90000
+    Wait-UiIdle
     $before = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
     & $WinApp ui invoke context-enabled -a $app.Id --action toggle
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存并应用设置完成' --contains --timeout 90000
+    & $WinApp ui invoke context-save -a $app.Id
+    Wait-UiIdle
     $after = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
     if ($before.context.enabled -eq $after.context.enabled) { throw 'Context switch did not change saved CLI state' }
+    & $WinApp ui wait-for context-enabled -a $app.Id --timeout 30000
     & $WinApp ui invoke context-enabled -a $app.Id --action toggle
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存并应用设置完成' --contains --timeout 90000
+    & $WinApp ui invoke context-save -a $app.Id
+    Wait-UiIdle
     $restored = & $cli --no-tui --json-errors context config get --json | ConvertFrom-Json
     if ($before.context.enabled -ne $restored.context.enabled) { throw 'Context switch did not restore its original value' }
     $completed.Add($stage)
 
     $stage = 'usage filters'
-    & $WinApp ui invoke console-usage-tab -a $app.Id --action select
-    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
-    & $WinApp ui wait-for 统计范围 -a $app.Id --timeout 30000
-    & $WinApp ui invoke 统计范围 -a $app.Id --action expand
-    $option = & $WinApp ui search '今天' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    # SelectionChanged disables the page while reloading; use a real mouse gesture
-    # so the outgoing SelectionItem peer is not queried after it becomes disabled.
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '读取用量完成' --contains --timeout 30000
-    & $WinApp ui invoke 图表分组 -a $app.Id --action expand
-    $option = & $WinApp ui search '按 Provider 拆分' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
+    & $WinApp ui send-keys ctrl+5 -a $app.Id --via send-input
+    & $WinApp ui wait-for usage-range -a $app.Id --timeout 30000
+    # The range segments reload the page data in place; the trend title names the loaded range.
+    & $WinApp ui click 今天 -a $app.Id
+    & $WinApp ui wait-for usage-trend-title -a $app.Id --value '按小时' --contains --timeout 30000
+    & $WinApp ui click '按 Provider 拆分' -a $app.Id
     & $WinApp ui wait-for usage-status -a $app.Id --timeout 10000
     $null = & $cli --no-tui --json-errors usage --daily --json --days 1 | ConvertFrom-Json
     & $WinApp ui screenshot -a $app.Id --output "$evidence\usage.png"
@@ -256,45 +258,39 @@ try {
     # Failover needs a second routable model besides `shared`.
     $null = & $cli --no-tui --json-errors provider select ui-local --model shared --model hidden
     if ($LASTEXITCODE -ne 0) { throw 'Selecting a second model for routing failed' }
-    & $WinApp ui invoke console-routing-tab -a $app.Id --action select
-    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
-    & $WinApp ui invoke route-new -a $app.Id
+    & $WinApp ui send-keys ctrl+3 -a $app.Id --via send-input
+    & $WinApp ui wait-for route-new-fusion -a $app.Id --timeout 90000
     & $WinApp ui invoke route-new-fusion -a $app.Id
-    $field = & $WinApp ui search '名称' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector ui-fusion -a $app.Id
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    & $WinApp ui set-value route-name ui-fusion -a $app.Id
+    & $WinApp ui invoke route-save -a $app.Id
+    Wait-UiIdle
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     $fusion = @($routes.routes | Where-Object model -eq 'auto/ui-fusion')[0]
     if ($null -eq $fusion -or $fusion.kind -ne 'fusion' -or $fusion.mode -ne 'orchestration') { throw 'Fusion route was not saved' }
-    & $WinApp ui invoke route-new -a $app.Id
     & $WinApp ui invoke route-new-schedule -a $app.Id
-    & $WinApp ui invoke 添加时段 -a $app.Id
-    $slots = & $WinApp ui search 移除此时段 -a $app.Id --type Button --json | ConvertFrom-Json
-    if (@($slots.matches).Count -ne 2) { throw 'Adding a time slot did not create a second row' }
-    & $WinApp ui invoke $slots.matches[0].selector -a $app.Id
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    & $WinApp ui invoke route-slot-add -a $app.Id
+    & $WinApp ui wait-for route-slot-remove-1 -a $app.Id --timeout 10000
+    & $WinApp ui invoke route-slot-remove-0 -a $app.Id
+    & $WinApp ui invoke route-save -a $app.Id
+    Wait-UiIdle
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     $schedule = @($routes.routes | Where-Object kind -eq 'schedule')[0]
     if ($null -eq $schedule -or $schedule.mode -ne 'time_rotation' -or @($schedule.time_routes).Count -ne 1) { throw 'Schedule route was not saved' }
-    & $WinApp ui invoke route-new -a $app.Id
     & $WinApp ui invoke route-new-failover -a $app.Id
-    & $WinApp ui invoke apply-changes -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '保存模型路由完成' --contains --timeout 90000
+    & $WinApp ui invoke route-save -a $app.Id
+    Wait-UiIdle
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     $failover = @($routes.routes | Where-Object kind -eq 'failover')[0]
     if ($null -eq $failover -or @($failover.fallbacks).Count -ne 1 -or $failover.fallbacks[0] -eq $failover.source) { throw 'Failover route was not saved' }
     & $WinApp ui screenshot -a $app.Id --output "$evidence\routing.png"
-    & $WinApp ui invoke route-more -a $app.Id
+    # The saved failover route stays selected; cancel, then confirm its deletion.
     & $WinApp ui invoke route-delete -a $app.Id
-    & $WinApp ui invoke CloseButton -a $app.Id
+    & $WinApp ui invoke 取消 -a $app.Id
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     if (@($routes.routes).Count -ne 3) { throw 'Cancelled route deletion removed a route' }
-    & $WinApp ui invoke route-more -a $app.Id
     & $WinApp ui invoke route-delete -a $app.Id
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '删除模型路由完成' --contains --timeout 90000
+    & $WinApp ui invoke 确认 -a $app.Id
+    Wait-UiIdle
     $routes = & $cli --no-tui --json-errors route list --json | ConvertFrom-Json
     if (@($routes.routes | Where-Object kind -eq 'failover').Count -ne 0 -or @($routes.routes).Count -ne 2) { throw 'Route deletion did not remove the failover route' }
     # Later stages delete the provider, which routes still reference.
@@ -304,83 +300,77 @@ try {
     }
     $completed.Add($stage)
 
-    $stage = 'settings themes, diagnostics and backup cancellation'
-    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=settings' -PassThru
-    & $WinApp ui wait-for theme-picker -a $app.Id --timeout 30000
-    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
-    $settingsWindow = @($tree.windows | Where-Object title -eq '设置与诊断')[0].hwnd
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '连接 CLI完成' --contains --timeout 90000
-    foreach ($theme in @('浅色', '深色', '跟随系统')) {
-        & $WinApp ui invoke theme-picker -w $settingsWindow --action expand
-        $option = & $WinApp ui search $theme -w $settingsWindow --type ListItem --json | ConvertFrom-Json
-        & $WinApp ui click $option.matches[0].selector -w $settingsWindow
-        & $WinApp ui screenshot -w $settingsWindow --output "$evidence\theme-$theme.png"
-    }
+    $stage = 'settings diagnostics, updates and backup cancellation'
+    & $WinApp ui send-keys ctrl+6 -a $app.Id --via send-input
+    & $WinApp ui wait-for run-diagnostics -a $app.Id --timeout 90000
+    Wait-UiIdle
     $settingsChanged = $true
-    & $WinApp ui click '登录 Windows 时启动界面' -w $settingsWindow
-    $startupAfter = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'CodexMixin', $null)
-    if (($null -ne $startupAfter) -eq ($null -ne $startupValue)) { throw 'Startup checkbox did not change the native Run value' }
-    & $WinApp ui click '登录 Windows 时启动界面' -w $settingsWindow
-    $startupRestored = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'CodexMixin', $null)
-    if (($null -ne $startupRestored) -ne ($null -ne $startupValue)) { throw 'Startup checkbox did not restore its original enabled state' }
-    $automatic = '自动更新（每小时检查；网关空闲 30 分钟后安装）'
-    & $WinApp ui click $automatic -w $settingsWindow
+    $automatic = 'app-update-automatic'
+    & $WinApp ui invoke $automatic -a $app.Id --action toggle
     $automaticAfter = [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', $null)
     $automaticBefore = if ($null -eq $automaticValue) { 1 } else { [int]$automaticValue }
-    if ($null -eq $automaticAfter -or [int]$automaticAfter -eq $automaticBefore) { throw 'Automatic-update checkbox did not save the new state' }
-    & $WinApp ui click $automatic -w $settingsWindow
-    if ([int][Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', -1) -ne $automaticBefore) { throw 'Automatic-update checkbox did not restore its enabled state' }
-    & $WinApp ui invoke 运行诊断 -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '诊断完成' --contains --timeout 90000
+    if ($null -eq $automaticAfter -or [int]$automaticAfter -eq $automaticBefore) { throw 'Automatic-update switch did not save the new state' }
+    & $WinApp ui invoke $automatic -a $app.Id --action toggle
+    if ([int][Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\CodexMixin\Updates', 'Automatic', -1) -ne $automaticBefore) { throw 'Automatic-update switch did not restore its enabled state' }
+    & $WinApp ui invoke run-diagnostics -a $app.Id
+    & $WinApp ui wait-for doctor-report -a $app.Id --timeout 180000
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\doctor.png"
+    & $WinApp ui send-keys escape -a $app.Id --via send-input
     $null = & $cli --no-tui --json-errors doctor --json | ConvertFrom-Json
     # Normal HTTP uses the dead fixture proxy; an update check must surface its error.
-    & $WinApp ui wait-for check-app-updates -w $settingsWindow --property IsEnabled --value True --timeout 90000
-    & $WinApp ui invoke check-app-updates -w $settingsWindow
-    & $WinApp ui wait-for app-update-status -w $settingsWindow --value '更新失败：' --contains --timeout 90000
-    & $WinApp ui wait-for check-app-updates -w $settingsWindow --property IsEnabled --value True --timeout 90000
+    & $WinApp ui wait-for check-app-updates -a $app.Id --property IsEnabled --value True --timeout 90000
+    & $WinApp ui invoke check-app-updates -a $app.Id
+    & $WinApp ui wait-for app-update-status -a $app.Id --value '更新失败：' --contains --timeout 90000
+    & $WinApp ui wait-for check-app-updates -a $app.Id --property IsEnabled --value True --timeout 90000
     $completed.Add($stage)
 
     $stage = 'ECH test, safe fallback and disable'
-    & $WinApp ui wait-for '检测 ECH' -w $settingsWindow --timeout 30000
+    & $WinApp ui wait-for ech-test -a $app.Id --timeout 30000
     $echBefore = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
-    & $WinApp ui invoke '检测 ECH' -w $settingsWindow
-    # ECH deliberately bypasses ordinary proxies. Both real probe verdicts are valid.
+    & $WinApp ui invoke ech-test -a $app.Id
+    # ECH deliberately bypasses ordinary proxies. Both real probe verdicts are valid:
+    # a ready probe lists its hosts, a failed one reports the CLI error.
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    $echTestStatus = ''
     do {
-        $status = & $WinApp ui get-property operation-status -w $settingsWindow --property Name --json | ConvertFrom-Json
-        $echTestStatus = [string]$status.properties.Name
+        foreach ($outcome in @('ech-test-result', 'settings-error')) {
+            $found = & $WinApp ui search $outcome -a $app.Id --json | ConvertFrom-Json
+            if (@($found.matches).Count -gt 0) { $echTestStatus = $outcome; break }
+        }
         if ([DateTime]::UtcNow -gt $deadline) { throw 'ECH test did not expose its terminal result' }
-        if ($echTestStatus -notmatch '^检测 ECH(完成|失败)') { Start-Sleep -Milliseconds 200 }
-    } until ($echTestStatus -match '^检测 ECH(完成|失败)')
+        if ($echTestStatus -eq '') { Start-Sleep -Milliseconds 200 }
+    } until ($echTestStatus -ne '')
+    & $WinApp ui send-keys escape -a $app.Id --via send-input
+    Start-Sleep -Milliseconds 500
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -ne $echBefore.enabled -or $echAfter.fallback_reason -ne $echBefore.fallback_reason) { throw 'ECH test changed saved network settings' }
-    & $WinApp ui wait-for '启用 ECH' -w $settingsWindow --timeout 90000
-    & $WinApp ui invoke '启用 ECH' -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '启用 ECH完成' --contains --timeout 90000
+    & $WinApp ui invoke ech-enabled -a $app.Id --action toggle
+    Wait-UiIdle
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -eq (-not [string]::IsNullOrWhiteSpace($echAfter.fallback_reason))) { throw 'ECH enable did not persist a consistent probe verdict or safe fallback' }
     @{ test = $echTestStatus; enable = $echAfter } | ConvertTo-Json -Depth 8 | Set-Content "$evidence\ech.json"
-    & $WinApp ui wait-for '关闭 ECH' -w $settingsWindow --timeout 90000
-    & $WinApp ui invoke '关闭 ECH' -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '关闭 ECH完成' --contains --timeout 90000
+    & $WinApp ui wait-for ech-enabled -a $app.Id --timeout 90000
+    & $WinApp ui invoke ech-enabled -a $app.Id --action toggle
+    Wait-UiIdle
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -or $null -ne $echAfter.fallback_reason) { throw 'ECH disable did not clear its saved setting and fallback reason' }
     $completed.Add($stage)
 
-    & $WinApp ui invoke 导出配置 -w $settingsWindow
-    & $WinApp ui wait-for CloseButton -w $settingsWindow --timeout 5000
-    & $WinApp ui invoke CloseButton -w $settingsWindow
+    & $WinApp ui invoke export-config -a $app.Id
+    & $WinApp ui wait-for 取消 -a $app.Id --timeout 5000
+    & $WinApp ui invoke 取消 -a $app.Id
     if (-not (Test-Path $env:CODEX_GATEWAY_CONFIG)) { throw 'Backup cancellation removed configuration' }
     $stage = 'native backup export, import and restoration'
     $backup = Join-Path $fixture 'config.b64'
     $beforeBackup = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
-    & $WinApp ui invoke 导出配置 -w $settingsWindow
-    & $WinApp ui invoke PrimaryButton -w $settingsWindow
+    & $WinApp ui invoke export-config -a $app.Id
+    & $WinApp ui invoke 确认 -a $app.Id
     & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
     $pickerTree = & $WinApp ui inspect -a $app.Id --depth 10 --json | ConvertFrom-Json
     $pickerTree | ConvertTo-Json -Depth 30 | Set-Content "$evidence\export-picker-tree.json"
-    $pickerWindow = @($pickerTree.windows | Where-Object title -eq 'Save As')[0].hwnd
-    # Target the native dialog, not the larger disabled settings window behind it.
+    # The picker title is the one the page passes to the storage provider.
+    $pickerWindow = @($pickerTree.windows | Where-Object title -eq '选择保存位置')[0].hwnd
+    # Target the native dialog, not the larger disabled window behind it.
     $field = & $WinApp ui search 'File name:' -w $pickerWindow --type Edit --json | ConvertFrom-Json
     & $WinApp ui send-keys 'ctrl+a' --target $field.matches[0].selector -w $pickerWindow --via send-input
     & $WinApp ui send-keys $backup --verbatim --target $field.matches[0].selector -w $pickerWindow --via send-input
@@ -388,13 +378,13 @@ try {
     & $WinApp ui send-keys tab -w $pickerWindow --via send-input
     $button = & $WinApp ui search Save -w $pickerWindow --type Button --json | ConvertFrom-Json
     & $WinApp ui invoke $button.matches[0].selector -w $pickerWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '导出配置完成' --contains --timeout 90000
+    Wait-UiIdle
     if (-not (Test-Path $backup) -or (Get-Item $backup).Length -eq 0) { throw 'Native save picker did not export the fixture' }
     & $cli --no-tui --json-errors provider update ui-local --display-name 'Changed after backup'
-    & $WinApp ui invoke 导入配置 -w $settingsWindow
+    & $WinApp ui invoke import-config -a $app.Id
     & $WinApp ui wait-for 'File name:' -a $app.Id --timeout 30000
-    $pickerTree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
-    $pickerWindow = @($pickerTree.windows | Where-Object title -eq 'Open')[0].hwnd
+    $pickerTree = & $WinApp ui inspect -a $app.Id --depth 10 --json | ConvertFrom-Json
+    $pickerWindow = @($pickerTree.windows | Where-Object title -eq '导入配置')[0].hwnd
     $field = & $WinApp ui search 'File name:' -w $pickerWindow --type Edit --json | ConvertFrom-Json
     & $WinApp ui send-keys 'ctrl+a' --target $field.matches[0].selector -w $pickerWindow --via send-input
     & $WinApp ui send-keys $backup --verbatim --target $field.matches[0].selector -w $pickerWindow --via send-input
@@ -404,59 +394,54 @@ try {
     # The Open split button also exposes its dropdown arrow as a Button; invoke the main part.
     $openButton = @($button.matches | Where-Object { $_.selector -notlike '*dropdown*' })[0]
     & $WinApp ui invoke $openButton.selector -w $pickerWindow
-    & $WinApp ui wait-for PrimaryButton -w $settingsWindow --timeout 15000
-    & $WinApp ui invoke PrimaryButton -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '导入配置完成' --contains --timeout 90000
+    & $WinApp ui wait-for 确认 -a $app.Id --timeout 15000
+    & $WinApp ui invoke 确认 -a $app.Id
+    Wait-UiIdle
     $afterBackup = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     if ($afterBackup.providers[0].display_name -ne $beforeBackup.providers[0].display_name) { throw 'Native import did not restore the exported provider' }
     Remove-Item $backup
     $completed.Add($stage)
-    & $WinApp ui inspect -w $settingsWindow --depth 10 --json | Set-Content "$evidence\settings-tree.json"
-    & $WinApp ui send-keys alt+f4 -w $settingsWindow --via send-input --allow-system-keys
+    & $WinApp ui inspect -a $app.Id --depth 10 --json | Set-Content "$evidence\settings-tree.json"
 
-    $stage = 'tray, gateway toggle, refresh, console reopening and exit'
-    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
-    & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 30000
+    $stage = 'window close to tray, reopen, refresh and provider delete'
+    # With the tray icon present, closing the console hides it and keeps the process and gateway alive.
+    & $WinApp ui send-keys alt+f4 -a $app.Id --via send-input --allow-system-keys
+    Start-Sleep -Seconds 2
+    if ($app.HasExited) { throw 'Closing the console window exited the application instead of hiding it' }
     $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
-    $trayWindow = @($tree.windows | Where-Object title -eq 'Codex Mixin · 主面板')[0].hwnd
-    & $WinApp ui invoke tray-refresh -w $trayWindow
+    if (@($tree.windows | Where-Object title -eq 'Codex Mixin').Count -ne 0) { throw 'Closing the console window left it visible' }
     $before = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
-    & $WinApp ui wait-for GatewaySwitch -w $trayWindow --property IsEnabled --value True --timeout 90000
-    # OnGatewayToggled disables the switch while starting the real CLI action.
-    # Use a mouse gesture rather than a synchronous TogglePattern call whose
-    # automation peer becomes disabled before the call returns.
-    & $WinApp ui click GatewaySwitch -w $trayWindow
-    $deadline = [DateTime]::UtcNow.AddSeconds(90)
-    do {
-        $after = & $cli --no-tui --json-errors service status --json | ConvertFrom-Json
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'Gateway switch did not change actual service state' }
-        if ($after.gateway -eq $before.gateway) { Start-Sleep -Milliseconds 200 }
-    } until ($after.gateway -ne $before.gateway)
-    & $WinApp ui screenshot -w $trayWindow --output "$evidence\tray.png"
-    & $WinApp ui invoke '打开控制台…' -w $trayWindow
-    & $WinApp ui wait-for console-providers-tab -a $app.Id --timeout 15000
-    & $WinApp ui invoke console-providers-tab -a $app.Id --action select
-    & $WinApp ui wait-for operation-status -a $app.Id --value '切换页面完成' --contains --timeout 90000
-    & $WinApp ui invoke 删除服务商 -a $app.Id
-    & $WinApp ui invoke CloseButton -a $app.Id
+    if ($before.gateway -ne 'running') { throw 'Hiding the console stopped the gateway' }
+    # A second launch hands its page request to the running instance.
+    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=providers' -PassThru
+    & $WinApp ui wait-for shell-refresh -a $app.Id --timeout 30000
+    & $WinApp ui invoke shell-refresh -a $app.Id
+    Wait-UiIdle
+    & $WinApp ui screenshot -a $app.Id --output "$evidence\reopened.png"
+    & $WinApp ui wait-for provider-card-ui-local -a $app.Id --timeout 30000
+    Open-Provider
+    & $WinApp ui invoke provider-remove-ui-local -a $app.Id
+    & $WinApp ui invoke 取消 -a $app.Id
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     if (@($listed.providers | Where-Object id -eq 'ui-local').Count -ne 1) { throw 'Cancelled provider deletion removed configuration' }
-    & $WinApp ui invoke 删除服务商 -a $app.Id
-    & $WinApp ui invoke PrimaryButton -a $app.Id
-    & $WinApp ui wait-for operation-status -a $app.Id --value '删除服务商完成' --contains --timeout 90000
+    & $WinApp ui invoke provider-remove-ui-local -a $app.Id
+    & $WinApp ui invoke 确认 -a $app.Id
+    Wait-UiIdle
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     if (@($listed.providers).Count -ne 0) { throw 'Provider delete button did not remove the isolated provider' }
     $completed.Add('provider delete cancellation and confirmation')
-    $null = Start-Process (Join-Path $AppDirectory 'codex_mixin_ui.exe') -ArgumentList '--page=overview' -PassThru
-    & $WinApp ui wait-for tray-refresh -a $app.Id --timeout 15000
-    & $WinApp ui invoke '彻底退出 Mixin' -w $trayWindow
-    & $WinApp ui wait-for CloseButton -w $trayWindow --timeout 5000
-    & $WinApp ui invoke CloseButton -w $trayWindow
-    if ($app.HasExited) { throw 'Cancel on the quit confirmation exited the application' }
-    & $WinApp ui invoke '彻底退出 Mixin' -w $trayWindow
-    & $WinApp ui wait-for PrimaryButton -w $trayWindow --timeout 5000
-    & $WinApp ui invoke PrimaryButton -w $trayWindow
-    if (-not $app.WaitForExit(15000)) { throw 'Quit button did not exit the application' }
+    $completed.Add($stage)
+
+    $stage = 'exit with unsaved changes'
+    # The empty provider page opens the add form; typing into it leaves an unsaved draft.
+    & $WinApp ui wait-for provider-new-id -a $app.Id --timeout 30000
+    & $WinApp ui set-value provider-new-id unsaved-draft -a $app.Id
+    Invoke-AppExit
+    & $WinApp ui invoke 取消 -a $app.Id
+    if ($app.WaitForExit(3000)) { throw 'Cancel on the unsaved-changes confirmation exited the application' }
+    Invoke-AppExit
+    & $WinApp ui invoke 确认 -a $app.Id
+    if (-not $app.WaitForExit(30000)) { throw 'Exit action did not exit the application' }
     $completed.Add($stage)
     @{ passed = $completed.ToArray(); phase = 'native UI and CLI'; notCovered = @('provider OAuth and credential-dependent adapters', 'installing an application update (covered separately by installer and portable-update checks)') } | ConvertTo-Json -Depth 6 | Set-Content "$evidence\coverage.json"
 }

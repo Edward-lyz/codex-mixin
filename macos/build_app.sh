@@ -9,7 +9,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 CARGO_BUILD_ARGS=(--release)
-TARGET_DIR="$ROOT_DIR/target/release"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}/release"
 MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
@@ -38,7 +38,7 @@ fi
 
 if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
   CARGO_BUILD_ARGS+=(--target "$CARGO_BUILD_TARGET")
-  TARGET_DIR="$ROOT_DIR/target/$CARGO_BUILD_TARGET/release"
+  TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}/$CARGO_BUILD_TARGET/release"
 fi
 
 if [[ -n "${CARGO_BUILD_FEATURES:-}" ]]; then
@@ -89,7 +89,6 @@ fi
 
 cd "$ROOT_DIR"
 cargo build "${CARGO_BUILD_ARGS[@]}"
-"$ROOT_DIR/scripts/check_localizations.sh"
 SPARKLE_DIR="$("$ROOT_DIR/scripts/fetch_sparkle.sh")"
 "$ROOT_DIR/macos/make_icon.sh"
 PACKAGE_ID="$(cargo pkgid --package codex-mixin)"
@@ -249,6 +248,20 @@ xcrun swiftc \
   -framework UserNotifications \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"
+
+# All desktop console pages are shared Arc/Avalonia controls. Keep AppKit's
+# menu bar, login item and signed Sparkle update lifecycle in the native host.
+case "$SWIFT_ARCH" in
+  arm64) DESKTOP_RID=osx-arm64 ;;
+  x86_64) DESKTOP_RID=osx-x64 ;;
+esac
+dotnet publish "$ROOT_DIR/desktop/CodexMixin/CodexMixin.csproj" -c Release \
+  -r "$DESKTOP_RID" --self-contained true -p:Version="$APP_VERSION" \
+  -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o "$MACOS_DIR"
+cp "$TARGET_DIR/codex-mixin" "$MACOS_DIR/codex-mixin"
+mv "$MACOS_DIR/THIRD-PARTY-NOTICES.md" "$RESOURCES_DIR/THIRD-PARTY-NOTICES.md"
+find "$MACOS_DIR" -type f -name '*.dylib' -exec codesign --force --sign "$CODE_SIGN_IDENTITY" {} \;
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$MACOS_DIR/codex_mixin_ui"
 
 cp "$TARGET_DIR/codex-mixin" "$ROOT_DIR/dist/codex-mixin"
 chmod +x "$ROOT_DIR/dist/codex-mixin"

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Codex Mixin
+Comment=Local model gateway and agent control panel
+Exec=/opt/codex-mixin/codex_mixin_ui
+Icon=codex-mixin
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=codex_mixin_ui
