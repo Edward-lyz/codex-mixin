@@ -557,6 +557,8 @@ async fn stream_openai_responses(
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
+    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body)?;
+    let plaintext_collaboration = saved_collaboration.active();
     let original_model = body
         .as_object_mut()
         .and_then(|fields| fields.remove("model"));
@@ -570,9 +572,6 @@ async fn stream_openai_responses(
     } else {
         Vec::new()
     };
-    // Provider collaboration must remain readable by agents using other
-    // protocols. Direct official routes retain their encryption contract.
-    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body);
     if !normalized_reasoning.is_empty() {
         tracing::debug!(
             provider_id = provider.id(),
@@ -684,6 +683,7 @@ async fn stream_openai_responses(
         observe_upstream_cache_usage(upstream.bytes_stream(), observation),
         upstream_model_id.to_owned(),
         downstream_model.to_owned(),
+        plaintext_collaboration,
     ))
 }
 
