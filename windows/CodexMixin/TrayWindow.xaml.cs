@@ -450,13 +450,12 @@ public sealed partial class TrayWindow : Window
             Title = title,
             Content = content,
             PrimaryButtonText = primary,
-            CloseButtonText = Localized.Get("取消"),
-            Owner = this
+            CloseButtonText = Localized.Get("取消")
         };
         dialogOpen = true;
         try
         {
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (await dialog.ShowAsync(this) != ContentDialogResult.Primary) return;
             await exit((App)Application.Current);
         }
         catch (Exception error) when (!exiting) { PanelStatus.Text = error.Message; FitToContent(); }

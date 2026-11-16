@@ -20,6 +20,7 @@ internal sealed class OperationWindow : Window
 
     internal OperationWindow(Window owner, string title, Action onCancel)
     {
+        iNKORE.UI.WPF.Modern.ThemeManager.SetIsThemeAware(this, true);
         Owner = owner; Title = title; Width = 720; Height = 460; MinWidth = 440; MinHeight = 300;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         SetResourceReference(BackgroundProperty, "LayerFillColorDefaultBrush");

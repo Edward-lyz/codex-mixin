@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using iNKORE.UI.WPF.Modern;
 using System.IO.Pipes;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -29,8 +30,7 @@ public partial class App : Application
     internal bool HasVisibleWindows => windows.Values.Any(target => target.IsVisible);
     internal bool HasDraftChanges => windows.Values.Any(target => target.HasDraftChanges);
     internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
-    // Fluent resources follow Application.ThemeMode in every window.
-    internal void SetTheme(ThemeMode value) => ThemeMode = value;
+    internal void SetTheme(ApplicationTheme? value) => ThemeManager.Current.ApplicationTheme = value;
 
     internal void SetUpdateInputBlocked(bool blocked)
     {
@@ -148,7 +148,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs args)
     {
         base.OnStartup(args);
-        ThemeMode = ThemeMode.System;
+        SetTheme(null);
         var background = args.Args.Contains("--background");
         if (background && LightweightModeSet()) { Shutdown(); return; }
         SetLightweightMode(false);

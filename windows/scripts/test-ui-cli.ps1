@@ -121,7 +121,7 @@ try {
     & $WinApp ui set-value $field.matches[0].selector shared -a $app.Id
     & $WinApp ui wait-for $field.matches[0].selector -a $app.Id --value shared --timeout 5000
     & $WinApp ui invoke 'shared 上下文' -a $app.Id
-    $field = & $WinApp ui search '上下文 Token 数' -a $app.Id --type Edit --json | ConvertFrom-Json
+    $field = & $WinApp ui search '上下文 Token 数' -a $app.Id --type Spinner --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector 16384 -a $app.Id
     & $WinApp ui invoke PrimaryButton -a $app.Id
     & $WinApp ui invoke apply-changes -a $app.Id

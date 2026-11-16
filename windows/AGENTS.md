@@ -1,6 +1,6 @@
 # Windows 原生 GUI 壳规范
 
-继承根规范。这里使用 C# / XAML / WPF（.NET 10 Fluent 主题），只消费真实 Rust CLI contract；业务策略由 CLI/core 负责。
+继承根规范。这里使用 C# / XAML / WPF（iNKORE.UI.WPF.Modern 主题与控件），只消费真实 Rust CLI contract；业务策略由 CLI/core 负责。
 
 - `CodexMixin/` 负责 WPF 页面与 Windows 窗口、托盘、登录启动；`Core/` 负责 CLI 进程与 JSON 适配。不得复制供应商校验、接入、路由或服务生命周期策略。
 - 所有命令使用参数数组、`--no-tui` 与 `--json-errors`；查询使用 JSON，严格检查版本、字段及类型。未知状态不得展示为关闭、零用量或最新版本。

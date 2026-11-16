@@ -1,0 +1,9 @@
+global using ToggleSwitch = iNKORE.UI.WPF.Modern.Controls.ToggleSwitch;
+global using InfoBarSeverity = iNKORE.UI.WPF.Modern.Controls.InfoBarSeverity;
+global using ProgressRing = iNKORE.UI.WPF.Modern.Controls.ProgressRing;
+global using ContentDialog = iNKORE.UI.WPF.Modern.Controls.ContentDialog;
+global using ContentDialogButton = iNKORE.UI.WPF.Modern.Controls.ContentDialogButton;
+global using ContentDialogResult = iNKORE.UI.WPF.Modern.Controls.ContentDialogResult;
+global using NumberBox = iNKORE.UI.WPF.Modern.Controls.NumberBox;
+global using TimePicker = iNKORE.UI.WPF.Modern.Controls.TimePicker;
+global using FontIcon = iNKORE.UI.WPF.Modern.Controls.FontIcon;

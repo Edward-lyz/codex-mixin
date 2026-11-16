@@ -1,3 +1,4 @@
+using iNKORE.UI.WPF.Modern;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Automation;
@@ -33,20 +34,40 @@ public sealed partial class MainWindow
             await OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"));
         }));
         diagnostics.Children.Add(Button(Localized.Get("运行诊断"), () => ChangeAsync(Localized.Get("诊断"), ["doctor", "--json"])));
-        var about = Card(Localized.Get("关于与诊断"), $"Codex Mixin · GUI {AppUpdates.GuiVersion} · WPF / .NET", diagnostics, glyph: "\uE946");
-        var updateControls = UpdateControls(app.Updates, pageToken);
-        var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], app.ThemeMode == ThemeMode.Light ? Localized.Get("浅色") : app.ThemeMode == ThemeMode.Dark ? Localized.Get("深色") : Localized.Get("跟随系统"));
-        AutomationProperties.SetAutomationId(theme, "theme-picker");
-        theme.SelectionChanged += (_, _) => app.SetTheme(theme.SelectedIndex switch { 1 => ThemeMode.Light, 2 => ThemeMode.Dark, _ => ThemeMode.System });
-        var startup = new CheckBox { Content = Localized.Get("登录 Windows 时启动界面"), IsChecked = NativeShell.StartupEnabled(), IsEnabled = !NativeShell.StartupBlocked() };
-        startup.Click += (_, _) =>
+        var about = new iNKORE.UI.WPF.Modern.Controls.SettingsCard
         {
-            try { NativeShell.SetStartup(startup.IsChecked == true); }
-            catch (Exception error) { startup.IsChecked = NativeShell.StartupEnabled(); ShowNotice(Localized.Get("启动设置失败"), error.Message, InfoBarSeverity.Error); }
+            Header = Localized.Get("关于与诊断"),
+            Description = $"Codex Mixin · GUI {AppUpdates.GuiVersion} · iNKORE.UI.WPF.Modern",
+            HeaderIcon = new FontIcon { Glyph = "\uE946" },
+            Content = diagnostics,
+            ContentAlignment = iNKORE.UI.WPF.Modern.Controls.ContentAlignment.Vertical
         };
-        var appearance = new Stack { Spacing = 16 }; appearance.Children.Add(Field.Wrap(theme)); appearance.Children.Add(startup);
-        appearance.Children.Add(Text(NativeShell.StartupBlocked() ? Localized.Get("启动项已被 Windows 禁用，请在系统「启动应用」中调整。") : Localized.Get("界面登录启动与网关自启分别管理。")));
-        PageBody.Children.Add(Card(Localized.Get("外观与启动"), "", appearance, glyph: "\uE790"));
+        var updateControls = UpdateControls(app.Updates, pageToken);
+        var theme = Choice(Localized.Get("外观"), [Localized.Get("跟随系统"), Localized.Get("浅色"), Localized.Get("深色")], ThemeManager.Current.ApplicationTheme == ApplicationTheme.Light ? Localized.Get("浅色") : ThemeManager.Current.ApplicationTheme == ApplicationTheme.Dark ? Localized.Get("深色") : Localized.Get("跟随系统"));
+        AutomationProperties.SetAutomationId(theme, "theme-picker");
+        theme.SelectionChanged += (_, _) => app.SetTheme(theme.SelectedIndex switch { 1 => ApplicationTheme.Light, 2 => ApplicationTheme.Dark, _ => null });
+        var startup = new ToggleSwitch { IsOn = NativeShell.StartupEnabled(), IsEnabled = !NativeShell.StartupBlocked(), OnContent = "", OffContent = "" };
+        AutomationProperties.SetName(startup, Localized.Get("登录 Windows 时启动界面"));
+        var restoringStartup = false;
+        startup.Toggled += (_, _) =>
+        {
+            if (restoringStartup) return;
+            try { NativeShell.SetStartup(startup.IsOn); }
+            catch (Exception error) { restoringStartup = true; startup.IsOn = NativeShell.StartupEnabled(); restoringStartup = false; ShowNotice(Localized.Get("启动设置失败"), error.Message, InfoBarSeverity.Error); }
+        };
+        PageBody.Children.Add(new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("外观"),
+            HeaderIcon = new FontIcon { Glyph = "\uE790" },
+            Content = theme
+        });
+        PageBody.Children.Add(new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("登录 Windows 时启动界面"),
+            Description = NativeShell.StartupBlocked() ? Localized.Get("启动项已被 Windows 禁用，请在系统「启动应用」中调整。") : Localized.Get("界面登录启动与网关自启分别管理。"),
+            HeaderIcon = new FontIcon { Glyph = "\uE7E8" },
+            Content = startup
+        });
         PageBody.Children.Add(about);
         PageBody.Children.Add(updateControls);
         var backup = Row();
@@ -62,7 +83,12 @@ public sealed partial class MainWindow
             if (picker.ShowDialog(this) == true && await ConfirmAsync(Localized.Get("替换当前配置？"), Localized.Get("导入会替换现有供应商与密钥，并应用到已接入的客户端。"), Localized.Get("导入")))
                 await ChangeAsync(Localized.Get("导入配置"), ["config", "import", picker.FileName], apply: true);
         }));
-        PageBody.Children.Add(Card(Localized.Get("配置备份"), "", backup, glyph: "\uE8B7"));
+        PageBody.Children.Add(new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("配置备份"),
+            HeaderIcon = new FontIcon { Glyph = "\uE8B7" },
+            Content = backup
+        });
 
         var service = new ContentControl();
         var network = new ContentControl();
@@ -74,7 +100,13 @@ public sealed partial class MainWindow
             var buttons = Row();
             buttons.Children.Add(Button(Localized.Get("启用网关自启"), () => ChangeAsync(Localized.Get("启用网关自启"), ["service", "autostart", "enable", "--json"])));
             buttons.Children.Add(Button(Localized.Get("关闭网关自启"), () => ChangeAsync(Localized.Get("关闭网关自启"), ["service", "autostart", "disable", "--json"])));
-            return Card(Localized.Get("网关自启"), Json.Flag(autostart, "enabled") ? Localized.Get("已启用") : Localized.Get("已关闭"), buttons, glyph: "\uE7E8");
+            return new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+            {
+                Header = Localized.Get("网关自启"),
+                Description = Json.Flag(autostart, "enabled") ? Localized.Get("已启用") : Localized.Get("已关闭"),
+                HeaderIcon = new FontIcon { Glyph = "\uE7E8" },
+                Content = buttons
+            };
         }, pageToken);
         Task RefreshNetwork() => LoadSettingAsync(network, Localized.Get("官方连接 · ECH"), EchCardAsync, pageToken);
         refreshSettings = () => Task.WhenAll(RefreshService(), RefreshNetwork());
@@ -90,9 +122,14 @@ public sealed partial class MainWindow
         buttons.Children.Add(Button(Localized.Get("检测 ECH"), () => ChangeAsync(Localized.Get("检测 ECH"), ["ech", "test", "--json"])));
         buttons.Children.Add(Button(Localized.Get("启用 ECH"), () => ChangeAsync(Localized.Get("启用 ECH"), ["ech", "enable"])));
         buttons.Children.Add(Button(Localized.Get("关闭 ECH"), () => ChangeAsync(Localized.Get("关闭 ECH"), ["ech", "disable"])));
-        return Card(Localized.Get("官方连接 · ECH"),
-            (enabled ? Localized.Get("已启用") : Localized.Get("已关闭")) + " · " +
-            (Json.OptionalText(ech, "fallback_reason") ?? Json.Text(ech, "doh_url")), buttons, glyph: "\uE72E");
+        return new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("官方连接 · ECH"),
+            Description = (enabled ? Localized.Get("已启用") : Localized.Get("已关闭")) + " · " + (Json.OptionalText(ech, "fallback_reason") ?? Json.Text(ech, "doh_url")),
+            HeaderIcon = new FontIcon { Glyph = "\uE72E" },
+            Content = buttons,
+            ContentAlignment = iNKORE.UI.WPF.Modern.Controls.ContentAlignment.Vertical
+        };
     }
 
     private async Task LoadSettingAsync(ContentControl host, string title,
@@ -123,15 +160,14 @@ public sealed partial class MainWindow
             if (Process.Start(new ProcessStartInfo(AppRelease.ReleasesUrl) { UseShellExecute = true }) == null) throw new IOException(Localized.Get("无法打开发布页。"));
             return Task.CompletedTask;
         });
-        var automatic = new CheckBox
+        var automatic = new ToggleSwitch { IsOn = updates.Automatic, OnContent = "", OffContent = "" };
+        AutomationProperties.SetName(automatic, Localized.Get("自动更新（每小时检查；网关空闲 30 分钟后安装）"));
+        var restoringAutomatic = false;
+        automatic.Toggled += (_, _) =>
         {
-            Content = Localized.Get("自动更新（每小时检查；网关空闲 30 分钟后安装）"),
-            IsChecked = updates.Automatic
-        };
-        automatic.Click += (_, _) =>
-        {
-            try { updates.SetAutomatic(automatic.IsChecked == true); }
-            catch (Exception error) { automatic.IsChecked = updates.Automatic; ShowNotice(Localized.Get("更新设置失败"), error.Message, InfoBarSeverity.Error); }
+            if (restoringAutomatic) return;
+            try { updates.SetAutomatic(automatic.IsOn); }
+            catch (Exception error) { restoringAutomatic = true; automatic.IsOn = updates.Automatic; restoringAutomatic = false; ShowNotice(Localized.Get("更新设置失败"), error.Message, InfoBarSeverity.Error); }
         };
         void RefreshUpdateState()
         {
@@ -145,8 +181,22 @@ public sealed partial class MainWindow
         var actions = Row();
         actions.Children.Add(check); actions.Children.Add(releases);
         var body = new Stack { Spacing = 12 };
-        body.Children.Add(status); body.Children.Add(automatic); body.Children.Add(actions);
+        body.Children.Add(status); body.Children.Add(actions);
         body.Children.Add(Text(Localized.Get("应用会自动下载、验证签名、安装并重新打开；网关原先运行时也会恢复。安装版可能出现系统 UAC 授权提示。请求进行中或草稿未保存时暂缓安装。")));
-        return Card(Localized.Get("应用更新"), Localized.Format("GUI {0} · 完整应用包包含 GUI、CLI 和运行时", AppUpdates.GuiVersion), body, glyph: "\uE895");
+        var cards = new Stack { Spacing = 12 };
+        cards.Children.Add(new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("应用更新"),
+            Description = Localized.Format("GUI {0} · 完整应用包包含 GUI、CLI 和运行时", AppUpdates.GuiVersion),
+            HeaderIcon = new FontIcon { Glyph = "\uE895" },
+            Content = body,
+            ContentAlignment = iNKORE.UI.WPF.Modern.Controls.ContentAlignment.Vertical
+        });
+        cards.Children.Add(new iNKORE.UI.WPF.Modern.Controls.SettingsCard
+        {
+            Header = Localized.Get("自动更新（每小时检查；网关空闲 30 分钟后安装）"),
+            Content = automatic
+        });
+        return cards;
     }
 }

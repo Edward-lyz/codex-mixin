@@ -2,11 +2,25 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows10.0.19041": {
+      "iNKORE.UI.WPF.Modern": {
+        "type": "Direct",
+        "requested": "[0.11.0, )",
+        "resolved": "0.11.0",
+        "contentHash": "F6DdPt6ibY+Bo5vgfeRlPPJBAr+xjMeOpGtrBlEUh61g1XXUrf+1YfWKYKsJlGHrJAjQ25W+UldYwIvDu+wH7A==",
+        "dependencies": {
+          "iNKORE.UI.WPF": "1.2.8"
+        }
+      },
       "SharpVectors.Wpf": {
         "type": "Direct",
         "requested": "[1.8.6, )",
         "resolved": "1.8.6",
         "contentHash": "FjD8w5D+nBHBLlVOxr4tZpmqN6XOHhMllKKI9PZDeqjet4wS4PUDdpV/7p71SPQoeowvMivYFoKXsszFUmPpfg=="
+      },
+      "iNKORE.UI.WPF": {
+        "type": "Transitive",
+        "resolved": "1.2.8",
+        "contentHash": "7b+z25JFdhGAfyJqlVIF0vLbmgsRvqDZMvhGPTz20gzQigDPMqVUOoCCKB5824GtYsjFCYNilmaowb+4yWATkQ=="
       }
     },
     "net10.0-windows10.0.19041/win-x64": {}

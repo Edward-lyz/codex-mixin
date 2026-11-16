@@ -18,6 +18,11 @@ internal static class XamlText
         }
         switch (node)
         {
+            case iNKORE.UI.WPF.Modern.Controls.NavigationView navigation:
+                foreach (var child in navigation.MenuItems) Translate(child);
+                foreach (var child in navigation.FooterMenuItems) Translate(child);
+                Translate(navigation.Content);
+                break;
             case TextBlock text: text.Text = Localized.Get(text.Text); break;
             case HeaderedItemsControl item:
                 if (item.Header is string header) item.Header = Localized.Get(header);

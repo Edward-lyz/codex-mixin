@@ -110,7 +110,7 @@ internal static class UsageView
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
         var heading = new Stack { Orientation = Orientation.Horizontal, Spacing = 6 };
         var icon = new FontIcon { Glyph = glyph, FontSize = glyph == "$" ? 10 : 13 };
-        icon.SetResourceReference(TextBlock.ForegroundProperty, brush);
+        icon.SetResourceReference(iNKORE.UI.WPF.Modern.Controls.IconElement.ForegroundProperty, brush);
         if (glyph == "$")
         {
             icon.FontFamily = new FontFamily("Segoe UI");

@@ -46,7 +46,7 @@ public sealed partial class MainWindow
     {
         var enabled = new ToggleSwitch
         {
-            Content = Localized.Get("启用上下文引擎"),
+            Header = Localized.Get("启用上下文引擎"),
             IsOn = stored.Enabled,
             HorizontalAlignment = HorizontalAlignment.Right
         };
@@ -56,7 +56,7 @@ public sealed partial class MainWindow
         {
             var edited = stored with
             {
-                Enabled = enabled.IsChecked == true
+                Enabled = enabled.IsOn
             };
             if (ContextContract.SaveArguments(stored, edited) is not { } arguments)
             {

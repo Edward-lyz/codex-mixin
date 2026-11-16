@@ -20,8 +20,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <!-- ThemeMode (Fluent light/dark switching) is still marked experimental. -->
-    <NoWarn>$(NoWarn);WPF0001</NoWarn>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode>true</RestoreLockedMode>
   </PropertyGroup>
@@ -31,10 +29,12 @@
   </ItemGroup>
   <ItemGroup>
     <!-- WPF has no SVG renderer; SharpVectors draws the shared macOS logos. -->
+    <PackageReference Include="iNKORE.UI.WPF.Modern" Version="0.11.0" />
     <PackageReference Include="SharpVectors.Wpf" Version="1.8.6" />
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <EmbeddedResource Include="../Core/Strings.resx" LogicalName="CodexMixin.Strings.resources" />
     <Content Include="../build/winsparkle/WinSparkle.dll;../build/winsparkle/WinSparkle.PublicKey.txt;../build/winsparkle/WinSparkle.LICENSE.txt;../build/winsparkle/WinSparkle.Expat.LICENSE.txt" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../licenses/*" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../scripts/install-update.ps1" Link="install-update.ps1" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/*.ico" Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/app_icon.png" Link="Assets/app_icon.png" CopyToOutputDirectory="PreserveNewest" />

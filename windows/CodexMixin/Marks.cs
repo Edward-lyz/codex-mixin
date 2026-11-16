@@ -25,7 +25,7 @@ internal static class Marks
                 var key = $"agents/{id}.{extension}";
                 return IsMonochromeAgent(key, id) ? ThemedMark(source, size) : new Image { Source = source, Width = size, Height = size };
             }
-        return new FontIcon { Glyph = "\uE77B", FontSize = size * 0.875, Width = size, Height = size, TextAlignment = TextAlignment.Center };
+        return new FontIcon { Glyph = "\uE77B", FontSize = size * 0.875, Width = size, Height = size };
     }
 
     internal static FrameworkElement Provider(JsonElement provider, double size = 28)
@@ -37,7 +37,7 @@ internal static class Marks
             return !agy && name is "openai" or "baidu" or "custom"
                 ? ThemedMark(source, size)
                 : new Image { Source = source, Width = size, Height = size };
-        return new FontIcon { Glyph = "\uE753", FontSize = size * 0.8, Width = size, Height = size, TextAlignment = TextAlignment.Center };
+        return new FontIcon { Glyph = "\uE753", FontSize = size * 0.8, Width = size, Height = size };
     }
 
     private static bool IsMonochromeAgent(string key, string id)

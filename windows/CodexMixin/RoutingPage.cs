@@ -355,7 +355,7 @@ public sealed partial class MainWindow
     private TextBox RouteNameField(Stack form, string value, bool optional, Func<string> fallback)
     {
         var name = Input(Localized.Get("名称"), value);
-        if (optional) Placeholder.Set(name, Localized.Get("可选；留空则直接接管原模型"));
+        if (optional) iNKORE.UI.WPF.Modern.Controls.Helpers.ControlHelper.SetPlaceholderText(name, Localized.Get("可选；留空则直接接管原模型"));
         AutomationProperties.SetAutomationId(name, "route-name");
         var entry = new TextBlock { Style = Themed("SecondaryText") };
         void ShowEntry()
@@ -492,7 +492,7 @@ public sealed partial class MainWindow
         var chosen = selected.ToList();
         var flyout = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true };
         var search = new TextBox();
-        Placeholder.Set(search, Localized.Get("搜索模型"));
+        iNKORE.UI.WPF.Modern.Controls.Helpers.ControlHelper.SetPlaceholderText(search, Localized.Get("搜索模型"));
         AutomationProperties.SetAutomationId(search, "route-model-search");
         AutomationProperties.SetName(search, Localized.Get("搜索模型"));
         var caption = new TextBlock { Style = Themed("Caption") };
@@ -677,11 +677,11 @@ public sealed partial class MainWindow
                 var slot = slots[index];
                 row++;
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var begin = new TimePicker { Time = TimeSpan.FromMinutes(slot.Start) };
-                var finish = new TimePicker { Time = TimeSpan.FromMinutes(slot.End) };
+                var begin = new TimePicker { Culture = System.Globalization.CultureInfo.GetCultureInfo("en-GB"), SelectedTimeFormat = iNKORE.UI.WPF.Modern.Controls.TimePickerFormat.Short, SelectedDateTime = DateTime.Today.AddMinutes(slot.Start) };
+                var finish = new TimePicker { Culture = System.Globalization.CultureInfo.GetCultureInfo("en-GB"), SelectedTimeFormat = iNKORE.UI.WPF.Modern.Controls.TimePickerFormat.Short, SelectedDateTime = DateTime.Today.AddMinutes(slot.End) };
                 AutomationProperties.SetName(begin, Localized.Format("时段 {0} 开始", index + 1)); AutomationProperties.SetName(finish, Localized.Format("时段 {0} 结束", index + 1));
-                begin.TimeChanged += (_, _) => { slots[slotIndex] = slots[slotIndex] with { Start = (int)begin.Time.TotalMinutes }; MarkDirty(); };
-                finish.TimeChanged += (_, _) => { slots[slotIndex] = slots[slotIndex] with { End = (int)finish.Time.TotalMinutes }; MarkDirty(); };
+                begin.SelectedDateTimeChanged += (_, e) => { if (e.NewValue is not { } value) { begin.SelectedDateTime = e.OldValue; return; } if ((int)value.TimeOfDay.TotalMinutes != slots[slotIndex].Start) { slots[slotIndex] = slots[slotIndex] with { Start = (int)value.TimeOfDay.TotalMinutes }; MarkDirty(); } };
+                finish.SelectedDateTimeChanged += (_, e) => { if (e.NewValue is not { } value) { finish.SelectedDateTime = e.OldValue; return; } if ((int)value.TimeOfDay.TotalMinutes != slots[slotIndex].End) { slots[slotIndex] = slots[slotIndex] with { End = (int)value.TimeOfDay.TotalMinutes }; MarkDirty(); } };
                 Place(begin, 0);
                 Place(new TextBlock { Text = "–", VerticalAlignment = VerticalAlignment.Center }, 1);
                 Place(finish, 2);

@@ -199,7 +199,7 @@ public sealed partial class MainWindow : Window
         var console = IsConsolePage(page);
         NavPane.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
         selectingNavigation = true;
-        try { if (console) ConsoleTabs.SelectedItem = ConsoleTabs.Items.OfType<TabItem>().First(item => (string)item.Tag == page); }
+        try { if (console) ConsoleTabs.SelectedItem = ConsoleTabs.MenuItems.OfType<iNKORE.UI.WPF.Modern.Controls.NavigationViewItem>().First(item => (string)item.Tag == page); }
         finally { selectingNavigation = false; }
         var providers = page == "providers";
         ProviderSidebar.Visibility = providers ? Visibility.Visible : Visibility.Collapsed;
@@ -217,9 +217,8 @@ public sealed partial class MainWindow : Window
     private void ApplyWidthLayout()
     {
         var compact = Root.ActualWidth > 0 && Root.ActualWidth < 1100;
-        ConsoleTabs.Tag = null;
         SettingsLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        foreach (var item in ConsoleTabs.Items.OfType<TabItem>()) item.ToolTip = item.Header;
+        foreach (var item in ConsoleTabs.MenuItems.OfType<iNKORE.UI.WPF.Modern.Controls.NavigationViewItem>()) item.ToolTip = item.Content;
         SidebarColumn.Width = new GridLength(page == "providers" ? compact ? 208 : 232 : 0);
         PageLayout.Margin = compact ? new Thickness(16, 12, 16, 10) : new Thickness(20, 16, 20, 12);
     }
@@ -259,11 +258,9 @@ public sealed partial class MainWindow : Window
         }, readOnly: true);
     }
 
-    private void OnConsoleTab(object sender, SelectionChangedEventArgs args)
+    private void OnConsoleTab(iNKORE.UI.WPF.Modern.Controls.NavigationView sender, iNKORE.UI.WPF.Modern.Controls.NavigationViewSelectionChangedEventArgs args)
     {
-        // Selection events bubble from child selectors inside tab content; only the tab strip itself navigates.
-        if (args.OriginalSource != ConsoleTabs) return;
-        if (ready && !selectingNavigation && ConsoleTabs.SelectedItem is TabItem { Tag: string next }) ShowPage(next);
+        if (ready && !selectingNavigation && ConsoleTabs.SelectedItem is iNKORE.UI.WPF.Modern.Controls.NavigationViewItem { Tag: string next }) ShowPage(next);
     }
 
     internal void ShowMain()
@@ -797,7 +794,7 @@ public sealed partial class MainWindow : Window
         // The toolbar wraps on narrow windows instead of clipping the actions.
         var toolbar = new ActionPanel();
         var search = new TextBox { Width = 280, VerticalAlignment = VerticalAlignment.Center };
-        Placeholder.Set(search, Localized.Get("搜索当前服务商的模型"));
+        iNKORE.UI.WPF.Modern.Controls.Helpers.ControlHelper.SetPlaceholderText(search, Localized.Get("搜索当前服务商的模型"));
         AutomationProperties.SetName(search, Localized.Get("搜索当前服务商的模型"));
         var filter = new ComboBox { MinWidth = 108, VerticalAlignment = VerticalAlignment.Center };
         foreach (var option in new[] { Localized.Get("全部"), Localized.Get("已加入"), Localized.Get("未加入") }) filter.Items.Add(option);
@@ -1125,14 +1122,14 @@ public sealed partial class MainWindow : Window
         switch (control)
         {
             case Field field: TrackDraft(field.Control); break;
-            // NumberBox is a TextBox, so its text edits are covered here too.
+            case NumberBox number: number.ValueChanged += (_, _) => MarkDirty(); break;
             case TextBox box: box.TextChanged += (_, _) => MarkDirty(); break;
             case PasswordBox box: box.PasswordChanged += (_, _) => MarkDirty(); break;
             case ComboBox picker: picker.SelectionChanged += (_, _) => MarkDirty(); break;
             case ToggleSwitch toggle: toggle.Toggled += (_, _) => MarkDirty(); break;
             case CheckBox check:
                 check.Checked += (_, _) => MarkDirty(); check.Unchecked += (_, _) => MarkDirty(); break;
-            case TimePicker time: time.TimeChanged += (_, _) => MarkDirty(); break;
+            case TimePicker time: time.SelectedDateTimeChanged += (_, _) => MarkDirty(); break;
         }
     }
 
@@ -1839,8 +1836,6 @@ public sealed partial class MainWindow : Window
         Title = title,
         Content = content,
         CloseButtonText = Localized.Get("取消"),
-        Owner = this,
-        IconGlyph = PageGlyph(),
         DefaultButton = ContentDialogButton.Primary
     };
 
@@ -1848,7 +1843,7 @@ public sealed partial class MainWindow : Window
     {
         if (dialogOpen) return ContentDialogResult.None;
         dialogOpen = true;
-        try { return await dialog.ShowAsync(); }
+        try { return await dialog.ShowAsync(this); }
         finally { dialogOpen = false; }
     }
 

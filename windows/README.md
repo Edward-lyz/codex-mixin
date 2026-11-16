@@ -1,8 +1,8 @@
 # Codex Mixin Windows 原生端
 
-Windows 前端使用 **C# + XAML + WPF（.NET 10 内置 Fluent 主题）**。Rust CLI / 本地网关负责供应商、模型、客户端接入、配置事务和服务生命周期。
+Windows 前端使用 **C# + XAML + WPF（iNKORE.UI.WPF.Modern）**。Rust CLI / 本地网关负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
-界面使用 .NET 10 自带的 WPF 与 [Fluent 主题](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/whats-new/net90#fluent-theme)，不依赖 Windows App SDK runtime。供应商与 Agent 的 SVG 图标通过 NuGet `SharpVectors.Wpf` 渲染，版本固定在 lock file。
+界面使用 [iNKORE.UI.WPF.Modern](https://github.com/iNKORE-NET/UI.WPF.Modern) 0.11.0，作者为 iNKORE Studios 和所有 iNKORE.UI.WPF.Modern 贡献者；其非商业许可证见 `licenses/iNKORE.UI.WPF.Modern.LICENSE.md`。间接依赖 iNKORE.UI.WPF 1.2.8 采用 LGPL-2.1-or-later，许可证见 `licenses/iNKORE.UI.WPF.LICENSE.txt`。界面不依赖 Windows App SDK runtime。供应商与 Agent 的 SVG 图标通过 NuGet `SharpVectors.Wpf` 渲染，版本固定在 lock file。
 
 ## 原生界面
 
