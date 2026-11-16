@@ -1,4 +1,18 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.5
+
+### 体验优化
+
+- **Windows 支持手动添加模型**：在服务商模型列表中输入模型 ID，即可添加并选中列表中未发现的模型（#136）。
+
+### BUG 修复
+
+- 修复 Codex 多代理协作时，混用不同服务商可能因协作消息被错误标记为加密内容，报错 `Encrypted function output content could not be decrypted or decoded` 的问题。例如主代理使用转发的 OpenAI 模型、子代理使用非 OpenAI 模型时，消息现在可以正常传递。已经保存在旧会话中的异常消息不会自动修复（#135）。
+
+### 致谢
+
+- @JaviS-Rei：贡献跨服务商多代理协作消息的修复（#135）。
+
 ## v0.8.4
 
 ### 体验优化
@@ -361,6 +375,20 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.5
+
+### 體驗優化
+
+- **Windows 支援手動新增模型**：在服務商模型清單中輸入模型 ID，即可新增並選取清單中未發現的模型（#136）。
+
+### BUG 修正
+
+- 修正 Codex 多代理協作時，混用不同服務商可能因協作訊息被錯誤標記為加密內容，出現 `Encrypted function output content could not be decrypted or decoded` 錯誤的問題。例如主代理使用轉發的 OpenAI 模型、子代理使用非 OpenAI 模型時，訊息現在可以正常傳遞。已儲存在舊對話中的異常訊息不會自動修復（#135）。
+
+### 致謝
+
+- @JaviS-Rei：貢獻跨服務商多代理協作訊息的修正（#135）。
+
 ## v0.8.4
 
 ### 體驗最佳化
@@ -723,6 +751,20 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.5
+
+### Improvements
+
+- **Manually add models on Windows**: Enter a model ID in a provider's model list to add and select a model that was not discovered (#136).
+
+### Bug fixes
+
+- Fix Codex multi-agent collaboration across providers failing with `Encrypted function output content could not be decrypted or decoded` when collaboration messages are incorrectly marked as encrypted. For example, messages can now be delivered when the main agent uses a forwarded OpenAI model and a sub-agent uses a non-OpenAI model. Invalid messages already saved in older sessions are not repaired automatically (#135).
+
+### Thanks
+
+- @JaviS-Rei for contributing the cross-provider multi-agent collaboration fix (#135).
+
 ## v0.8.4
 
 ### Improvements
