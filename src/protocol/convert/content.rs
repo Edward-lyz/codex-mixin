@@ -399,18 +399,11 @@ pub(crate) fn agent_message_text(item: &Value) -> Result<String, GatewayError> {
                         .to_owned(),
                 );
             }
-            // Codex v2 stores the local collaboration tool's message argument in this field.
-            // Third-party upstreams do not understand the Responses envelope, so materialize it.
-            Some("encrypted_content") => text_parts.push(
-                part.get("encrypted_content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        GatewayError::BadRequest(
-                            "agent_message encrypted_content missing payload".to_owned(),
-                        )
-                    })?
-                    .to_owned(),
-            ),
+            Some("encrypted_content") => {
+                return Err(GatewayError::BadRequest(
+                    "encrypted agent messages cannot be delivered through a plaintext protocol; start a new conversation with plaintext collaboration".to_owned(),
+                ));
+            }
             Some(other) => {
                 return Err(GatewayError::BadRequest(format!(
                     "unsupported agent_message content type: {other}"

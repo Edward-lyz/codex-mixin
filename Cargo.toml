@@ -15,10 +15,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# Tests live in tests/ and drive the real CLI and HTTP paths end to end, so the
-# library and binary have no unit-test harnesses.
+# Private protocol regressions use the library harness; CLI and HTTP tests
+# remain in tests/ alongside the offline protocol cases.
 [lib]
-test = false
 doctest = false
 
 [[bin]]

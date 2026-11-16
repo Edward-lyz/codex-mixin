@@ -10,13 +10,11 @@ use crate::protocol::sse::{
 
 use crate::protocol::{CollectedResponse, ResponseStream};
 
-#[cfg(test)]
-mod tests;
-
 pub(super) fn map_openai_responses_sse<S>(
     upstream: S,
     upstream_model: String,
     downstream_model: String,
+    plaintext_collaboration: bool,
 ) -> ResponseStream
 where
     S: futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
@@ -35,8 +33,8 @@ where
                         }
                         // Image and other large items need no JSON allocation.
                         // Escaped namespace strings still take the rewrite path.
-                        let collaboration_item = matches!(event_name, "response.output_item.added" | "response.output_item.done" | "message")
-                            && (event.data.contains("collaboration") || event.data.contains("\\u"));
+                        let collaboration_item = plaintext_collaboration && matches!(event_name, "response.output_item.added" | "response.output_item.done" | "message")
+                            && (event.data.contains("codex_mixin_collaboration") || event.data.contains("\\u"));
                         if !event_contains_response_metadata(event_name) && !collaboration_item
                         {
                             yield Ok(encode_raw_event(event_name, &event.data));
@@ -44,14 +42,18 @@ where
                         }
                         match serde_json::from_str::<Value>(&event.data) {
                             Ok(mut payload) => {
-                                crate::protocol::convert::collaboration::mark_plaintext_event(&mut payload);
+                                if plaintext_collaboration
+                                    && let Err(error) = crate::protocol::convert::collaboration::restore_event(&mut payload)
+                                {
+                                    yield Ok(collaboration_failure(&error, &downstream_model));
+                                    return;
+                                }
                                 rewrite_response_model_field(
                                     &mut payload,
                                     &upstream_model,
                                     &downstream_model,
                                 );
-                                yield Ok(encode_event(event_name, &payload)
-                                    .expect("rewritten responses event is serializable"));
+                                yield Ok(encode_raw_event(event_name, &payload.to_string()));
                             }
                             Err(_) => {
                                 for (recovered_name, recovered_data) in
@@ -59,14 +61,18 @@ where
                                 {
                                     match serde_json::from_str::<Value>(&recovered_data) {
                                         Ok(mut payload) => {
-                                            crate::protocol::convert::collaboration::mark_plaintext_event(&mut payload);
+                                            if plaintext_collaboration
+                                                && let Err(error) = crate::protocol::convert::collaboration::restore_event(&mut payload)
+                                            {
+                                                yield Ok(collaboration_failure(&error, &downstream_model));
+                                                return;
+                                            }
                                             rewrite_response_model_field(
                                                 &mut payload,
                                                 &upstream_model,
                                                 &downstream_model,
                                             );
-                                            yield Ok(encode_event(&recovered_name, &payload)
-                                                .expect("recovered responses event is serializable"));
+                                            yield Ok(encode_raw_event(&recovered_name, &payload.to_string()));
                                         }
                                         Err(_) => {
                                             yield Ok(encode_raw_event(
@@ -99,6 +105,14 @@ where
         }
     }
     .boxed()
+}
+
+fn collaboration_failure(error: &GatewayError, model: &str) -> Bytes {
+    tracing::error!(error = %crate::error::format_error_chain(error), "invalid provider collaboration response");
+    encode_raw_event(
+        "response.failed",
+        &response_failed_payload(None, Some(model), error.to_string(), "server_error").to_string(),
+    )
 }
 
 fn split_malformed_metadata_events(event_name: &str, data: &str) -> Vec<(String, String)> {
@@ -217,3 +231,7 @@ pub(crate) async fn collect_response_stream(
     }
     Ok(CollectedResponse { response })
 }
+
+#[cfg(test)]
+#[path = "../../tests/collaboration_transport/responses.rs"]
+mod tests;
