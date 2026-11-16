@@ -1,7 +1,9 @@
 # Chat Completions 到 Responses 的流式映射
 
 Mixin 将兼容 Chat Completions 上游转换为 Responses 时，保留以下行为。
-原生 Responses 上游继续透传，不使用这条转换路径。
+原生 Responses 上游不使用这条 Chat 转换路径。自定义 Responses provider 的
+MultiAgent V2 协作工具会单独适配 namespace 与明文元数据，详见
+[跨 Provider 协作消息与 encrypted_content](collaboration-encrypted-content.md)。
 
 ## 工具调用
 
