@@ -81,6 +81,7 @@ impl MapperState {
                     item["namespace"] = json!(namespace);
                 }
             }
+            crate::protocol::convert::collaboration::mark_plaintext_call(&mut item);
             self.output.push(item.clone());
             self.chat_tools.insert(
                 key,

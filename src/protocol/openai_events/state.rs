@@ -414,7 +414,7 @@ impl MapperState {
     ) -> Result<Value, String> {
         let codex_name = self.tool_names.to_codex_name(name).to_owned();
         let codex_namespace = self.tool_names.to_codex_namespace(name).map(str::to_owned);
-        let item = if self.tool_names.is_custom(name) {
+        let mut item = if self.tool_names.is_custom(name) {
             let parsed_arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
                 format!("custom tool call {id} arguments are not valid JSON: {err}")
             })?;
@@ -472,6 +472,7 @@ impl MapperState {
             }
             item
         };
+        crate::protocol::convert::collaboration::mark_plaintext_call(&mut item);
         Ok(item)
     }
 

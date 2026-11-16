@@ -381,7 +381,7 @@ pub(super) fn convert_function_tool(
         .and_then(Value::as_str)
         .map(str::to_owned)
         .or_else(|| namespace.map(|namespace| format!("Tool {name} in namespace {namespace}.")));
-    let input_schema = tool
+    let mut input_schema = tool
         .get("parameters")
         .filter(|schema| !schema.is_null())
         .or_else(|| tool.get("input_schema"))
@@ -391,6 +391,7 @@ pub(super) fn convert_function_tool(
         .cloned()
         .map(reshape_anthropic_input_schema)
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+    super::collaboration::prepare_schema(&mut input_schema, namespace, name);
     // Anthropic Messages tools carry only name/description/input_schema.
     // The OpenAI "strict" flag is dropped: anthropic.com ignores unknown
     // fields but Bedrock's Anthropic layer rejects them with 400.

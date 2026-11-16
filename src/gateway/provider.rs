@@ -570,6 +570,9 @@ async fn stream_openai_responses(
     } else {
         Vec::new()
     };
+    // Provider collaboration must remain readable by agents using other
+    // protocols. Direct official routes retain their encryption contract.
+    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body);
     if !normalized_reasoning.is_empty() {
         tracing::debug!(
             provider_id = provider.id(),
@@ -656,6 +659,10 @@ async fn stream_openai_responses(
         Ok(upstream)
     };
     restore_reasoning(&mut request_body, saved_reasoning);
+    crate::protocol::convert::collaboration::restore_request(
+        &mut request_body,
+        saved_collaboration,
+    );
     restore_portable_responses_reasoning(&mut request_body, normalized_reasoning);
     restore_optional_field(&mut request_body, "model", original_model);
     restore_optional_field(

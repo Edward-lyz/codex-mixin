@@ -10,6 +10,9 @@ use crate::protocol::sse::{
 
 use crate::protocol::{CollectedResponse, ResponseStream};
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn map_openai_responses_sse<S>(
     upstream: S,
     upstream_model: String,
@@ -30,12 +33,18 @@ where
                             yield Ok(encode_raw_event(event_name, &event.data));
                             continue;
                         }
-                        if !event_contains_response_metadata(event_name) {
+                        // Image and other large items need no JSON allocation.
+                        // Escaped namespace strings still take the rewrite path.
+                        let collaboration_item = matches!(event_name, "response.output_item.added" | "response.output_item.done" | "message")
+                            && (event.data.contains("collaboration") || event.data.contains("\\u"));
+                        if !event_contains_response_metadata(event_name) && !collaboration_item
+                        {
                             yield Ok(encode_raw_event(event_name, &event.data));
                             continue;
                         }
                         match serde_json::from_str::<Value>(&event.data) {
                             Ok(mut payload) => {
+                                crate::protocol::convert::collaboration::mark_plaintext_event(&mut payload);
                                 rewrite_response_model_field(
                                     &mut payload,
                                     &upstream_model,
@@ -50,6 +59,7 @@ where
                                 {
                                     match serde_json::from_str::<Value>(&recovered_data) {
                                         Ok(mut payload) => {
+                                            crate::protocol::convert::collaboration::mark_plaintext_event(&mut payload);
                                             rewrite_response_model_field(
                                                 &mut payload,
                                                 &upstream_model,
