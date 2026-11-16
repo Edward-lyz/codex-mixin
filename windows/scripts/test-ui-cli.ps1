@@ -89,10 +89,13 @@ try {
     $add = & $WinApp ui search 新增服务商 -a $app.Id --type Button --json | ConvertFrom-Json
     & $WinApp ui invoke $add.matches[0].selector -a $app.Id
     & $WinApp ui invoke 供应商类型 -a $app.Id --action expand
-    $option = & $WinApp ui search 'custom' -a $app.Id --type ListItem --json | ConvertFrom-Json
-    # WPF also exposes open ComboBox items through the popup window as wrapper peers
-    # without SelectionItemPattern; click the visible item like a user would.
-    & $WinApp ui click $option.matches[0].selector -a $app.Id
+    $presetIds = @($interface.provider_catalog.presets | ForEach-Object { $_.id })
+    $customIndex = [Array]::IndexOf($presetIds, 'custom')
+    if ($customIndex -lt 0) { throw 'CLI provider catalog has no custom preset' }
+    # The WPF popup can expose an off-screen wrapper for custom; navigate the actual list.
+    $keys = 'home ' + ('down ' * $customIndex) + 'enter'
+    & $WinApp ui send-keys $keys --target 供应商类型 -a $app.Id --via send-input
+    & $WinApp ui wait-for '供应商 ID' -a $app.Id --timeout 10000
     $field = & $WinApp ui search '供应商 ID' -a $app.Id --type Edit --json | ConvertFrom-Json
     & $WinApp ui set-value $field.matches[0].selector ui-local -a $app.Id
     $field = & $WinApp ui search '显示名称' -a $app.Id --type Edit --json | ConvertFrom-Json
@@ -129,6 +132,35 @@ try {
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
     if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared' -or $provider.model_context_overrides.shared -ne 16384) { throw 'Model draft was not persisted by the UI' }
+    $completed.Add($stage)
+
+    $stage = 'manual model entry and removal'
+    if (@($provider.cached_models | Where-Object id -eq 'ui-manual-model').Count -ne 0) { throw 'Manual model already exists in the fixture catalog' }
+    & $WinApp ui invoke 更多模型操作 -a $app.Id
+    & $WinApp ui invoke '手动添加模型…' -a $app.Id
+    $field = & $WinApp ui search '模型 ID' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-manual-model -a $app.Id
+    & $WinApp ui invoke PrimaryButton -a $app.Id
+    $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-manual-model -a $app.Id
+    & $WinApp ui wait-for 'ui-manual-model 加入 Codex' -a $app.Id --timeout 10000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    if ('ui-manual-model' -in @($listed.providers | Where-Object id -eq 'ui-local')[0].selected_models) { throw 'Manual model was saved before the draft was applied' }
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
+    $manualModel = @($provider.cached_models | Where-Object id -eq 'ui-manual-model')
+    if ('shared' -notin $provider.selected_models -or 'ui-manual-model' -notin $provider.selected_models -or $manualModel.Count -ne 1 -or -not $manualModel[0].manually_added) { throw 'Manual model selection was not persisted by the UI' }
+    $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
+    & $WinApp ui set-value $field.matches[0].selector ui-manual-model -a $app.Id
+    & $WinApp ui wait-for 'ui-manual-model 加入 Codex' -a $app.Id --timeout 10000
+    & $WinApp ui invoke 'ui-manual-model 加入 Codex' -a $app.Id --action toggle
+    & $WinApp ui invoke apply-changes -a $app.Id
+    & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
+    $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
+    $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
+    if (@($provider.selected_models).Count -ne 1 -or $provider.selected_models[0] -ne 'shared' -or @($provider.cached_models | Where-Object id -eq 'ui-manual-model').Count -ne 0) { throw 'Removing the manual model did not preserve the existing selection' }
     $completed.Add($stage)
 
     $stage = 'provider edit and refresh'

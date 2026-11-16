@@ -788,7 +788,8 @@ public sealed partial class MainWindow : Window
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
         var modelsById = models.Select((model, index) => (Model: model, Index: index)).ToDictionary(row => Json.Text(row.Model, "id"));
-        var modelIds = modelsById.Keys.ToArray();
+        var modelIds = modelsById.Keys.ToList();
+        var manualDraftIds = new HashSet<string>();
         var selected = Json.Strings(Json.Field(provider, "selected_models")).ToList();
         var modelOrder = Json.OptionalText(provider, "model_order") ?? "family";
         var savedContexts = Json.Field(provider, "model_context_overrides");
@@ -886,7 +887,15 @@ public sealed partial class MainWindow : Window
             var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
             AutomationProperties.SetName(check, Localized.Format("{0} 加入 Codex", modelId));
             check.Checked += (_, _) => { if (!selected.Contains(modelId)) selected.Add(modelId); MarkDirty(); Filter(); };
-            check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); Filter(); };
+            check.Unchecked += (_, _) =>
+            {
+                selected.Remove(modelId);
+                if (manualDraftIds.Remove(modelId))
+                {
+                    modelsById.Remove(modelId); modelIds.Remove(modelId); contexts.Remove(modelId);
+                }
+                MarkDirty(); Filter();
+            };
             var rank = new TextBlock { Text = selected.Contains(modelId) ? $"{selected.IndexOf(modelId) + 1}  ≡" : "", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
             var moveMenu = new ContextMenu();
             async Task Move(int delta)
@@ -1064,6 +1073,32 @@ public sealed partial class MainWindow : Window
             list.ItemsSource = (sortColumn < 0 ? visible.OrderBy(modelId => modelOrder == "manual" && selected.Contains(modelId) ? selected.IndexOf(modelId) : int.MaxValue)
                 : visible.Order(Comparer<string>.Create(Compare))).ToArray();
         }
+        var addManual = MenuItem(Localized.Get("手动添加模型…"), "\uE710", async () =>
+        {
+            var input = Input(Localized.Get("模型 ID"), "");
+            Placeholder.Set(input, Localized.Get("输入模型 ID（可不在供应商模型列表中）"));
+            input.Loaded += (_, _) => input.Focus();
+            var dialog = Dialog(Localized.Get("手动添加模型"), Field.Wrap(input));
+            dialog.PrimaryButtonText = Localized.Get("添加并选中");
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+            var modelId = input.Text.Trim();
+            if (modelId.Length == 0)
+            {
+                ShowNotice(Localized.Get("手动添加模型"), Localized.Get("模型 ID 不能为空。"), InfoBarSeverity.Warning);
+                return;
+            }
+            var changed = false;
+            if (!modelsById.ContainsKey(modelId))
+            {
+                modelsById.Add(modelId, (JsonSerializer.SerializeToElement(new { id = modelId }), modelsById.Count));
+                modelIds.Add(modelId); manualDraftIds.Add(modelId); changed = true;
+            }
+            if (!selected.Contains(modelId)) { selected.Add(modelId); changed = true; }
+            if (changed) MarkDirty();
+            search.Text = ""; filter.SelectedIndex = 0; Filter();
+        });
+        addManual.IsEnabled = Json.Text(provider, "kind") != "official";
+        actions.Items.Add(addManual);
         for (var index = 0; index < headers.Count; index++)
         {
             var column = index;
@@ -1087,8 +1122,10 @@ public sealed partial class MainWindow : Window
         ShowSummary(Localized.Get("正在读取测速结果…"));
         pendingApply = async () =>
         {
+            if (selected.Count == 0 && Json.Field(provider, "selected_models").GetArrayLength() > 0)
+                throw new InvalidOperationException(Localized.Get("至少保留一个已选模型。"));
             var arguments = new List<string> { "provider", "select", id, "--model-order", modelOrder };
-            foreach (var modelId in selected) arguments.AddRange(["--model", modelId]);
+            foreach (var modelId in selected) arguments.Add($"--model={modelId}");
             foreach (var (modelId, value) in contexts)
             {
                 if (double.IsNaN(value)) { if (savedContexts.TryGetProperty(modelId, out _)) arguments.AddRange(["--clear-model-context", modelId]); continue; }
