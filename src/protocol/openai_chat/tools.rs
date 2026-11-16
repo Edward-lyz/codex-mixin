@@ -116,6 +116,7 @@ pub(super) fn convert_function_tool(
         .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type":"object","properties":{}}));
+    crate::protocol::convert::collaboration::prepare_schema(&mut parameters, namespace, name);
     let root = parameters.as_object_mut().ok_or_else(|| {
         GatewayError::BadRequest(format!(
             "function tool {name} parameters must have type object"

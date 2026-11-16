@@ -6,6 +6,7 @@ use crate::anthropic::{ContentBlock, Message, MessageRequest, Tool};
 use crate::config::ThinkingMode;
 use crate::error::GatewayError;
 
+pub(crate) mod collaboration;
 mod content;
 mod request;
 mod thinking;
