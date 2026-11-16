@@ -17,7 +17,7 @@
        <TextBlock x:Name="ServiceTitle" Text="正在读取服务状态" FontSize="15" FontWeight="SemiBold"/>
        <TextBlock x:Name="Endpoint" Text="" Style="{StaticResource Caption}"/>
       </local:Stack>
-      <ui:ToggleSwitch x:Name="GatewaySwitch" Grid.Column="2" Toggled="OnGatewayToggled" HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.AutomationId="GatewaySwitch" AutomationProperties.Name="本地网关"/>
+      <ui:ToggleSwitch x:Name="GatewaySwitch" Grid.Column="2" MinWidth="0" OnContent="" OffContent="" Toggled="OnGatewayToggled" HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.AutomationId="GatewaySwitch" AutomationProperties.Name="本地网关"/>
      </local:SpacedGrid>
      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
       <local:Stack x:Name="ProviderStrip" Orientation="Horizontal" Spacing="6"/>
