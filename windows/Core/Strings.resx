@@ -1778,4 +1778,11 @@ Click to change model</value>
   <data name="备用 {0}" xml:space="preserve"><value>Backup {0}</value></data>
   <data name="{0} · {1}&#10;点击更换模型" xml:space="preserve"><value>{0} · {1}
 Click to change model</value></data>
+  <data name="手动添加模型…" xml:space="preserve"><value>Add model manually…</value></data>
+  <data name="手动添加模型" xml:space="preserve"><value>Add model manually</value></data>
+  <data name="模型 ID" xml:space="preserve"><value>Model ID</value></data>
+  <data name="输入模型 ID（可不在供应商模型列表中）" xml:space="preserve"><value>Enter a model ID (it may be absent from the provider's model list)</value></data>
+  <data name="添加并选中" xml:space="preserve"><value>Add and select</value></data>
+  <data name="模型 ID 不能为空。" xml:space="preserve"><value>Model ID cannot be empty.</value></data>
+  <data name="至少保留一个已选模型。" xml:space="preserve"><value>Keep at least one model selected.</value></data>
 </root>
