@@ -89,6 +89,7 @@ struct StoredSession {
 static SESSION_LOCK: Mutex<()> = Mutex::const_new(());
 static CLIENT: tokio::sync::OnceCell<reqwest::Client> = tokio::sync::OnceCell::const_new();
 
+#[allow(clippy::cognitive_complexity)]
 pub(crate) async fn session(
     fallback_region: &str,
     force_refresh: bool,

@@ -541,6 +541,7 @@ async fn stream_openai_chat(
     .boxed())
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn stream_openai_responses(
     ctx: ProviderRequestContext<'_>,
 ) -> Result<ResponseStream, GatewayError> {
@@ -570,7 +571,7 @@ async fn stream_openai_responses(
     };
     let plaintext_collaboration = saved_collaboration
         .as_ref()
-        .is_some_and(|saved| saved.active());
+        .is_some_and(crate::protocol::convert::collaboration::RequestRestore::active);
     let original_model = body
         .as_object_mut()
         .and_then(|fields| fields.remove("model"));
