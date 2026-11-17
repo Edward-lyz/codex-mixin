@@ -399,10 +399,21 @@ try {
     if ($echAfter.enabled -ne $echBefore.enabled -or $echAfter.fallback_reason -ne $echBefore.fallback_reason) { throw 'ECH test changed saved network settings' }
     & $WinApp ui wait-for '启用 ECH' -w $settingsWindow --timeout 90000
     & $WinApp ui invoke '启用 ECH' -w $settingsWindow
-    & $WinApp ui wait-for operation-status -w $settingsWindow --value '启用 ECH完成' --contains --timeout 90000
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    do {
+        $status = & $WinApp ui get-property operation-status -w $settingsWindow --property Name --json | ConvertFrom-Json
+        $echEnableStatus = [string]$status.properties.Name
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'ECH enable did not expose its terminal result' }
+        if ($echEnableStatus -notmatch '^(启用 ECH完成|配置已保存，后续操作失败)') { Start-Sleep -Milliseconds 200 }
+    } until ($echEnableStatus -match '^(启用 ECH完成|配置已保存，后续操作失败)')
+    if ($echEnableStatus -match '^配置已保存') {
+        $echNotice = & $WinApp ui search 'ECH enable failed: ECH unavailable' -w $settingsWindow --type Text --json | ConvertFrom-Json
+        if (-not @($echNotice.matches | Where-Object { $_.name -match '^配置已保存，后续操作失败\s+configuration was saved, but ECH enable failed: ECH unavailable' }).Count) { throw 'ECH enable failed for a reason other than the expected probe fallback' }
+    }
     $echAfter = & $cli --no-tui --json-errors ech status --json | ConvertFrom-Json
     if ($echAfter.enabled -eq (-not [string]::IsNullOrWhiteSpace($echAfter.fallback_reason))) { throw 'ECH enable did not persist a consistent probe verdict or safe fallback' }
-    @{ test = $echTestStatus; enable = $echAfter } | ConvertTo-Json -Depth 8 | Set-Content "$evidence\ech.json"
+    if (($echEnableStatus -match '^启用 ECH完成') -ne $echAfter.enabled) { throw 'ECH enable UI result did not match the persisted probe verdict' }
+    @{ test = $echTestStatus; enable_status = $echEnableStatus; enable = $echAfter } | ConvertTo-Json -Depth 8 | Set-Content "$evidence\ech.json"
     & $WinApp ui wait-for '关闭 ECH' -w $settingsWindow --timeout 90000
     & $WinApp ui invoke '关闭 ECH' -w $settingsWindow
     & $WinApp ui wait-for operation-status -w $settingsWindow --value '关闭 ECH完成' --contains --timeout 90000
