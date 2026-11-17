@@ -152,10 +152,21 @@ try {
     $provider = @($listed.providers | Where-Object id -eq 'ui-local')[0]
     $manualModel = @($provider.cached_models | Where-Object id -eq 'ui-manual-model')
     if ('shared' -notin $provider.selected_models -or 'ui-manual-model' -notin $provider.selected_models -or $manualModel.Count -ne 1 -or -not $manualModel[0].manually_added) { throw 'Manual model selection was not persisted by the UI' }
-    $field = & $WinApp ui search '搜索当前服务商的模型' -a $app.Id --type Edit --json | ConvertFrom-Json
-    & $WinApp ui set-value $field.matches[0].selector ui-manual-model -a $app.Id
-    & $WinApp ui wait-for 'ui-manual-model 加入 Codex' -a $app.Id --timeout 10000
-    & $WinApp ui invoke 'ui-manual-model 加入 Codex' -a $app.Id --action toggle
+    # Applying opens the operation window and rebuilds the page; target the main
+    # window and re-resolve the search box until the rebuilt element is stable.
+    $tree = & $WinApp ui inspect -a $app.Id --json | ConvertFrom-Json
+    $mainWindow = @($tree.windows | Where-Object title -eq '模型与服务')[0].hwnd
+    if (-not $mainWindow) { throw 'Main window was not found after applying model changes' }
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            $field = & $WinApp ui search '搜索当前服务商的模型' -w $mainWindow --type Edit --json | ConvertFrom-Json
+            & $WinApp ui set-value $field.matches[0].selector ui-manual-model -w $mainWindow
+            break
+        }
+        catch { if ($attempt -ge 10) { throw }; Start-Sleep -Milliseconds 500 }
+    }
+    & $WinApp ui wait-for 'ui-manual-model 加入 Codex' -w $mainWindow --timeout 10000
+    & $WinApp ui invoke 'ui-manual-model 加入 Codex' -w $mainWindow --action toggle
     & $WinApp ui invoke apply-changes -a $app.Id
     & $WinApp ui wait-for operation-status -a $app.Id --value '应用模型更改完成' --contains --timeout 90000
     $listed = & $cli --no-tui --json-errors provider list --json | ConvertFrom-Json
