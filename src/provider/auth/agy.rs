@@ -90,6 +90,7 @@ pub async fn invalidate_agy_cache(path: &Path) {
     lock.remove(path);
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub async fn get_agy_headers(
     provider: &crate::provider::ProviderDefinition,
 ) -> anyhow::Result<HeaderMap> {
