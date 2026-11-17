@@ -24,7 +24,7 @@ pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{
     ProviderResponseRequest, stream_provider_response, upstream_failure_reason,
 };
-pub(crate) use responses::collect_response_stream;
+pub(crate) use responses::{collect_response_stream, map_openai_responses_sse};
 pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,
     stable_oneapi_routing,

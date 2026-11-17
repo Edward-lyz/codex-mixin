@@ -56,6 +56,7 @@ pub(crate) struct GatewayExecutor {
 pub(crate) struct OfficialSendResult {
     pub(crate) response: reqwest::Response,
     pub(crate) observation: Option<PrefixObservation>,
+    pub(crate) plaintext_collaboration: bool,
 }
 
 impl GatewayExecutor {
@@ -492,7 +493,8 @@ impl GatewayExecutor {
             .unwrap_or("official")
             .to_owned();
         let observation = self.official_prefix_observation(headers, &body)?;
-        let (mut upstream, body) = self.upstream.send_official_responses(headers, body).await?;
+        let (mut upstream, body, plaintext_collaboration) =
+            self.upstream.send_official_responses(headers, body).await?;
         if upstream.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) =
                 normalize_provider_images_for_fallback(body.clone()).await?;
@@ -516,6 +518,15 @@ impl GatewayExecutor {
                 "official responses endpoint",
             )
             .await?);
+        }
+        if plaintext_collaboration {
+            let stream = super::responses::map_openai_responses_sse(
+                crate::gateway::observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+                model.clone(),
+                model,
+                true,
+            );
+            return Ok((stream, body));
         }
         let stream = async_stream::stream! {
             let upstream = crate::gateway::observe_upstream_cache_usage(
@@ -555,7 +566,8 @@ impl GatewayExecutor {
     ) -> Result<OfficialSendResult, GatewayError> {
         let body = super::prepare_compaction_replay(body, true).await?;
         let observation = self.official_prefix_observation(headers, &body)?;
-        let (mut response, body) = self.upstream.send_official_responses(headers, body).await?;
+        let (mut response, body, plaintext_collaboration) =
+            self.upstream.send_official_responses(headers, body).await?;
         if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) = normalize_provider_images_for_fallback(body).await?;
             if stats.normalized_images > 0 && stats.saved_bytes > 0 {
@@ -574,6 +586,7 @@ impl GatewayExecutor {
         Ok(OfficialSendResult {
             response,
             observation,
+            plaintext_collaboration,
         })
     }
 

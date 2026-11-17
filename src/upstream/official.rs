@@ -2,7 +2,7 @@ use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::UpstreamAccess;
 use crate::error::GatewayError;
@@ -59,32 +59,20 @@ impl UpstreamAccess {
     /// Send an official Responses request with auth and forwarded client
     /// headers. Callers map status and wrap the byte stream.
     ///
-    /// Native `agent_message` envelopes stay as the client wrote them. When the
-    /// endpoint rejects the request, retry once with locally stored plaintext
-    /// payloads materialized as `input_text`, which is how a third-party
-    /// subagent's message reaches an official parent.
+    /// Use the same plaintext tool contract as custom Responses providers.
+    /// Opaque native messages remain opaque, including on upstream failures.
     pub(crate) async fn send_official_responses(
         &self,
         headers: &HeaderMap,
-        body: Value,
-    ) -> Result<(reqwest::Response, Value), GatewayError> {
+        mut body: Value,
+    ) -> Result<(reqwest::Response, Value, bool), GatewayError> {
+        let saved = crate::protocol::convert::collaboration::prepare_request(&mut body)?;
+        let plaintext_collaboration = saved.active();
         let body = OfficialResponsesBody::new(body)?;
         let (response, body) = self.send_official_body(headers, body).await?;
-        if response.status().is_success() {
-            return Ok((response, body.0));
-        }
-        let Some(fallback) = materialize_official_responses_body(&body.0)? else {
-            return Ok((response, body.0));
-        };
-        tracing::warn!(
-            status = %response.status(),
-            "retrying official responses request with materialized agent messages"
-        );
-        drop(response);
-        let (response, _) = self
-            .send_official_body(headers, OfficialResponsesBody::new(fallback)?)
-            .await?;
-        Ok((response, body.0))
+        let mut body = body.0;
+        crate::protocol::convert::collaboration::restore_request(&mut body, saved);
+        Ok((response, body, plaintext_collaboration))
     }
 
     async fn send_official_body(
@@ -234,86 +222,6 @@ fn validate_agent_message_content(item: &Value) -> Result<(), GatewayError> {
             })?;
     }
     Ok(())
-}
-
-/// Rebuild locally stored plaintext `agent_message` payloads as `input_text`.
-///
-/// Returns `None` when the body carries no such payload, so callers only retry
-/// when materialization would actually change the request.
-pub(crate) fn materialize_official_responses_body(
-    body: &Value,
-) -> Result<Option<Value>, GatewayError> {
-    let Some(input) = body.get("input").and_then(Value::as_array) else {
-        return Ok(None);
-    };
-    let has_convertible = input.iter().try_fold(false, |changed, item| {
-        has_materializable_agent_message_content(item).map(|item_changed| changed || item_changed)
-    })?;
-    if !has_convertible {
-        return Ok(None);
-    }
-    let mut materialized = body.clone();
-    let Some(input) = materialized.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok(None);
-    };
-    let mut changed = false;
-    for item in input {
-        changed |= materialize_agent_message_content(item)?;
-    }
-    Ok(changed.then_some(materialized))
-}
-
-fn has_materializable_agent_message_content(item: &Value) -> Result<bool, GatewayError> {
-    if item.get("type").and_then(Value::as_str) != Some("agent_message") {
-        return Ok(false);
-    }
-    let Some(content) = item.get("content").and_then(Value::as_array) else {
-        return Ok(false);
-    };
-    for part in content {
-        if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
-            continue;
-        }
-        part.get("encrypted_content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                GatewayError::BadRequest(
-                    "agent_message encrypted_content missing payload".to_owned(),
-                )
-            })?;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-fn materialize_agent_message_content(item: &mut Value) -> Result<bool, GatewayError> {
-    if item.get("type").and_then(Value::as_str) != Some("agent_message") {
-        return Ok(false);
-    }
-    let Some(content) = item.get_mut("content").and_then(Value::as_array_mut) else {
-        return Ok(false);
-    };
-    let mut changed = false;
-    for part in content {
-        if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
-            continue;
-        }
-        // Codex collaboration stores local plaintext in this agent-only field
-        // when the subagent ran on a non-official provider. The official
-        // endpoint cannot decode it, so present it as user text instead.
-        let text = part
-            .get("encrypted_content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                GatewayError::BadRequest(
-                    "agent_message encrypted_content missing payload".to_owned(),
-                )
-            })?
-            .to_owned();
-        *part = json!({"type": "input_text", "text": text});
-        changed = true;
-    }
-    Ok(changed)
 }
 
 fn is_foreign_reasoning(item: &Value) -> bool {

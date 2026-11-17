@@ -1273,6 +1273,29 @@ async fn mock_official_responses(
             ))
             .unwrap();
     }
+    if matches!(
+        state.websocket_behavior,
+        OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool
+    ) && body["tools"][0]["tools"][0]["name"].is_string()
+    {
+        let tool = &body["tools"][0];
+        let item = json!({"type":"function_call", "id":"fc_delegation", "status":"completed",
+            "namespace":tool["name"], "name":tool["tools"][0]["name"],
+            "call_id":"call_delegation", "arguments":"{\"message\":\"read probe\"}"});
+        let wire = [
+            json!({"type":"response.output_item.added", "item":item, "output_index":0}),
+            json!({"type":"response.output_item.done", "item":item, "output_index":0}),
+            json!({"type":"response.completed", "response":{"id":"resp_1", "output":[item]}}),
+        ]
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(wire))
+            .unwrap();
+    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -1395,6 +1418,18 @@ async fn serve_mock_official_websocket(
                     })
             })
             .flatten();
+        let collaboration_namespace = body
+            .get("tools")
+            .and_then(Value::as_array)
+            .and_then(|tools| {
+                tools.iter().find(|tool| {
+                    matches!(
+                        tool["name"].as_str(),
+                        Some("collaboration" | "codex_mixin_collaboration")
+                    )
+                })
+            })
+            .map(|tool| tool["name"].clone());
         let request_number = {
             let mut requests = state.requests.lock().unwrap();
             requests.push(body);
@@ -1528,7 +1563,7 @@ async fn serve_mock_official_websocket(
             {
                 return json!({
                     "type":"function_call", "id":"fc_delegation", "status":"completed",
-                    "namespace":"collaboration", "name":"spawn_agent",
+                    "namespace":collaboration_namespace, "name":"spawn_agent",
                     "call_id":"call_delegation", "arguments":"{\"message\":\"read probe\"}"
                 });
             }
@@ -1556,6 +1591,14 @@ async fn serve_mock_official_websocket(
             }
         });
         if let Some(output_item) = output_item.as_ref() {
+            if matches!(
+                state.websocket_behavior,
+                OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool
+            ) {
+                socket.send(AxumWsMessage::Text(json!({
+                    "type":"response.output_item.added", "output_index":0, "item":output_item
+                }).to_string().into())).await.unwrap();
+            }
             socket
                 .send(AxumWsMessage::Text(
                     json!({

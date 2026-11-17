@@ -131,6 +131,11 @@ async fn forward_official_responses(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("official")
+        .to_owned();
     let sent = state.gateway.send_official(headers, body).await?;
     let status = sent.response.status();
     let content_type = sent
@@ -147,15 +152,24 @@ async fn forward_official_responses(
         )
         .await?);
     }
+    let stream = crate::gateway::observe_upstream_cache_usage(
+        sent.response.bytes_stream(),
+        sent.observation,
+    );
+    let body = if sent.plaintext_collaboration {
+        Body::from_stream(crate::gateway::map_openai_responses_sse(
+            stream,
+            model.clone(),
+            model,
+            true,
+        ))
+    } else {
+        Body::from_stream(stream)
+    };
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from_stream(
-            crate::gateway::observe_upstream_cache_usage(
-                sent.response.bytes_stream(),
-                sent.observation,
-            ),
-        ))
+        .body(body)
         .map_err(|err| GatewayError::Other(err.into()))
 }

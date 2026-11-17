@@ -65,7 +65,9 @@ pub(super) async fn proxy_official_ws_request(
             }
             return Ok(Some((error, None)));
         }
-        match proxy_official_responses_ws(
+        let saved = crate::protocol::convert::collaboration::prepare_request(body)?;
+        let plaintext_collaboration = saved.active();
+        let result = proxy_official_responses_ws(
             context
                 .official_socket
                 .as_mut()
@@ -74,9 +76,11 @@ pub(super) async fn proxy_official_ws_request(
             body,
             context.state.config.request_timeout,
             usage_observer.as_mut(),
+            plaintext_collaboration,
         )
-        .await
-        {
+        .await;
+        crate::protocol::convert::collaboration::restore_request(body, saved);
+        match result {
             Ok(OfficialWebSocketResponse::Completed {
                 response_id,
                 items_added,
@@ -101,11 +105,9 @@ pub(super) async fn proxy_official_ws_request(
             Err(error) if !error.response_started && retry_available => {
                 retry_available = false;
                 *context.official_socket = None;
-                let materialized = materialize_ws_retry_body(body)?;
                 tracing::warn!(
                     model,
                     error = %error.source,
-                    materialized,
                     "retrying official responses websocket before any response started"
                 );
             }
@@ -115,16 +117,6 @@ pub(super) async fn proxy_official_ws_request(
             }
         }
     }
-}
-
-/// Replace the retry request with a plaintext-materialized body when it carries
-/// locally stored agent messages. Returns whether the body changed.
-fn materialize_ws_retry_body(body: &mut Value) -> anyhow::Result<bool> {
-    let Some(fallback) = crate::upstream::materialize_official_responses_body(body)? else {
-        return Ok(false);
-    };
-    *body = fallback;
-    Ok(true)
 }
 
 async fn connect_and_expand_official_request(
@@ -185,6 +177,7 @@ async fn proxy_official_responses_ws(
     body: &Value,
     idle_timeout: Duration,
     mut usage_observer: Option<&mut crate::gateway::UpstreamCacheObserver>,
+    plaintext_collaboration: bool,
 ) -> Result<OfficialWebSocketResponse, OfficialWebSocketRequestError> {
     tokio::time::timeout(
         idle_timeout,
@@ -207,7 +200,7 @@ async fn proxy_official_responses_ws(
     let mut response_id = None;
     let mut items_added = Vec::new();
     loop {
-        let message = tokio::time::timeout(idle_timeout, official_socket.next())
+        let mut message = tokio::time::timeout(idle_timeout, official_socket.next())
             .await
             .map_err(|_| OfficialWebSocketRequestError {
                 source: anyhow::anyhow!(
@@ -228,7 +221,7 @@ async fn proxy_official_responses_ws(
                 response_started,
                 response_id: response_id.clone(),
             })?;
-        let event = match &message {
+        let mut event = match &message {
             TungsteniteMessage::Text(text) => {
                 parse_official_ws_event(text.as_bytes(), response_id.as_deref())
             }
@@ -237,6 +230,17 @@ async fn proxy_official_responses_ws(
             }
             _ => None,
         };
+        if plaintext_collaboration && let Some(event) = event.as_mut() {
+            crate::protocol::convert::collaboration::restore_event(event).map_err(|error| {
+                OfficialWebSocketRequestError {
+                    source: error.into(),
+                    // A protocol rejection must never replay executable calls.
+                    response_started: true,
+                    response_id: response_id.clone(),
+                }
+            })?;
+            message = TungsteniteMessage::Text(event.to_string().into());
+        }
         if let Some(event) = event.as_ref()
             && let Some(observer) = usage_observer.as_deref_mut()
         {
@@ -382,6 +386,7 @@ fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Va
         && memmem::find(bytes, b"response.output_text.delta").is_none()
         && memmem::find(bytes, b"response.reasoning_summary_text.delta").is_none()
         && memmem::find(bytes, b"response.output_item.done").is_none()
+        && memmem::find(bytes, b"response.output_item.added").is_none()
         && memmem::find(bytes, b"response.completed").is_none()
         && memmem::find(bytes, b"response.failed").is_none()
         && memmem::find(bytes, b"response.incomplete").is_none()

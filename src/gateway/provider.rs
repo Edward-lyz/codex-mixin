@@ -562,16 +562,8 @@ async fn stream_openai_responses(
         .upstream
         .official_account_headers(provider, headers)
         .await?;
-    let saved_collaboration = if official_native.is_some() {
-        None
-    } else {
-        Some(crate::protocol::convert::collaboration::prepare_request(
-            body,
-        )?)
-    };
-    let plaintext_collaboration = saved_collaboration
-        .as_ref()
-        .is_some_and(crate::protocol::convert::collaboration::RequestRestore::active);
+    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body)?;
+    let plaintext_collaboration = saved_collaboration.active();
     let original_model = body
         .as_object_mut()
         .and_then(|fields| fields.remove("model"));
@@ -603,12 +595,12 @@ async fn stream_openai_responses(
         CacheShape::from_openai_responses(body),
     );
     let request_body = std::mem::take(body);
-    let mut wire_body = if official_native.is_some() {
+    let wire_body = if official_native.is_some() {
         crate::upstream::normalize_official_responses_body(request_body.clone())?
     } else {
         request_body.clone()
     };
-    let (mut upstream, _) = executor
+    let (upstream, _) = executor
         .upstream
         .send_provider_json_retaining(
             provider,
@@ -629,23 +621,6 @@ async fn stream_openai_responses(
             );
         })?;
     let mut request_body = request_body;
-    if !upstream.status().is_success()
-        && official_native.is_some()
-        && let Some(fallback) = crate::upstream::materialize_official_responses_body(&wire_body)?
-    {
-        upstream = executor
-            .upstream
-            .send_provider_json(
-                provider,
-                ProviderProtocol::OpenAiResponses,
-                upstream_model_id,
-                routing.map(|routing| routing.hash_key.as_str()),
-                official_native.as_ref(),
-                fallback.clone(),
-            )
-            .await?;
-        wire_body = fallback;
-    }
     let upstream = if upstream.status() == reqwest::StatusCode::BAD_REQUEST
         && (provider.definition().preset_id.as_deref() == Some("baidu-oneapi")
             || official_native.is_some())
@@ -695,12 +670,10 @@ async fn stream_openai_responses(
         Ok(upstream)
     };
     restore_reasoning(&mut request_body, saved_reasoning);
-    if let Some(saved_collaboration) = saved_collaboration {
-        crate::protocol::convert::collaboration::restore_request(
-            &mut request_body,
-            saved_collaboration,
-        );
-    }
+    crate::protocol::convert::collaboration::restore_request(
+        &mut request_body,
+        saved_collaboration,
+    );
     restore_portable_responses_reasoning(&mut request_body, normalized_reasoning);
     restore_optional_field(&mut request_body, "model", original_model);
     restore_optional_field(
