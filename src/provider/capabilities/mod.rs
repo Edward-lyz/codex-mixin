@@ -148,7 +148,7 @@ impl ProviderCapabilities {
             && provider.auth.api_key.trim().is_empty()
         {
             crate::provider::agy::require_native_account(provider)?;
-            Some(crate::provider::auth::agy::get_agy_headers().await?)
+            Some(crate::provider::auth::agy::get_agy_headers(provider).await?)
         } else {
             None
         };

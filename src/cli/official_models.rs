@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use codex_mixin::catalog::{apply_official_context_overrides, load_template_catalog};
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
-use codex_mixin::provider::{ProviderModel, ProviderProtocol};
+use codex_mixin::provider::{ProviderModel, official_models_from_catalog};
 use serde_json::Value;
 
 use codex_mixin::catalog::official::{
@@ -23,7 +23,6 @@ pub(super) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
         |catalog| official_models_from_catalog(&catalog),
     )
 }
-
 pub(super) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
     let catalog = match load_template_catalog(Some(&official_models_cache_path()))? {
         Some(catalog) => Some(catalog),
@@ -268,66 +267,4 @@ fn filter_selected_models(
     models.retain(|model| positions.contains_key(model.id.as_str()));
     models.sort_by_key(|model| positions.get(model.id.as_str()).copied());
     models
-}
-
-fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderModel>> {
-    let models = catalog
-        .get("models")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("official Codex catalog has no models array"))?;
-    models
-        .iter()
-        .filter(|model| model.get("visibility").and_then(Value::as_str) != Some("hide"))
-        .map(|model| {
-            let id = model
-                .get("slug")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("official Codex model is missing slug"))?;
-            let supports_image = model
-                .get("input_modalities")
-                .and_then(Value::as_array)
-                .is_some_and(|modalities| {
-                    modalities
-                        .iter()
-                        .any(|modality| modality.as_str() == Some("image"))
-                });
-            let supports_thinking = model
-                .get("supported_reasoning_levels")
-                .and_then(Value::as_array)
-                .is_some_and(|levels| !levels.is_empty());
-            let supports_tool_search = model
-                .get("experimental_supported_tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.as_str() == Some("tool_search"))
-                });
-            Ok(ProviderModel {
-                id: id.to_owned(),
-                display_name: model
-                    .get("display_name")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                description: model
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                context_window: model
-                    .get("context_window")
-                    .and_then(Value::as_u64)
-                    .or_else(|| model.get("max_context_window").and_then(Value::as_u64)),
-                protocol: Some(ProviderProtocol::OpenAiResponses),
-                api_path: Some("/responses".to_owned()),
-                supports_image: Some(supports_image),
-                supports_thinking: Some(supports_thinking),
-                supports_web_search: Some(
-                    model.get("supports_search_tool").and_then(Value::as_bool) == Some(true),
-                ),
-                supports_tool_search: Some(supports_tool_search),
-                supports_function_tools: Some(true),
-                ..ProviderModel::default()
-            })
-        })
-        .collect()
 }

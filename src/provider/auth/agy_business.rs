@@ -1,5 +1,7 @@
 //! Business OAuth and authorized-user ADC are separate from consumer OAuth.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail, ensure};
@@ -14,12 +16,13 @@ struct CachedSession {
     headers: HeaderMap,
     expires: Instant,
 }
-static CACHE: Mutex<Option<CachedSession>> = Mutex::const_new(None);
+static CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedSession>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) async fn headers(
     force: bool,
     owned_path: &Path,
     external_paths: &[PathBuf],
-    adc_path: &Path,
+    adc_path: Option<&Path>,
     token_endpoint: &str,
 ) -> anyhow::Result<HeaderMap> {
     let mut selected = if let Some(value) = read_optional(owned_path).await? {
@@ -52,6 +55,9 @@ pub(crate) async fn headers(
     let (path, document) = match selected {
         Some(source) => source,
         None => {
+            let adc_path = adc_path.context(
+                "AGY Business credentials are missing; run providers add --preset agy-business",
+            )?;
             let document = read_optional(adc_path).await?.context("AGY Business credentials are missing; run providers add --preset agy-business or use authorized_user ADC")?;
             (adc_path.to_path_buf(), document)
         }
@@ -60,7 +66,7 @@ pub(crate) async fn headers(
     {
         let cache = CACHE.lock().await;
         if !force
-            && let Some(cached) = cache.as_ref().filter(|cached| {
+            && let Some(cached) = cache.get(owned_path).filter(|cached| {
                 cached.path == path
                     && cached.modified == modified
                     && cached.expires > Instant::now()
@@ -159,14 +165,17 @@ pub(crate) async fn headers(
         HeaderValue::from_str(&format!("Bearer {access_token}"))?,
     );
     headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
-    *CACHE.lock().await = Some(CachedSession {
-        path,
-        modified,
-        headers: headers.clone(),
-        expires: Instant::now()
-            .checked_add(Duration::from_secs(lifetime.saturating_sub(180)))
-            .context("Business OAuth expiry is out of range")?,
-    });
+    CACHE.lock().await.insert(
+        owned_path.to_owned(),
+        CachedSession {
+            path,
+            modified,
+            headers: headers.clone(),
+            expires: Instant::now()
+                .checked_add(Duration::from_secs(lifetime.saturating_sub(180)))
+                .context("Business OAuth expiry is out of range")?,
+        },
+    );
     Ok(headers)
 }
 

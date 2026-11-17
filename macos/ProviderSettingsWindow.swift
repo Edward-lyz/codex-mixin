@@ -214,6 +214,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             onTest: { [weak self] in self?.testProvider() },
             onApplyChanges: { [weak self] in self?.applyChanges() },
             onClearKey: { [weak self] in self?.clearProviderKey() },
+            onReauthorize: { [weak self] in self?.reauthorizeProvider() },
             onClearQuotaCredentials: { [weak self] in self?.clearQuotaCredentials() },
             onMove: { [weak self] offsets, destination in
                 self?.moveProviders(from: offsets, to: destination)
@@ -497,6 +498,22 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             } catch {
                 showAlert(title: "连接测试失败", message: String(describing: error))
             }
+        }
+    }
+
+    func reauthorizeProvider() {
+        guard let provider = selectedProvider, provider.kind == .configured,
+              let preset = provider.presetID, let catalog = model.providerCatalog,
+              let window, !model.isBusy, !benchmarkModel.isBusy else { return }
+        var authorized = false
+        runAddProviderSheet(attachedTo: window, catalog: catalog, reauthorize: { [weak self] in
+            guard let self else { throw CancellationError() }
+            _ = try await self.runHandler(["providers", "add", "--preset", preset, "--id", provider.id, "--reauthorize"])
+            try Task.checkCancellation()
+            authorized = true
+        }) { [weak self] _ in
+            guard let self, authorized else { return }
+            self.performMutation([], status: "正在应用供应商配置…", selecting: provider.id)
         }
     }
 

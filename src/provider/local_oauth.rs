@@ -267,10 +267,9 @@ fn discover_at(
     let mut found = Vec::new();
     for preset in AUTO_PRESETS {
         let preset_id = preset.as_str();
-        if configured
-            .iter()
-            .any(|provider| provider.preset_id.as_deref() == Some(preset_id))
-            || ignored.iter().any(|entry| entry == preset_id)
+        if configured.iter().any(|provider| {
+            provider.id == preset.default_id() && provider.preset_id.as_deref() == Some(preset_id)
+        }) || ignored.iter().any(|entry| entry == preset_id)
         {
             continue;
         }
@@ -317,6 +316,9 @@ fn reconcile_at(at: &Locations, providers: &mut Vec<ProviderDefinition>) -> anyh
         else {
             continue;
         };
+        if provider.id != preset.default_id() {
+            continue;
+        }
         let Some(current) = inspect(preset, at) else {
             continue;
         };
@@ -358,6 +360,11 @@ fn runtime_providers_at(
         .filter(|provider| {
             provider.discovered_credential.is_none()
                 || provider.auth.is_configured()
+                || provider
+                    .preset_id
+                    .as_deref()
+                    .and_then(|id| ProviderPreset::parse(id).ok())
+                    .is_some_and(|preset| provider.id != preset.default_id())
                 || provider
                     .preset_id
                     .as_deref()

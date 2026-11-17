@@ -56,7 +56,8 @@ fn provider_catalog() -> Value {
             json!({
                 "id": spec.id,
                 "default_id": preset.default_id(),
-                "allow_multiple": !preset.is_virtual(),
+                "allow_multiple": true,
+                "browser_oauth": matches!(preset, ProviderPreset::Official | ProviderPreset::Agy | ProviderPreset::AgyBusiness),
                 "display_name": spec.display_name,
                 "description": spec.description,
                 "icon": spec.icon,

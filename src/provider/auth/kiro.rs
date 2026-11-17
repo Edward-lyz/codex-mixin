@@ -92,13 +92,18 @@ static CLIENT: tokio::sync::OnceCell<reqwest::Client> = tokio::sync::OnceCell::c
 pub(crate) async fn session(
     fallback_region: &str,
     force_refresh: bool,
+    provider: &crate::provider::ProviderDefinition,
 ) -> anyhow::Result<KiroSession> {
     let _guard = SESSION_LOCK.lock().await;
-    let lock = tokio::task::spawn_blocking(|| {
-        crate::platform::oauth::lock_oauth(&crate::platform::oauth::oauth_path("kiro"))
-    })
-    .await??;
-    if let Some(path) = crate::platform::oauth::kiro_cli_auth_path() {
+    let owned = provider
+        .owned_oauth_path()
+        .context("Kiro provider has no owned OAuth path")?;
+    let lock_path = owned.clone();
+    let lock = tokio::task::spawn_blocking(move || crate::platform::oauth::lock_oauth(&lock_path))
+        .await??;
+    if provider.is_legacy_oauth_instance()
+        && let Some(path) = crate::platform::oauth::kiro_cli_auth_path()
+    {
         let cli_path = path.clone();
         let cli = tokio::task::spawn_blocking(move || cli_credentials(&cli_path)).await??;
         if let Some(mut credentials) = cli {
@@ -157,7 +162,11 @@ pub(crate) async fn session(
             });
         }
     }
-    let source = crate::platform::oauth::kiro_auth_path();
+    let source = if provider.is_legacy_oauth_instance() {
+        crate::platform::oauth::kiro_auth_path()
+    } else {
+        owned.clone()
+    };
     let modified = tokio::fs::metadata(&source).await
         .with_context(|| format!("Kiro credentials are missing at {}; sign in with Kiro IDE or set CODEX_MIXIN_KIRO_AUTH_FILE", source.display()))?.modified()?;
     let raw = tokio::fs::read(&source).await?;
@@ -167,17 +176,18 @@ pub(crate) async fn session(
     );
     let mut credentials: Value =
         serde_json::from_slice(&raw).context("invalid Kiro credential JSON")?;
-    let owned = crate::platform::oauth::oauth_path("kiro");
-    match tokio::fs::read(&owned).await {
-        Ok(raw) => {
-            let cached: StoredSession =
-                serde_json::from_slice(&raw).context("invalid cached Kiro session")?;
-            if cached.source_path == source && cached.source_modified == modified {
-                credentials = cached.credentials;
+    if provider.is_legacy_oauth_instance() {
+        match tokio::fs::read(&owned).await {
+            Ok(raw) => {
+                let cached: StoredSession =
+                    serde_json::from_slice(&raw).context("invalid cached Kiro session")?;
+                if cached.source_path == source && cached.source_modified == modified {
+                    credentials = cached.credentials;
+                }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("read cached Kiro session"),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).context("read cached Kiro session"),
     }
     let expiry = credentials
         .get("expiresAt")
@@ -278,11 +288,15 @@ pub(crate) async fn session(
                 credentials[field] = value.clone();
             }
         }
-        let bytes = serde_json::to_vec(&StoredSession {
-            source_path: source,
-            source_modified: modified,
-            credentials: credentials.clone(),
-        })?;
+        let bytes = if provider.is_legacy_oauth_instance() {
+            serde_json::to_vec(&StoredSession {
+                source_path: source,
+                source_modified: modified,
+                credentials: credentials.clone(),
+            })?
+        } else {
+            serde_json::to_vec(&credentials)?
+        };
         tokio::task::spawn_blocking(move || crate::platform::oauth::save_oauth(&owned, &bytes))
             .await??;
     }

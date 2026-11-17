@@ -77,6 +77,14 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             .iter()
             .map(|provider| {
                 let readiness = provider.readiness();
+                let auth_configured = if provider.preset_id.as_deref() == Some("openai") {
+                    match provider.owned_oauth_path() {
+                        Some(path) => codex_mixin::provider::official_auth_available(&path)?,
+                        None => false,
+                    }
+                } else {
+                    provider.auth.is_configured()
+                };
                 let available_models = provider
                     .cached_models
                     .iter()
@@ -87,7 +95,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     .iter()
                     .filter(|model| !available_models.contains(model.as_str()))
                     .collect::<Vec<_>>();
-                json!({
+                Ok(json!({
                     "id": provider.id,
                     "kind": "configured",
                     "source": if provider.discovered_credential.is_some() {
@@ -107,7 +115,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "website_url": provider.website_url,
                     "api_path": provider.api_path,
                     "model_source": provider.model_source,
-                    "api_key_configured": provider.auth.is_configured(),
+                    "api_key_configured": auth_configured,
                     "aws_sigv4_configured": provider.auth.aws_sigv4.is_some(),
                     "aws_region": provider.auth.aws_sigv4.as_ref().map(|aws| &aws.region),
                     "aws_session_token_configured": provider
@@ -144,9 +152,9 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "readiness": readiness.status,
                     "readiness_issues": readiness.issues,
                     "routable_model_count": readiness.routable_model_count,
-                })
+                }))
             })
-            .collect::<Vec<_>>();
+            .collect::<anyhow::Result<Vec<_>>>()?;
         if official_available {
             providers.insert(0, official_provider_view(&config, load_official_models()?));
         }

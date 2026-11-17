@@ -103,19 +103,19 @@ pub(crate) async fn headers(
         // Imported official sessions are read-only. Rotating their refresh token
         // independently can sign the official app out of its existing session.
         ensure!(
-            path == crate::platform::oauth::oauth_path("official"),
+            path != crate::platform::oauth::codex_auth_path(),
             "local Codex OAuth access token expired; refresh the official session or run providers add --preset openai for independent renewal"
         );
-        let _refresh_lock = tokio::task::spawn_blocking(|| {
-            crate::platform::oauth::lock_oauth(&crate::platform::oauth::oauth_path("official"))
-        })
-        .await??;
+        let lock_path = path.clone();
+        let _refresh_lock =
+            tokio::task::spawn_blocking(move || crate::platform::oauth::lock_oauth(&lock_path))
+                .await??;
         let latest_path = path.clone();
         document = tokio::task::spawn_blocking(move || read_document(&latest_path))
             .await??
             .context("owned OAuth credentials disappeared during refresh")?;
         if needs_refresh(&document) {
-            document = refresh_owned(document).await?;
+            document = refresh_owned(document, &path).await?;
         }
     }
     let (authorization, account) = auth_pair(&document)?;
@@ -138,7 +138,7 @@ fn needs_refresh(document: &Value) -> bool {
         .is_some_and(|expiry| expiry <= chrono::Utc::now().timestamp() + 60)
 }
 
-async fn refresh_owned(mut document: Value) -> anyhow::Result<Value> {
+async fn refresh_owned(mut document: Value, path: &Path) -> anyhow::Result<Value> {
     let refresh = document
         .pointer("/tokens/refresh_token")
         .and_then(Value::as_str)
@@ -164,7 +164,7 @@ async fn refresh_owned(mut document: Value) -> anyhow::Result<Value> {
         }
     }
     document["last_refresh"] = json!(chrono::Utc::now().to_rfc3339());
-    let owned = crate::platform::oauth::oauth_path("official");
+    let owned = path.to_owned();
     let bytes = serde_json::to_vec(&document)?;
     tokio::task::spawn_blocking(move || crate::platform::oauth::save_oauth(&owned, &bytes))
         .await??;

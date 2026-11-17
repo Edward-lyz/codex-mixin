@@ -331,6 +331,7 @@ struct ProviderSettingsRootView: View {
     let onTest: () -> Void
     let onApplyChanges: () -> Void
     let onClearKey: () -> Void
+    let onReauthorize: () -> Void
     let onClearQuotaCredentials: () -> Void
     let onMove: (IndexSet, Int) -> Void
     /// The console hosts this page without a window toolbar, so a collapsed
@@ -434,6 +435,7 @@ struct ProviderSettingsRootView: View {
                         onTest: onTest,
                         onApplyChanges: onApplyChanges,
                         onClearKey: onClearKey,
+                        onReauthorize: onReauthorize,
                         onClearQuotaCredentials: onClearQuotaCredentials
                     )
                     .id(provider.id)
@@ -552,6 +554,7 @@ private struct ProviderDetailForm: View {
     let onTest: () -> Void
     let onApplyChanges: () -> Void
     let onClearKey: () -> Void
+    let onReauthorize: () -> Void
     let onClearQuotaCredentials: () -> Void
     @State private var selectedSection = ProviderDetailSection.models
     @State private var showsAdvancedOptions = false
@@ -626,6 +629,11 @@ private struct ProviderDetailForm: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
+                        if (provider.presetID == "openai" || !provider.apiKeyConfigured),
+                           formState.providerCatalog?.presets.contains(where: { $0.id == provider.presetID && $0.browserOauth == true }) == true {
+                            Button(AppLocalization.string("settings.reauthorize"), action: onReauthorize)
+                                .disabled(operationsBusy)
+                        }
                         if isCustom {
                             TextField("站点名称", text: $formState.displayName)
                             TextField(

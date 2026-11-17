@@ -1451,6 +1451,9 @@ public sealed partial class MainWindow : Window
         {
             var body = new Stack { Spacing = 16, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
             body.Children.Add(Card(Localized.Get("连接配置"), Localized.Get("密钥已配置时留空保留；修改后使用底部「应用更改」。"), form));
+            var connectionPreset = Json.OptionalText(connection, "preset_id");
+            if ((connectionPreset == "openai" || !Json.Flag(connection, "api_key_configured")) && presets.Any(row => Json.Text(row, "id") == connectionPreset && Json.Flag(row, "browser_oauth")))
+                body.Children.Add(Button(Localized.Get("重新授权"), () => ChangeAsync(Localized.Get("重新授权"), ["providers", "add", "--preset", connectionPreset!, "--id", Json.Text(connection, "id"), "--reauthorize"], apply: true)));
             body.Children.Add(Button(Localized.Get("清除密钥"), () => ChangeAsync(Localized.Get("清除密钥"), ["provider", "update", Json.Text(connection, "id"), Json.OptionalText(connection, "preset_id") == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key"], apply: true)));
             pendingApply = Save;
             connectionDrafts[Json.Text(connection, "id")] = (body, Save);

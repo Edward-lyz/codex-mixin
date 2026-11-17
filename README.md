@@ -192,6 +192,8 @@ macOS 提供原生菜单栏与控制台，Windows 提供 WPF 控制台与托盘�
 
 添加供应商时可选择以下预设，其余兼容端点选择「自定义」。添加后可测试连接、刷新模型列表并探测 Reasoning、Function Calling、Tool Search、Web Search 能力；探测会发送真实请求，可能消耗额度。
 
+添加多个 OAuth 账号时，为每个额外账号指定不同 ID，例如 `codex-mixin --no-tui providers add --preset openai --id work --name Work` 或 `codex-mixin --no-tui providers add --preset agy --id agy-2`。重新登录时追加 `--reauthorize`；模型名称带账号 ID 后缀，例如 `gpt-5.5-work`。Claude Code 可通过 `claude setup-token` 获取令牌，并使用 `--preset claude-code --id work-claude --key @env:CLAUDE_SETUP_TOKEN` 添加独立账号。
+
 | 预设 | 供应商 | 上游协议 | 鉴权 |
 | --- | --- | --- | --- |
 | `openai` | OpenAI 官方 | OpenAI Responses | ChatGPT OAuth |

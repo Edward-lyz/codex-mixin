@@ -150,7 +150,7 @@ async fn auth_headers(
         return Ok(None);
     }
     require_native_account(definition)?;
-    Ok(Some(super::auth::agy::get_agy_headers().await?))
+    Ok(Some(super::auth::agy::get_agy_headers(definition).await?))
 }
 
 async fn fetch_json(

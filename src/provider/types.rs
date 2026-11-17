@@ -246,6 +246,37 @@ pub struct ProviderDefinition {
 }
 
 impl ProviderDefinition {
+    pub fn owned_oauth_path(&self) -> Option<std::path::PathBuf> {
+        let preset = super::ProviderPreset::parse(self.preset_id.as_deref()?).ok()?;
+        match preset {
+            super::ProviderPreset::Official => {
+                Some(crate::platform::oauth::account_oauth_path(&self.id))
+            }
+            super::ProviderPreset::Agy
+            | super::ProviderPreset::AgyBusiness
+            | super::ProviderPreset::Kiro => Some(if self.id == preset.as_str() {
+                crate::platform::oauth::oauth_path(preset.as_str())
+            } else {
+                crate::platform::oauth::account_oauth_path(&self.id)
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn is_legacy_oauth_instance(&self) -> bool {
+        self.preset_id
+            .as_deref()
+            .and_then(|id| super::ProviderPreset::parse(id).ok())
+            .is_some_and(|preset| {
+                matches!(
+                    preset,
+                    super::ProviderPreset::Agy
+                        | super::ProviderPreset::AgyBusiness
+                        | super::ProviderPreset::Kiro
+                ) && self.id == preset.as_str()
+            })
+    }
+
     pub fn apply_model_order(&mut self) {
         self.cached_models
             .sort_by(|left, right| super::compare_model_ids(&left.id, &right.id));
@@ -467,7 +498,7 @@ impl ProviderDefinition {
         self.auth.is_configured()
             || matches!(
                 self.preset_id.as_deref(),
-                Some("agy" | "agy-business" | "kiro" | "claude-code")
+                Some("openai" | "agy" | "agy-business" | "kiro" | "claude-code")
             )
     }
 

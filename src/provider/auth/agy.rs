@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -77,29 +78,39 @@ struct CachedToken {
     file_mtime: std::time::SystemTime,
 }
 
-static TOKEN_CACHE: Mutex<Option<CachedToken>> = Mutex::const_new(None);
+static TOKEN_CACHE: LazyLock<Mutex<HashMap<PathBuf, CachedToken>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn resolve_agy_token_path() -> Option<PathBuf> {
     crate::platform::oauth::agy_auth_path()
 }
 
-pub async fn invalidate_agy_cache() {
+pub async fn invalidate_agy_cache(path: &Path) {
     let mut lock = TOKEN_CACHE.lock().await;
-    *lock = None;
+    lock.remove(path);
 }
 
-pub async fn get_agy_headers() -> anyhow::Result<HeaderMap> {
+pub async fn get_agy_headers(
+    provider: &crate::provider::ProviderDefinition,
+) -> anyhow::Result<HeaderMap> {
     let mut lock = TOKEN_CACHE.lock().await;
     let now = Instant::now();
 
-    let token_path = resolve_agy_token_path()
-        .context("AGY OAuth credentials are missing; run providers add --preset agy")?;
+    let owned_path = provider
+        .owned_oauth_path()
+        .context("AGY provider has no owned OAuth path")?;
+    let token_path = (if provider.is_legacy_oauth_instance() {
+        resolve_agy_token_path()
+    } else {
+        Some(owned_path.clone())
+    })
+    .context("AGY OAuth credentials are missing; run providers add --preset agy")?;
     let file_mtime = tokio::fs::metadata(&token_path)
         .await
         .and_then(|m| m.modified())
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-    if let Some(cached) = lock.as_ref()
+    if let Some(cached) = lock.get(&token_path)
         && cached.token_path == token_path
         && cached.file_mtime == file_mtime
         && cached.expires_at > now
@@ -136,15 +147,48 @@ pub async fn get_agy_headers() -> anyhow::Result<HeaderMap> {
                     remaining_secs - TOKEN_REFRESH_MARGIN_SECONDS,
                 ))
                 .context("AGY token expiry is out of range")?,
-            token_path,
+            token_path: token_path.clone(),
             file_mtime,
         };
-        *lock = Some(cached);
+        lock.insert(token_path, cached);
         return build_header_map(&stored.access_token);
     }
 
-    if let Some(refresh_token) = &stored.refresh_token {
-        match refresh_oauth_token(refresh_token).await {
+    if let Some(stored_refresh) = &stored.refresh_token {
+        let mut refresh_token = stored_refresh.clone();
+        let _refresh_lock = if token_path == owned_path {
+            let path = owned_path.clone();
+            let guard =
+                tokio::task::spawn_blocking(move || crate::platform::oauth::lock_oauth(&path))
+                    .await??;
+            // Another process may have renewed this account while we waited.
+            let current = tokio::fs::read_to_string(&token_path).await?;
+            if current != raw {
+                let latest = serde_json::from_str::<StoredTokenFile>(&current)
+                    .with_context(|| format!("parsing agy token file: {}", token_path.display()))?
+                    .token
+                    .context("agy token file does not contain a 'token' object")?;
+                let fresh = latest.expiry.as_deref().is_some_and(|expiry| {
+                    chrono::DateTime::parse_from_rfc3339(expiry).is_ok_and(|expiry| {
+                        expiry.timestamp()
+                            > chrono::Utc::now().timestamp()
+                                + i64::try_from(TOKEN_REFRESH_MARGIN_SECONDS).unwrap_or(i64::MAX)
+                    })
+                });
+                if fresh && !latest.access_token.trim().is_empty() {
+                    lock.remove(&token_path);
+                    return build_header_map(&latest.access_token);
+                }
+                // Refresh with the newest token; a rotated one invalidates ours.
+                if let Some(latest_refresh) = latest.refresh_token {
+                    refresh_token = latest_refresh;
+                }
+            }
+            Some(guard)
+        } else {
+            None
+        };
+        match refresh_oauth_token(&refresh_token).await {
             Ok(refreshed) => {
                 let expires_in = refreshed
                     .expires_in
@@ -161,9 +205,9 @@ pub async fn get_agy_headers() -> anyhow::Result<HeaderMap> {
                 let next_refresh = refreshed
                     .refresh_token
                     .as_deref()
-                    .unwrap_or(refresh_token)
+                    .unwrap_or(refresh_token.as_str())
                     .to_owned();
-                if token_path == crate::platform::oauth::oauth_path("agy") {
+                if token_path == owned_path {
                     let document = serde_json::json!({"auth_method":"consumer", "token":{
                         "access_token":refreshed.access_token,"refresh_token":next_refresh,
                         "token_type":"Bearer","expiry":expiry.to_rfc3339()
@@ -183,11 +227,11 @@ pub async fn get_agy_headers() -> anyhow::Result<HeaderMap> {
                     expires_at: now
                         .checked_add(Duration::from_secs(valid_secs))
                         .context("AGY token expiry is out of range")?,
-                    token_path,
+                    token_path: token_path.clone(),
                     file_mtime,
                 };
                 let token_str = refreshed.access_token;
-                *lock = Some(cached);
+                lock.insert(token_path, cached);
                 return build_header_map(&token_str);
             }
             Err(error) => {

@@ -10,6 +10,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -55,6 +56,7 @@ async fn callback(
 
 pub(crate) async fn login(
     provider: &str,
+    path: &Path,
     timeout_seconds: u64,
     show_url: impl Fn(&str),
 ) -> anyhow::Result<()> {
@@ -64,14 +66,14 @@ pub(crate) async fn login(
     );
     let mut shutdown = crate::platform::ShutdownSignal::install()?;
     tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(timeout_seconds), login_inner(provider, show_url)) => {
+        result = tokio::time::timeout(Duration::from_secs(timeout_seconds), login_inner(provider, path, show_url)) => {
             result.context("OAuth login timed out; refresh to check any completed steps")?
         }
         _ = shutdown.recv() => anyhow::bail!("OAuth login cancelled"),
     }
 }
 
-async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<()> {
+async fn login_inner(provider: &str, path: &Path, show_url: impl Fn(&str)) -> anyhow::Result<()> {
     let google = matches!(provider, "agy" | "agy-business");
     ensure!(
         google || provider == "official",
@@ -186,15 +188,15 @@ async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<
     )
     .await?;
     let document = login_document(provider, tokens)?;
-    let path = crate::platform::oauth::oauth_path(provider);
+    let owned = path.to_owned();
     let bytes = serde_json::to_vec(&document)?;
     tokio::task::spawn_blocking(move || {
-        let _lock = crate::platform::oauth::lock_oauth(&path)?;
-        crate::platform::oauth::save_oauth(&path, &bytes)
+        let _lock = crate::platform::oauth::lock_oauth(&owned)?;
+        crate::platform::oauth::save_oauth(&owned, &bytes)
     })
     .await??;
     if google {
-        super::agy::invalidate_agy_cache().await;
+        super::agy::invalidate_agy_cache(path).await;
     }
     Ok(())
 }

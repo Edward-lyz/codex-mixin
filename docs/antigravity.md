@@ -48,6 +48,9 @@ Explicit provider keys use their own credentials for quota as well as models.
 Custom quota URLs continue through the existing parser.
 
 Choose AGY in Add Provider or run `codex-mixin --no-tui providers add --preset agy`.
+Add another account with `codex-mixin --no-tui providers add --preset agy --id agy-2`;
+repeat with `--reauthorize` to sign in again. Each additional account has its
+own credentials and its model slugs end in its provider ID.
 When a usable personal AGY login already exists on this machine, `providers add`
 reuses it and skips the browser; pass `--reauthorize` to sign in again.
 

@@ -36,6 +36,7 @@ struct AddProviderPreset: Identifiable, Decodable {
     let quotaCredentialsRequired: Bool
     var defaultId: String? = nil
     var allowMultiple: Bool? = nil
+    var browserOauth: Bool? = nil
 }
 
 struct ProviderProtocolOption: Identifiable, Decodable {
@@ -184,105 +185,110 @@ final class AddProviderFormModel: ObservableObject {
 
 private struct AddProviderFormView: View {
     @ObservedObject var model: AddProviderFormModel
+    var reauthorizing = false
     let cancel: () -> Void
     let submit: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section {
-                    Picker(AppLocalization.string("settings.provider"), selection: $model.preset) {
-                        ForEach(model.presets) { preset in
-                            Text(preset.displayName).tag(preset.id)
+                if reauthorizing {
+                    Text(AppLocalization.string("settings.localOAuthCredentials"))
+                } else {
+                    Section {
+                        Picker(AppLocalization.string("settings.provider"), selection: $model.preset) {
+                            ForEach(model.presets) { preset in
+                                Text(preset.displayName).tag(preset.id)
+                            }
+                        }
+
+                        if let credentialURL = model.credentialURL, !model.isCustom, !model.usesLocalOAuth {
+                            Link(destination: credentialURL) {
+                                Label(AppLocalization.string("settings.openProviderSetup"), systemImage: "key")
+                            }
+                        }
+                    } header: {
+                        Text(AppLocalization.string("settings.chooseASubscriptionAndEnterItsCredentials"))
+                    }
+
+                    if model.isCustom {
+                        Section(AppLocalization.string("settings.customSite")) {
+                            TextField(
+                                AppLocalization.string("settings.siteName"),
+                                text: $model.displayName,
+                                prompt: Text(AppLocalization.string("settings.forExampleCommunityAPI"))
+                            )
+                            TextField(
+                                AppLocalization.string("settings.apiURL"),
+                                text: $model.baseURL,
+                                prompt: Text(AppLocalization.string("settings.apiURLPrompt"))
+                            )
+                            .help(AppLocalization.string("settings.apiURLHint"))
+                            TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
                         }
                     }
 
-                    if let credentialURL = model.credentialURL, !model.isCustom, !model.usesLocalOAuth {
-                        Link(destination: credentialURL) {
-                            Label(AppLocalization.string("settings.openProviderSetup"), systemImage: "key")
-                        }
-                    }
-                } header: {
-                    Text(AppLocalization.string("settings.chooseASubscriptionAndEnterItsCredentials"))
-                }
-
-                if model.isCustom {
-                    Section(AppLocalization.string("settings.customSite")) {
-                        TextField(
-                            AppLocalization.string("settings.siteName"),
-                            text: $model.displayName,
-                            prompt: Text(AppLocalization.string("settings.forExampleCommunityAPI"))
-                        )
-                        TextField(
-                            AppLocalization.string("settings.apiURL"),
-                            text: $model.baseURL,
-                            prompt: Text(AppLocalization.string("settings.apiURLPrompt"))
-                        )
-                        .help(AppLocalization.string("settings.apiURLHint"))
-                        TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
-                    }
-                }
-
-                if model.isAWSBedrock {
-                    Section("Amazon Bedrock") {
-                        TextField("AWS Region", text: $model.awsRegion, prompt: Text("us-east-1"))
-                            .help("Endpoint 会按 Region 自动设置为 Bedrock Mantle。")
-                    }
-                }
-
-                Section("凭据") {
-                    if model.usesLocalSession {
-                        Text(AppLocalization.string(model.preset == "kiro"
-                            ? "settings.kiroSessionCredentials"
-                            : model.preset == "claude-code"
-                                ? "settings.claudeCodeCredentials" : "settings.agyBusinessCredentials"))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    if model.usesLocalOAuth {
-                        Text(AppLocalization.string("settings.localOAuthCredentials"))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        TextField(
-                            AppLocalization.string("provider.oauthTimeout"),
-                            text: $model.oauthTimeout
-                        )
-                    }
                     if model.isAWSBedrock {
-                        SecureField("Access Key ID", text: $model.awsAccessKeyID)
-                        SecureField("Secret Access Key", text: $model.awsSecretAccessKey)
-                        SecureField(
-                            "Session Token（可选）",
-                            text: $model.awsSessionToken
-                        )
-                    } else if !model.usesLocalOAuth {
-                        SecureField(
-                            "API Key",
-                            text: $model.apiKey,
-                            prompt: Text(AppLocalization.string(model.usesLocalSession
-                                ? "settings.optionalAPIKey" : "settings.requiredStoredOnlyByTheLocalRust"))
-                        )
+                        Section("Amazon Bedrock") {
+                            TextField("AWS Region", text: $model.awsRegion, prompt: Text("us-east-1"))
+                                .help("Endpoint 会按 Region 自动设置为 Bedrock Mantle。")
+                        }
                     }
 
-                    if model.isBaiduOneAPI {
-                        TextField(
-                            AppLocalization.string("settings.quotaUsername"),
-                            text: $model.quotaUsername,
-                            prompt: Text(AppLocalization.string("settings.baiduOneAPIQuotaUsername"))
-                        )
-                    }
+                    Section("凭据") {
+                        if model.usesLocalSession {
+                            Text(AppLocalization.string(model.preset == "kiro"
+                                ? "settings.kiroSessionCredentials"
+                                : model.preset == "claude-code"
+                                    ? "settings.claudeCodeCredentials" : "settings.agyBusinessCredentials"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        if model.usesLocalOAuth {
+                            Text(AppLocalization.string("settings.localOAuthCredentials"))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            TextField(
+                                AppLocalization.string("provider.oauthTimeout"),
+                                text: $model.oauthTimeout
+                            )
+                        }
+                        if model.isAWSBedrock {
+                            SecureField("Access Key ID", text: $model.awsAccessKeyID)
+                            SecureField("Secret Access Key", text: $model.awsSecretAccessKey)
+                            SecureField(
+                                "Session Token（可选）",
+                                text: $model.awsSessionToken
+                            )
+                        } else if !model.usesLocalOAuth {
+                            SecureField(
+                                "API Key",
+                                text: $model.apiKey,
+                                prompt: Text(AppLocalization.string(model.usesLocalSession
+                                    ? "settings.optionalAPIKey" : "settings.requiredStoredOnlyByTheLocalRust"))
+                            )
+                        }
 
-                    if model.requiresQuotaCredentials {
-                        TextField(
-                            AppLocalization.string("settings.workspaceID"),
-                            text: $model.quotaWorkspaceID,
-                            prompt: Text(AppLocalization.string("settings.forExampleWrkAbc123"))
-                        )
-                        SecureField(
-                            AppLocalization.string("settings.authCookie"),
-                            text: $model.quotaAuthCookie,
-                            prompt: Text(AppLocalization.string("settings.opencodeAiAuthCookie"))
-                        )
+                        if model.isBaiduOneAPI {
+                            TextField(
+                                AppLocalization.string("settings.quotaUsername"),
+                                text: $model.quotaUsername,
+                                prompt: Text(AppLocalization.string("settings.baiduOneAPIQuotaUsername"))
+                            )
+                        }
+
+                        if model.requiresQuotaCredentials {
+                            TextField(
+                                AppLocalization.string("settings.workspaceID"),
+                                text: $model.quotaWorkspaceID,
+                                prompt: Text(AppLocalization.string("settings.forExampleWrkAbc123"))
+                            )
+                            SecureField(
+                                AppLocalization.string("settings.authCookie"),
+                                text: $model.quotaAuthCookie,
+                                prompt: Text(AppLocalization.string("settings.opencodeAiAuthCookie"))
+                            )
+                        }
                     }
                 }
             }
@@ -307,7 +313,7 @@ private struct AddProviderFormView: View {
                 Spacer()
                 Button(AppLocalization.string("settings.cancel"), action: cancel)
                     .keyboardShortcut(.cancelAction)
-                Button(AppLocalization.string("settings.add"), action: submit)
+                Button(AppLocalization.string(reauthorizing ? "settings.reauthorize" : "settings.add"), action: submit)
                     .keyboardShortcut(.defaultAction)
                     .liquidGlassProminentButton()
                     .disabled(model.isAuthorizing)
@@ -337,6 +343,7 @@ final class ModalActionTarget: NSObject {
 func runAddProviderSheet(
     attachedTo parentWindow: NSWindow,
     catalog: ProviderCatalog,
+    reauthorize: (@MainActor () async throws -> Void)? = nil,
     authorize: (@MainActor (AddProviderFormValues) async throws -> Void)? = nil,
     completion: @escaping (AddProviderFormValues?) -> Void
 ) {
@@ -347,7 +354,7 @@ func runAddProviderSheet(
         backing: .buffered,
         defer: false
     )
-    sheet.title = AppLocalization.string("settings.addProvider")
+    sheet.title = AppLocalization.string(reauthorize == nil ? "settings.addProvider" : "settings.reauthorize")
     configureOpaqueWindow(sheet)
     configurePersistentWindow(sheet)
 
@@ -359,6 +366,23 @@ func runAddProviderSheet(
         parentWindow.endSheet(sheet, returnCode: .cancel)
     }
     let submit = {
+        if let reauthorize {
+            model.isAuthorizing = true
+            model.authorizationError = nil
+            authorizationTask = Task { @MainActor in
+                defer { model.isAuthorizing = false }
+                do {
+                    try await reauthorize()
+                    try Task.checkCancellation()
+                    parentWindow.endSheet(sheet, returnCode: .OK)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    model.authorizationError = error.localizedDescription
+                }
+            }
+            return
+        }
         guard let values = model.validatedValues() else { return }
         if model.usesLocalOAuth, let authorize {
             model.isAuthorizing = true
@@ -381,7 +405,7 @@ func runAddProviderSheet(
         parentWindow.endSheet(sheet, returnCode: .OK)
     }
     sheet.contentViewController = NSHostingController(
-        rootView: AddProviderFormView(model: model, cancel: cancel, submit: submit)
+        rootView: AddProviderFormView(model: model, reauthorizing: reauthorize != nil, cancel: cancel, submit: submit)
     )
 
     let closeTarget = ModalActionTarget(cancel)

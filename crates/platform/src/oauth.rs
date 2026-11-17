@@ -12,6 +12,12 @@ pub fn oauth_path(provider: &str) -> PathBuf {
         .join(format!("{provider}.json"))
 }
 
+pub fn account_oauth_path(provider_id: &str) -> PathBuf {
+    oauth_path("accounts")
+        .with_file_name("accounts")
+        .join(format!("{provider_id}.json"))
+}
+
 pub fn codex_auth_path() -> PathBuf {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)

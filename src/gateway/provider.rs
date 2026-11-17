@@ -557,8 +557,20 @@ async fn stream_openai_responses(
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
-    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body)?;
-    let plaintext_collaboration = saved_collaboration.active();
+    let official_native = executor
+        .upstream
+        .official_account_headers(provider, headers)
+        .await?;
+    let saved_collaboration = if official_native.is_some() {
+        None
+    } else {
+        Some(crate::protocol::convert::collaboration::prepare_request(
+            body,
+        )?)
+    };
+    let plaintext_collaboration = saved_collaboration
+        .as_ref()
+        .is_some_and(|saved| saved.active());
     let original_model = body
         .as_object_mut()
         .and_then(|fields| fields.remove("model"));
@@ -590,15 +602,20 @@ async fn stream_openai_responses(
         CacheShape::from_openai_responses(body),
     );
     let request_body = std::mem::take(body);
-    let (upstream, mut request_body) = executor
+    let mut wire_body = if official_native.is_some() {
+        crate::upstream::normalize_official_responses_body(request_body.clone())?
+    } else {
+        request_body.clone()
+    };
+    let (mut upstream, _) = executor
         .upstream
         .send_provider_json_retaining(
             provider,
             ProviderProtocol::OpenAiResponses,
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
-            baidu_native.as_ref(),
-            request_body,
+            official_native.as_ref().or(baidu_native.as_ref()),
+            wire_body.clone(),
         )
         .await
         .inspect_err(|error| {
@@ -610,8 +627,27 @@ async fn stream_openai_responses(
                 "provider responses request failed before receiving a response"
             );
         })?;
+    let mut request_body = request_body;
+    if !upstream.status().is_success()
+        && official_native.is_some()
+        && let Some(fallback) = crate::upstream::materialize_official_responses_body(&wire_body)?
+    {
+        upstream = executor
+            .upstream
+            .send_provider_json(
+                provider,
+                ProviderProtocol::OpenAiResponses,
+                upstream_model_id,
+                routing.map(|routing| routing.hash_key.as_str()),
+                official_native.as_ref(),
+                fallback.clone(),
+            )
+            .await?;
+        wire_body = fallback;
+    }
     let upstream = if upstream.status() == reqwest::StatusCode::BAD_REQUEST
-        && provider.definition().preset_id.as_deref() == Some("baidu-oneapi")
+        && (provider.definition().preset_id.as_deref() == Some("baidu-oneapi")
+            || official_native.is_some())
     {
         let content_type = upstream
             .headers()
@@ -623,7 +659,7 @@ async fn stream_openai_responses(
         // Replay once without the opaque items rather than fail every turn.
         let mut retry_body = Value::Null;
         let dropped = if error_text.contains(INVALID_ENCRYPTED_CONTENT) {
-            retry_body = request_body.clone();
+            retry_body = wire_body.clone();
             drop_opaque_history(&mut retry_body)
         } else {
             0
@@ -649,7 +685,7 @@ async fn stream_openai_responses(
                     ProviderProtocol::OpenAiResponses,
                     upstream_model_id,
                     routing.map(|routing| routing.hash_key.as_str()),
-                    baidu_native.as_ref(),
+                    official_native.as_ref().or(baidu_native.as_ref()),
                     retry_body,
                 )
                 .await
@@ -658,10 +694,12 @@ async fn stream_openai_responses(
         Ok(upstream)
     };
     restore_reasoning(&mut request_body, saved_reasoning);
-    crate::protocol::convert::collaboration::restore_request(
-        &mut request_body,
-        saved_collaboration,
-    );
+    if let Some(saved_collaboration) = saved_collaboration {
+        crate::protocol::convert::collaboration::restore_request(
+            &mut request_body,
+            saved_collaboration,
+        );
+    }
     restore_portable_responses_reasoning(&mut request_body, normalized_reasoning);
     restore_optional_field(&mut request_body, "model", original_model);
     restore_optional_field(
@@ -999,7 +1037,13 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
             provider_id = provider.id(),
             "refreshing agy OAuth token after upstream rejected credentials"
         );
-        crate::provider::auth::agy::invalidate_agy_cache().await;
+        if let Some(path) = if provider.definition().is_legacy_oauth_instance() {
+            crate::provider::auth::agy::resolve_agy_token_path()
+        } else {
+            provider.definition().owned_oauth_path()
+        } {
+            crate::provider::auth::agy::invalidate_agy_cache(&path).await;
+        }
         let refreshed_headers = executor.upstream.agy_native_headers(provider).await?;
         let (response, retained_payload) = executor
             .upstream

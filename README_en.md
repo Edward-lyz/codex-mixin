@@ -193,6 +193,8 @@ More screens are in the [Product Tour](https://github.com/Edward-lyz/codex-mixin
 
 Choose one of these presets when adding a provider, or Custom for any other compatible endpoint. After adding one, you can test the connection, refresh the model list, and probe Reasoning, Function Calling, Tool Search, and Web Search support. Probing sends real requests and may consume quota.
 
+For multiple OAuth accounts, give each additional account a distinct ID, for example `codex-mixin --no-tui providers add --preset openai --id work --name Work` or `codex-mixin --no-tui providers add --preset agy --id agy-2`. Add `--reauthorize` to sign in again. Model slugs include the ID, such as `gpt-5.5-work`. For an independent Claude Code account, obtain a token with `claude setup-token`, then use `--preset claude-code --id work-claude --key @env:CLAUDE_SETUP_TOKEN`.
+
 | Preset | Provider | Upstream protocol | Authentication |
 | --- | --- | --- | --- |
 | `openai` | OpenAI | OpenAI Responses | ChatGPT OAuth |

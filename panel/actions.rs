@@ -163,6 +163,7 @@ enum OptionKind {
 /// environment mappings and gateway keys stay CLI-only on purpose.
 const PROVIDER_ADD_OPTIONS: &[(&str, OptionKind)] = &[
     ("id", OptionKind::Text),
+    ("reauthorize", OptionKind::Switch),
     ("oauth_timeout_seconds", OptionKind::Text),
     ("key", OptionKind::Secret),
     ("aws_access_key_id", OptionKind::Secret),
