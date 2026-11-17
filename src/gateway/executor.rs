@@ -153,7 +153,10 @@ impl GatewayExecutor {
             false,
         )
         .resolve(model);
-        if custom_result.is_ok() || !super::is_official_model_slug(model) {
+        if custom_result.is_ok()
+            || self.providers.resolve_known(model).is_some()
+            || !super::is_official_model_slug(model)
+        {
             return custom_result;
         }
         if !model.eq_ignore_ascii_case(super::AUTO_REVIEW_MODEL_SLUG)

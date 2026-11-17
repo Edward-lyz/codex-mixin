@@ -45,7 +45,7 @@ pub(crate) async fn credentials(
             token_type: super::auth::kiro::token_type(&provider.definition().auth.api_key, false),
         }
     } else {
-        super::auth::kiro::session(region, force).await?
+        super::auth::kiro::session(region, force, provider.definition()).await?
     };
     if let Some(arn) = std::env::var("KIRO_PROFILE_ARN")
         .ok()

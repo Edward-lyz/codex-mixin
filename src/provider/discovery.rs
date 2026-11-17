@@ -23,6 +23,77 @@ use super::{
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const DEFAULT_SELECTED_MODEL_LIMIT: usize = 10;
 
+pub fn official_models_from_catalog(
+    catalog: &serde_json::Value,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let models = catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("official Codex catalog has no models array"))?;
+    models
+        .iter()
+        .filter(|model| model.get("visibility").and_then(serde_json::Value::as_str) != Some("hide"))
+        .map(|model| {
+            let id = model
+                .get("slug")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("official Codex model is missing slug"))?;
+            let supports_image = model
+                .get("input_modalities")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|modalities| {
+                    modalities
+                        .iter()
+                        .any(|modality| modality.as_str() == Some("image"))
+                });
+            let supports_thinking = model
+                .get("supported_reasoning_levels")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|levels| !levels.is_empty());
+            let supports_tool_search = model
+                .get("experimental_supported_tools")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|tools| {
+                    tools
+                        .iter()
+                        .any(|tool| tool.as_str() == Some("tool_search"))
+                });
+            Ok(ProviderModel {
+                id: id.to_owned(),
+                display_name: model
+                    .get("display_name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                description: model
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
+                context_window: model
+                    .get("context_window")
+                    .and_then(serde_json::Value::as_u64)
+                    .or_else(|| {
+                        model
+                            .get("max_context_window")
+                            .and_then(serde_json::Value::as_u64)
+                    }),
+                protocol: Some(super::ProviderProtocol::OpenAiResponses),
+                api_path: Some("/responses".to_owned()),
+                supports_image: Some(supports_image),
+                supports_thinking: Some(supports_thinking),
+                supports_web_search: Some(
+                    model
+                        .get("supports_search_tool")
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true),
+                ),
+                supports_tool_search: Some(supports_tool_search),
+                supports_function_tools: Some(true),
+                ..ProviderModel::default()
+            })
+        })
+        .collect()
+}
+
 // Keep one raw response per provider, bounded for small gateway hosts. Matching
 // the resolved headers also invalidates env-based credentials without logging them.
 const MAX_MODEL_CACHE_BYTES: usize = 8 * 1024 * 1024;
@@ -82,6 +153,13 @@ pub async fn discover_provider_models(
     client: &Client,
     definition: &ProviderDefinition,
 ) -> anyhow::Result<Vec<ProviderModel>> {
+    if definition.preset_id.as_deref() == Some("openai") {
+        let path = definition
+            .owned_oauth_path()
+            .context("official account OAuth path is missing")?;
+        let catalog = super::fetch_official_resource(&path, true).await?;
+        return official_models_from_catalog(&catalog);
+    }
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
     let native_headers = native_baidu_headers_if_needed(definition, &provider).await?;
     if definition.preset_id.as_deref() == Some("agy") {

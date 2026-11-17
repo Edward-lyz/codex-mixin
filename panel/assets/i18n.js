@@ -308,6 +308,8 @@ const EN = {
  "AWS 凭据已清除": "AWS credentials cleared",
  "API 密钥": "API key",
  "清除密钥": "Clear key",
+ "重新授权": "Re-authorize",
+ "授权已更新": "Authorization updated",
  "密钥已清除": "Key cleared",
  "连接配置": "Connection",
  "百度额度": "Baidu quota",

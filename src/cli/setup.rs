@@ -328,6 +328,7 @@ async fn authorize_existing_preset(preset: &str) -> anyhow::Result<()> {
     if matches!(preset, "openai" | "agy" | "agy-business") {
         codex_mixin::application::provider::login::authorize_add(
             ProviderPreset::parse(preset)?,
+            None,
             codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS,
             |url| super::progress_step(&format!("Open this URL to authorize, or cancel: {url}")),
         )

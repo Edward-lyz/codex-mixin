@@ -151,7 +151,7 @@ fn parse_models(stdout: &str) -> anyhow::Result<Vec<ProviderModel>> {
 }
 
 /// Remember the allowance headers of one reply; replies without any are ignored.
-pub(crate) fn record_limits(headers: &Value) -> anyhow::Result<()> {
+pub(crate) fn record_limits(provider_id: &str, headers: &Value) -> anyhow::Result<()> {
     let mut windows = serde_json::Map::new();
     for (prefix, key, _) in WINDOWS {
         let number = |suffix: &str| {
@@ -173,16 +173,23 @@ pub(crate) fn record_limits(headers: &Value) -> anyhow::Result<()> {
     }
     let snapshot =
         json!({"captured_at_ms": chrono::Utc::now().timestamp_millis(), "windows": windows});
-    crate::platform::oauth::save_oauth(
-        &crate::platform::oauth::oauth_path(FILE),
-        &serde_json::to_vec(&snapshot)?,
-    )
-    .context("save Claude Code allowance")
+    crate::platform::oauth::save_oauth(&limits_path(provider_id), &serde_json::to_vec(&snapshot)?)
+        .context("save Claude Code allowance")
+}
+
+/// Allowance snapshot of one Claude Code account; the default instance keeps
+/// the original file name.
+pub(crate) fn limits_path(provider_id: &str) -> std::path::PathBuf {
+    crate::platform::oauth::oauth_path(&if provider_id == "claude-code" {
+        FILE.to_owned()
+    } else {
+        format!("{FILE}-{provider_id}")
+    })
 }
 
 /// Rows in the shape `quota --json` prints for percentage windows.
-pub fn fetch_claude_code_quota() -> anyhow::Result<Vec<Value>> {
-    let path = crate::platform::oauth::oauth_path(FILE);
+pub fn fetch_claude_code_quota(provider_id: &str) -> anyhow::Result<Vec<Value>> {
+    let path = limits_path(provider_id);
     let raw = std::fs::read(&path).map_err(|error| {
         anyhow::anyhow!(
             "no Claude allowance recorded yet; it appears after the first request through Mixin ({error})"

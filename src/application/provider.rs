@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{StoredGatewayConfig, mutate_stored_config};
@@ -344,8 +345,23 @@ pub fn reorder_providers(ids: &[String]) -> Result<(), OperationError> {
 
 pub fn remove_provider(id: &str) -> Result<RemovedProvider, OperationError> {
     let mut discovered_preset = None;
+    let mut owned_oauth_path = None;
     let renames = commit_provider_change(|config| {
         require_providers(config)?;
+        owned_oauth_path = config
+            .providers
+            .iter()
+            .find(|provider| provider.id == id)
+            .and_then(|provider| {
+                if provider.preset_id.as_deref() == Some("claude-code") {
+                    (provider.id != "claude-code")
+                        .then(|| crate::provider::claude_code::limits_path(&provider.id))
+                } else if provider.is_legacy_oauth_instance() {
+                    None
+                } else {
+                    provider.owned_oauth_path()
+                }
+            });
         discovered_preset = config
             .providers
             .iter()
@@ -353,6 +369,18 @@ pub fn remove_provider(id: &str) -> Result<RemovedProvider, OperationError> {
             .and_then(|provider| provider.preset_id.clone());
         remove_provider_config(config, id)
     })?;
+    if let Some(path) = owned_oauth_path {
+        after_provider_commit("OAuth credential removal", || {
+            for file in [&path, &path.with_extension("lock")] {
+                match std::fs::remove_file(file) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error).context("remove owned OAuth credential file"),
+                }
+            }
+            Ok(())
+        })?;
+    }
     if let Some(preset_id) = discovered_preset {
         // Without this marker the next discovery would bring the login back.
         after_provider_commit("discovered login ignore list", || {
@@ -462,7 +490,18 @@ pub fn remove_provider_config(
     let Some(preset_id) = removed.preset_id else {
         return Ok(Vec::new());
     };
-    compact_generated_provider_ids(config, ProviderPreset::parse(&preset_id)?)
+    let preset = ProviderPreset::parse(&preset_id)?;
+    if matches!(
+        preset,
+        ProviderPreset::Official
+            | ProviderPreset::Agy
+            | ProviderPreset::AgyBusiness
+            | ProviderPreset::Kiro
+            | ProviderPreset::ClaudeCode
+    ) {
+        return Ok(Vec::new());
+    }
+    compact_generated_provider_ids(config, preset)
 }
 
 fn compact_generated_provider_ids(

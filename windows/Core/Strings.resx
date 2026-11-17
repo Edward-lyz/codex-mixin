@@ -1400,6 +1400,9 @@ Click to change model</value>
   <data name="清除密钥" xml:space="preserve">
     <value>Clear key</value>
   </data>
+  <data name="重新授权" xml:space="preserve">
+    <value>Re-authorize</value>
+  </data>
   <data name="清除筛选：{0}" xml:space="preserve">
     <value>Clear filter: {0}</value>
   </data>

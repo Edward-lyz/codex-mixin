@@ -4,6 +4,9 @@ Use preset `agy-business` for the Business option backed by Gemini Enterprise.
 The existing `agy` preset continues to use personal subscription OAuth.
 
 Add the provider with `codex-mixin providers add --preset agy-business`.
+For a second account, use `codex-mixin providers add --preset agy-business --id agy-business-2`;
+repeat with `--reauthorize` to sign in again. Its credentials and model slugs
+are scoped to that provider ID.
 Without a usable local Business login, Mixin opens its Google browser OAuth
 flow with PKCE and requests the `aicode`, `cloud-platform` and `userinfo.email`
 scopes. The native macOS, Windows and Web forms use the same CLI workflow.

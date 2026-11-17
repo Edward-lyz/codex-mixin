@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 async fn business_authorization_reaches_the_bounded_browser_workflow() {
     let error = codex_mixin::application::provider::login::authorize_add(
         codex_mixin::provider::ProviderPreset::AgyBusiness,
+        None,
         0,
         |_| panic!("invalid timeout must not start browser authorization"),
     )

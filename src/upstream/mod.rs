@@ -7,6 +7,7 @@
 
 use anyhow::Context;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::http::header;
@@ -45,6 +46,8 @@ enum AnthropicStreamDisposition {
     RetryHostedWebSearch,
 }
 
+type OfficialAuthSlot = Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>;
+
 /// Transport + auth runtime shared by every upstream send path.
 #[derive(Clone)]
 pub(crate) struct UpstreamAccess {
@@ -52,7 +55,8 @@ pub(crate) struct UpstreamAccess {
     client: Client,
     official_ech: Arc<crate::ech::OfficialEch>,
     official_direct_client: Arc<tokio::sync::OnceCell<Client>>,
-    official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
+    official_auth_cache: OfficialAuthSlot,
+    official_account_auth: Arc<tokio::sync::Mutex<HashMap<PathBuf, OfficialAuthSlot>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
     gzip_support: Arc<tokio::sync::Mutex<HashMap<reqwest::Url, bool>>>,
     claude_code: Arc<claude_code::ClaudeCodeSessions>,
@@ -66,6 +70,7 @@ impl UpstreamAccess {
             official_ech: Arc::new(crate::ech::OfficialEch::default()),
             official_direct_client: Arc::new(tokio::sync::OnceCell::new()),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            official_account_auth: Arc::default(),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             gzip_support: Arc::default(),
             claude_code: Arc::default(),
@@ -120,7 +125,15 @@ impl UpstreamAccess {
             provider.api_url_for_model(upstream_model_id).into_owned()
         };
         let base = self.request(reqwest::Method::POST, url).await?;
-        let authenticated = match native_headers {
+        let official_headers = if provider.definition().preset_id.as_deref() == Some("openai")
+            && native_headers.is_none()
+        {
+            self.official_account_headers(provider, &reqwest::header::HeaderMap::new())
+                .await?
+        } else {
+            None
+        };
+        let authenticated = match native_headers.or(official_headers.as_ref()) {
             Some(headers) => base.headers(headers.clone()),
             None => provider.apply_auth_for_protocol(base, protocol),
         };
@@ -165,7 +178,15 @@ impl UpstreamAccess {
             url.query_pairs_mut().append_pair("alt", "sse");
         }
         let base = self.request(reqwest::Method::POST, url).await?;
-        let authenticated = match native_headers {
+        let official_headers = if provider.definition().preset_id.as_deref() == Some("openai")
+            && native_headers.is_none()
+        {
+            self.official_account_headers(provider, &reqwest::header::HeaderMap::new())
+                .await?
+        } else {
+            None
+        };
+        let authenticated = match native_headers.or(official_headers.as_ref()) {
             Some(headers) => base.headers(headers.clone()),
             None => provider.apply_auth_for_protocol(base, protocol),
         };
@@ -183,6 +204,39 @@ impl UpstreamAccess {
         crate::provider::agy::project_id(&self.client, provider, headers).await
     }
 
+    pub(crate) async fn official_account_headers(
+        &self,
+        provider: &ProviderRuntime,
+        incoming: &reqwest::header::HeaderMap,
+    ) -> Result<Option<reqwest::header::HeaderMap>, GatewayError> {
+        if provider.definition().preset_id.as_deref() != Some("openai") {
+            return Ok(None);
+        }
+        let path = provider
+            .definition()
+            .owned_oauth_path()
+            .context("official account OAuth path is missing")?;
+        let cache = {
+            let mut caches = self.official_account_auth.lock().await;
+            caches.entry(path.clone()).or_default().clone()
+        };
+        let (authorization, account_id) = crate::provider::auth::official::headers(&path, &cache)
+            .await
+            .map_err(GatewayError::Other)?;
+        let mut headers = reqwest::header::HeaderMap::new();
+        for &name in FORWARDED_OFFICIAL_HEADERS {
+            if let Some(value) = incoming.get(name) {
+                headers.insert(
+                    reqwest::header::HeaderName::from_static(name),
+                    value.clone(),
+                );
+            }
+        }
+        headers.insert(header::AUTHORIZATION, authorization);
+        headers.insert("chatgpt-account-id", account_id);
+        Ok(Some(headers))
+    }
+
     pub(crate) async fn agy_native_headers(
         &self,
         provider: &ProviderRuntime,
@@ -191,7 +245,7 @@ impl UpstreamAccess {
             && provider.definition().auth.api_key.trim().is_empty()
         {
             crate::provider::agy::require_native_account(provider.definition())?;
-            crate::provider::auth::agy::get_agy_headers()
+            crate::provider::auth::agy::get_agy_headers(provider.definition())
                 .await
                 .map(Some)
         } else {

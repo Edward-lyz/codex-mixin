@@ -54,11 +54,23 @@ fn validate_provider(provider: &ProviderRuntime) -> anyhow::Result<()> {
 async fn auth_headers(provider: &ProviderRuntime, force: bool) -> anyhow::Result<HeaderMap> {
     validate_provider(provider)?;
     let mut headers = if provider.definition().auth.api_key.trim().is_empty() {
+        let definition = provider.definition();
+        let owned = definition
+            .owned_oauth_path()
+            .context("AGY Business provider has no owned OAuth path")?;
+        let external = crate::platform::oauth::agy_external_token_paths();
+        let adc = crate::platform::oauth::google_adc_path();
         super::auth::agy_business::headers(
             force,
-            &crate::platform::oauth::oauth_path("agy-business"),
-            &crate::platform::oauth::agy_external_token_paths(),
-            &crate::platform::oauth::google_adc_path(),
+            &owned,
+            if definition.is_legacy_oauth_instance() {
+                &external
+            } else {
+                &[]
+            },
+            definition
+                .is_legacy_oauth_instance()
+                .then_some(adc.as_path()),
             "https://oauth2.googleapis.com/token",
         )
         .await?
@@ -77,12 +89,21 @@ async fn auth_headers(provider: &ProviderRuntime, force: bool) -> anyhow::Result
     Ok(headers)
 }
 
-async fn license(client: &reqwest::Client, headers: &HeaderMap) -> anyhow::Result<License> {
-    let settings =
-        super::auth::agy_business::read_optional(&crate::platform::oauth::agy_settings_path())
-            .await?;
-    let adc = super::auth::agy_business::read_optional(&crate::platform::oauth::google_adc_path())
-        .await?;
+async fn license(
+    client: &reqwest::Client,
+    headers: &HeaderMap,
+    legacy: bool,
+) -> anyhow::Result<License> {
+    let (settings, adc) = if legacy {
+        (
+            super::auth::agy_business::read_optional(&crate::platform::oauth::agy_settings_path())
+                .await?,
+            super::auth::agy_business::read_optional(&crate::platform::oauth::google_adc_path())
+                .await?,
+        )
+    } else {
+        (None, None)
+    };
     let project = settings
         .as_ref()
         .and_then(|settings| settings.pointer("/gcp/project"))
@@ -149,7 +170,12 @@ pub(crate) async fn discover_models(
     provider: &ProviderRuntime,
 ) -> anyhow::Result<Vec<ProviderModel>> {
     let headers = auth_headers(provider, false).await?;
-    let license = license(client, &headers).await?;
+    let license = license(
+        client,
+        &headers,
+        provider.definition().is_legacy_oauth_instance(),
+    )
+    .await?;
     let response = client.post("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
         .headers(headers).timeout(std::time::Duration::from_secs(20))
         .json(&json!({"project":license.project_id,"location":license.location,"entitlement":{"userTier":license.user_tier}})).send().await?;
@@ -169,7 +195,12 @@ pub(crate) async fn prepare_request(
     force: bool,
 ) -> anyhow::Result<(reqwest::Url, HeaderMap, Value)> {
     let mut headers = auth_headers(provider, force).await?;
-    let license = license(client, &headers).await?;
+    let license = license(
+        client,
+        &headers,
+        provider.definition().is_legacy_oauth_instance(),
+    )
+    .await?;
     let (url, body) = inference_request(&license, model, body)?;
     let trajectory = uuid::Uuid::new_v4().to_string();
     headers.insert("x-goog-user-project", license.project_id.parse()?);

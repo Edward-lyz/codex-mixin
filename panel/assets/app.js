@@ -2171,6 +2171,9 @@ function connectionTab(provider) {
   const aws = definition.auth_mode === "aws_sigv4";
   const form = h("form", { class: "svc-form", autocomplete: "off" });
   const connection = [formRow(t("服务商 ID"), h("span", { class: "mono muted", text: provider.id }))];
+  if (provider.kind === "configured" && definition.browser_oauth && (preset === "openai" || !provider.api_key_configured)) {
+    connection.push(formRow(t("重新授权"), actionButton(t("重新授权"), "provider_add", { preset, options: { id: provider.id, reauthorize: true } }, { ok: t("授权已更新") }, "btn-sm")));
+  }
   if (definition.custom_endpoint) {
     connection.push(
       formRow(t("站点名称"), inlineInput("display_name", provider.display_name)),

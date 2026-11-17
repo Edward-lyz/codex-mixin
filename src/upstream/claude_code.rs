@@ -55,7 +55,7 @@ type Desks = Arc<Mutex<HashMap<String, Arc<ToolDesk>>>>;
 /// Live CLI processes keyed by client thread, plus the shared MCP bridge.
 #[derive(Default)]
 pub(crate) struct ClaudeCodeSessions {
-    idle: tokio::sync::Mutex<HashMap<String, Session>>,
+    idle: tokio::sync::Mutex<HashMap<(String, String), Session>>,
     bridge: tokio::sync::OnceCell<Bridge>,
 }
 
@@ -127,7 +127,8 @@ impl UpstreamAccess {
         let sessions = self.claude_code.clone();
         let bridge = sessions.bridge().await?;
         let fingerprint = request_fingerprint(request);
-        let reused = match thread {
+        let thread = thread.map(|thread| (provider.id().to_owned(), thread.to_owned()));
+        let reused = match &thread {
             Some(thread) => sessions.take(thread).await,
             None => None,
         };
@@ -160,7 +161,6 @@ impl UpstreamAccess {
             Step::NewTurn(content) => write_user(&mut session.stdin, content).await?,
         }
         session.seen_messages = request.messages.len();
-        let thread = thread.map(str::to_owned);
         Ok(Box::pin(async_stream::stream! {
             let mut stop_reason = None::<String>;
             let mut started = false;
@@ -245,11 +245,11 @@ impl ClaudeCodeSessions {
         Ok(bridge.clone())
     }
 
-    async fn take(&self, thread: &str) -> Option<Session> {
+    async fn take(&self, thread: &(String, String)) -> Option<Session> {
         self.idle.lock().await.remove(thread)
     }
 
-    async fn put(&self, thread: String, mut session: Session) {
+    async fn put(&self, thread: (String, String), mut session: Session) {
         session.last_used = Instant::now();
         let mut idle = self.idle.lock().await;
         idle.retain(|_, session| session.last_used.elapsed() < IDLE_TTL);
@@ -564,13 +564,15 @@ async fn spawn_session(
     .context("start interactive Claude worker")??;
     let (sender, events) = mpsc::channel(EVENT_QUEUE);
     let tool_desk = desk.clone();
+    let provider_id = provider.id().to_owned();
     tokio::spawn(async move {
         let mut blocks = HashMap::new();
         while let Some(event) = source.recv().await {
             if event["type"] == "rate_limits" {
                 let headers = event["headers"].clone();
+                let provider_id = provider_id.clone();
                 let saved = tokio::task::spawn_blocking(move || {
-                    crate::provider::claude_code::record_limits(&headers)
+                    crate::provider::claude_code::record_limits(&provider_id, &headers)
                 })
                 .await;
                 if let Err(error) = saved.map_err(anyhow::Error::from).and_then(|result| result) {

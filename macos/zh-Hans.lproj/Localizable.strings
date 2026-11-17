@@ -171,6 +171,7 @@
 "settings.agyBusinessCredentials" = "请在 agy 选择 Business 并配置 Cloud 项目和地区，或配置 authorized_user 类型的应用默认凭据。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
+"settings.reauthorize" = "重新授权";
 
 "provider.oauthWaiting" = "等待浏览器授权。关闭网页不会取消本次请求；可点击取消，或等待设置的超时自动结束。";
 "provider.oauthTimeout" = "OAuth 授权超时（秒）";

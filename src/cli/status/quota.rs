@@ -34,6 +34,29 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             let client = client.clone();
             async move {
                 let mut provider_results = Vec::new();
+                if provider.definition().preset_id.as_deref() == Some("openai") {
+                    let result = async {
+                        let path = provider.definition().owned_oauth_path()
+                            .ok_or_else(|| anyhow::anyhow!("official account OAuth path is missing"))?;
+                        let value = codex_mixin::provider::fetch_official_resource(&path, false).await?;
+                        official_quota_rows(&value)
+                    }.await;
+                    match result {
+                        Ok(rows) => for mut row in rows {
+                            row["provider_id"] = serde_json::json!(provider.id());
+                            row["provider_display_name"] = serde_json::json!(provider.display_name());
+                            let label = row["display_name"].as_str().unwrap_or("Quota");
+                            row["display_name"] = serde_json::json!(format!("{} {}", provider.display_name(), label.strip_prefix("OpenAI ").unwrap_or(label)));
+                            provider_results.push(row);
+                        },
+                        Err(error) => provider_results.push(serde_json::json!({
+                            "provider_id": provider.id(), "provider_display_name": provider.display_name(),
+                            "display_name": provider.display_name(), "quota_id": "quota", "label": "Quota",
+                            "value": null, "error": error.to_string(), "stale_at": null,
+                        })),
+                    }
+                    return (index, provider_results);
+                }
                 if provider.definition().preset_id.as_deref() == Some("kiro") && provider.quota_url().is_none() {
                     match codex_mixin::provider::fetch_kiro_quota(provider).await {
                         Ok(rows) => for mut row in rows {
@@ -53,7 +76,7 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
                     return (index, provider_results);
                 }
                 if provider.definition().preset_id.as_deref() == Some("claude-code") {
-                    match codex_mixin::provider::fetch_claude_code_quota() {
+                    match codex_mixin::provider::fetch_claude_code_quota(provider.id()) {
                         Ok(rows) => for mut row in rows {
                             row["provider_id"] = serde_json::json!(provider.id());
                             row["provider_display_name"] = serde_json::json!(provider.display_name());

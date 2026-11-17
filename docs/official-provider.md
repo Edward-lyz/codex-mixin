@@ -15,6 +15,10 @@ implemented. Credential-store errors are explicit, and no store is enumerated.
 
 Choose OpenAI (ChatGPT OAuth) in Add Provider, or run
 `codex-mixin --no-tui providers add --preset openai`.
+Add another ChatGPT account with `codex-mixin --no-tui providers add --preset openai --id work --name Work`.
+Its models use the `-work` suffix, for example `gpt-5.5-work`. Sign in to a
+different account or workspace; a private browser window can help select it.
+To sign in again, repeat the command with `--reauthorize`.
 There is no separate login command or toolbar entry.
 The CLI opens the authorization page and waits on the official loopback
 callback at `localhost:1455/auth/callback`. It validates state and uses PKCE.

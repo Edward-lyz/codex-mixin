@@ -35,7 +35,7 @@ use reqwest::header::HeaderMap;
 
 pub use discovery::{
     AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
-    discover_provider_models, redact_provider_error,
+    discover_provider_models, official_models_from_catalog, redact_provider_error,
 };
 pub use models_dev::{MODELS_DEV_API_URL, default_metadata_cache_path, metadata_catalog_path};
 pub use quota::{QuotaUsageSummary, quota_usage};

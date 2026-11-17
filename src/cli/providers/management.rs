@@ -26,13 +26,9 @@ async fn add_provider_inner(options: AddProviderInput) -> anyhow::Result<()> {
     if preset == codex_mixin::provider::ProviderPreset::Official {
         anyhow::ensure!(
             options
-                .id
+                .key
                 .as_deref()
-                .is_none_or(|id| matches!(id, "official" | "openai"))
-                && options
-                    .key
-                    .as_deref()
-                    .is_none_or(|key| key.trim().is_empty())
+                .is_none_or(|key| key.trim().is_empty())
                 && options.base_url.is_none()
                 && options.protocol.is_none()
                 && options.api_path.is_none()
@@ -43,45 +39,104 @@ async fn add_provider_inner(options: AddProviderInput) -> anyhow::Result<()> {
                 && options.header_env.is_empty(),
             "the OpenAI OAuth preset uses the official account and endpoint"
         );
-        codex_mixin::application::provider::login::authorize_add(preset, timeout, |url| {
-            super::super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"));
-        })
-        .await?;
-        discover_models_with_output("official", false)
-            .await
-            .map_err(|source| OperationError::AfterCommit {
-                stage: "OAuth model discovery",
-                source,
-            })?;
-        println!("provider added: official");
-        return Ok(());
+        if options
+            .id
+            .as_deref()
+            .is_none_or(|id| matches!(id, "official" | "openai"))
+        {
+            codex_mixin::application::provider::login::authorize_add(
+                preset,
+                None,
+                timeout,
+                |url| {
+                    super::super::progress_step(&format!(
+                        "Open this URL to authorize, or cancel: {url}"
+                    ));
+                },
+            )
+            .await?;
+            discover_models_with_output("official", false)
+                .await
+                .map_err(|source| OperationError::AfterCommit {
+                    stage: "OAuth model discovery",
+                    source,
+                })?;
+            println!("provider added: official");
+            return Ok(());
+        }
     }
     // A usable local AGY login is reused; the browser only opens when none
     // exists or the user asked to sign in again.
     let browser_oauth = matches!(
         preset,
-        codex_mixin::provider::ProviderPreset::Agy
+        codex_mixin::provider::ProviderPreset::Official
+            | codex_mixin::provider::ProviderPreset::Agy
             | codex_mixin::provider::ProviderPreset::AgyBusiness
     ) && options
         .key
         .as_deref()
         .is_none_or(|key| key.trim().is_empty())
-        && (options.reauthorize
+        && (preset == codex_mixin::provider::ProviderPreset::Official
+            || options
+                .id
+                .as_deref()
+                .is_some_and(|id| id != preset.as_str())
+            || options.reauthorize
             || !codex_mixin::application::provider::local_agy_login_available(preset));
+    let reauthorize = options.reauthorize;
     let mut prepared = codex_mixin::application::provider::build::create_provider(options)?;
     if browser_oauth {
+        let existing = codex_mixin::config::load_stored_config()?
+            .unwrap_or_default()
+            .providers
+            .into_iter()
+            .find(|provider| provider.id == prepared.id);
+        if reauthorize && let Some(existing) = existing.as_ref() {
+            anyhow::ensure!(
+                existing.preset_id.as_deref() == Some(preset.as_str()),
+                "provider {} uses a different preset",
+                prepared.id
+            );
+            codex_mixin::application::provider::login::authorize_add(
+                preset,
+                Some(existing),
+                timeout,
+                |url| {
+                    super::super::progress_step(&format!(
+                        "Open this URL to authorize, or cancel: {url}"
+                    ));
+                },
+            )
+            .await?;
+            discover_models_with_output(&prepared.id, false)
+                .await
+                .map_err(|source| OperationError::AfterCommit {
+                    stage: "OAuth model discovery",
+                    source,
+                })?;
+            println!("provider authorized: {}", prepared.id);
+            return Ok(());
+        }
         anyhow::ensure!(
-            !codex_mixin::config::load_stored_config()?
-                .unwrap_or_default()
-                .providers
-                .iter()
-                .any(|provider| provider.id == prepared.id),
+            !reauthorize || existing.is_some() || prepared.provider.is_legacy_oauth_instance(),
+            "provider {} not found; add it without --reauthorize",
+            prepared.id
+        );
+        anyhow::ensure!(
+            existing.is_none(),
             "provider {} already exists; choose a different provider ID",
             prepared.id
         );
-        codex_mixin::application::provider::login::authorize_add(preset, timeout, |url| {
-            super::super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"));
-        })
+        codex_mixin::application::provider::login::authorize_add(
+            preset,
+            Some(&prepared.provider),
+            timeout,
+            |url| {
+                super::super::progress_step(&format!(
+                    "Open this URL to authorize, or cancel: {url}"
+                ));
+            },
+        )
         .await?;
     }
     let mut detected_protocol = None;
@@ -97,7 +152,32 @@ async fn add_provider_inner(options: AddProviderInput) -> anyhow::Result<()> {
         }
     }
     let configured_protocol = super::protocol_name(prepared.provider.protocol);
-    codex_mixin::application::provider::add_provider(prepared.provider, prepared.gateway_api_key)?;
+    let fresh_credential = browser_oauth
+        .then(|| {
+            (!prepared.provider.is_legacy_oauth_instance())
+                .then(|| prepared.provider.owned_oauth_path())
+                .flatten()
+        })
+        .flatten();
+    if let Err(error) = codex_mixin::application::provider::add_provider(
+        prepared.provider,
+        prepared.gateway_api_key,
+    ) {
+        // The browser login wrote a credential for an instance that was never saved.
+        if let (Some(path), OperationError::BeforeCommit { .. }) = (fresh_credential, &error) {
+            for file in [path.clone(), path.with_extension("lock")] {
+                if let Err(cleanup) = std::fs::remove_file(&file)
+                    && cleanup.kind() != std::io::ErrorKind::NotFound
+                {
+                    eprintln!(
+                        "failed to remove unsaved OAuth credential {}: {cleanup}",
+                        file.display()
+                    );
+                }
+            }
+        }
+        return Err(error.into());
+    }
     after_provider_commit("imagegen skill sync", sync_imagegen_skill)?;
     println!("provider added: {}", prepared.id);
     if let Some(protocol) = detected_protocol {
