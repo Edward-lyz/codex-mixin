@@ -76,11 +76,7 @@ impl UpstreamAccess {
         if let Some(runtime) = runtimes.get(provider.id()) {
             return Ok(Arc::clone(runtime));
         }
-        let runtime = Arc::new(
-            DucxRuntime::spawn(executable)
-                .await
-                .map_err(GatewayError::Other)?,
-        );
+        let runtime = DucxRuntime::shared(executable).map_err(GatewayError::Other)?;
         runtimes.insert(provider.id().to_owned(), Arc::clone(&runtime));
         Ok(runtime)
     }

@@ -292,6 +292,8 @@ pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const AGY_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+/// Longest wait before a provider whose model refresh keeps failing is tried again.
+const PROVIDER_MODEL_REFRESH_BACKOFF_CAP: Duration = Duration::from_secs(5 * 60);
 /// How often the client-credential watch checks the stored configuration timestamp.
 const CLIENT_CREDENTIAL_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
@@ -381,10 +383,9 @@ async fn sync_all_provider_models_once(
     for provider in providers {
         let id = provider.id.clone();
         let is_agy = provider.is_agy;
-        if is_agy
-            && retries
-                .get(&id)
-                .is_some_and(|(_, next)| *next > std::time::Instant::now())
+        if retries
+            .get(&id)
+            .is_some_and(|(_, next)| *next > std::time::Instant::now())
         {
             continue;
         }
@@ -393,17 +394,27 @@ async fn sync_all_provider_models_once(
                 changed |= updated;
                 retries.remove(&id);
             }
-            None if is_agy => {
+            None => {
                 let failures = retries
                     .get(&id)
                     .map_or(0, |(failures, _)| *failures)
                     .saturating_add(1);
+                let cap = if is_agy {
+                    AGY_MODEL_REFRESH_INTERVAL
+                } else {
+                    PROVIDER_MODEL_REFRESH_BACKOFF_CAP
+                };
                 let delay = PROVIDER_MODEL_REFRESH_INTERVAL
                     .saturating_mul(1_u32 << failures.min(5))
-                    .min(AGY_MODEL_REFRESH_INTERVAL);
+                    .min(cap);
+                tracing::info!(
+                    provider_id = %id,
+                    failures,
+                    retry_in_secs = delay.as_secs(),
+                    "provider model refresh backs off after a failure"
+                );
                 retries.insert(id, (failures, std::time::Instant::now() + delay));
             }
-            None => {}
         }
     }
     probe_all_missing_selected_models().await;
