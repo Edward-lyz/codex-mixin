@@ -158,10 +158,11 @@ impl ContextEngine {
     /// `<base><SEP>sub:<fingerprint>` unless it continues the archived chain
     /// (a model switch replays the same history and keeps the raw key).
     ///
-    /// A request that replays more history than the archive holds takes the
-    /// raw key back: browsing turns always resend the whole conversation while
-    /// auxiliary requests send a single message, so an auxiliary request that
-    /// anchored the key first cannot strand the main conversation's state.
+    /// A longer replay can reclaim the raw key when its divergence does not
+    /// discard a summary, allowing a main request to follow an auxiliary one
+    /// that anchored an uncompressed archive first. After a restart, a
+    /// divergent request that would discard a summary also forks before it
+    /// can establish an anchor.
     pub(crate) fn session_identity(
         &self,
         base: &str,
@@ -179,11 +180,11 @@ impl ContextEngine {
             return Ok(base.to_owned());
         }
         let persona = persona_fingerprint(instructions);
-        let (history_len, divergence) = self.history_shape(base, items)?;
+        let (history_len, divergence, drops_summary) = self.history_shape(base, items)?;
         let mut anchors = self.lock_anchors()?;
         match anchors.get(base) {
             None => {
-                if history_len > 0 && divergence == 0 {
+                if history_len > 0 && (divergence == 0 || drops_summary) {
                     let forked = forked_session(base, &persona);
                     tracing::info!(
                         session = %session_display_name(base),
@@ -198,7 +199,8 @@ impl ContextEngine {
             Some(anchor) if *anchor == persona => Ok(base.to_owned()),
             Some(_) => {
                 let continues = history_len > 0 && divergence == history_len;
-                let replays = history_len > 0 && items.len() > history_len;
+                let replays =
+                    !continues && history_len > 0 && items.len() > history_len && !drops_summary;
                 if continues || replays {
                     anchors.insert(base.to_owned(), persona);
                     return Ok(base.to_owned());
@@ -215,10 +217,12 @@ impl ContextEngine {
     }
 
     /// Longest common prefix between the archived history and the incoming
-    /// items, plus the archived length.
-    fn history_shape(&self, key: &str, items: &[Value]) -> Result<(usize, usize)> {
+    /// items, the archived length, and whether divergence discards a summary.
+    fn history_shape(&self, key: &str, items: &[Value]) -> Result<(usize, usize, bool)> {
         let store = self.lock()?;
-        store.history_prefix(key, items, fingerprint, 0)
+        let (history_len, divergence) = store.history_prefix(key, items, fingerprint, 0)?;
+        let drops_summary = history_len > 0 && store.has_block_at_or_after(key, divergence)?;
+        Ok((history_len, divergence, drops_summary))
     }
 
     fn lock_anchors(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, String>>> {

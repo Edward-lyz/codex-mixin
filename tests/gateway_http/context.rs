@@ -1859,6 +1859,118 @@ async fn concurrent_turns_of_one_session_wait_instead_of_failing() {
     }
 }
 
+/// An auxiliary request with other instructions replays a longer history that
+/// diverges inside the main session's summary. It must fork so the main replay
+/// keeps its compressed view (issue #138).
+#[tokio::test]
+async fn divergent_auxiliary_replay_preserves_main_summary() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextCompressThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    config.context.protected_messages = 1;
+    config.context.protected_tokens = 1;
+    configure_baidu_policy(&mut config);
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config.clone(), &database_path).await;
+    let client = reqwest::Client::new();
+    let mut main = responses_request();
+    main["input"] = json!([
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"explore two ideas"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("alpha {}", "word ".repeat(400))}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":format!("beta {}", "word ".repeat(400))}]},
+        {"type":"configuration_update","reasoning":{"effort":"high"}},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona-summary")
+        .json(&main)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+
+    let mut auxiliary = main.clone();
+    auxiliary["instructions"] = json!("Review this conversation.");
+    auxiliary["input"][2]["content"][0]["text"] = json!("different analysis");
+    auxiliary["input"].as_array_mut().unwrap().extend([
+        json!({"type":"message","role":"user","content":[{"type":"input_text","text":"review"}]}),
+        json!({"type":"message","role":"user","content":[{"type":"input_text","text":"more review"}]}),
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona-summary")
+        .json(&auxiliary)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let fork_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE session_key LIKE '%sub:%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(fork_count, 1, "auxiliary request must fork");
+
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    auxiliary["instructions"] = json!("Review after restart.");
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona-summary")
+        .json(&auxiliary)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+    let fork_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE session_key LIKE '%sub:%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(fork_count, 2, "auxiliary request must fork after restart");
+
+    let before_replay = requests.lock().unwrap().len();
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-persona-summary")
+        .json(&main)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+    let view = requests.lock().unwrap()[before_replay]["messages"].to_string();
+    assert!(
+        view.contains("<context_summary"),
+        "main summary missing: {view}"
+    );
+    let blocks: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM segments s JOIN sessions t
+             ON s.session_key = t.session_key AND s.revision = t.revision
+             WHERE t.session_key NOT LIKE '%sub:%' AND s.kind = 'block'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(blocks > 0, "main session lost its block");
+}
+
 /// A session-title style request carries its own instructions text and a fresh
 /// message line. It must land on its own session so it cannot take the main
 /// turn's lease or rewrite the archived view.
