@@ -5,9 +5,11 @@
 //! DUCX wrapper to launch Mixin's internal carrier without creating a model
 //! turn, then reconstruct the native headers from its versioned pipe output.
 
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
@@ -29,50 +31,99 @@ const NATIVE_HEADER: &str = "comate_custom_header";
 /// Captured headers are refreshed on demand after one minute. No background
 /// process runs while the gateway is idle.
 const HEADER_TTL: Duration = Duration::from_secs(60);
+/// A carrier answers in about a second. Minting holds the header lock, and
+/// every request queued on it, so a stuck carrier must not be waited on for
+/// the caller's whole timeout (10 minutes for requests).
+const MINT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A failed mint is remembered briefly, so callers queued behind it fail with
+/// the same error at once instead of each waiting out a carrier of their own.
+const FAILURE_TTL: Duration = Duration::from_secs(10);
+
+/// One runtime per DUCX executable for the whole process: model refreshes,
+/// probes and requests share its header cache instead of each starting a
+/// carrier of their own.
+static RUNTIMES: OnceLock<std::sync::Mutex<HashMap<PathBuf, Arc<DucxRuntime>>>> = OnceLock::new();
 
 struct CapturedHeaders {
     headers: HeaderMap,
     at: Instant,
 }
 
+struct FailedMint {
+    message: String,
+    at: Instant,
+}
+
+#[derive(Default)]
+struct MintState {
+    headers: Option<CapturedHeaders>,
+    failure: Option<FailedMint>,
+}
+
 pub(crate) struct DucxRuntime {
     executable: PathBuf,
     home: PathBuf,
-    cached: Mutex<Option<CapturedHeaders>>,
+    cached: Mutex<MintState>,
 }
 
 impl DucxRuntime {
-    pub(crate) async fn spawn(executable: PathBuf) -> anyhow::Result<Self> {
+    pub(crate) fn shared(executable: PathBuf) -> anyhow::Result<Arc<Self>> {
         ensure!(
             executable.is_file(),
             "DUCX executable does not exist: {}",
             executable.display()
         );
-        let home = managed_home(&executable)?;
-        Ok(Self {
-            executable,
-            home,
-            cached: Mutex::new(None),
-        })
+        let mut runtimes = RUNTIMES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(runtime) = runtimes.get(&executable) {
+            return Ok(Arc::clone(runtime));
+        }
+        let runtime = Arc::new(Self {
+            home: managed_home(&executable)?,
+            executable: executable.clone(),
+            cached: Mutex::new(MintState::default()),
+        });
+        runtimes.insert(executable, Arc::clone(&runtime));
+        Ok(runtime)
     }
 
     pub(crate) async fn native_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
-        let mut cached = self.cached.lock().await;
-        if let Some(entry) = cached.as_ref()
+        let mut state = self.cached.lock().await;
+        if let Some(entry) = &state.headers
             && entry.at.elapsed() < HEADER_TTL
         {
             return Ok(entry.headers.clone());
         }
-        let headers = self.mint_headers(timeout).await?;
-        *cached = Some(CapturedHeaders {
-            headers: headers.clone(),
-            at: Instant::now(),
-        });
-        Ok(headers)
+        if let Some(failure) = &state.failure
+            && failure.at.elapsed() < FAILURE_TTL
+        {
+            anyhow::bail!("{}", failure.message);
+        }
+        match self.mint_headers(timeout.min(MINT_TIMEOUT)).await {
+            Ok(headers) => {
+                *state = MintState {
+                    headers: Some(CapturedHeaders {
+                        headers: headers.clone(),
+                        at: Instant::now(),
+                    }),
+                    failure: None,
+                };
+                Ok(headers)
+            }
+            Err(error) => {
+                state.failure = Some(FailedMint {
+                    message: format!("{error:#}"),
+                    at: Instant::now(),
+                });
+                Err(error)
+            }
+        }
     }
 
     pub(crate) async fn invalidate_headers(&self) {
-        *self.cached.lock().await = None;
+        *self.cached.lock().await = MintState::default();
     }
 
     pub(crate) async fn report_client_token(&self, timeout: Duration) -> anyhow::Result<String> {

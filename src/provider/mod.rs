@@ -116,8 +116,7 @@ pub(crate) async fn native_baidu_headers(provider: &ProviderRuntime) -> anyhow::
         .or_else(auth::ducx::default_ducx_executable)
         .context("Baidu auth bridge is enabled but no managed executable is configured")?;
     if provider.uses_ducx_loopback() {
-        auth::ducx::DucxRuntime::spawn(executable)
-            .await?
+        auth::ducx::DucxRuntime::shared(executable)?
             .native_headers(Duration::from_secs(30))
             .await
     } else {

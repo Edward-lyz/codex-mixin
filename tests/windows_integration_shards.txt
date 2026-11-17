@@ -25,3 +25,4 @@ integration-c|query_isolation.rs
 integration-c|real_models.rs
 integration-c|websocket_proxy.rs
 integration-c|claude_code_provider.rs
+integration-c|ducx_carrier.rs
