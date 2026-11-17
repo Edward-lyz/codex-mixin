@@ -71,7 +71,9 @@ try {
     Assert-Gateway 'running'
 
     # Emulate an older task definition; the upgrade must repair it and restart the gateway.
-    $oldSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+    # Omitting the restart policy produced task XML missing RestartOnFailure/Count on CI,
+    # so the outdated retry policy is stated explicitly.
+    $oldSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -RestartCount 1 -RestartInterval (New-TimeSpan -Minutes 5)
     Set-ScheduledTask -TaskName $taskName -TaskPath '\' -Settings $oldSettings | Out-Null
     Invoke-Installer
     Assert-Gateway 'running'
