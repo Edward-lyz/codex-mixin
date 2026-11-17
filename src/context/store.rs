@@ -1500,6 +1500,18 @@ impl Store {
         Ok((session, changed))
     }
 
+    pub(super) fn has_block_at_or_after(&self, key: &str, position: usize) -> Result<bool> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM segments s JOIN sessions t
+                 ON s.session_key = t.session_key AND s.revision = t.revision
+                 WHERE s.session_key = ?1 AND s.kind = 'block' AND s.end_position >= ?2)",
+                params![key, position as i64],
+                |row| row.get(0),
+            )
+            .context("check context blocks at divergence")
+    }
+
     pub fn segments(&self, key: &str, revision: i64) -> Result<Vec<SegmentRow>> {
         let mut statement = self
             .connection
