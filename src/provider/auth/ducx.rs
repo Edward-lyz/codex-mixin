@@ -274,6 +274,16 @@ impl DucxRuntime {
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
         let carrier_executable = std::env::current_exe().context("resolve DUCX auth carrier")?;
         let codex_home = self.home.join(".baidu-cx");
+        let config_home = codex_home.clone();
+        let plugin_sync = tokio::task::spawn_blocking(move || disable_plugin_sync(&config_home))
+            .await
+            .context("join DUCX plugin sync configuration");
+        if let Err(error) = plugin_sync.and_then(|inner| inner) {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "could not disable DUCX plugin sync; each carrier run may leave a temporary git directory"
+            );
+        }
         // The managed home usually sits inside the user's home. Start DUCX in
         // an empty private directory and stop git and Codex project discovery
         // there, so a repository at the user's home cannot delay or change the
@@ -442,6 +452,42 @@ fn managed_username(home: &Path) -> anyhow::Result<String> {
         "DUCX login directory contains multiple users; cannot disambiguate reporting identity"
     );
     Ok(username)
+}
+
+/// The DUCX wrapper starts its own `app-server` for every carrier run, and that
+/// server syncs the curated plugin repository over git before the carrier is
+/// killed, leaving a `git-XXXXXX` directory under `.tmp` each time. The
+/// `--disable plugins` flag only reaches the sandbox process, so the switch has
+/// to live in the `config.toml` the app-server reads. DUCX rewrites that file
+/// itself, so the key is merged in and an up-to-date file is left untouched.
+fn disable_plugin_sync(codex_home: &Path) -> anyhow::Result<()> {
+    let path = codex_home.join("config.toml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read DUCX config {}", path.display()));
+        }
+    };
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("parse DUCX config {}", path.display()))?;
+    let features = document
+        .entry("features")
+        .or_insert_with(toml_edit::table)
+        .as_table_like_mut()
+        .context("DUCX config `features` is not a table")?;
+    if features
+        .get("plugins")
+        .and_then(toml_edit::Item::as_bool)
+        .is_some_and(|enabled| !enabled)
+    {
+        return Ok(());
+    }
+    features.insert("plugins", toml_edit::value(false));
+    crate::platform::write_atomic_if_changed(&path, document.to_string().as_bytes())
+        .with_context(|| format!("write DUCX config {}", path.display()))?;
+    Ok(())
 }
 
 fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
