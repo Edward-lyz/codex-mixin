@@ -10,7 +10,7 @@ use crate::protocol::sse::{
 
 use crate::protocol::{CollectedResponse, ResponseStream};
 
-pub(super) fn map_openai_responses_sse<S>(
+pub(crate) fn map_openai_responses_sse<S>(
     upstream: S,
     upstream_model: String,
     downstream_model: String,

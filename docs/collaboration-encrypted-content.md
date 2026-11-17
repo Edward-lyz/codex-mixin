@@ -6,7 +6,7 @@
 
 ## 1. 范围、版本与证据
 
-记录日期：2026-11-16。本文描述已经实现的代码，并分别标注运行观察、源码事实和推断；没有把离线测试当作真实 provider 验证。
+记录日期：2026-11-16，2026-11-17 补充内置 official 与独立 OAuth 账户的闭环。本文描述已经实现的代码，并分别标注运行观察、源码事实和推断；没有把离线测试当作真实 provider 验证。
 
 | 对象 | 本文使用的基线 | 用途 |
 | --- | --- | --- |
@@ -17,7 +17,7 @@
 | 本地 Codex 源码 | `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | 核对工具 schema、调用分类、agent 消息封套和序列化 |
 | 故障样本 | 2026-11-16 的父、子 rollout JSONL | 只比较字段、类型和字符串相等性，不在文档中保存业务消息 |
 
-最初排查涉及 `v0.8.0`，但本次提交实际基于上述 `upstream/main` / `0.8.4`。文中的“当前实现”指这个固定提交，不表示未来的 upstream/main 永远具有相同行为。
+最初排查涉及 `v0.8.0`，上表记录首次修复的基线。2026-11-17 的官方路径补全基于 `834fc94`（`0.8.5`）；第 11–12 节描述补全后的行为，第 13 节保留首次修复的验证记录。
 
 用户确认：出错时子代理使用 **OneAPI 的 `dsf41`**；整体场景包含 OneAPI 与转发 OpenAI 的 Sub2API 两个 provider。配置后来已经回退，因此不能根据现在的 `config.toml` 倒推出故障当时的全部路由、模型参数和服务状态。`dsf41` 在本文是用户配置中的模型标识，不据此推断其实际部署版本。
 
@@ -30,8 +30,8 @@
 3. **本次把明文装进密文字段的行为并非 OneAPI 的要求。** 当前问题的关键契约来自 Codex MultiAgent V2 与 OpenAI Responses 的协作机制；OpenAI 兼容 Chat Completions 的普通工具调用可以返回明文参数。
 4. **`encrypted_function_args: []` 与字段缺失 / `null` 不等价。** 在核对的 Codex 版本中，只有显式空数组才能为相关直接协作调用选择明文投递。
 5. **接收端加一个明文标记，不能把已经产生的真正密文变回任务文字。** 对 GPT / Responses 路径，需要在生成工具调用之前请求普通明文工具语义。
-6. **修复同时约束生成端和接收端。** Chat Completions / Anthropic 转换路径为已知明文调用补标记；自定义 Responses 路径先适配工具 namespace，再只恢复属于这条适配路径的调用。
-7. **这不是任意跨 provider 加密状态的迁移工具。** 旧的坏消息、其他模型的 reasoning / compaction 密文，以及内置官方路径的既有重试行为，必须分别讨论。
+6. **修复同时约束生成端和接收端。** Chat Completions / Anthropic 转换路径为已知明文调用补标记；自定义 Responses、内置 official HTTP / WS 与独立 ChatGPT OAuth 账户先适配工具 namespace，再只恢复属于这条适配路径的调用。
+7. **旧的真实密文保持不透明。** 失败重试也不会把 agent 密文包装成任务文字；其他模型的 reasoning / compaction 状态仍由其独立路径处理。
 
 ## 3. 各层分别做什么
 
@@ -413,23 +413,19 @@ SSE 仍按事件增量处理。非 metadata 事件先检查是否需要协作改
 
 这不是零开销：请求会扫描工具与历史项，需要适配的 JSON 事件会解析并重新序列化；构造普通文本输入需要复制相应文本。这里没有对树莓派硬件做性能实测，不把结构上的节省描述为已测得的延迟或内存收益。
 
-## 11. 当前实现仍保留哪些旧行为
+## 11. 官方路径闭环与既有重试
 
-这一节区分本次新增逻辑与基线中已有的重试，避免把局部保证扩大为整个网关的全局保证。
+### 11.1 内置官方与独立 OAuth 账户复用同一 adapter
 
-### 11.1 内置官方订阅路径仍有失败后文本化重试
+2026-11-17 补全了以下入口：
 
-自定义 Responses provider 与 Mixin 内置 `official` / ChatGPT OAuth 路径是不同执行入口。`Sub2API 转发 GPT` 也不自动等同于使用内置 `official` 路由。
+- [upstream/official.rs](../src/upstream/official.rs) 在发送内置 official HTTP 请求前调用 `prepare_request()`，返回前还原调用方历史。普通 HTTP 透传与启用上下文管理的流式路径均恢复 SSE 中的 namespace 与明确 `[]` 标记。
+- [responses_ws/official.rs](../src/server/responses_ws/official.rs) 在每次发送前适配请求，在 added / done / completed 中恢复调用，并保存客户端格式的历史；断线展开历史后重新适配，避免在重连时丢失明文契约。
+- [provider.rs](../src/gateway/provider.rs) 对独立 ChatGPT OAuth 账户也执行原有 Responses adapter，取消 `official_native` 绕过。
 
-[upstream/official.rs](../src/upstream/official.rs) 当前行为为：
+三个入口均将明确的 `input_text` agent 消息转成普通用户输入，真实或混合密文封套保持原样。此前将任意 agent `encrypted_content` 字符串改成 `input_text` 的 HTTP / WS 失败重试已移除；WS 仍可在响应开始前重连一次，重试保持密文原义。
 
-1. 首次转发保留原生 agent 消息封套，只验证必要结构。
-2. HTTP 返回非成功状态，且请求中存在可转换的 agent 加密内容块时，记录 warning，文本化后最多再请求一次。
-3. WS 在尚未开始响应且仍有重试机会的错误分支，也可能调用同一材料化函数。
-
-**该材料化函数并没有证明内容是明文。** 它把 agent 消息中的字符串重新包成 `input_text`，不会解密。真实密文在失败重试时仍可能被错误地当作文本呈现。
-
-这条行为来自基线提交 `85bd1c4`，本次两个修复提交没有修改它。因此，本文关于原生密文保留的保证，准确范围是本次 collaboration adapter，以及官方路径的首次请求；不能声称所有旧重试分支都已经具有可靠的密文来源判断。
+因此，当 official 与第三方双方均经过 Mixin 时，official 父代理生成任务、official 子代理回信和第三方向 official 投递都使用相同明文契约。纯 official 协作经 Mixin 时也采用此契约。
 
 ### 11.2 OneAPI 既有 opaque 历史重试不是本次的协作修复
 
@@ -449,7 +445,8 @@ SSE 仍按事件增量处理。非 metadata 事件先检查是否需要协作改
 | 原生 `collaboration` 调用缺失 / null 标记，实际可能是密文 | 新 adapter 保留原样 | 不假定可以交给不支持该密文的子 provider |
 | 历史已明确为明文的 agent 消息 | 转成 provider 能消费的普通文本输入 | 不等于恢复旧的误标消息 |
 | 历史只有不透明加密 agent 消息，要送往 Chat / Anthropic | 明确报错 | 无法无损解密或通用迁移 |
-| 内置 official 父代理直接生成真密文，子代理为第三方 | 本次没有给该官方生成端增加明文策略 | 不能承诺这种拓扑已修好 |
+| 内置 official 父代理或子代理生成新协作调用 | HTTP / WS 生成前适配 namespace，返回时恢复并补 `[]` | 本地 HTTP / WS、重连回归覆盖 |
+| 独立 ChatGPT OAuth 账户生成新协作调用 | 与自定义 Responses provider 使用相同 adapter | 真实 CLI 进程与网关重启回放回归覆盖 |
 | 只有子代理经过 adapter，父代理绕过 Mixin 生成加密任务 | 父代理生成端不在本补丁控制下 | 仅适配子代理不足以找回任务明文 |
 | 自定义 collaboration namespace 或其他协作实现 | 不在三个工具与固定 namespace 的当前匹配范围内 | 不声明为通用 agent 框架兼容层 |
 | 模型生成普通工具参数失败、缺少工具调用能力或服务不支持 namespace | 本次没有增加这些上游能力 | 明文传输契约不能代替模型 / 服务能力验证 |
@@ -506,7 +503,11 @@ CARGO_BUILD_JOBS=2 cargo +1.98.1 test --locked --lib
 
 重复完整 Cargo 集成测试时，应保留第 13.3 节的隔离条件，并沿用 [tests/common/mod.rs](../tests/common/mod.rs) 的 CLI 启动方式；不要直接对现有日常配置运行真实二进制探针。
 
-本文本身的新增属于文档变更，不需要再次编译或调用模型；文档检查与上述代码验证记录分开汇报。
+### 13.5 2026-11-17 官方路径回归
+
+[gateway_http/collaboration.rs](../tests/gateway_http/collaboration.rs) 驱动真实路由与本地受控 upstream，覆盖三个消息工具的 official HTTP 生成、上下文管理开关、第三方与 official 的明文消息投递、WS added / done / completed 一致性、重连历史展开，以及 HTTP 拒绝和 WS 重试时的密文保留。
+
+独立 OAuth 账户用例通过 [tests/common/mod.rs](../tests/common/mod.rs) 启动真实 CLI，使用临时配置、凭据和数据库，停止进程后再次启动并回放明确明文的协作调用。它验证重启后仍使用适配 namespace 与 `[]`，不依赖进程内的消息来源缓存。上述回归均使用本地受控服务，不计为真实 OpenAI 或第三方服务验证。
 
 ## 14. 旧会话、部署与后续验证建议
 

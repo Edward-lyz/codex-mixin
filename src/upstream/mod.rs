@@ -34,7 +34,7 @@ use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace}
 
 pub(crate) use official::{
     CachedOfficialAuth, FORWARDED_OFFICIAL_HEADERS, forward_official_headers,
-    materialize_official_responses_body, normalize_official_responses_body,
+    normalize_official_responses_body,
 };
 
 pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
