@@ -72,6 +72,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             capabilities.annotate_provider(provider);
         }
     }
+    let route_issues = route_reference_issues(&config)?;
     if json_output {
         let mut providers = config
             .providers
@@ -167,6 +168,11 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 "gateway_auth_configured": config.gateway_api_key.is_some() || !config.gateway_api_keys.is_empty(),
                 "codex_install_mode": codex_install_mode,
                 "fusion_profile": config.fusion_profiles.first(),
+                "route_warnings": route_issues.iter().map(|issue| json!({
+                    "model": issue.model,
+                    "enabled": !config.disabled_routes.contains(&issue.model),
+                    "missing_models": issue.missing_models,
+                })).collect::<Vec<_>>(),
                 "providers": providers,
             }))?
         );
@@ -251,7 +257,6 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             name_width = name_width,
         );
     }
-    let route_issues = route_reference_issues(&config)?;
     for issue in route_issues {
         let state = if config.disabled_routes.contains(&issue.model) {
             "disabled"

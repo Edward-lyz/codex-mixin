@@ -86,6 +86,21 @@ async fn refresh_disables_routes_with_removed_models_and_preserves_configuration
     );
     assert!(stdout.contains(MISSING_MODEL), "{stdout}");
 
+    let providers = run_cli(
+        directory.path(),
+        &config_path,
+        &["--no-tui", "providers", "list", "--json"],
+    )
+    .await;
+    assert!(providers.status.success());
+    let providers: Value = serde_json::from_slice(&providers.stdout).unwrap();
+    assert_eq!(providers["route_warnings"][0]["model"], ROUTE);
+    assert_eq!(providers["route_warnings"][0]["enabled"], false);
+    assert_eq!(
+        providers["route_warnings"][0]["missing_models"][0],
+        MISSING_MODEL
+    );
+
     let routes = run_cli(
         directory.path(),
         &config_path,
