@@ -178,21 +178,17 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
     let cache = Mutex::new(None);
     let (authorization, account) = headers(path, &cache).await?;
     let endpoint = if models {
-        "https://chatgpt.com/backend-api/codex/models"
+        models_url().await?
     } else {
-        "https://chatgpt.com/backend-api/wham/usage"
+        reqwest::Url::parse("https://chatgpt.com/backend-api/wham/usage")?
     };
-    let mut request = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
+    let request = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
         .build()?
         .get(endpoint)
         .header("authorization", authorization)
         .header("chatgpt-account-id", account.clone())
         .header("originator", "codex_cli_rs")
         .timeout(Duration::from_secs(20));
-    if models && let Some(version) = local_codex_version().await? {
-        // The backend's compatibility version describes the Codex wire contract.
-        request = request.query(&[("client_version", version)]);
-    }
     let limit = if models {
         MAX_CATALOG_BYTES
     } else {
@@ -218,6 +214,16 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
         value["codex_mixin_account_id"] = json!(account.to_str()?);
     }
     Ok(value)
+}
+
+pub(crate) async fn models_url() -> anyhow::Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse("https://chatgpt.com/backend-api/codex/models")?;
+    if let Some(version) = local_codex_version().await? {
+        // The backend's compatibility version describes the Codex wire contract.
+        url.query_pairs_mut()
+            .append_pair("client_version", &version);
+    }
+    Ok(url)
 }
 
 async fn local_codex_version() -> anyhow::Result<Option<String>> {
@@ -248,7 +254,7 @@ async fn local_codex_version() -> anyhow::Result<Option<String>> {
                 Err(error) => tracing::debug!(error = %error, "Codex version probe failed"),
             }
         }
-        tracing::warn!("No recognizable local Codex CLI version; omitting client_version from official model discovery");
+        tracing::warn!("No recognizable local Codex CLI version; omitting client_version from the official models URL");
         Ok(None)
     })
     .await

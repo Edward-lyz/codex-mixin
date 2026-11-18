@@ -35,6 +35,7 @@ pub(crate) fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Resu
             let value = serde_json::json!({
                 "path": path,
                 "bind": bind.to_string(),
+                "client_endpoint": format!("http://{}/v1", codex_mixin::config::client_address(bind)),
                 "providers": providers,
                 "official_image_generation_url": config.official_image_generation_url()?,
                 "official_image_edit_url": config.official_image_edit_url()?,

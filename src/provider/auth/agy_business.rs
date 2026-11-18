@@ -5,11 +5,10 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, bail, ensure};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-pub(crate) const USER_AGENT_VALUE: &str = "antigravity/cli/1.3.5 (aidev_client; auth_method=gcp)";
 struct CachedSession {
     path: PathBuf,
     modified: SystemTime,
@@ -164,7 +163,6 @@ pub(crate) async fn headers(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {access_token}"))?,
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
     CACHE.lock().await.insert(
         owned_path.to_owned(),
         CachedSession {

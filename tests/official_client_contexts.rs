@@ -343,6 +343,8 @@ async fn desktop_effort_anchors_follow_model_versions() {
         ("Claude Haiku 5.5", 1_000_000, Some("claude-haiku-5-5")),
         ("Claude Haiku 4.5", 200_000, Some("claude-haiku-4-5")),
         ("Claude Sonnet 5.5", 1_000_000, Some("claude-sonnet-5-5")),
+        ("Claude Fable 5.2", 1_000_000, Some("claude-fable-5-2")),
+        ("custom-opus-router-7", 200_000, None),
         ("claude-sonnet-5", 1_000_000, Some("claude-sonnet-5")),
         ("Opus 4.8", 1_000_000, Some("claude-opus-4-8")),
         ("Opus 5", 1_000_000, Some("claude-opus-5")),

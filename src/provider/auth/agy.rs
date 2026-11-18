@@ -24,7 +24,9 @@ const AGY_OAUTH_CLIENT_SECRET_XOR: &[u8] = &[
 ];
 const AGY_OAUTH_XOR_KEY: u8 = 0x5c;
 const TOKEN_REFRESH_MARGIN_SECONDS: u64 = 180;
-const AGY_USER_AGENT: &str = "antigravity/cli/1.3.5 (aidev_client; os_type=linux; arch=amd64; cl=998863838; auth_method=consumer)";
+const AGY_VERSION_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+type AgyVersionCache = Option<(Option<String>, Instant)>;
+static AGY_VERSION_CACHE: LazyLock<Mutex<AgyVersionCache>> = LazyLock::new(|| Mutex::new(None));
 
 fn deobfuscate_agy_credential(bytes: &[u8]) -> anyhow::Result<String> {
     let decoded: Vec<u8> = bytes.iter().map(|b| b ^ AGY_OAUTH_XOR_KEY).collect();
@@ -90,8 +92,56 @@ pub async fn invalidate_agy_cache(path: &Path) {
     lock.remove(path);
 }
 
-#[allow(clippy::cognitive_complexity)]
 pub async fn get_agy_headers(
+    provider: &crate::provider::ProviderDefinition,
+) -> anyhow::Result<HeaderMap> {
+    let mut headers = credential_headers(provider).await?;
+    headers.insert(USER_AGENT, user_agent("consumer").await?);
+    Ok(headers)
+}
+
+/// Builds the AGY User-Agent. The client token keeps the `antigravity/cli/<version>` spelling
+/// with the locally installed AGY CLI version, and `codex-mixin` is named as the actual sender.
+pub(crate) async fn user_agent(auth_method: &str) -> anyhow::Result<HeaderValue> {
+    let mixin = format!("codex-mixin/{}", env!("CARGO_PKG_VERSION"));
+    let value = match local_agy_version().await? {
+        Some(version) => format!("antigravity/cli/{version} ({mixin}; auth_method={auth_method})"),
+        None => format!("{mixin} (auth_method={auth_method})"),
+    };
+    Ok(HeaderValue::from_str(&value)?)
+}
+
+/// Holding the cache lock across the probe lets concurrent callers share a single `agy --version` run.
+async fn local_agy_version() -> anyhow::Result<Option<String>> {
+    let mut cached = AGY_VERSION_CACHE.lock().await;
+    if let Some((version, refresh_after)) = cached.as_ref()
+        && Instant::now() < *refresh_after
+    {
+        return Ok(version.clone());
+    }
+    let version = tokio::task::spawn_blocking(|| -> anyhow::Result<Option<String>> {
+        let pattern = regex::Regex::new(r"(?m)^([0-9]+\.[0-9]+\.[0-9]+)\s*$")?;
+        let Some(path) = crate::platform::agent_cli::find_command("agy") else {
+            return Ok(None);
+        };
+        match crate::platform::agent_cli::probe_version_output(&path, Duration::from_secs(5)) {
+            Ok(output) => Ok(pattern
+                .captures(&output)
+                .map(|captures| captures[1].to_owned())),
+            Err(error) => {
+                tracing::debug!(error = %error, "AGY version probe failed");
+                Ok(None)
+            }
+        }
+    })
+    .await
+    .context("join local AGY version probe")??;
+    *cached = Some((version.clone(), Instant::now() + AGY_VERSION_CACHE_TTL));
+    Ok(version)
+}
+
+#[allow(clippy::cognitive_complexity)]
+async fn credential_headers(
     provider: &crate::provider::ProviderDefinition,
 ) -> anyhow::Result<HeaderMap> {
     let mut lock = TOKEN_CACHE.lock().await;
@@ -286,7 +336,6 @@ fn build_header_map(access_token: &str) -> anyhow::Result<HeaderMap> {
         AUTHORIZATION,
         HeaderValue::from_str(&bearer).context("formatting authorization header")?,
     );
-    headers.insert(USER_AGENT, HeaderValue::from_static(AGY_USER_AGENT));
     headers.insert(
         "x-goog-api-client",
         HeaderValue::from_static("google-cloud-sdk vscode_cloudshelleditor/0.1"),
