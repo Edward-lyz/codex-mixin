@@ -1,4 +1,24 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.7
+
+### 体验优化
+
+- **Codex 默认模型随目录更新**：接入时保留用户指定的模型或仍可用的现有模型。需要为官方账号选择新默认模型时，优先使用官方目录中首个可见模型（#144）。
+- **客户端兼容性改进**：Antigravity 个人与企业账号请求使用本机 CLI 版本；Claude Desktop 按模型系列和版本显示对应的推理强度选项，支持 Claude Fable（#144）。
+
+### BUG 修复
+
+- 修复 Codex 多代理会话重放已保存的明文协作调用时，网关误报 `collaboration compatibility namespace is already in use`（HTTP 400）的问题。升级后，受此问题影响的旧会话可以直接继续，无需新建会话或清理历史（#148）。
+- 修复上游下架模型后，引用该模型的路由阻断整个服务商模型列表刷新的问题。现在刷新会正常完成，只停用受影响的路由，并在 CLI 中列出缺失模型；恢复或替换模型后可重新启用（#143、#145）。
+- 修复 Windows 上 DUCX 会话目录较大时，查询服务商列表或网关状态可能超时的问题。配置读写不再重写共享目录权限，以保留 DUCX 沙箱账号原有的权限；写入时仍保护配置文件和锁文件（#149）。
+- 修复 macOS 在网关监听 IPv6 时复制的连接地址不可用，以及 ZCode 接入时未保留模型配置的最大输出 token 数的问题（#144）。
+
+### 致谢
+
+- @Veltharis-x：提供旧协作会话返回 400 的复现和初版修复（#147）。
+- @kevincheng2：反馈并修复模型下架阻断目录刷新的问题（#143、#145）。
+- @rentuturentutu：排查并修复 Windows 服务商查询超时的问题（#149）。
+
 ## v0.8.6
 
 ### 特性新增
@@ -392,6 +412,26 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.7
+
+### 體驗最佳化
+
+- **Codex 預設模型隨清單更新**：接入時保留使用者指定的模型或仍可用的現有模型。需要為官方帳號選擇新的預設模型時，優先使用官方清單中的第一個可見模型（#144）。
+- **用戶端相容性改進**：Antigravity 個人與企業帳號請求使用本機 CLI 版本；Claude Desktop 依模型系列與版本顯示對應的推理強度選項，支援 Claude Fable（#144）。
+
+### BUG 修復
+
+- 修正 Codex 多代理會話重播已儲存的明文協作呼叫時，閘道誤報 `collaboration compatibility namespace is already in use`（HTTP 400）的問題。升級後，受此問題影響的舊會話可直接繼續，無需建立新會話或清除歷史記錄（#148）。
+- 修正上游下架模型後，引用該模型的路由阻礙整個服務商模型清單更新的問題。現在更新可正常完成，只停用受影響的路由，並在 CLI 中列出缺少的模型；恢復或替換模型後可重新啟用（#143、#145）。
+- 修正 Windows 上 DUCX 會話目錄較大時，查詢服務商清單或閘道狀態可能逾時的問題。讀寫設定不再改寫共用目錄的權限，以保留 DUCX 沙箱帳號原有的權限；寫入時仍保護設定檔和鎖定檔（#149）。
+- 修正 macOS 上閘道監聽 IPv6 時複製的連線位址無法使用，以及 ZCode 接入時沒有保留模型設定的最大輸出 token 數的問題（#144）。
+
+### 致謝
+
+- @Veltharis-x：提供舊協作會話回傳 400 的重現方式與初版修正（#147）。
+- @kevincheng2：回報並修正模型下架阻礙清單更新的問題（#143、#145）。
+- @rentuturentutu：排查並修正 Windows 服務商查詢逾時的問題（#149）。
+
 ## v0.8.6
 
 ### 特性新增
@@ -785,6 +825,26 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.7
+
+### Improvements
+
+- **Default Codex model follows the catalog**: Setup keeps an explicitly selected model or an existing model that is still available. When an official account needs a new default, Mixin prefers the first visible model in the official catalog (#144).
+- **Better client compatibility**: Requests for Antigravity personal and business accounts use the locally installed CLI version. Claude Desktop shows reasoning effort options based on model family and version, including Claude Fable (#144).
+
+### Bug fixes
+
+- Fix the gateway incorrectly returning `collaboration compatibility namespace is already in use` (HTTP 400) when a Codex multi-agent session replays previously saved plaintext collaboration calls. After upgrading, affected sessions can continue without starting a new session or clearing history (#148).
+- Fix provider catalog refreshes failing when a model route references a model that the upstream provider has removed. Refreshes now complete, only affected routes are disabled, and the CLI lists the missing models. You can re-enable a route after restoring or replacing those models (#143, #145).
+- Fix possible timeouts when querying the provider list or gateway status on Windows with a large DUCX session directory. Config reads and writes leave permissions on the shared directory alone, preserving existing DUCX sandbox access. Writes still protect the config files and lock file (#149).
+- Fix macOS copying an unusable connection address when the gateway listens on IPv6, and fix ZCode setup not preserving a model's configured maximum output tokens (#144).
+
+### Thanks
+
+- @Veltharis-x for reproducing the HTTP 400 in older collaboration sessions and contributing the initial fix (#147).
+- @kevincheng2 for reporting and fixing catalog refresh failures after models are removed (#143, #145).
+- @rentuturentutu for investigating and fixing provider query timeouts on Windows (#149).
+
 ## v0.8.6
 
 ### New features
