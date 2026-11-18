@@ -87,6 +87,102 @@ async fn adapts_collaboration_over_official_http_without_relabeling_ciphertext()
 }
 
 #[tokio::test]
+async fn replays_legacy_collaboration_calls_for_declared_tools_only() {
+    let (gateway_url, requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool,
+        Duration::from_secs(5),
+    )
+    .await;
+    let client = reqwest::Client::new();
+    let url = format!("{gateway_url}/v1/responses");
+    // Simulate a saved upstream-format call followed by its client tool output.
+    let body = json!({"model":"gpt-5.5", "stream":true,
+        "tools":[{"type":"namespace", "name":"collaboration", "tools":[
+            {"type":"function", "name":"send_message", "parameters":{"type":"object",
+                "properties":{"message":{"type":"string", "encrypted":true}}}}
+        ]}],
+        "input":[
+            {"type":"function_call", "id":"fc_legacy", "call_id":"call_legacy",
+                "namespace":"codex_mixin_collaboration", "name":"send_message",
+                "arguments":"{\"message\":\"legacy note\"}"},
+            {"type":"function_call_output", "call_id":"call_legacy", "output":"delivered"},
+            {"type":"additional_tools", "tools":[{"type":"namespace", "name":"collaboration",
+                "tools":[{"type":"function", "name":"wait_agent", "parameters":{"type":"object"}}]}]},
+            {"type":"function_call", "id":"fc_wait", "call_id":"call_wait",
+                "namespace":"codex_mixin_collaboration", "name":"wait_agent",
+                "arguments":"{}", "encrypted_function_args":null},
+            {"type":"function_call_output", "call_id":"call_wait", "output":"done"},
+            {"type":"function_call", "id":"fc_native", "call_id":"call_native",
+                "namespace":"collaboration", "name":"send_message",
+                "arguments":"{\"message\":\"opaque-native-payload\"}"}
+        ]
+    });
+    let response = client
+        .post(&url)
+        .bearer_auth("gateway-key")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let mut wire = response.bytes().await.unwrap().to_vec();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&wire));
+    let events = drain_events(&mut wire);
+    assert_eq!(events.len(), 3);
+    for event in events {
+        let payload: Value = serde_json::from_str(&event.data).unwrap();
+        let item = payload
+            .get("item")
+            .unwrap_or(&payload["response"]["output"][0]);
+        assert_eq!(item["namespace"], "collaboration");
+        assert_eq!(item["encrypted_function_args"], json!([]));
+    }
+    {
+        let requests = requests.lock().unwrap();
+        let sent = &requests[0];
+        assert_eq!(sent["tools"][0]["name"], "codex_mixin_collaboration");
+        let mut expected = body["input"].clone();
+        expected[2]["tools"][0]["name"] = json!("codex_mixin_collaboration");
+        assert_eq!(sent["input"], expected);
+    }
+
+    let mut unknown_tool = body.clone();
+    unknown_tool["input"][0]["name"] = json!("unlisted_tool");
+    let mut encrypted_call = body.clone();
+    encrypted_call["input"][0]["encrypted_function_args"] = json!(["message"]);
+    let mut malformed_metadata = body.clone();
+    malformed_metadata["input"][0]["encrypted_function_args"] = json!("message");
+    let mut reserved_declaration = body.clone();
+    reserved_declaration["input"][2]["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"namespace", "name":"codex_mixin_collaboration", "tools":[]}));
+    for (case, rejected) in [
+        ("unlisted tool", unknown_tool),
+        ("encrypted call", encrypted_call),
+        ("malformed encryption metadata", malformed_metadata),
+        ("reserved tool declaration", reserved_declaration),
+    ] {
+        let response = client
+            .post(&url)
+            .bearer_auth("gateway-key")
+            .json(&rejected)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{case}");
+        assert!(
+            response
+                .text()
+                .await
+                .unwrap()
+                .contains("collaboration compatibility namespace is already in use")
+        );
+    }
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn official_account_collaboration_replays_after_gateway_restart() {
     let (official_url, requests, _, _, _, _) =
         spawn_mock_official(OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool)

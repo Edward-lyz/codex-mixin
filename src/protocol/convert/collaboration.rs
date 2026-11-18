@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
 
 use crate::error::GatewayError;
@@ -122,14 +124,35 @@ pub(crate) fn prepare_request(body: &mut Value) -> Result<RequestRestore, Gatewa
             && name == Some(NAMESPACE);
         collision |= name == Some(PLAINTEXT_NAMESPACE);
     }
-    collision |= body
+    let mut alias_history = body
         .get("input")
         .and_then(Value::as_array)
-        .is_some_and(|input| {
-            input.iter().any(|item| {
-                item.get("namespace").and_then(Value::as_str) == Some(PLAINTEXT_NAMESPACE)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("namespace").and_then(Value::as_str) == Some(PLAINTEXT_NAMESPACE))
+        .peekable();
+    if active && !collision && alias_history.peek().is_some() {
+        // Only index the adapted tool declarations when the request replays the alias.
+        let adapted_function_names: HashSet<_> = declared_tools(body)
+            .filter(|tool| {
+                tool.get("type").and_then(Value::as_str) == Some("namespace")
+                    && tool.get("name").and_then(Value::as_str) == Some(NAMESPACE)
             })
+            .filter_map(|tool| tool.get("tools").and_then(Value::as_array))
+            .flatten()
+            .filter(|tool| tool.get("type").and_then(Value::as_str) == Some("function"))
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        collision = alias_history.any(|item| {
+            let name = item.get("name").and_then(Value::as_str);
+            let encrypted = item.get("encrypted_function_args").is_some_and(|args| {
+                !args.is_null() && args.as_array().is_none_or(|args| !args.is_empty())
+            });
+            item.get("type").and_then(Value::as_str) != Some("function_call")
+                || encrypted
+                || name.is_none_or(|name| !adapted_function_names.contains(name))
         });
+    }
     if active && collision {
         return Err(GatewayError::BadRequest(
             "collaboration compatibility namespace is already in use".to_owned(),

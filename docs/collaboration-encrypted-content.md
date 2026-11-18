@@ -382,13 +382,14 @@ Chat / Anthropic 转换没有通用方式承载真正的 OpenAI 加密 agent 消
 - 三个消息工具只有显式 `encrypted_function_args: []` 才会跟随新工具 namespace 回放。
 - 缺失、null 或非空标记的原生消息调用保留，不试图解析 / 重写其中的 `message`。
 - 其他协作控制调用跟随已启用的 namespace 适配。
+- 已使用 `codex_mixin_collaboration` 的旧 `function_call`，只有同一请求的协作 namespace 声明了对应函数，且加密元数据缺失、为 `null` 或 `[]` 时，才原样重放。与调用关联的工具输出按原 `call_id` 转发。
 - reasoning、加密工具结果以及不透明 agent 消息不由本模块重解释。
 
 `restore_request()` 还原请求中的原始 namespace、加密 schema 字段与被替换的明文消息。其目的在于避免适配状态污染后续请求保留和处理逻辑；这里的还原不是回滚 Codex 已经保存的 rollout。
 
 ### 10.2 名称冲突与输入验证
 
-如果启用协作适配时已经存在 `codex_mixin_collaboration` 名称或历史 namespace 冲突，返回 `BadRequest`，不擅自换一个名字继续请求。
+启用协作适配时，工具声明占用 `codex_mixin_collaboration`，或该别名下的历史项不符合上述回放条件，都会返回 `BadRequest`。
 
 全部明文 agent 消息先验证，再改写请求。缺少 content、author、recipient、text 或空 content 数组会明确失败，防止只留下一个看似成功的消息标题。
 
