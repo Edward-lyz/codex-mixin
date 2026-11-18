@@ -6,9 +6,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    FailoverActivity, FailoverRoute, FusionMode, FusionProfile, StoredGatewayConfig,
-    load_failover_activity, load_stored_config, mutate_stored_config,
+    FailoverActivity, FailoverRoute, FusionMode, FusionProfile, OFFICIAL_MODEL_PREFIX,
+    StoredGatewayConfig, load_failover_activity, load_stored_config, mutate_stored_config,
 };
+use crate::provider::ProviderRegistry;
 use crate::web_search::WebSearchCapabilities;
 
 use super::error::OperationError;
@@ -76,6 +77,10 @@ impl ModelRoute {
 pub struct RouteEntry {
     pub model: String,
     pub enabled: bool,
+    /// Provider models referenced by this route that are not currently in any
+    /// provider catalog. Disabled routes keep their references unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_models: Vec<String>,
     #[serde(flatten)]
     pub route: ModelRoute,
     /// Latest failover activity recorded by the gateway, for failover routes.
@@ -83,21 +88,123 @@ pub struct RouteEntry {
     pub activity: Option<FailoverActivity>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RouteReferenceIssue {
+    pub model: String,
+    pub missing_models: Vec<String>,
+}
+
+/// Finds routes whose model references no longer resolve against the current
+/// provider catalogs. This includes disabled routes so the reason stays
+/// visible while their configuration is retained.
+pub fn route_reference_issues(
+    stored: &StoredGatewayConfig,
+) -> anyhow::Result<Vec<RouteReferenceIssue>> {
+    let providers = ProviderRegistry::new(stored.providers.clone())?;
+    let mut issues = Vec::new();
+    for route in stored
+        .fusion_profiles
+        .iter()
+        .cloned()
+        .map(ModelRoute::from_profile)
+        .chain(
+            stored
+                .failover_routes
+                .iter()
+                .cloned()
+                .map(ModelRoute::Failover),
+        )
+    {
+        let missing_models = missing_route_models(&route, &providers);
+        if !missing_models.is_empty() {
+            issues.push(RouteReferenceIssue {
+                model: route.model(),
+                missing_models,
+            });
+        }
+    }
+    Ok(issues)
+}
+
+/// Disables enabled routes whose model references disappeared after a
+/// provider catalog changed. The return value contains only routes newly
+/// disabled by this call.
+pub(crate) fn disable_unavailable_routes(
+    config: &mut StoredGatewayConfig,
+) -> anyhow::Result<Vec<RouteReferenceIssue>> {
+    let issues = route_reference_issues(config)?;
+    let mut disabled = Vec::new();
+    for issue in issues {
+        if config.disabled_routes.contains(&issue.model) {
+            continue;
+        }
+        tracing::warn!(
+            route = %issue.model,
+            missing_models = ?issue.missing_models,
+            "model route disabled because referenced provider models are unavailable"
+        );
+        config.disabled_routes.push(issue.model.clone());
+        disabled.push(issue);
+    }
+    Ok(disabled)
+}
+
+fn missing_route_models(route: &ModelRoute, providers: &ProviderRegistry) -> Vec<String> {
+    let references = match route {
+        ModelRoute::Fusion(profile) => profile
+            .panel_models
+            .iter()
+            .chain([&profile.judge_model, &profile.final_model])
+            .collect::<Vec<_>>(),
+        ModelRoute::Schedule(profile) => profile
+            .time_routes
+            .iter()
+            .map(|route| &route.model)
+            .chain([&profile.final_model])
+            .collect::<Vec<_>>(),
+        ModelRoute::Failover(route) => route.models().collect::<Vec<_>>(),
+    };
+    let mut missing = Vec::new();
+    for reference in references {
+        if reference.starts_with(OFFICIAL_MODEL_PREFIX)
+            || providers.resolve(reference).is_some()
+            || missing.iter().any(|model| model == reference)
+        {
+            continue;
+        }
+        missing.push(reference.clone());
+    }
+    missing
+}
+
 pub fn list_routes() -> anyhow::Result<Vec<RouteEntry>> {
     let stored = load_stored_config()?.unwrap_or_default();
+    let issues = route_reference_issues(&stored)?;
     let mut activity = load_failover_activity()?;
     let mut routes: Vec<_> = stored
         .fusion_profiles
-        .into_iter()
+        .iter()
+        .cloned()
         .map(ModelRoute::from_profile)
-        .chain(stored.failover_routes.into_iter().map(ModelRoute::Failover))
+        .chain(
+            stored
+                .failover_routes
+                .iter()
+                .cloned()
+                .map(ModelRoute::Failover),
+        )
         .map(|route| RouteEntry {
             enabled: !stored.disabled_routes.contains(&route.model()),
-            model: route.model(),
+            missing_models: issues
+                .iter()
+                .find(|issue| issue.model == route.model())
+                .map(|issue| issue.missing_models.clone())
+                .unwrap_or_default(),
             activity: match &route {
                 ModelRoute::Failover(failover) => activity.remove(&failover.entry_model()),
                 _ => None,
             },
+            model: route.model(),
             route,
         })
         .collect();

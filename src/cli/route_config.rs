@@ -12,7 +12,19 @@ pub(super) fn list_routes(json_output: bool) -> anyhow::Result<()> {
         println!("no model routes configured");
     } else {
         for entry in routes {
-            println!("{} [{}]", entry.model, entry.route.kind());
+            println!(
+                "{} [{}] {}",
+                entry.model,
+                entry.route.kind(),
+                if entry.enabled { "enabled" } else { "disabled" }
+            );
+            if !entry.missing_models.is_empty() {
+                println!(
+                    "  missing provider model(s): {}; restore them upstream or edit the route, then run `codex-mixin route enable --model {}`",
+                    entry.missing_models.join(", "),
+                    entry.model
+                );
+            }
         }
     }
     Ok(())

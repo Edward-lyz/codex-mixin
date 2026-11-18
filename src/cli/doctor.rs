@@ -1,7 +1,10 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
+use codex_mixin::application::routing::route_reference_issues;
+use codex_mixin::config::{
+    GatewayConfig, StoredGatewayConfig, load_stored_config, stored_config_path,
+};
 use console::style;
 use serde::Serialize;
 
@@ -326,6 +329,9 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
                 .detail(format!("{error:#}")),
             ),
         }
+        if let Some(stored) = stored.as_ref() {
+            checks.push(check_model_routes(stored));
+        }
     }
 
     let provider_task = if options.check_providers {
@@ -458,5 +464,55 @@ fn check_config_permissions(path: &Path) -> DoctorCheck {
             "could not read config file permissions",
         )
         .detail(error.to_string()),
+    }
+}
+
+fn check_model_routes(stored: &StoredGatewayConfig) -> DoctorCheck {
+    let route_count = stored.fusion_profiles.len() + stored.failover_routes.len();
+    match route_reference_issues(stored) {
+        Ok(issues) if issues.is_empty() => DoctorCheck::new(
+            "model_routes",
+            "Model routes",
+            DoctorStatus::Ok,
+            format!("all {route_count} configured route(s) reference available models"),
+        ),
+        Ok(issues) => {
+            let disabled = issues
+                .iter()
+                .filter(|issue| stored.disabled_routes.contains(&issue.model))
+                .count();
+            DoctorCheck::new(
+                "model_routes",
+                "Model routes",
+                DoctorStatus::Warning,
+                format!(
+                    "{} route(s) reference unavailable provider models ({disabled} disabled)",
+                    issues.len()
+                ),
+            )
+            .detail(
+                issues
+                    .iter()
+                    .map(|issue| {
+                        format!(
+                            "{}: missing provider model(s): {}",
+                            issue.model,
+                            issue.missing_models.join(", ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .hint(
+                "restore the missing models upstream or edit each route, then run `codex-mixin route enable --model <route>`",
+            )
+        }
+        Err(error) => DoctorCheck::new(
+            "model_routes",
+            "Model routes",
+            DoctorStatus::Error,
+            "route references could not be validated",
+        )
+        .detail(format!("{error:#}")),
     }
 }

@@ -17,6 +17,7 @@ use super::codex::{
 };
 use super::official_models::{load_official_models, official_models_cache_path};
 use codex_mixin::application::provider::required;
+use codex_mixin::application::routing::route_reference_issues;
 mod management;
 mod models;
 pub(super) use management::{
@@ -248,6 +249,20 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             status_styled,
             id_width = id_width,
             name_width = name_width,
+        );
+    }
+    let route_issues = route_reference_issues(&config)?;
+    for issue in route_issues {
+        let state = if config.disabled_routes.contains(&issue.model) {
+            "disabled"
+        } else {
+            "enabled"
+        };
+        println!(
+            "warning: model route {} is {state}: missing provider model(s): {}; restore them upstream or edit the route, then run `codex-mixin route enable --model {}`",
+            issue.model,
+            issue.missing_models.join(", "),
+            issue.model
         );
     }
     Ok(())
