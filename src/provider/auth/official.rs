@@ -3,12 +3,15 @@ use anyhow::{Context, ensure};
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::Mutex;
 
 const MAX_AUTH_BYTES: u64 = 1024 * 1024;
 const MAX_CATALOG_BYTES: u64 = 8 * 1024 * 1024;
-const CODEX_COMPAT_VERSION: &str = "0.159.0";
+const CODEX_VERSION_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+type CodexVersionCache = Option<(Option<String>, Instant)>;
+static CODEX_VERSION_CACHE: LazyLock<Mutex<CodexVersionCache>> = LazyLock::new(|| Mutex::new(None));
 pub(crate) struct CachedOfficialAuth {
     path: PathBuf,
     modified: Option<(SystemTime, u64)>,
@@ -186,9 +189,9 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
         .header("chatgpt-account-id", account.clone())
         .header("originator", "codex_cli_rs")
         .timeout(Duration::from_secs(20));
-    if models {
+    if models && let Some(version) = local_codex_version().await? {
         // The backend's compatibility version describes the Codex wire contract.
-        request = request.query(&[("client_version", CODEX_COMPAT_VERSION)]);
+        request = request.query(&[("client_version", version)]);
     }
     let limit = if models {
         MAX_CATALOG_BYTES
@@ -215,4 +218,42 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
         value["codex_mixin_account_id"] = json!(account.to_str()?);
     }
     Ok(value)
+}
+
+async fn local_codex_version() -> anyhow::Result<Option<String>> {
+    {
+        let cached = CODEX_VERSION_CACHE.lock().await;
+        if let Some((version, refresh_after)) = cached.as_ref()
+            && Instant::now() < *refresh_after
+        {
+            return Ok(version.clone());
+        }
+    }
+    let version = tokio::task::spawn_blocking(|| -> anyhow::Result<Option<String>> {
+        let pattern = regex::Regex::new(
+            r"(?m)^codex-cli ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:\s|$)",
+        )?;
+        let candidates = crate::platform::codex_cli_candidates()
+            .into_iter()
+            .chain(crate::platform::agent_cli::find_command("codex"));
+        for path in candidates.filter(|path| path.is_file()) {
+            match crate::platform::agent_cli::probe_version_output(&path, Duration::from_secs(5)) {
+                Ok(output) => {
+                    if let Some(captures) = pattern.captures(&output)
+                        && let Some(version) = captures.get(1)
+                    {
+                        return Ok(Some(version.as_str().to_owned()));
+                    }
+                }
+                Err(error) => tracing::debug!(error = %error, "Codex version probe failed"),
+            }
+        }
+        tracing::warn!("No recognizable local Codex CLI version; omitting client_version from official model discovery");
+        Ok(None)
+    })
+    .await
+    .context("join local Codex client version probe")??;
+    *CODEX_VERSION_CACHE.lock().await =
+        Some((version.clone(), Instant::now() + CODEX_VERSION_CACHE_TTL));
+    Ok(version)
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ use codex_mixin::web_search::WebSearchCapabilities;
 use super::managed_config::*;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, is_official_account_catalog, load_official_account_catalog,
+    apply_account_model_metadata, filter_official_catalog, load_official_account_catalog,
     load_official_catalog, official_template_cache_path, write_official_models_cache,
 };
 use codex_mixin::catalog::official::{
@@ -431,107 +431,6 @@ async fn load_preferred_official_catalog(
         apply_account_model_metadata(template, account_catalog)?;
     }
     Ok(template)
-}
-
-fn apply_account_model_metadata(
-    template: &mut serde_json::Value,
-    account_catalog: &serde_json::Value,
-) -> anyhow::Result<()> {
-    if !is_official_account_catalog(account_catalog) {
-        return Ok(());
-    }
-    codex_mixin::catalog::official::validate_catalog(account_catalog)?;
-    let account_models = account_catalog
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("official account catalog has no models array"))?;
-    anyhow::ensure!(
-        !account_models.iter().any(is_managed_catalog_model),
-        "official account catalog contains managed provider models"
-    );
-    let template_models = template
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("official template has no models array"))?;
-    let by_slug = template_models
-        .iter()
-        .filter_map(|model| Some((model.get("slug")?.as_str()?, model)))
-        .collect::<HashMap<_, _>>();
-    let mut merged = Vec::with_capacity(account_models.len());
-    for account_model in account_models {
-        let slug = account_model
-            .get("slug")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("official account model is missing slug"))?;
-        // A legacy mixed template may also contain provider-owned models.
-        // Account metadata must never replace their identity or capabilities.
-        if by_slug
-            .get(slug)
-            .is_some_and(|model| is_managed_catalog_model(model))
-        {
-            continue;
-        }
-        let mut model = by_slug
-            .get(slug)
-            .map_or_else(|| account_model.clone(), |model| (*model).clone());
-        let fields = model
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("official template model must be an object"))?;
-        // An account may lose a tier or explicitly advertise none.
-        for field in [
-            "service_tiers",
-            "additional_speed_tiers",
-            "visibility",
-            "supported_in_api",
-            "priority",
-        ] {
-            match account_model.get(field) {
-                Some(value) => {
-                    fields.insert(field.to_owned(), value.clone());
-                }
-                None => {
-                    fields.remove(field);
-                }
-            }
-        }
-        // Missing context fields retain the template value; explicit nulls
-        // clear optional limits. Instructions and tools stay with the template.
-        for field in [
-            "context_window",
-            "max_context_window",
-            "auto_compact_token_limit",
-        ] {
-            if let Some(value) = account_model.get(field) {
-                anyhow::ensure!(
-                    value.is_null() || value.as_i64().is_some_and(|limit| limit > 0),
-                    "official account model {field} must be null or a positive 64-bit integer"
-                );
-                fields.insert(field.to_owned(), value.clone());
-            }
-        }
-        if let (Some(window), Some(maximum)) = (
-            fields
-                .get("context_window")
-                .and_then(serde_json::Value::as_i64),
-            fields
-                .get("max_context_window")
-                .and_then(serde_json::Value::as_i64),
-        ) {
-            anyhow::ensure!(
-                window <= maximum,
-                "official account context_window exceeds max_context_window"
-            );
-        }
-        merged.push(model);
-    }
-    merged.extend(
-        template_models
-            .iter()
-            .filter(|model| is_managed_catalog_model(model))
-            .cloned(),
-    );
-    template["models"] = serde_json::Value::Array(merged);
-    Ok(())
 }
 
 pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> bool {

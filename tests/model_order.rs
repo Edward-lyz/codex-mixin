@@ -220,6 +220,7 @@ fn account_catalog_membership_and_manual_order_reach_codex_together() {
         serde_json::to_vec(&json!({"models":[
             {"slug":"gpt-5.5","visibility":"list"},
             {"slug":"gpt-current","visibility":"list","context_window":272000,
+                "max_context_window":872000,"auto_compact_token_limit":200000,
                 "base_instructions":"public instructions"},
             {"slug":"gpt-hidden","visibility":"list"}
         ]}))
@@ -232,7 +233,8 @@ fn account_catalog_membership_and_manual_order_reach_codex_together() {
             "codex_mixin_source":"https://chatgpt.com/backend-api/codex/models",
             "codex_mixin_account_id":"fixture-account",
             "models":[
-                {"slug":"gpt-current","visibility":"list","context_window":500000},
+                {"slug":"gpt-current","visibility":"list","context_window":500000,
+                    "max_context_window":1000000,"auto_compact_token_limit":450000},
                 {"slug":"gpt-hidden","visibility":"hide"},
                 {"slug":"gpt-new","visibility":"list","context_window":600000}
             ]
@@ -247,7 +249,7 @@ fn account_catalog_membership_and_manual_order_reach_codex_together() {
         String::from_utf8_lossy(&output.stderr)
     );
     let models = catalog_models(&catalog);
-    assert!(!models.iter().any(|model| model["slug"] == "gpt-5.5"));
+    assert!(models.iter().any(|model| model["slug"] == "gpt-5.5"));
     assert_eq!(
         models
             .iter()
@@ -268,7 +270,7 @@ fn account_catalog_membership_and_manual_order_reach_codex_together() {
     assert_eq!(config.official_model_order, ModelOrder::Manual);
     assert_eq!(
         config.official_selected_models.unwrap(),
-        ["gpt-current", "gpt-new"]
+        ["gpt-5.5", "gpt-current", "gpt-new"]
     );
     let output = select(
         root,
@@ -290,6 +292,8 @@ fn account_catalog_membership_and_manual_order_reach_codex_together() {
     assert!(models[0]["priority"].as_u64() < models[1]["priority"].as_u64());
     assert_eq!(models[1]["base_instructions"], "public instructions");
     assert_eq!(models[1]["context_window"], 500000);
+    assert_eq!(models[1]["max_context_window"], 1000000);
+    assert_eq!(models[1]["auto_compact_token_limit"], 450000);
     assert!(models.iter().any(|model| model["slug"] == "Opus 5.5-test"));
     fs::write(
         root.join("official-models.json"),
