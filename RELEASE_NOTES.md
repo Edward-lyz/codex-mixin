@@ -1,4 +1,21 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.8.6
+
+### 特性新增
+
+- **多个 OAuth 账号**：同一服务商可配置多个独立账号，以账号 ID 区分；各账号分别维护凭据、模型标识和用量。
+
+### 体验优化
+
+- **补全官方模型目录**：合并订阅账号目录与 Codex 公共模型模板；模板已收录、账号接口暂未返回的模型也会显示。同名模型的上下文信息优先使用账号返回值。模型目录请求自动读取本机 Codex CLI 版本，不再依赖写死的客户端版本或 GitHub Releases 查询。
+
+### BUG 修复
+
+- 修复跨服务商多代理协作中，官方协作消息未在生成前转换而导致格式错误的问题。
+- 修复上下文回放遇到分叉时可能丢失已有摘要的问题。
+- 修复 DUCX 会话头重复生成、缓存未共享和失败刷新后退避不足的问题。
+- 停止 DUCX carrier 的 app-server 同步精选插件。
+
 ## v0.8.5
 
 ### 体验优化
@@ -375,6 +392,23 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.8.6
+
+### 特性新增
+
+- **多個 OAuth 帳號**：同一服務商可設定多個獨立帳號，以帳號 ID 區分；各帳號分別維護憑證、模型識別與用量。
+
+### 體驗最佳化
+
+- **補全官方模型清單**：合併訂閱帳號清單與 Codex 公開模型範本；範本已有、帳號介面暫未回傳的模型也會顯示。同名模型的上下文資訊優先使用帳號回傳值。模型清單請求會自動讀取本機 Codex CLI 版本，不再依賴寫死的用戶端版本或 GitHub Releases 查詢。
+
+### BUG 修復
+
+- 修正跨服務商多代理協作時，官方協作訊息未在生成前轉換而導致格式錯誤的問題。
+- 修正上下文回放遇到分歧時可能遺失既有摘要的問題。
+- 修正 DUCX 會話標頭重複產生、快取未共用，以及刷新失敗後退避不足的問題。
+- 停止 DUCX carrier 的 app-server 同步精選外掛。
+
 ## v0.8.5
 
 ### 體驗優化
@@ -751,6 +785,23 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.8.6
+
+### New features
+
+- **Multiple OAuth accounts**: Configure separate accounts for the same provider and distinguish each by ID. Credentials, model slugs, and usage remain scoped to each account.
+
+### Improvements
+
+- **A fuller official model catalog**: Merge the subscription account catalog with the public Codex model template, so template models appear even before the account endpoint returns them. For models in both sources, account context metadata takes precedence. Model catalog requests detect the locally installed Codex CLI version, without a pinned client version or a GitHub Releases lookup.
+
+### Bug fixes
+
+- Fix malformed native collaboration messages when agents use models from different providers by adapting the official payload before generation.
+- Fix existing context summaries being lost when replay encounters a divergent history.
+- Fix duplicate DUCX session-header minting, share the header cache, and back off failed refreshes.
+- Stop the DUCX carrier app-server from syncing curated plugins.
+
 ## v0.8.5
 
 ### Improvements
