@@ -466,9 +466,6 @@ pub(in crate::cli) fn select_codex_model(
     {
         return Ok(current_model.to_owned());
     }
-    if let Some(model) = models.iter().find(|model| model.id == "Claude Sonnet 5") {
-        return Ok(model.id.clone());
-    }
     Ok(models[0].id.clone())
 }
 
@@ -489,22 +486,16 @@ pub(in crate::cli) fn select_codex_oauth_proxy_model(
     {
         return Ok(current_model.to_owned());
     }
-    for preferred in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] {
-        if template_catalog_has_model(template_catalog, preferred) {
-            return Ok(preferred.to_owned());
-        }
-    }
-    if let Some(model) = template_catalog
+    if let Some(slug) = template_catalog
         .and_then(|catalog| catalog.get("models"))
         .and_then(serde_json::Value::as_array)
-        .and_then(|models| {
-            models
-                .iter()
-                .filter_map(|model| model.get("slug").and_then(serde_json::Value::as_str))
-                .find(|slug| is_gpt_model(slug))
-        })
+        .into_iter()
+        .flatten()
+        .filter(|model| model.get("visibility").and_then(serde_json::Value::as_str) != Some("hide"))
+        .filter_map(|model| model["slug"].as_str())
+        .find(|slug| !slug.is_empty())
     {
-        return Ok(model.to_owned());
+        return Ok(slug.to_owned());
     }
     Ok(models[0].id.clone())
 }
@@ -532,8 +523,4 @@ pub(in crate::cli) fn template_catalog_has_model(
                 .iter()
                 .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(slug))
         })
-}
-
-pub(in crate::cli) fn is_gpt_model(model: &str) -> bool {
-    model.to_ascii_lowercase().starts_with("gpt-")
 }

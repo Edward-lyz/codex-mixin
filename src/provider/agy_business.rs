@@ -82,10 +82,7 @@ async fn auth_headers(provider: &ProviderRuntime, force: bool) -> anyhow::Result
         );
         headers
     };
-    headers.insert(
-        USER_AGENT,
-        super::auth::agy_business::USER_AGENT_VALUE.parse()?,
-    );
+    headers.insert(USER_AGENT, super::auth::agy::user_agent("gcp").await?);
     Ok(headers)
 }
 

@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::config::{load_stored_config, mutate_stored_config};
 use crate::ech::{OfficialEch, PLUS_DOH};
+use crate::provider::auth::official;
 use crate::upstream::transport_log::{
     OfficialTransport, TransportTrace, attach_trace_for, take_trace,
 };
@@ -86,15 +87,11 @@ async fn probe_host(host: &'static str) -> EchProbe {
     let started = Instant::now();
     let mut addresses = Vec::new();
     let attempt = async {
-        let endpoint = if host == "chatgpt.com" {
-            format!(
-                "https://{host}/backend-api/codex/models?client_version={}",
-                env!("CARGO_PKG_VERSION")
-            )
+        let url = if host == "chatgpt.com" {
+            official::models_url().await?
         } else {
-            format!("https://{host}/v1/models")
+            reqwest::Url::parse(&format!("https://{host}/v1/models"))?
         };
-        let url = reqwest::Url::parse(&endpoint)?;
         let connection = OfficialEch::default()
             .connection(&url, Duration::from_secs(20))
             .await?;

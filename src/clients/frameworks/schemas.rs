@@ -1169,7 +1169,7 @@ fn zcode(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec
     let ids: Vec<_> = models.iter().map(|m| &m.id).collect();
     provider_rules.push(json!({"providerId":PROVIDER,"providerName":PROVIDER,"enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":key},"api":{"type":"anthropic-messages","baseUrl":base},"personalModelIds":ids,"modelOrder":ids}}));
     for model in models {
-        model_rules.push(json!({"providerId":PROVIDER,"modelId":model.id,"config":{"properties":{"contextWindow":model.context_window,"inputFormat":{"supportsImage":model.supports_image}},"optionSpecs":{"maxOutputTokens":{"max":model.max_tokens.min(128000)}}}}));
+        model_rules.push(json!({"providerId":PROVIDER,"modelId":model.id,"config":{"properties":{"contextWindow":model.context_window,"inputFormat":{"supportsImage":model.supports_image}},"optionSpecs":{"maxOutputTokens":{"max":model.max_tokens}}}}));
     }
     let mut fields = vec![
         field(
