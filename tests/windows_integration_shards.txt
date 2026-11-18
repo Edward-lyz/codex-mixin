@@ -23,6 +23,7 @@ integration-c|provider_catalog.rs
 integration-c|provider_commit_boundaries.rs
 integration-c|query_isolation.rs
 integration-c|real_models.rs
+integration-c|route_refresh.rs
 integration-c|websocket_proxy.rs
 integration-c|claude_code_provider.rs
 integration-c|ducx_carrier.rs

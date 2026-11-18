@@ -98,8 +98,46 @@ pub(crate) async fn discover_models_with_output(
         if let Some(url) = refreshed.quota_url {
             println!("provider quota endpoint detected: {id} ({url})");
         }
+        print_route_reference_issues();
     }
     Ok(refreshed.changes)
+}
+
+fn print_route_reference_issues() {
+    let stored = match codex_mixin::config::load_stored_config() {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "stored config reload failed after provider refresh"
+            );
+            return;
+        }
+    };
+    let issues = match codex_mixin::application::routing::route_reference_issues(&stored) {
+        Ok(issues) => issues,
+        Err(error) => {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "model route reference check failed after provider refresh"
+            );
+            return;
+        }
+    };
+    for issue in issues {
+        let state = if stored.disabled_routes.contains(&issue.model) {
+            "disabled"
+        } else {
+            "enabled"
+        };
+        println!(
+            "model route {} is {state}: missing provider model(s): {}; restore them upstream or edit the route, then run `codex-mixin route enable --model {}`",
+            issue.model,
+            issue.missing_models.join(", "),
+            issue.model
+        );
+    }
 }
 
 pub(in crate::cli) fn apply_official_model_refresh(

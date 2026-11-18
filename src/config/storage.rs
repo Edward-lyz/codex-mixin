@@ -209,9 +209,24 @@ fn save_stored_config_to_path_unlocked(
     super::validate_cors_origins(&config.cors_allowed_origins)?;
     let providers = ProviderRegistry::new(config.providers.clone())?;
     validate_fusion_profiles(&config.fusion_profiles)?;
-    validate_fusion_model_references(&config.fusion_profiles, &providers)?;
+    // A disabled route keeps its configuration even when an upstream model
+    // disappears. Model discovery disables affected routes before saving;
+    // re-enabling one re-validates its references.
+    let enabled_fusion_profiles = config
+        .fusion_profiles
+        .iter()
+        .filter(|profile| !config.disabled_routes.contains(&profile.model_slug()))
+        .cloned()
+        .collect::<Vec<_>>();
+    validate_fusion_model_references(&enabled_fusion_profiles, &providers)?;
     validate_failover_routes(&config.failover_routes)?;
-    validate_failover_model_references(&config.failover_routes, &providers)?;
+    let enabled_failover_routes = config
+        .failover_routes
+        .iter()
+        .filter(|route| !config.disabled_routes.contains(&route.entry_model()))
+        .cloned()
+        .collect::<Vec<_>>();
+    validate_failover_model_references(&enabled_failover_routes, &providers)?;
     if let Some(id) = config
         .failover_routes
         .iter()
