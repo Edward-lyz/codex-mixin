@@ -117,7 +117,7 @@ pub fn load_stored_config_from_path(
     if !path.exists() {
         return Ok(None);
     }
-    let _lock = lock_stored_config(path)?;
+    let _lock = lock_stored_config(path, LockPurpose::Read)?;
     load_stored_config_from_path_unlocked(path, true)
 }
 
@@ -154,7 +154,7 @@ pub fn mutate_stored_config_at_path<T>(
     path: &std::path::Path,
     mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    let _lock = lock_stored_config(path)?;
+    let _lock = lock_stored_config(path, LockPurpose::Write)?;
     let mut config = load_stored_config_from_path_unlocked(path, false)?.unwrap_or_default();
     let result = mutation(&mut config)?;
     backup_legacy_config_if_needed(path)?;
@@ -198,7 +198,7 @@ pub fn save_stored_config_to_path(
     path: &std::path::Path,
     config: &StoredGatewayConfig,
 ) -> anyhow::Result<()> {
-    let _lock = lock_stored_config(path)?;
+    let _lock = lock_stored_config(path, LockPurpose::Write)?;
     save_stored_config_to_path_unlocked(path, config)
 }
 fn save_stored_config_to_path_unlocked(
@@ -227,7 +227,6 @@ fn save_stored_config_to_path_unlocked(
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-        set_private_dir_permissions(parent)?;
     }
     let file_name = path
         .file_name()
@@ -455,10 +454,20 @@ fn decrypt_config_if_needed(path: &std::path::Path, raw: &[u8]) -> anyhow::Resul
     ciphertext.truncate(plaintext_len);
     Ok((ciphertext, true))
 }
-fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
+/// Reads only need the lock. A private directory DACL is inheritable, so
+/// Windows expands it to every existing descendant; the state directory also
+/// holds DUCX client homes whose sandbox accounts own their ACEs. Rewriting it
+/// on each config read walks hundreds of thousands of session files and strips
+/// those ACEs. Writes harden only the lock file and the config files.
+#[derive(Clone, Copy)]
+enum LockPurpose {
+    Read,
+    Write,
+}
+
+fn lock_stored_config(path: &std::path::Path, purpose: LockPurpose) -> anyhow::Result<fs::File> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-        set_private_dir_permissions(parent)?;
     }
     let file_name = path
         .file_name()
@@ -472,13 +481,11 @@ fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
         .write(true)
         .open(&lock_path)
         .with_context(|| format!("open {}", lock_path.display()))?;
-    set_private_file_permissions(&lock_path)?;
+    if matches!(purpose, LockPurpose::Write) {
+        set_private_file_permissions(&lock_path)?;
+    }
     FileExt::lock_exclusive(&lock).with_context(|| format!("lock {}", lock_path.display()))?;
     Ok(lock)
-}
-fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
-    crate::platform::restrict_owner_only_dir(path)
-        .with_context(|| format!("restrict permissions for {}", path.display()))
 }
 fn set_private_file_permissions(path: &std::path::Path) -> anyhow::Result<()> {
     crate::platform::restrict_owner_only_file(path)
