@@ -126,6 +126,7 @@ pub struct AgentsPage {
     agents: Option<Vec<Agent>>,
     error: Option<SharedString>,
     loading: bool,
+    reload_pending: bool,
     show_undetected: bool,
     revision: u64,
     _subscriptions: Vec<Subscription>,
@@ -146,6 +147,7 @@ impl AgentsPage {
             agents: None,
             error: None,
             loading: false,
+            reload_pending: false,
             show_undetected: false,
             revision: Store::global(cx).read(cx).revision,
             _subscriptions: vec![subscription],
@@ -172,6 +174,8 @@ impl AgentsPage {
 
     fn load(&mut self, args: Vec<String>, cx: &mut Context<Self>) {
         if self.loading {
+            // A reload asked for mid-flight runs once the current read lands.
+            self.reload_pending = true;
             return;
         }
         self.loading = true;
@@ -186,6 +190,9 @@ impl AgentsPage {
                     // into the listed agents instead of replacing them.
                     Ok(list) => page.merge(list.agents),
                     Err(error) => page.error = Some(error.message.into()),
+                }
+                if std::mem::take(&mut page.reload_pending) {
+                    page.reload(cx);
                 }
                 cx.notify();
             })
@@ -242,24 +249,44 @@ impl AgentsPage {
             );
             return;
         }
-        // Codex can keep the official account beside custom models.
-        window.open_alert_dialog(cx, move |dialog, _, _| {
+        // Codex can keep the official account beside custom models. Each
+        // mode is its own button, so dismissing the dialog connects nothing.
+        window.open_dialog(cx, move |dialog, _, _| {
+            let connect = |mode: &'static str| {
+                move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+                    let args = ["agent", "connect", "codex", "--mode", mode];
+                    run_change(Change::new(t!("agents.connect_label"), args), cx);
+                    window.close_dialog(cx);
+                }
+            };
             dialog
                 .title(tr!("agents.codex_mode_title"))
-                .description(tr!("agents.codex_mode_detail"))
-                .confirm()
-                .ok_text(t!("agents.codex_mode_official"))
-                .cancel_text(t!("agents.codex_mode_custom"))
-                .on_ok(|_, _, cx| {
-                    let args = ["agent", "connect", "codex", "--mode", "official-account"];
-                    run_change(Change::new(t!("agents.connect_label"), args), cx);
-                    true
-                })
-                .on_cancel(|_, _, cx| {
-                    let args = ["agent", "connect", "codex", "--mode", "custom-only"];
-                    run_change(Change::new(t!("agents.connect_label"), args), cx);
-                    true
-                })
+                .w(gpui_kit::px(460.0))
+                .child(div().text_sm().child(t!("agents.codex_mode_detail")))
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("codex-mode-cancel")
+                                .ghost()
+                                .label(t!("common.cancel"))
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("codex-mode-custom")
+                                .secondary()
+                                .label(t!("agents.codex_mode_custom"))
+                                .on_click(connect("custom-only")),
+                        )
+                        .child(
+                            Button::new("codex-mode-official")
+                                .primary()
+                                .label(t!("agents.codex_mode_official"))
+                                .on_click(connect("official-account")),
+                        ),
+                )
         });
     }
 
@@ -348,7 +375,7 @@ impl AgentsPage {
             .when(agent.cli.update, |row| {
                 row.child(
                     Button::new(SharedString::from(format!("upgrade-{}", agent.id)))
-                        .outline()
+                        .secondary()
                         .small()
                         .icon(IconName::Download)
                         .label(t!(
@@ -442,7 +469,7 @@ impl Render for AgentsPage {
                                 v_flex()
                                     .child(
                                         div()
-                                            .text_lg()
+                                            .text_2xl()
                                             .font_semibold()
                                             .child(t!("console.page.agents")),
                                     )

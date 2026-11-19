@@ -143,7 +143,18 @@ impl ModelsView {
     }
 
     fn is_dirty(&self) -> bool {
-        self.selected != self.provider.selected_models
+        // Family order lets the CLI sort the selection, so only membership
+        // counts; manual order keeps the user's sequence.
+        let selection_changed = if self.manual_order {
+            self.selected != self.provider.selected_models
+        } else {
+            let mut draft = self.selected.clone();
+            let mut saved = self.provider.selected_models.clone();
+            draft.sort();
+            saved.sort();
+            draft != saved
+        };
+        selection_changed
             || self.contexts != self.provider.model_context_overrides
             || self.manual_order != (self.provider.model_order.as_deref() == Some("manual"))
     }
@@ -462,7 +473,7 @@ impl ModelsView {
         let view = cx.entity().downgrade();
         let filter = self.filter;
         let filter_button = Button::new("model-filter")
-            .outline()
+            .secondary()
             .small()
             .label(filter.label())
             .dropdown_caret(true)
@@ -489,7 +500,7 @@ impl ModelsView {
             });
         let manual_order = self.manual_order;
         let order_button = Button::new("model-order")
-            .outline()
+            .secondary()
             .small()
             .icon(IconName::ArrowUpDown)
             .tooltip(t!("models.order_tooltip"))
@@ -546,7 +557,7 @@ impl ModelsView {
                 h_flex()
                     .child(
                         Button::new("refresh-models")
-                            .outline()
+                            .secondary()
                             .small()
                             .icon(IconName::RefreshCw)
                             .label(t!("models.refresh"))
@@ -558,7 +569,7 @@ impl ModelsView {
                             .anchor(Anchor::TopRight)
                             .trigger(
                                 Button::new("refresh-settings-trigger")
-                                    .outline()
+                                    .secondary()
                                     .small()
                                     .icon(IconName::ChevronDown)
                                     .tooltip(t!("models.refresh_settings")),
@@ -573,7 +584,7 @@ impl ModelsView {
                 h_flex()
                     .child(
                         Button::new("start-benchmark")
-                            .outline()
+                            .secondary()
                             .small()
                             .icon(IconName::Gauge)
                             .label(t!("models.benchmark", count = saved_count))
@@ -585,7 +596,7 @@ impl ModelsView {
                             .anchor(Anchor::TopRight)
                             .trigger(
                                 Button::new("benchmark-settings-trigger")
-                                    .outline()
+                                    .secondary()
                                     .small()
                                     .icon(IconName::ChevronDown)
                                     .tooltip(t!("models.benchmark_settings")),
@@ -660,7 +671,7 @@ fn render_refresh_settings(view: &WeakEntity<ModelsView>, cx: &mut App) -> AnyEl
         .child(popover_row(
             t!("models.refresh_interval").into(),
             Button::new("refresh-interval")
-                .outline()
+                .secondary()
                 .xsmall()
                 .label(format_interval(policy.interval_seconds))
                 .dropdown_caret(true)
@@ -744,7 +755,7 @@ fn render_benchmark_settings(view: &WeakEntity<ModelsView>, cx: &mut App) -> Any
         .child(popover_row(
             t!("models.benchmark_timeout").into(),
             Button::new("benchmark-timeout")
-                .outline()
+                .secondary()
                 .xsmall()
                 .label(t!("time.seconds", count = timeout))
                 .dropdown_caret(true)
@@ -860,11 +871,9 @@ impl ModelsView {
         let down_id = row.id.clone();
         let capability = |supported: Option<bool>, icon: IconName, tooltip: SharedString| {
             supported.filter(|supported| *supported).map(|_| {
-                div().id(ElementId::Name(tooltip.clone())).child(
-                    Icon::new(icon)
-                        .xsmall()
-                        .text_color(colors.primary.opacity(0.8)),
-                )
+                div()
+                    .id(ElementId::Name(tooltip.clone()))
+                    .child(Icon::new(icon).xsmall().text_color(colors.muted_foreground))
             })
         };
         h_flex()
@@ -1016,7 +1025,7 @@ impl ModelsView {
             .children(self.benchmark_progress(cx))
             .child(
                 Button::new("probe-capabilities")
-                    .outline()
+                    .secondary()
                     .xsmall()
                     .icon(IconName::ScanSearch)
                     .label(t!("models.probe"))
@@ -1070,7 +1079,11 @@ impl ModelsView {
                     .border_1()
                     .border_color(colors.border)
                     .shadow_lg()
-                    .child(div().text_sm().child(t!("models.unapplied")))
+                    .child(div().text_sm().child(if self.selected.is_empty() {
+                        t!("models.keep_one")
+                    } else {
+                        t!("models.unapplied")
+                    }))
                     .child(
                         Button::new("discard-models")
                             .ghost()
@@ -1084,7 +1097,7 @@ impl ModelsView {
                             .small()
                             .label(t!("common.apply"))
                             .loading(is_busy(cx))
-                            .disabled(is_busy(cx))
+                            .disabled(is_busy(cx) || self.selected.is_empty())
                             .on_click(cx.listener(|view, _, window, cx| view.apply(window, cx))),
                     ),
             )

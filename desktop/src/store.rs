@@ -19,6 +19,9 @@ pub struct Snapshot<T> {
     pub value: Option<T>,
     pub error: Option<SharedString>,
     pub loading: bool,
+    /// A refresh was requested while one was in flight; the in-flight result
+    /// may predate a change, so the query runs again when it lands.
+    stale: bool,
 }
 
 impl<T> Default for Snapshot<T> {
@@ -27,12 +30,25 @@ impl<T> Default for Snapshot<T> {
             value: None,
             error: None,
             loading: false,
+            stale: false,
         }
     }
 }
 
 impl<T> Snapshot<T> {
-    fn finish(&mut self, result: CliResult<T>) {
+    /// Marks a query as started; `false` means one is already running and
+    /// will be repeated when it finishes.
+    fn begin(&mut self) -> bool {
+        if self.loading {
+            self.stale = true;
+            return false;
+        }
+        self.loading = true;
+        true
+    }
+
+    /// Stores the result and reports whether the query must run again.
+    fn finish(&mut self, result: CliResult<T>) -> bool {
         self.loading = false;
         match result {
             Ok(value) => {
@@ -41,6 +57,7 @@ impl<T> Snapshot<T> {
             }
             Err(error) => self.error = Some(error.message.into()),
         }
+        std::mem::take(&mut self.stale)
     }
 }
 
@@ -86,8 +103,10 @@ pub struct Store {
     pub providers: Snapshot<ProviderList>,
     pub interface: Snapshot<Interface>,
     pub quotas: BTreeMap<String, Snapshot<Vec<QuotaEntry>>>,
-    /// Label and latest progress line of the running change.
-    pub busy: Option<(SharedString, Option<SharedString>)>,
+    /// Running changes in start order, each with its label and latest
+    /// progress line.
+    running: Vec<(u64, SharedString, Option<SharedString>)>,
+    next_change: u64,
     /// Bumped after every change so pages reload their own data.
     pub revision: u64,
     _poll: Task<()>,
@@ -119,7 +138,8 @@ impl Store {
                 providers: Snapshot::default(),
                 interface: Snapshot::default(),
                 quotas: BTreeMap::new(),
-                busy: None,
+                running: Vec::new(),
+                next_change: 0,
                 revision: 0,
                 _poll: poll,
             };
@@ -145,18 +165,26 @@ impl Store {
         }
     }
 
+    /// Label and latest progress line of the oldest running change.
+    pub fn busy(&self) -> Option<(SharedString, Option<SharedString>)> {
+        self.running
+            .first()
+            .map(|(_, label, detail)| (label.clone(), detail.clone()))
+    }
+
     pub fn refresh_status(&mut self, cx: &mut Context<Self>) {
-        if self.service.loading {
+        if !self.service.begin() {
             return;
         }
-        self.service.loading = true;
         let cli = self.cli.clone();
         cx.spawn(async move |this, cx| {
             let result =
                 cli_thread(move || cli.query::<ServiceStatus>(&["service", "status", "--json"]))
                     .await;
             this.update(cx, |store, cx| {
-                store.service.finish(result);
+                if store.service.finish(result) {
+                    store.refresh_status(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -165,17 +193,18 @@ impl Store {
     }
 
     pub fn refresh_providers(&mut self, cx: &mut Context<Self>) {
-        if self.providers.loading {
+        if !self.providers.begin() {
             return;
         }
-        self.providers.loading = true;
         let cli = self.cli.clone();
         cx.spawn(async move |this, cx| {
             let result =
                 cli_thread(move || cli.query::<ProviderList>(&["provider", "list", "--json"]))
                     .await;
             this.update(cx, |store, cx| {
-                store.providers.finish(result);
+                if store.providers.finish(result) {
+                    store.refresh_providers(cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -199,6 +228,7 @@ impl Store {
 
     pub fn refresh_quota(&mut self, provider_id: &str, cx: &mut Context<Self>) {
         let snapshot = self.quotas.entry(provider_id.to_owned()).or_default();
+        // Quota reads are remote and slow; an in-flight one is not repeated.
         if snapshot.loading {
             return;
         }
@@ -213,7 +243,7 @@ impl Store {
             })
             .await;
             this.update(cx, |store, cx| {
-                store.quotas.entry(id).or_default().finish(result);
+                let _ = store.quotas.entry(id).or_default().finish(result);
                 cx.notify();
             })
             .ok();
@@ -230,7 +260,9 @@ impl Store {
     ) -> Task<Result<String, CliError>> {
         let cli = self.cli.clone();
         let label = change.label.clone();
-        self.busy = Some((label.clone(), None));
+        let change_id = self.next_change;
+        self.next_change += 1;
+        self.running.push((change_id, label.clone(), None));
         cx.notify();
         let (progress_sender, progress_receiver) = smol::channel::unbounded::<String>();
         let progress: Progress = Arc::new(move |line| {
@@ -242,7 +274,9 @@ impl Store {
                 cx.spawn(async move |cx| {
                     while let Ok(line) = progress_receiver.recv().await {
                         let updated = this.update(cx, |store, cx| {
-                            if let Some((_, detail)) = &mut store.busy {
+                            if let Some((_, _, detail)) =
+                                store.running.iter_mut().find(|(id, _, _)| *id == change_id)
+                            {
                                 *detail = Some(line.into());
                                 cx.notify();
                             }
@@ -259,7 +293,7 @@ impl Store {
             .await;
             drop(progress_task);
             this.update(cx, |store, cx| {
-                store.busy = None;
+                store.running.retain(|(id, _, _)| *id != change_id);
                 store.revision += 1;
                 store.refresh_status(cx);
                 store.refresh_providers(cx);

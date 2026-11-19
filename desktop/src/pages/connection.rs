@@ -21,7 +21,7 @@ use gpui_kit::{
 };
 use rust_i18n::t;
 
-use super::{is_busy, run_change};
+use super::{is_busy, run_change, run_change_then};
 use crate::cli::Secret;
 use crate::model::{Provider, ProviderCatalog, ProviderPreset};
 use crate::store::{Change, Store};
@@ -226,6 +226,23 @@ impl ConnectionView {
                 }
             }
         }
+        // An emptied optional field clears the saved value.
+        if let Some(saved) = &self.provider {
+            if saved.website_url.is_some() && Self::value(&self.inputs.website, cx).is_empty() {
+                args.extend(["--website-url".to_owned(), String::new()]);
+            }
+            if saved.image_generation_path.is_some()
+                && Self::value(&self.inputs.image_path, cx).is_empty()
+            {
+                args.push("--clear-image-generation".to_owned());
+            }
+            if saved.quota_workspace_id.is_some()
+                && preset.quota_credentials_required
+                && Self::value(&self.inputs.workspace, cx).is_empty()
+            {
+                args.push("--clear-quota-workspace-id".to_owned());
+            }
+        }
         if preset.custom_endpoint {
             if let Some(protocol) = &self.protocol {
                 args.extend(["--protocol".to_owned(), protocol.clone()]);
@@ -324,13 +341,24 @@ impl ConnectionView {
         !(preset.auth_mode == "local_oauth" && !preset.allow_multiple)
     }
 
-    pub fn save(&mut self, cx: &mut Context<Self>) {
+    /// Saves the form; the draft stays dirty until the CLI confirms it, so a
+    /// failed save keeps the user's input. Resolves to whether it succeeded.
+    pub fn save(&mut self, cx: &mut Context<Self>) -> gpui_kit::Task<bool> {
         let Some(change) = self.save_change(cx) else {
-            return;
+            return gpui_kit::Task::ready(false);
         };
-        self.dirty = false;
-        run_change(change, cx);
-        cx.notify();
+        let saved = run_change_then(change, cx);
+        cx.spawn(async move |view, cx| {
+            let ok = saved.await;
+            if ok {
+                view.update(cx, |view, cx| {
+                    view.dirty = false;
+                    cx.notify();
+                })
+                .ok();
+            }
+            ok
+        })
     }
 
     pub fn set_preset(&mut self, preset: String, cx: &mut Context<Self>) {
@@ -377,7 +405,7 @@ fn choice_button(
         .unwrap_or_default();
     let on_pick = std::rc::Rc::new(on_pick);
     Button::new(id)
-        .outline()
+        .secondary()
         .small()
         .label(label)
         .dropdown_caret(true)
@@ -653,7 +681,7 @@ impl ConnectionView {
                 let preset_id = preset.id.clone();
                 let id = id.clone();
                 Button::new("reauthorize")
-                    .outline()
+                    .secondary()
                     .small()
                     .label(tr!("connection.reauthorize"))
                     .disabled(busy)
@@ -708,7 +736,7 @@ impl ConnectionView {
                 Some(t!("connection.credentials_detail").into()),
                 h_flex().gap_2().children(reauthorize).child(
                     Button::new("clear-key")
-                        .outline()
+                        .secondary()
                         .small()
                         .label(tr!("connection.clear_key"))
                         .disabled(busy)
@@ -830,7 +858,7 @@ impl ConnectionView {
                             .label(tr!("common.apply"))
                             .loading(is_busy(cx))
                             .disabled(is_busy(cx))
-                            .on_click(cx.listener(|view, _, _, cx| view.save(cx))),
+                            .on_click(cx.listener(|view, _, _, cx| view.save(cx).detach())),
                     ),
             )
             .with_animation(
@@ -918,8 +946,15 @@ pub fn open_add_provider(window: &mut Window, cx: &mut App) {
                             .icon(IconName::Plus)
                             .label(tr!("connection.add_confirm"))
                             .on_click(move |_, window, cx| {
-                                save_view.update(cx, |view, cx| view.save(cx));
-                                window.close_dialog(cx);
+                                // The dialog stays open on failure so nothing typed is lost.
+                                let saved = save_view.update(cx, |view, cx| view.save(cx));
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        if saved.await {
+                                            cx.update(|window, cx| window.close_dialog(cx)).ok();
+                                        }
+                                    })
+                                    .detach();
                             }),
                     ),
             )

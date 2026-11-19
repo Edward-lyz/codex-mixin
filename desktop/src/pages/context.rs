@@ -166,7 +166,7 @@ impl ContextPage {
                 |(_, label)| label.clone(),
             );
         Button::new(id)
-            .outline()
+            .secondary()
             .small()
             .label(label)
             .dropdown_caret(true)
@@ -480,7 +480,7 @@ impl Render for ContextPage {
                                 v_flex()
                                     .child(
                                         div()
-                                            .text_lg()
+                                            .text_2xl()
                                             .font_semibold()
                                             .child(t!("console.page.context")),
                                     )

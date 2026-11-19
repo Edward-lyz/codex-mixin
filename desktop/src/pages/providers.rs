@@ -125,9 +125,9 @@ impl ProvidersPage {
                 .py_1p5()
                 .rounded_lg()
                 .cursor_pointer()
-                .when(selected, |row| row.bg(colors.sidebar_accent))
+                .when(selected, |row| row.bg(colors.list_active))
                 .when(!selected, |row| {
-                    row.hover(|style| style.bg(colors.sidebar_accent.opacity(0.5)))
+                    row.hover(|style| style.bg(colors.list_hover))
                 })
                 .on_click(
                     cx.listener(move |page, _, window, cx| page.select(id.clone(), window, cx)),
@@ -163,9 +163,8 @@ impl ProvidersPage {
             .w_64()
             .flex_none()
             .h_full()
-            .bg(colors.sidebar)
             .border_r_1()
-            .border_color(colors.sidebar_border)
+            .border_color(colors.border)
             .child(
                 v_flex()
                     .id("provider-list")
@@ -203,7 +202,7 @@ impl ProvidersPage {
         };
         h_flex()
             .px_6()
-            .pt_5()
+            .pt_2()
             .pb_4()
             .gap_3()
             .child(provider_logo(&provider.icon, true, cx))
@@ -222,7 +221,7 @@ impl ProvidersPage {
                                     .child(provider.display_name.clone()),
                             )
                             .when(provider.is_official(), |title| {
-                                title.child(pill(t!("providers.official"), colors.primary))
+                                title.child(pill(t!("providers.official"), colors.muted_foreground))
                             })
                             .child(pill(state_label, state_color)),
                     )

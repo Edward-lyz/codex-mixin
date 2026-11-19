@@ -8,3 +8,5 @@
 - 视觉：颜色、圆角来自 `themes/codex-mixin.json`，跟随系统浅深色；动效统一用 `theme.rs` 的三条三次贝塞尔曲线（移动、进入、退出）。新增界面不写裸色值。
 - 文案放 `locales/app.yml`，每个 key 同时提供 `en` 与 `zh-CN`；运行 `./scripts/check_localizations.sh`。
 - 构建：`cargo build --manifest-path desktop/Cargo.toml`；macOS 打包 `./desktop/macos/build_app.sh`，Windows 打包 `desktop/windows/package.ps1`。界面行为通过真实窗口人工验收，不新增 UI 自动化。
+- 窗口：控制台打开时 App 切到 `ActivationPolicy::Regular`（Dock、Command-Tab、菜单栏与 Command-W 等快捷键），全部关闭后回到 `Accessory`；菜单与快捷键在 `console::init`。macOS 关闭了 Touch Bar API（`NSFunctionBarAPIEnabled`），避免关闭窗口时 AppKit 的 KVO 竞态崩溃。
+- 更新：`updater.rs` 从 GitHub Release 下载 `codex-mixin-app-<版本>-<target>.zip`，用内置 Ed25519 公钥校验 `.sig` 后由新版本的辅助进程替换整个 App。发布包由 `scripts/sign_update.sh` 用 `UPDATE_SIGNING_KEY` 签名；macOS 默认 ad-hoc 签名并固定 designated requirement，配置 Developer ID 证书与 notary 凭据后启用 hardened runtime 和公证。

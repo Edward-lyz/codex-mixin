@@ -1,7 +1,9 @@
-//! The menu bar (macOS) or notification area (Windows) icon. A left click
-//! toggles the status panel; the context menu offers the console and quit.
+//! The menu bar (macOS), notification area (Windows) or StatusNotifierItem
+//! (Linux) icon. A left click toggles the status panel; the context menu
+//! offers the console and quit.
 
 use gpui_kit::{App, Global, Pixels, Point, point, px};
+use tray_icon::dpi::PhysicalPosition;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -25,7 +27,7 @@ struct Tray {
 impl Global for Tray {}
 
 enum TrayInput {
-    Clicked(tray_icon::Rect),
+    Clicked(tray_icon::Rect, PhysicalPosition<f64>),
     Menu(String),
 }
 
@@ -64,12 +66,13 @@ pub fn install(cx: &mut App) {
     TrayIconEvent::set_event_handler(Some(move |event| {
         if let TrayIconEvent::Click {
             rect,
+            position,
             button: MouseButton::Left,
             button_state: MouseButtonState::Up,
             ..
         } = event
         {
-            let _ = click_sender.try_send(TrayInput::Clicked(rect));
+            let _ = click_sender.try_send(TrayInput::Clicked(rect, position));
         }
     }));
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -78,7 +81,7 @@ pub fn install(cx: &mut App) {
     cx.spawn(async move |cx| {
         while let Ok(input) = receiver.recv().await {
             cx.update(|cx| match input {
-                TrayInput::Clicked(rect) => panel::toggle(anchor(rect, cx), cx),
+                TrayInput::Clicked(rect, position) => panel::toggle(anchor(rect, position, cx), cx),
                 TrayInput::Menu(id) if id == OPEN_CONSOLE => Console::open(None, cx),
                 TrayInput::Menu(id) if id == QUIT => cx.quit(),
                 TrayInput::Menu(_) => {}
@@ -149,7 +152,7 @@ fn render_icon(running: bool) -> anyhow::Result<Icon> {
 
 /// Where the panel's top-center should sit, in GPUI's logical screen space.
 #[cfg(target_os = "macos")]
-fn anchor(rect: tray_icon::Rect, _: &App) -> Option<Point<Pixels>> {
+fn anchor(rect: tray_icon::Rect, _: PhysicalPosition<f64>, _: &App) -> Option<Point<Pixels>> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSScreen;
 
@@ -177,12 +180,30 @@ fn anchor(rect: tray_icon::Rect, _: &App) -> Option<Point<Pixels>> {
 
 /// Windows keeps the notification area beside the taskbar; the panel opens
 /// above it at the work area's corner.
-#[cfg(not(target_os = "macos"))]
-fn anchor(_: tray_icon::Rect, cx: &App) -> Option<Point<Pixels>> {
+#[cfg(windows)]
+fn anchor(_: tray_icon::Rect, _: PhysicalPosition<f64>, cx: &App) -> Option<Point<Pixels>> {
     let display = cx.primary_display()?;
     let bounds = display.visible_bounds();
     Some(point(
         bounds.right() - px(panel::PANEL_WIDTH / 2.0 + 12.0),
         bounds.bottom() - px(panel::PANEL_HEIGHT + 12.0),
     ))
+}
+
+/// Linux panels sit on any screen edge and StatusNotifierItem reports only
+/// the click point: the panel opens below a click in the top half of the
+/// screen and above one in the bottom half, kept inside the work area.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn anchor(_: tray_icon::Rect, click: PhysicalPosition<f64>, cx: &App) -> Option<Point<Pixels>> {
+    let bounds = cx.primary_display()?.visible_bounds();
+    let half_width = px(panel::PANEL_WIDTH / 2.0 + 12.0);
+    let x = px(click.x as f32)
+        .min(bounds.right() - half_width)
+        .max(bounds.left() + half_width);
+    let y = if px(click.y as f32) < bounds.center().y {
+        bounds.top() + px(12.0)
+    } else {
+        bounds.bottom() - px(panel::PANEL_HEIGHT + 12.0)
+    };
+    Some(point(x, y))
 }

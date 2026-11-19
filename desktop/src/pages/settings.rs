@@ -3,6 +3,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::progress::Progress;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex,
@@ -18,11 +19,10 @@ use serde::Deserialize;
 use super::{is_busy, run_change};
 use crate::store::{Change, Store, query};
 use crate::tr;
+use crate::updater::{APP_VERSION, UpdateState, Updater};
 use crate::widgets::{row_divider, section, setting_row};
 
-const RELEASES_URL: &str = "https://github.com/Edward-lyz/codex-mixin/releases/latest";
 const REPOSITORY_URL: &str = "https://github.com/Edward-lyz/codex-mixin";
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const WALLPAPERS: [&str; 3] = [
     "nasa-wallpapers/over-the-horizon.png",
     "nasa-wallpapers/crew-12-to-orbit.png",
@@ -32,12 +32,6 @@ const WALLPAPERS: [&str; 3] = [
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Autostart {
     enabled: bool,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-struct UpdateCheck {
-    current_version: String,
-    latest_version: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -56,8 +50,6 @@ struct DoctorCheck {
 
 pub struct SettingsPage {
     autostart: Option<bool>,
-    update: Option<Result<UpdateCheck, SharedString>>,
-    checking_update: bool,
     doctor: Option<Result<Doctor, SharedString>>,
     running_doctor: bool,
     wallpaper: usize,
@@ -65,20 +57,10 @@ pub struct SettingsPage {
     _subscriptions: Vec<Subscription>,
 }
 
-/// Compares dotted numeric versions; non-numeric parts compare as zero.
-fn is_newer(latest: &str, current: &str) -> bool {
-    let parse = |version: &str| -> Vec<u64> {
-        version
-            .split('.')
-            .map(|part| part.parse().unwrap_or(0))
-            .collect()
-    };
-    parse(latest) > parse(current)
-}
-
 impl SettingsPage {
     pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
+        let updater = cx.observe(&Updater::global(cx), |_, _, cx| cx.notify());
         let subscription = cx.observe(&store, |page, store: Entity<Store>, cx| {
             let revision = store.read(cx).revision;
             if revision != page.revision {
@@ -88,13 +70,11 @@ impl SettingsPage {
         });
         let mut page = Self {
             autostart: None,
-            update: None,
-            checking_update: false,
             doctor: None,
             running_doctor: false,
             wallpaper: chrono::Local::now().timestamp().unsigned_abs() as usize % WALLPAPERS.len(),
             revision: store.read(cx).revision,
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![subscription, updater],
         };
         page.reload(cx);
         page
@@ -114,23 +94,6 @@ impl SettingsPage {
             let result = task.await;
             page.update(cx, |page, cx| {
                 page.autostart = result.ok().map(|status| status.enabled);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn check_update(&mut self, cx: &mut Context<Self>) {
-        self.checking_update = true;
-        cx.notify();
-        let task =
-            query::<UpdateCheck>(vec!["update".into(), "--check".into(), "--json".into()], cx);
-        cx.spawn(async move |page, cx| {
-            let result = task.await;
-            page.update(cx, |page, cx| {
-                page.checking_update = false;
-                page.update = Some(result.map_err(|error| error.message.into()));
                 cx.notify();
             })
             .ok();
@@ -261,7 +224,7 @@ impl SettingsPage {
                     .when(running, |row| {
                         row.child(
                             Button::new("restart-gateway")
-                                .outline()
+                                .secondary()
                                 .small()
                                 .label(t!("settings.restart"))
                                 .disabled(busy)
@@ -269,7 +232,7 @@ impl SettingsPage {
                         )
                         .child(
                             Button::new("stop-gateway")
-                                .outline()
+                                .secondary()
                                 .small()
                                 .label(t!("settings.stop"))
                                 .disabled(busy)
@@ -307,7 +270,7 @@ impl SettingsPage {
                 t!("settings.export"),
                 Some(tr!("settings.export_detail")),
                 Button::new("export-backup")
-                    .outline()
+                    .secondary()
                     .small()
                     .icon(IconName::Upload)
                     .label(t!("settings.export_button"))
@@ -320,7 +283,7 @@ impl SettingsPage {
                 t!("settings.import"),
                 Some(tr!("settings.import_detail")),
                 Button::new("import-backup")
-                    .outline()
+                    .secondary()
                     .small()
                     .icon(IconName::Download)
                     .label(t!("settings.import_button"))
@@ -394,7 +357,7 @@ impl SettingsPage {
                 t!("settings.doctor"),
                 Some(summary),
                 Button::new("run-doctor")
-                    .outline()
+                    .secondary()
                     .small()
                     .icon(IconName::Activity)
                     .label(t!("settings.doctor_run"))
@@ -408,15 +371,33 @@ impl SettingsPage {
 
     fn render_about(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let update_line: SharedString = match &self.update {
-            None => tr!("settings.version", version = APP_VERSION),
-            Some(Err(error)) => error.clone(),
-            Some(Ok(check)) if is_newer(&check.latest_version, &check.current_version) => {
-                tr!("settings.update_available", version = check.latest_version)
+        let state = Updater::global(cx).read(cx).state.clone();
+        let update_line: SharedString = match &state {
+            UpdateState::Idle => tr!("settings.version", version = APP_VERSION),
+            UpdateState::Checking => tr!("update.checking"),
+            UpdateState::UpToDate => tr!("settings.up_to_date", version = APP_VERSION),
+            UpdateState::Available { version } => {
+                tr!("settings.update_available", version = version)
             }
-            Some(Ok(check)) => tr!("settings.up_to_date", version = check.current_version),
+            UpdateState::Downloading { version, progress } => tr!(
+                "update.downloading",
+                version = version,
+                percent = progress.map_or(0, |progress| (progress * 100.0) as u32)
+            ),
+            UpdateState::Ready { version } => tr!("update.ready", version = version),
+            UpdateState::Failed { message } => message.clone(),
         };
-        let newer = matches!(&self.update, Some(Ok(check)) if is_newer(&check.latest_version, &check.current_version));
+        let (label, busy) = match &state {
+            UpdateState::Available { .. } => (tr!("update.install"), false),
+            UpdateState::Downloading { .. } => (tr!("update.install"), true),
+            UpdateState::Ready { .. } => (tr!("update.restart"), false),
+            UpdateState::Checking => (tr!("settings.check_update"), true),
+            _ => (tr!("settings.check_update"), false),
+        };
+        let progress = match &state {
+            UpdateState::Downloading { progress, .. } => *progress,
+            _ => None,
+        };
         div()
             .relative()
             .h_48()
@@ -448,24 +429,31 @@ impl SettingsPage {
                                 v_flex()
                                     .flex_1()
                                     .child(div().text_lg().font_semibold().child("Codex Mixin"))
-                                    .child(div().text_xs().opacity(0.85).child(update_line)),
+                                    .child(div().text_xs().opacity(0.85).child(update_line))
+                                    .when_some(progress, |text, progress| {
+                                        text.child(
+                                            Progress::new("update-progress")
+                                                .value(progress * 100.0)
+                                                .h_1()
+                                                .mt_1(),
+                                        )
+                                    }),
                             )
                             .child(
                                 Button::new("check-update")
                                     .small()
-                                    .label(if newer {
-                                        t!("settings.download")
-                                    } else {
-                                        t!("settings.check_update")
-                                    })
-                                    .loading(self.checking_update)
-                                    .on_click(cx.listener(move |page, _, _, cx| {
-                                        if newer {
-                                            cx.open_url(RELEASES_URL);
-                                        } else {
-                                            page.check_update(cx);
-                                        }
-                                    })),
+                                    .label(label)
+                                    .loading(busy)
+                                    .disabled(busy)
+                                    .on_click(|_, _, cx| {
+                                        Updater::global(cx).update(cx, |updater, cx| match updater
+                                            .state
+                                        {
+                                            UpdateState::Available { .. } => updater.download(cx),
+                                            UpdateState::Ready { .. } => updater.restart(cx),
+                                            _ => updater.check(cx),
+                                        });
+                                    }),
                             )
                             .child(
                                 Button::new("open-repository")
@@ -494,6 +482,12 @@ impl Render for SettingsPage {
                     .px_6()
                     .py_5()
                     .gap_6()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_semibold()
+                            .child(t!("console.page.settings")),
+                    )
                     .child(self.render_about(cx))
                     .child(self.render_gateway(cx))
                     .child(self.render_backup(cx))

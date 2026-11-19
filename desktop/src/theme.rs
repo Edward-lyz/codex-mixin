@@ -2,6 +2,7 @@
 //! app follows the system light/dark appearance and uses one family of
 //! cubic Bezier curves for every transition.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use gpui_kit::base::motion::{Easing, Transition};
@@ -22,6 +23,21 @@ pub const EXIT_CURVE: (f32, f32, f32, f32) = (0.4, 0.0, 1.0, 1.0);
 
 pub const MOVE_DURATION: Duration = Duration::from_millis(340);
 pub const ENTER_DURATION: Duration = Duration::from_millis(260);
+
+/// Whether windows sit on the system's frosted-glass material: an
+/// `NSVisualEffectView` on macOS and acrylic on Windows. On Linux GPUI asks
+/// Wayland compositors for blur, which KWin reliably provides; X11 and
+/// compositors without blur would show the desktop unblurred, so they stay
+/// opaque.
+pub static FROSTED: LazyLock<bool> = LazyLock::new(|| {
+    if cfg!(any(target_os = "macos", windows)) {
+        return true;
+    }
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| desktop.contains("KDE"))
+});
+/// Opacity of the sidebar tint over the frosted material.
+pub const FROSTED_TINT: f32 = 0.72;
 
 pub fn bezier(curve: (f32, f32, f32, f32)) -> Easing {
     let (x1, y1, x2, y2) = curve;

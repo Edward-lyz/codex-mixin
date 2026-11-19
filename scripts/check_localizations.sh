@@ -24,8 +24,9 @@ awk '
   }
 ' "$LOCALES" | LC_ALL=C sort > "$TEMP_DIR/defined.keys"
 
-if [[ "$(LC_ALL=C sort "$TEMP_DIR/defined.keys" | uniq -d | wc -l)" -ne 0 ]]; then
-  echo "duplicate localization keys" >&2
+DUPLICATES="$(grep -E '^[a-z][a-z0-9_.]*:[[:space:]]*$' "$LOCALES" | LC_ALL=C sort | uniq -d)"
+if [[ -n "$DUPLICATES" ]]; then
+  echo "duplicate localization keys: $DUPLICATES" >&2
   exit 1
 fi
 

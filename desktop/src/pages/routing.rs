@@ -2,6 +2,8 @@
 //! the saved route JSON so fields it does not show are preserved; the CLI
 //! validates and stores the result.
 
+use std::time::Duration;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
@@ -13,16 +15,18 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _,
+    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, ElementId,
+    Entity, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, Pixels,
+    Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    WeakEntity, Window, canvas, div, fill, point, prelude::FluentBuilder as _, px, size,
 };
 use rust_i18n::t;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{is_busy, placeholder, run_change};
+use super::{is_busy, placeholder, run_change, run_change_then};
 use crate::store::{Change, Store, query};
+use crate::theme;
 use crate::tr;
 use crate::widgets::{pill, row_divider, section, setting_row};
 
@@ -63,14 +67,6 @@ impl Kind {
             Kind::Failover => tr!("routing.kind.failover"),
             Kind::Fusion => tr!("routing.kind.fusion"),
             Kind::Schedule => tr!("routing.kind.schedule"),
-        }
-    }
-
-    fn description(self) -> SharedString {
-        match self {
-            Kind::Failover => tr!("routing.kind.failover_detail"),
-            Kind::Fusion => tr!("routing.kind.fusion_detail"),
-            Kind::Schedule => tr!("routing.kind.schedule_detail"),
         }
     }
 
@@ -143,6 +139,8 @@ pub struct RoutingPage {
     selected: Option<String>,
     draft: Option<Draft>,
     name: Entity<InputState>,
+    /// Whether the failover flow previews a failing entry model.
+    simulating: bool,
     revision: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -197,6 +195,7 @@ impl RoutingPage {
             selected: None,
             draft: None,
             name,
+            simulating: false,
             revision: store.read(cx).revision,
             _subscriptions: vec![name_subscription, store_subscription],
         };
@@ -331,8 +330,22 @@ impl RoutingPage {
         if let Some(previous) = &draft.replace_model {
             args.extend(["--replace-model".to_owned(), previous.clone()]);
         }
-        draft.dirty = false;
-        run_change(Change::new(t!("routing.save_label"), args).applied(), cx);
+        let saved = run_change_then(Change::new(t!("routing.save_label"), args).applied(), cx);
+        let editing = self.selected.clone();
+        cx.spawn(async move |page, cx| {
+            if saved.await {
+                page.update(cx, |page, cx| {
+                    // Leave a route the user opened while the save ran.
+                    if page.selected == editing {
+                        page.draft = None;
+                        page.selected = None;
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn update_draft(view: &WeakEntity<Self>, cx: &mut App, edit: impl FnOnce(&mut Draft)) {
@@ -366,7 +379,7 @@ impl RoutingPage {
         let view = cx.entity().downgrade();
         let on_pick = std::rc::Rc::new(on_pick);
         Button::new(id)
-            .outline()
+            .secondary()
             .small()
             .label(label)
             .dropdown_caret(true)
@@ -418,9 +431,9 @@ impl RoutingPage {
                 .py_2()
                 .rounded_lg()
                 .cursor_pointer()
-                .when(selected, |row| row.bg(colors.sidebar_accent))
+                .when(selected, |row| row.bg(colors.list_active))
                 .when(!selected, |row| {
-                    row.hover(|style| style.bg(colors.sidebar_accent.opacity(0.5)))
+                    row.hover(|style| style.bg(colors.list_hover))
                 })
                 .on_click(cx.listener(move |page, _, window, cx| page.select(&target, window, cx)))
                 .child(
@@ -478,9 +491,8 @@ impl RoutingPage {
             .w_72()
             .flex_none()
             .h_full()
-            .bg(colors.sidebar)
             .border_r_1()
-            .border_color(colors.sidebar_border)
+            .border_color(colors.border)
             .child(
                 v_flex()
                     .id("route-list")
@@ -526,110 +538,189 @@ impl RoutingPage {
     }
 
     fn render_failover(&self, draft: &Draft, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors;
+        let simulating = self.simulating;
         let source = draft.text("source");
         let fallbacks = draft.list("fallbacks");
         let view = cx.entity().downgrade();
-        let rows = fallbacks.iter().enumerate().map(|(index, model)| {
-            let remove_view = view.clone();
-            let up_view = view.clone();
-            let picker = self.model_picker(
-                ElementId::Name(format!("fallback-{index}").into()),
-                Some(model.clone()),
-                cx,
-                move |draft, picked| {
-                    let mut list = draft.list("fallbacks");
-                    if let Some(slot) = list.get_mut(index) {
-                        *slot = picked;
-                    }
-                    draft.set("fallbacks", json!(list));
-                },
-            );
+        let node = |active: bool| {
             h_flex()
+                .absolute()
+                .h(px(NODE_HEIGHT))
+                .pl_3()
+                .pr_1()
                 .gap_2()
-                .px_4()
-                .py_2()
-                .child(
-                    div()
-                        .w_6()
-                        .text_xs()
-                        .text_color(cx.theme().colors.muted_foreground)
-                        .child(format!("{}", index + 1)),
-                )
-                .child(picker)
-                .child(div().flex_1())
-                .child(
-                    Button::new(ElementId::Name(format!("fallback-up-{index}").into()))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::ChevronUp)
-                        .disabled(index == 0)
-                        .on_click(move |_, _, cx| {
-                            Self::update_draft(&up_view, cx, |draft| {
-                                let mut list = draft.list("fallbacks");
-                                list.swap(index, index - 1);
-                                draft.set("fallbacks", json!(list));
-                            });
-                        }),
-                )
-                .child(
-                    Button::new(ElementId::Name(format!("fallback-remove-{index}").into()))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::Trash)
-                        .on_click(move |_, _, cx| {
-                            Self::update_draft(&remove_view, cx, |draft| {
-                                let mut list = draft.list("fallbacks");
-                                list.remove(index);
-                                draft.set("fallbacks", json!(list));
-                            });
-                        }),
-                )
-        });
-        let add_view = view.clone();
+                .rounded_full()
+                .bg(colors.popover)
+                .border_1()
+                .border_color(if active {
+                    colors.primary.opacity(0.8)
+                } else {
+                    colors.border
+                })
+        };
+        let picker_slot =
+            |picker: AnyElement| div().flex_1().min_w_0().overflow_hidden().child(picker);
+        let fallback_nodes: Vec<AnyElement> = fallbacks
+            .iter()
+            .enumerate()
+            .map(|(index, model)| {
+                let remove_view = view.clone();
+                let up_view = view.clone();
+                let picker = self.model_picker(
+                    ElementId::Name(format!("fallback-{index}").into()),
+                    Some(model.clone()),
+                    cx,
+                    move |draft, picked| {
+                        let mut list = draft.list("fallbacks");
+                        if let Some(slot) = list.get_mut(index) {
+                            *slot = picked;
+                        }
+                        draft.set("fallbacks", json!(list));
+                    },
+                );
+                let trying = simulating && index == 0;
+                node(trying)
+                    .left(px(CHILD_LEFT))
+                    .top(px(child_top(index + 1)))
+                    .w(px(CHILD_WIDTH))
+                    .child(
+                        div()
+                            .size_5()
+                            .flex_none()
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .font_medium()
+                            .when(trying, |badge| {
+                                badge
+                                    .bg(colors.primary)
+                                    .text_color(colors.primary_foreground)
+                            })
+                            .when(!trying, |badge| {
+                                badge.bg(colors.muted).text_color(colors.muted_foreground)
+                            })
+                            .child(format!("{}", index + 1)),
+                    )
+                    .child(picker_slot(picker))
+                    .child(
+                        Button::new(ElementId::Name(format!("fallback-up-{index}").into()))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ChevronUp)
+                            .disabled(index == 0)
+                            .on_click(move |_, _, cx| {
+                                Self::update_draft(&up_view, cx, |draft| {
+                                    let mut list = draft.list("fallbacks");
+                                    list.swap(index, index - 1);
+                                    draft.set("fallbacks", json!(list));
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(ElementId::Name(format!("fallback-remove-{index}").into()))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::X)
+                            .on_click(move |_, _, cx| {
+                                Self::update_draft(&remove_view, cx, |draft| {
+                                    let mut list = draft.list("fallbacks");
+                                    list.remove(index);
+                                    draft.set("fallbacks", json!(list));
+                                });
+                            }),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let can_add = fallbacks.len() < MAX_FALLBACKS;
+        // The success leaf, each fallback, and the add leaf.
+        let children = 1 + fallbacks.len() + usize::from(can_add);
+        let root = node(!simulating)
+            .left(px(MAP_PAD))
+            .top(px(root_top(children)))
+            .w(px(ROOT_WIDTH))
+            .child(
+                Icon::new(IconName::LogIn)
+                    .size_4()
+                    .text_color(if simulating {
+                        colors.warning
+                    } else {
+                        colors.primary
+                    }),
+            )
+            .child(picker_slot(self.model_picker(
+                "failover-source",
+                source,
+                cx,
+                |draft, picked| draft.set("source", json!(picked)),
+            )));
+        let success = node(false)
+            .left(px(CHILD_LEFT))
+            .top(px(child_top(0)))
+            .pr_3()
+            .child(
+                Icon::new(IconName::CircleCheck)
+                    .size_4()
+                    .text_color(colors.success),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(colors.muted_foreground)
+                    .child(t!("routing.finish")),
+            );
         let first = self
             .models
             .first()
             .map(|model| model.id.clone())
             .unwrap_or_default();
-        let chain = v_flex().children(rows).child(
-            div().px_4().py_2().child(
-                Button::new("add-fallback")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Plus)
-                    .label(t!("routing.add_fallback"))
-                    .disabled(fallbacks.len() >= MAX_FALLBACKS)
-                    .on_click(move |_, _, cx| {
-                        let first = first.clone();
-                        Self::update_draft(&add_view, cx, move |draft| {
-                            let mut list = draft.list("fallbacks");
-                            list.push(first);
-                            draft.set("fallbacks", json!(list));
-                        });
-                    }),
-            ),
-        );
-        v_flex()
-            .gap_5()
-            .child(section(
-                t!("routing.entry"),
-                Some(tr!("routing.entry_detail")),
-                v_flex().child(setting_row(
-                    t!("routing.source"),
-                    None,
-                    self.model_picker("failover-source", source, cx, |draft, picked| {
-                        draft.set("source", json!(picked))
-                    }),
-                    cx,
-                )),
-                cx,
-            ))
-            .child(section(
-                t!("routing.fallbacks"),
-                Some(tr!("routing.fallbacks_detail")),
-                chain,
-                cx,
-            ))
+        let add_view = view.clone();
+        let add = can_add.then(|| {
+            h_flex()
+                .id("add-fallback")
+                .absolute()
+                .left(px(CHILD_LEFT))
+                .top(px(child_top(children - 1)))
+                .h(px(NODE_HEIGHT))
+                .px_3()
+                .gap_2()
+                .rounded_full()
+                .border_1()
+                .border_dashed()
+                .border_color(colors.border)
+                .text_sm()
+                .text_color(colors.muted_foreground)
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.list_hover).text_color(colors.foreground))
+                .child(Icon::new(IconName::Plus).size_4())
+                .child(t!("routing.add_fallback"))
+                .on_click(move |_, _, cx| {
+                    let first = first.clone();
+                    Self::update_draft(&add_view, cx, move |draft| {
+                        let mut list = draft.list("fallbacks");
+                        list.push(first);
+                        draft.set("fallbacks", json!(list));
+                    });
+                })
+        });
+        let stage = div()
+            .relative()
+            .w_full()
+            .min_w(px(MAP_MIN_WIDTH))
+            .h(px(map_height(children)))
+            .child(map_branches(children, can_add, simulating, cx))
+            .child(root)
+            .child(success)
+            .children(fallback_nodes)
+            .children(add);
+        div()
+            .id("failover-map")
+            .w_full()
+            .overflow_x_scroll()
+            .child(stage)
             .into_any_element()
     }
 
@@ -651,7 +742,7 @@ impl RoutingPage {
         let view = cx.entity().downgrade();
         let on_pick = std::rc::Rc::new(on_pick);
         Button::new(id)
-            .outline()
+            .secondary()
             .small()
             .label(label)
             .dropdown_caret(true)
@@ -1021,14 +1112,30 @@ impl RoutingPage {
                         v_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(div().text_lg().font_semibold().truncate().child(title))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(colors.muted_foreground)
-                                    .child(kind.description()),
-                            ),
+                            .child(div().text_lg().font_semibold().truncate().child(title)),
                     )
+                    .when(kind == Kind::Failover, |header| {
+                        let simulating = self.simulating;
+                        header.child(
+                            Button::new("simulate-failover")
+                                .ghost()
+                                .small()
+                                .icon(if simulating {
+                                    IconName::Pause
+                                } else {
+                                    IconName::Play
+                                })
+                                .label(if simulating {
+                                    t!("routing.stop_simulation")
+                                } else {
+                                    t!("routing.simulate_failure")
+                                })
+                                .on_click(cx.listener(|page, _, _, cx| {
+                                    page.simulating = !page.simulating;
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .children(delete),
             )
             .when(
@@ -1038,15 +1145,7 @@ impl RoutingPage {
                         h_flex()
                             .gap_3()
                             .child(div().text_sm().w_24().child(t!("routing.name")))
-                            .child(div().w_72().child(Input::new(&self.name).small()))
-                            .when(kind != Kind::Failover, |row| {
-                                row.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(colors.muted_foreground)
-                                        .child(t!("routing.name_hint", prefix = VIRTUAL_PREFIX)),
-                                )
-                            }),
+                            .child(div().w_72().child(Input::new(&self.name).small())),
                     )
                 },
             )
@@ -1164,4 +1263,168 @@ impl Render for RoutingPage {
             )
             .into_any_element()
     }
+}
+
+// Failover mind map: the entry model is the root on the left; its branches
+// fan out to the success leaf, each fallback in order, and the add leaf.
+// Every node has a fixed height, so the curves share the layout's geometry.
+const MAP_PAD: f32 = 4.0;
+const ROOT_WIDTH: f32 = 232.0;
+const BRANCH_GAP: f32 = 104.0;
+const CHILD_LEFT: f32 = MAP_PAD + ROOT_WIDTH + BRANCH_GAP;
+const CHILD_WIDTH: f32 = 288.0;
+const NODE_HEIGHT: f32 = 40.0;
+const CHILD_GAP: f32 = 18.0;
+const MAP_TOP: f32 = 24.0;
+const MAP_MIN_WIDTH: f32 = CHILD_LEFT + CHILD_WIDTH + MAP_PAD;
+/// One request travels a branch per cycle.
+const FLOW_CYCLE: Duration = Duration::from_millis(2400);
+/// Beads drawn behind the request, fading out.
+const WAKE_BEADS: usize = 6;
+
+fn child_top(index: usize) -> f32 {
+    MAP_TOP + index as f32 * (NODE_HEIGHT + CHILD_GAP)
+}
+
+fn map_height(children: usize) -> f32 {
+    child_top(children) - CHILD_GAP + MAP_PAD
+}
+
+/// The root sits level with the middle of its children.
+fn root_top(children: usize) -> f32 {
+    (child_top(0) + child_top(children - 1)) / 2.0
+}
+
+/// A cubic Bezier branch between two node edges.
+#[derive(Clone, Copy)]
+struct Curve {
+    from: Point<Pixels>,
+    control_a: Point<Pixels>,
+    control_b: Point<Pixels>,
+    to: Point<Pixels>,
+}
+
+impl Curve {
+    /// A horizontal S-curve, leaving and entering its nodes level.
+    fn level(from: Point<Pixels>, to: Point<Pixels>) -> Self {
+        let pull = (to.x - from.x) * 0.55;
+        Self {
+            from,
+            control_a: point(from.x + pull, from.y),
+            control_b: point(to.x - pull, to.y),
+            to,
+        }
+    }
+
+    fn at(&self, t: f32) -> Point<Pixels> {
+        let inverse = 1.0 - t;
+        let weights = [
+            inverse * inverse * inverse,
+            3.0 * inverse * inverse * t,
+            3.0 * inverse * t * t,
+            t * t * t,
+        ];
+        let points = [self.from, self.control_a, self.control_b, self.to];
+        let mix = |axis: fn(&Point<Pixels>) -> f32| {
+            px(points
+                .iter()
+                .zip(weights)
+                .map(|(point, weight)| axis(point) * weight)
+                .sum())
+        };
+        point(
+            mix(|point| f32::from(point.x)),
+            mix(|point| f32::from(point.y)),
+        )
+    }
+
+    fn stroke(&self, width: f32, dashed: bool, window: &mut Window, color: Hsla) {
+        let mut path = PathBuilder::stroke(px(width));
+        if dashed {
+            path = path.dash_array(&[px(3.0), px(4.0)]);
+        }
+        path.move_to(self.from);
+        path.cubic_bezier_to(self.to, self.control_a, self.control_b);
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+        }
+    }
+}
+
+/// The branches and the travelling request. At rest the request takes the
+/// success branch, which breathes; a simulated failure sends it to the
+/// first fallback instead. Each journey eases on the product move curve.
+fn map_branches(children: usize, can_add: bool, simulating: bool, cx: &App) -> impl IntoElement {
+    let colors = cx.theme().colors;
+    let idle = colors.muted_foreground.opacity(0.35);
+    let active = colors.primary;
+    div().absolute().inset_0().with_animation(
+        ElementId::Name(format!("failover-map-{simulating}-{children}").into()),
+        Animation::new(FLOW_CYCLE).repeat(),
+        move |layer, cycle| {
+            let ease = theme::curve(theme::MOVE_CURVE);
+            let breath = 0.5 - 0.5 * (cycle * std::f32::consts::TAU).cos();
+            layer.child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let at = |x: f32, y: f32| {
+                            point(bounds.origin.x + px(x), bounds.origin.y + px(y))
+                        };
+                        let root = at(MAP_PAD + ROOT_WIDTH, root_top(children) + NODE_HEIGHT / 2.0);
+                        let branches: Vec<Curve> = (0..children)
+                            .map(|index| {
+                                Curve::level(
+                                    root,
+                                    at(CHILD_LEFT, child_top(index) + NODE_HEIGHT / 2.0),
+                                )
+                            })
+                            .collect();
+                        // The success leaf is index 0; the first fallback is 1.
+                        let lit = usize::from(simulating && children > 1 + usize::from(can_add));
+                        for (index, branch) in branches.iter().enumerate() {
+                            if index == lit {
+                                continue;
+                            }
+                            let dashed = can_add && index == children - 1;
+                            branch.stroke(1.25, dashed, window, idle);
+                        }
+                        let branch = branches[lit];
+                        branch.stroke(6.0, false, window, active.opacity(0.06 + 0.1 * breath));
+                        branch.stroke(1.5, false, window, active.opacity(0.6 + 0.3 * breath));
+                        for bead in 0..WAKE_BEADS {
+                            let progress = (cycle - bead as f32 * 0.02) / 0.7;
+                            if !(0.0..1.0).contains(&progress) {
+                                continue;
+                            }
+                            let center = branch.at(ease(progress));
+                            let fade = 1.0 - bead as f32 / WAKE_BEADS as f32;
+                            let radius = if bead == 0 { 3.5 } else { 2.5 * fade + 0.5 };
+                            let color = if bead == 0 {
+                                colors.popover_foreground
+                            } else {
+                                active.opacity(0.45 * fade)
+                            };
+                            window.paint_quad(
+                                fill(
+                                    Bounds::centered_at(
+                                        center,
+                                        size(px(radius * 2.0), px(radius * 2.0)),
+                                    ),
+                                    color,
+                                )
+                                .corner_radii(px(radius)),
+                            );
+                        }
+                        // Root port.
+                        window.paint_quad(
+                            fill(Bounds::centered_at(root, size(px(6.0), px(6.0))), active)
+                                .corner_radii(px(3.0)),
+                        );
+                    },
+                )
+                .size_full(),
+            )
+        },
+    )
 }
