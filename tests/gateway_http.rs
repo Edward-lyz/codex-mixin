@@ -178,12 +178,14 @@ struct OfficialState {
 #[derive(Clone, Copy)]
 enum OfficialWebSocketBehavior {
     Persistent,
+    PersistentWithoutTerminalOutput,
     CloseAfterCreated,
     CloseAfterCompletedWithCustomTool,
     CloseAfterCompletedWithCollaborationTool,
     NativeAgentEnvelopeGate,
     TerminalFailuresBeforeRecovery,
     ConnectionLimitThenComplete,
+    RejectMessageSize,
     Silent,
     SlowHandshake,
     RateLimitedHttp,
@@ -628,6 +630,10 @@ async fn spawn_mock_official(
         .route("/v1/realtime/calls", post(mock_official_realtime_call))
         .route(
             "/v1/responses",
+            get(mock_official_responses_ws).post(mock_official_responses),
+        )
+        .route(
+            "/backend-api/codex/responses",
             get(mock_official_responses_ws).post(mock_official_responses),
         )
         .route("/v1/responses/compact", post(mock_official_responses))
@@ -1435,6 +1441,19 @@ async fn serve_mock_official_websocket(
             requests.push(body);
             requests.len()
         };
+        if matches!(
+            state.websocket_behavior,
+            OfficialWebSocketBehavior::RejectMessageSize
+        ) {
+            socket
+                .send(AxumWsMessage::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1009,
+                    reason: "message too big".into(),
+                })))
+                .await
+                .unwrap();
+            return;
+        }
         if gated_native_envelope
             || matches!(state.websocket_behavior, OfficialWebSocketBehavior::Silent)
         {
@@ -1614,8 +1633,11 @@ async fn serve_mock_official_websocket(
         }
         let completed_output = if matches!(
             state.websocket_behavior,
+            OfficialWebSocketBehavior::PersistentWithoutTerminalOutput
+        ) || (matches!(
+            state.websocket_behavior,
             OfficialWebSocketBehavior::CloseAfterCompletedWithCustomTool
-        ) && request_number == 1
+        ) && request_number == 1)
         {
             json!([])
         } else {

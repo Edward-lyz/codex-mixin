@@ -3,9 +3,9 @@ use super::routing::{
     RealtimeRoute, official_codex_base_url, official_live_sideband_url, parse_custom_call_id,
     provider_realtime_url, resolve_realtime_route, set_mapped_query,
 };
-use super::websocket_proxy::{connect_official_websocket, connect_upstream_websocket};
 use super::{AppState, GatewayError, ProviderRuntime};
 use crate::upstream::FORWARDED_OFFICIAL_HEADERS;
+use crate::upstream::websocket::{connect_official_websocket, connect_upstream_websocket};
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, Uri, header};
 use axum::response::{IntoResponse, Response};

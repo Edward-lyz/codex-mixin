@@ -1,6 +1,175 @@
 use super::*;
 
 #[tokio::test]
+async fn official_http_stream_reuses_upstream_websocket_and_sends_only_new_input() {
+    let (mut config, requests, connections, _auth) = mock_official_gateway_config(
+        OfficialWebSocketBehavior::PersistentWithoutTerminalOutput,
+        Duration::from_secs(5),
+    )
+    .await;
+    config.official_responses_url = config
+        .official_responses_url
+        .replace("/v1/responses", "/backend-api/codex/responses");
+    let gateway = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let mut body = responses_request();
+    body["model"] = json!("gpt-5.5");
+    body["stream"] = json!(true);
+    let first = client
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", "first-thread")
+        .header("x-codex-turn-metadata", r#"{"turn_id":"first"}"#)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let events: Vec<Value> = first
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|json| serde_json::from_str::<Value>(json).ok())
+        .collect();
+    let completed = events
+        .iter()
+        .find(|event| event["type"] == "response.completed")
+        .expect("the upstream WebSocket completed the HTTP turn");
+    let output_item = &events
+        .iter()
+        .find(|event| event["type"] == "response.output_item.done")
+        .unwrap()["item"];
+    let new_input = json!({"type":"message", "role":"user", "content":[{"type":"input_text","text":"next turn"}]});
+    let input = body["input"].as_array_mut().unwrap();
+    input.push(output_item.clone());
+    input.push(new_input.clone());
+
+    for thread in ["first-thread", "other-thread"] {
+        let reply = client
+            .post(format!("{gateway}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header("thread-id", thread)
+            .header("x-codex-turn-metadata", r#"{"turn_id":"second"}"#)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(reply.contains("event: response.completed"), "{reply}");
+    }
+
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0]["type"], "response.create");
+    assert_eq!(
+        requests[1]["previous_response_id"],
+        completed["response"]["id"]
+    );
+    assert_eq!(requests[1]["input"], json!([new_input]));
+    assert_eq!(
+        requests[1]["client_metadata"]["x-codex-turn-metadata"],
+        r#"{"turn_id":"second"}"#
+    );
+    assert!(requests[2].get("previous_response_id").is_none());
+    assert_eq!(requests[2]["input"], body["input"]);
+}
+
+#[tokio::test]
+async fn official_http_stream_falls_back_on_unavailable_upstream_websocket() {
+    for (behavior, timeout, saw_websocket_request) in [
+        (
+            OfficialWebSocketBehavior::SlowHandshake,
+            Duration::from_millis(300),
+            false,
+        ),
+        (
+            OfficialWebSocketBehavior::ConnectionLimitThenComplete,
+            Duration::from_secs(5),
+            true,
+        ),
+        (
+            OfficialWebSocketBehavior::RejectMessageSize,
+            Duration::from_secs(5),
+            true,
+        ),
+    ] {
+        let (mut config, requests, _connections, _auth) =
+            mock_official_gateway_config(behavior, timeout).await;
+        config.official_responses_url = config
+            .official_responses_url
+            .replace("/v1/responses", "/backend-api/codex/responses");
+        let gateway = spawn_gateway_with_config(config).await;
+        let mut body = responses_request();
+        body["model"] = json!("gpt-5.5");
+        body["stream"] = json!(true);
+        let reply = reqwest::Client::new()
+            .post(format!("{gateway}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header("thread-id", "fallback-thread")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(reply.contains("response.completed"), "{reply}");
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), usize::from(saw_websocket_request) + 1);
+        if saw_websocket_request {
+            assert_eq!(requests[0]["type"], "response.create");
+        }
+        let http = requests.last().unwrap();
+        assert!(http.get("type").is_none());
+        assert_eq!(http["input"], body["input"]);
+    }
+}
+
+#[tokio::test]
+async fn official_http_stream_does_not_replay_after_websocket_response_started() {
+    let (mut config, requests, _connections, _auth) = mock_official_gateway_config(
+        OfficialWebSocketBehavior::CloseAfterCreated,
+        Duration::from_secs(5),
+    )
+    .await;
+    config.official_responses_url = config
+        .official_responses_url
+        .replace("/v1/responses", "/backend-api/codex/responses");
+    let gateway = spawn_gateway_with_config(config).await;
+    let mut body = responses_request();
+    body["model"] = json!("gpt-5.5");
+    body["stream"] = json!(true);
+    let reply = reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", "interrupted-thread")
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(reply.contains("event: response.created"), "{reply}");
+    assert!(reply.contains("event: response.failed"), "{reply}");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["type"], "response.create");
+}
+
+#[tokio::test]
 async fn maps_custom_websocket_to_responses_frames() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);

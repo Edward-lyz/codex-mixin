@@ -29,7 +29,9 @@ mod ducx;
 mod http_compression;
 mod kiro;
 mod official;
+mod responses_websocket;
 pub(crate) mod transport_log;
+pub(crate) mod websocket;
 use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace};
 
 pub(crate) use official::{
@@ -59,11 +61,17 @@ pub(crate) struct UpstreamAccess {
     official_account_auth: Arc<tokio::sync::Mutex<HashMap<PathBuf, OfficialAuthSlot>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
     gzip_support: Arc<tokio::sync::Mutex<HashMap<reqwest::Url, bool>>>,
+    responses_websockets: Arc<tokio::sync::Mutex<responses_websocket::ResponsesWebSockets>>,
+    proxy_selection: crate::platform::proxy::ProxySelection,
     claude_code: Arc<claude_code::ClaudeCodeSessions>,
 }
 
 impl UpstreamAccess {
-    pub(crate) fn new(config: Arc<GatewayConfig>, client: Client) -> Self {
+    pub(crate) fn new(
+        config: Arc<GatewayConfig>,
+        client: Client,
+        proxy_selection: crate::platform::proxy::ProxySelection,
+    ) -> Self {
         Self {
             config,
             client,
@@ -73,6 +81,8 @@ impl UpstreamAccess {
             official_account_auth: Arc::default(),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             gzip_support: Arc::default(),
+            responses_websockets: Arc::default(),
+            proxy_selection,
             claude_code: Arc::default(),
         }
     }

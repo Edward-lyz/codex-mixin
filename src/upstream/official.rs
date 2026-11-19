@@ -65,11 +65,14 @@ impl UpstreamAccess {
         &self,
         headers: &HeaderMap,
         mut body: Value,
+        prefer_websocket: bool,
     ) -> Result<(reqwest::Response, Value, bool), GatewayError> {
         let saved = crate::protocol::convert::collaboration::prepare_request(&mut body)?;
         let plaintext_collaboration = saved.active();
         let body = OfficialResponsesBody::new(body)?;
-        let (response, body) = self.send_official_body(headers, body).await?;
+        let (response, body) = self
+            .send_official_body(headers, body, prefer_websocket)
+            .await?;
         let mut body = body.0;
         crate::protocol::convert::collaboration::restore_request(&mut body, saved);
         Ok((response, body, plaintext_collaboration))
@@ -79,19 +82,35 @@ impl UpstreamAccess {
         &self,
         headers: &HeaderMap,
         body: OfficialResponsesBody,
+        prefer_websocket: bool,
     ) -> Result<(reqwest::Response, OfficialResponsesBody), GatewayError> {
         let (authorization, account_id) =
             self.official_auth().await.map_err(GatewayError::Other)?;
+        let url = reqwest::Url::parse(&self.config.official_responses_url)
+            .map_err(|error| GatewayError::Other(error.into()))?;
+        if prefer_websocket
+            && url.path() == "/backend-api/codex/responses"
+            && body.0.get("stream").and_then(Value::as_bool) == Some(true)
+            && body.0.get("previous_response_id").is_none()
+            && body.0.get("input").is_some_and(Value::is_array)
+            && let Some(response) = self
+                .try_official_responses_websocket(
+                    url.clone(),
+                    headers,
+                    (&authorization, &account_id),
+                    serde_json::to_value(&body)
+                        .map_err(|error| GatewayError::Other(error.into()))?,
+                )
+                .await?
+        {
+            return Ok((response, body));
+        }
         let request = forward_official_headers(
-            self.official_request(
-                reqwest::Method::POST,
-                reqwest::Url::parse(&self.config.official_responses_url)
-                    .map_err(|error| GatewayError::Other(error.into()))?,
-            )
-            .await?
-            .header(header::AUTHORIZATION, authorization)
-            .header("chatgpt-account-id", account_id)
-            .header(header::ACCEPT, "text/event-stream"),
+            self.official_request(reqwest::Method::POST, url)
+                .await?
+                .header(header::AUTHORIZATION, authorization)
+                .header("chatgpt-account-id", account_id)
+                .header(header::ACCEPT, "text/event-stream"),
             headers,
         );
         self.send_json_retaining(request, body, None).await

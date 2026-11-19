@@ -82,7 +82,11 @@ impl AppState {
             .pool_max_idle_per_host(64)
             .build()?;
         let config = Arc::new(config);
-        let upstream = Arc::new(UpstreamAccess::new(Arc::clone(&config), client));
+        let upstream = Arc::new(UpstreamAccess::new(
+            Arc::clone(&config),
+            client,
+            websocket_proxy_env.clone(),
+        ));
         let image_routes = ImageRouteRegistry::default();
         let cache_shapes = Arc::new(CacheShapeTracker::with_usage(
             usage.with_providers(&config.providers),

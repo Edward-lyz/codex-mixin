@@ -493,8 +493,10 @@ impl GatewayExecutor {
             .unwrap_or("official")
             .to_owned();
         let observation = self.official_prefix_observation(headers, &body)?;
-        let (mut upstream, body, plaintext_collaboration) =
-            self.upstream.send_official_responses(headers, body).await?;
+        let (mut upstream, body, plaintext_collaboration) = self
+            .upstream
+            .send_official_responses(headers, body, false)
+            .await?;
         if upstream.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) =
                 normalize_provider_images_for_fallback(body.clone()).await?;
@@ -506,7 +508,7 @@ impl GatewayExecutor {
                 );
                 upstream = self
                     .upstream
-                    .send_official_responses(headers, fallback_body)
+                    .send_official_responses(headers, fallback_body, false)
                     .await?
                     .0;
             }
@@ -566,8 +568,10 @@ impl GatewayExecutor {
     ) -> Result<OfficialSendResult, GatewayError> {
         let body = super::prepare_compaction_replay(body, true).await?;
         let observation = self.official_prefix_observation(headers, &body)?;
-        let (mut response, body, plaintext_collaboration) =
-            self.upstream.send_official_responses(headers, body).await?;
+        let (mut response, body, plaintext_collaboration) = self
+            .upstream
+            .send_official_responses(headers, body, true)
+            .await?;
         if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             let (fallback_body, stats) = normalize_provider_images_for_fallback(body).await?;
             if stats.normalized_images > 0 && stats.saved_bytes > 0 {
@@ -578,7 +582,7 @@ impl GatewayExecutor {
                 );
                 response = self
                     .upstream
-                    .send_official_responses(headers, fallback_body)
+                    .send_official_responses(headers, fallback_body, false)
                     .await?
                     .0;
             }
