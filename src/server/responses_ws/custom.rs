@@ -11,7 +11,9 @@ use super::super::compact;
 use super::{ResponsesWsContext, take_custom_request_input};
 use crate::fusion::{FusionEngine, should_fuse_turn};
 use crate::gateway::{RequestPlan, ResolvedModelRoute};
+use crate::protocol::convert::collaboration;
 use crate::protocol::sse::SseDecoder;
+use crate::provider::ProviderPreset;
 
 #[derive(Debug)]
 pub(super) struct CustomWebSocketState {
@@ -19,6 +21,41 @@ pub(super) struct CustomWebSocketState {
     model: String,
     route: ResolvedModelRoute,
     history: Vec<Value>,
+    collaboration_tool: Option<Value>,
+}
+
+fn owned_account_collaboration_tool(
+    state: &AppState,
+    route: &ResolvedModelRoute,
+    body: &Value,
+) -> Option<Value> {
+    let ResolvedModelRoute::Provider { provider_id, .. } = route else {
+        return None;
+    };
+    let tools = body.get("tools")?.as_array()?;
+    let provider = state.providers.provider(provider_id)?;
+    if provider.definition().preset_id.as_deref() != Some(ProviderPreset::Official.as_str()) {
+        return None;
+    }
+    tools
+        .iter()
+        .find(|tool| tool["type"] == "namespace" && tool["name"] == collaboration::NAMESPACE)
+        .cloned()
+}
+
+fn local_account_collaboration_tool(
+    state: &AppState,
+    route: &ResolvedModelRoute,
+    body: &mut Value,
+) -> anyhow::Result<Option<Value>> {
+    let tool = owned_account_collaboration_tool(state, route, body);
+    if tool.is_some() {
+        // Local completions skip the upstream adapter. Apply its normal checks
+        // before keeping a declaration, and leave the history in client form.
+        let saved = collaboration::prepare_request(body, None)?;
+        collaboration::restore_request(body, saved);
+    }
+    Ok(tool)
 }
 
 pub(super) async fn run_custom_ws_request(
@@ -41,26 +78,24 @@ pub(super) async fn run_custom_ws_request(
         let route = context
             .state
             .gateway
-            .resolve_model_route(&requested_model)
+            .resolve_responses_route(&requested_model, context.headers, body)
             .await?;
-        if let Some(response) =
-            compact::context_checkpoint(context.state, context.headers, body).await?
+        let response = match compact::context_checkpoint(context.state, context.headers, body)
+            .await?
         {
+            Some(response) => Some(response),
+            None if compact::prepare_v2_custom_compaction(context.state, body, &route).await? => {
+                Some(compact::local_compaction_response(body, &requested_model)?)
+            }
+            None => None,
+        };
+        if let Some(response) = response {
+            let collaboration_tool = local_account_collaboration_tool(context.state, &route, body)?;
             return complete_custom_compaction(
                 context.client_sender,
                 response,
                 requested_model,
-                route,
-            )
-            .await
-            .map(Some);
-        }
-        if compact::prepare_v2_custom_compaction(context.state, body, &route).await? {
-            let response = compact::local_compaction_response(body, &requested_model)?;
-            return complete_custom_compaction(
-                context.client_sender,
-                response,
-                requested_model,
+                collaboration_tool,
                 route,
             )
             .await
@@ -91,6 +126,7 @@ async fn complete_custom_compaction(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut response: Value,
     model: String,
+    collaboration_tool: Option<Value>,
     route: ResolvedModelRoute,
 ) -> anyhow::Result<CustomWebSocketState> {
     for event in compact::local_compaction_events(&response) {
@@ -113,6 +149,7 @@ async fn complete_custom_compaction(
         model,
         route,
         history,
+        collaboration_tool,
     })
 }
 
@@ -149,6 +186,7 @@ async fn proxy_custom_responses_ws(
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let model = requested_model;
+    let collaboration_tool = owned_account_collaboration_tool(state, &route, &body);
     let context_engine = if matches!(&route, ResolvedModelRoute::Fusion { .. }) {
         None
     } else {
@@ -282,6 +320,7 @@ async fn proxy_custom_responses_ws(
         model,
         route,
         history,
+        collaboration_tool,
     }))
 }
 
@@ -319,6 +358,14 @@ async fn expand_custom_websocket_history(
             state.model
         );
     }
+    // A named account gets a fresh HTTP request for each WebSocket turn.
+    // Only omission inherits its prior declaration; an explicit list replaces it.
+    if model == state.model
+        && body.get("tools").is_none()
+        && let Some(tool) = state.collaboration_tool
+    {
+        body["tools"] = Value::Array(vec![tool]);
+    }
     let incremental_input = body
         .get_mut("input")
         .map(Value::take)
@@ -348,6 +395,7 @@ async fn complete_custom_noop(
         .resolve_responses_route(&model, headers, &body)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let collaboration_tool = local_account_collaboration_tool(state, &route, &mut body)?;
     let history = take_custom_request_input(&mut body)?;
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     for status in ["in_progress", "completed"] {
@@ -373,5 +421,6 @@ async fn complete_custom_noop(
         model,
         route,
         history,
+        collaboration_tool,
     })
 }

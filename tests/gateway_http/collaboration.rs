@@ -182,11 +182,7 @@ async fn replays_legacy_collaboration_calls_for_declared_tools_only() {
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
-#[tokio::test]
-async fn official_account_collaboration_replays_after_gateway_restart() {
-    let (official_url, requests, _, _, _, _) =
-        spawn_mock_official(OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool)
-            .await;
+fn official_account_fixture(official_url: String, context_enabled: bool) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     let mut provider = ProviderPreset::Official.create("official-fixture", "");
     provider.base_url = official_url;
@@ -202,7 +198,7 @@ async fn official_account_collaboration_replays_after_gateway_restart() {
         gateway_api_key: Some("gateway-key".to_owned()),
         ..Default::default()
     };
-    stored.context.enabled = true;
+    stored.context.enabled = context_enabled;
     codex_mixin::config::save_stored_config_to_path(&root.path().join("config.json"), &stored)
         .unwrap();
     let credentials = root.path().join("oauth/accounts/official-fixture.json");
@@ -212,6 +208,44 @@ async fn official_account_collaboration_replays_after_gateway_restart() {
         r#"{"tokens":{"access_token":"fixture-token","account_id":"fixture-account"}}"#,
     )
     .unwrap();
+    root
+}
+
+async fn start_account_gateway(
+    root: &std::path::Path,
+    client: &reqwest::Client,
+) -> (tokio::process::Child, String) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let mut gateway = common::tokio_cli(root)
+        .args(["serve", "--bind", &address.to_string(), "--no-client-sync"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let url = format!("http://{address}");
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while client.get(format!("{url}/healthz")).send().await.is_err() {
+            assert!(
+                gateway.try_wait().unwrap().is_none(),
+                "gateway exited before listening"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("gateway did not listen");
+    (gateway, url)
+}
+
+#[tokio::test]
+async fn official_account_collaboration_replays_after_gateway_restart() {
+    let (official_url, requests, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool)
+            .await;
+    let root = official_account_fixture(official_url, true);
     let client = reqwest::Client::new();
     let mut body = json!({"model":"gpt-5.5-official-fixture", "stream":true,
         "tools":[{"type":"namespace","name":"collaboration","tools":[
@@ -222,28 +256,7 @@ async fn official_account_collaboration_replays_after_gateway_restart() {
             "content":[{"type":"input_text","text":"read probe"}]}]
     });
     for turn in 0..2 {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        let mut gateway = common::tokio_cli(root.path())
-            .args(["serve", "--bind", &address.to_string(), "--no-client-sync"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let url = format!("http://{address}");
-        tokio::time::timeout(Duration::from_secs(15), async {
-            while client.get(format!("{url}/healthz")).send().await.is_err() {
-                assert!(
-                    gateway.try_wait().unwrap().is_none(),
-                    "gateway exited before listening"
-                );
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-        })
-        .await
-        .expect("gateway did not listen");
+        let (mut gateway, url) = start_account_gateway(root.path(), &client).await;
         let response = client
             .post(format!("{url}/v1/responses"))
             .bearer_auth("gateway-key")
@@ -283,6 +296,144 @@ async fn official_account_collaboration_replays_after_gateway_restart() {
         }
         gateway.kill().await.unwrap();
     }
+}
+
+async fn account_tools_response(
+    State(requests): State<Arc<Mutex<Vec<Value>>>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    assert_eq!(headers["chatgpt-account-id"], "fixture-account");
+    let mut requests = requests.lock().unwrap();
+    let turn = requests.len() + 1;
+    let output: Vec<_> = body["tools"]
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["type"] == "namespace"))
+        .map(|tool| {
+            json!({"type":"function_call","namespace":tool["name"],
+            "name":tool["tools"][0]["name"],"id":format!("fc_{turn}"),
+            "call_id":format!("call_{turn}"),"arguments":"{}"})
+        })
+        .into_iter()
+        .collect();
+    requests.push(body);
+    let event = json!({"type":"response.completed","response":{
+        "id":format!("resp_{turn}"),"status":"completed","output":output
+    }});
+    (
+        [(header::CONTENT_TYPE, "text/event-stream")],
+        format!("event: response.completed\ndata: {event}\n\n"),
+    )
+}
+
+#[tokio::test]
+async fn owned_account_websocket_retains_only_omitted_collaboration_tools() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let upstream = spawn_router(
+        Router::new()
+            .route("/v1/responses", post(account_tools_response))
+            .with_state(requests.clone()),
+    )
+    .await;
+    let root = official_account_fixture(upstream, false);
+    let (mut gateway, url) = start_account_gateway(root.path(), &reqwest::Client::new()).await;
+    let mut request = format!("{}/v1/responses", url.replacen("http://", "ws://", 1))
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let model = "gpt-5.5-official-fixture";
+    let ordinary = json!({"type":"function","name":"fixture_echo","parameters":{"type":"object","properties":{}}});
+    let declared = json!({"type":"namespace","name":"collaboration","tools":[
+        {"type":"function","name":"list_agents","parameters":{"type":"object","properties":{}}}
+    ]});
+    let mut wire = declared.clone();
+    wire["name"] = json!("codex_mixin_collaboration");
+    let mut complete_turn = async |body: &Value| {
+        socket
+            .send(WsMessage::Text(body.to_string().into()))
+            .await
+            .unwrap();
+        let frames =
+            tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+                .await
+                .unwrap();
+        let completed: Value = serde_json::from_str(frames.last().unwrap()).unwrap();
+        assert_eq!(completed["type"], "response.completed", "{completed}");
+        completed
+    };
+    let mut body =
+        json!({"type":"response.create","model":model,"input":[{"role":"user","content":"start"}]});
+    for (turn, (client_tools, expected_tools)) in [
+        (
+            Some(json!([ordinary, declared])),
+            Some(json!([ordinary, wire])),
+        ),
+        (None, Some(json!([wire]))),
+        (Some(json!([ordinary])), Some(json!([ordinary]))),
+        (None, None),
+        (Some(json!([declared])), Some(json!([wire]))),
+        (Some(json!([])), Some(json!([]))),
+        (None, None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if let Some(tools) = client_tools {
+            body["tools"] = tools;
+        }
+        let completed = complete_turn(&body).await;
+        {
+            let captured = requests.lock().unwrap();
+            assert_eq!(captured.len(), turn + 1);
+            let sent = &captured[turn];
+            assert_eq!(sent["model"], "gpt-5.5");
+            assert!(sent.get("previous_response_id").is_none());
+            assert_eq!(sent.get("tools"), expected_tools.as_ref(), "turn {turn}");
+            if body["input"][0]["type"] == "function_call_output" {
+                assert_eq!(
+                    sent["input"].as_array().unwrap().last(),
+                    Some(&body["input"][0])
+                );
+            }
+        }
+        let output = completed["response"]["output"].as_array().unwrap();
+        let input = if matches!(turn, 0 | 1 | 4) {
+            assert_eq!(output.len(), 1);
+            assert_eq!(output[0]["namespace"], "collaboration");
+            assert_eq!(output[0]["name"], "list_agents");
+            json!([{"type":"function_call_output","call_id":output[0]["call_id"],"output":"done"}])
+        } else {
+            assert!(output.is_empty());
+            json!([{"role":"user","content":"continue"}])
+        };
+        body = json!({"type":"response.create","model":model,
+            "previous_response_id":completed["response"]["id"].as_str().unwrap(),"input":input});
+    }
+
+    // Start a fresh chain with a local prewarm, not an upstream response.
+    let forwarded = requests.lock().unwrap().len();
+    let warmup = complete_turn(
+        &json!({"type":"response.create","model":model,"generate":false,
+        "tools":[ordinary, declared],"input":[]}),
+    )
+    .await;
+    assert_eq!(warmup["response"]["output"], json!([]));
+    assert_eq!(requests.lock().unwrap().len(), forwarded);
+    let first = complete_turn(&json!({"type":"response.create","model":model,
+        "previous_response_id":warmup["response"]["id"].as_str().unwrap(),
+        "input":[{"role":"user","content":"after warmup"}]}))
+    .await;
+    assert_eq!(first["response"]["output"][0]["namespace"], "collaboration");
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), forwarded + 1);
+        assert_eq!(captured.last().unwrap()["tools"], json!([wire]));
+    }
+    gateway.kill().await.unwrap();
 }
 
 #[tokio::test]
