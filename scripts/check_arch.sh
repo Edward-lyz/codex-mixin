@@ -51,7 +51,7 @@ LOWER=(
     src/upstream src/ech.rs src/ech src/provider src/protocol src/catalog.rs src/catalog
     src/config.rs src/config src/benchmark src/web_search src/images
 )
-SHELLS=(macos panel windows)
+SHELLS=(desktop panel)
 
 check_paths "core" "${CORE[@]}"
 check_paths "protocol" "${PROTO_CONVERT[@]}"

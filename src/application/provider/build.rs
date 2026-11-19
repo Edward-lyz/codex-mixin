@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::provider::{
-    AWS_BEDROCK_DEFAULT_REGION, ProviderDefinition, ProviderModel, ProviderModelSource,
-    ProviderPreset, ProviderProtocol, ProviderQuotaParser, aws_bedrock_aksk_provider,
+    AWS_BEDROCK_DEFAULT_REGION, MIN_MODEL_REFRESH_INTERVAL_SECONDS, ModelRefreshPolicy,
+    ProviderDefinition, ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol,
+    ProviderQuotaParser, aws_bedrock_aksk_provider,
 };
 
 use super::super::error::OperationError;
@@ -82,6 +83,8 @@ pub struct UpdateProviderInput {
     pub clear_auto_review_model: bool,
     pub codex_thread_title_model: Option<String>,
     pub clear_codex_thread_title_model: bool,
+    pub auto_refresh_models: Option<bool>,
+    pub model_refresh_interval_seconds: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -399,6 +402,12 @@ pub fn update_provider_from_input(
         provider.codex_thread_title_model =
             Some(required("Codex thread title model", model).map_err(before_commit)?);
     }
+    apply_model_refresh(
+        &mut provider,
+        input.auto_refresh_models,
+        input.model_refresh_interval_seconds,
+    )
+    .map_err(before_commit)?;
     provider.validate().map_err(before_commit)?;
     update_provider(
         &id,
@@ -413,6 +422,32 @@ pub fn update_provider_from_input(
         should_probe_protocol,
         should_refresh_capabilities: refresh,
     })
+}
+
+/// Merges the refresh flags into the provider's policy. Setting only one flag
+/// keeps the other from the saved policy or the gateway default.
+fn apply_model_refresh(
+    provider: &mut ProviderDefinition,
+    enabled: Option<bool>,
+    interval_seconds: Option<u64>,
+) -> anyhow::Result<()> {
+    if enabled.is_none() && interval_seconds.is_none() {
+        return Ok(());
+    }
+    let saved = provider.model_refresh.unwrap_or(ModelRefreshPolicy {
+        enabled: true,
+        interval_seconds: MIN_MODEL_REFRESH_INTERVAL_SECONDS,
+    });
+    let interval_seconds = interval_seconds.unwrap_or(saved.interval_seconds);
+    anyhow::ensure!(
+        interval_seconds >= MIN_MODEL_REFRESH_INTERVAL_SECONDS,
+        "model refresh interval must be at least {MIN_MODEL_REFRESH_INTERVAL_SECONDS} seconds"
+    );
+    provider.model_refresh = Some(ModelRefreshPolicy {
+        enabled: enabled.unwrap_or(saved.enabled),
+        interval_seconds,
+    });
+    Ok(())
 }
 
 fn apply_quota_update(

@@ -1,42 +1,50 @@
 #!/usr/bin/env bash
+# Checks desktop/locales/app.yml: every key has en and zh-CN text, and every
+# key the desktop sources translate is defined.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENGLISH="$ROOT_DIR/macos/en.lproj/Localizable.strings"
-CHINESE="$ROOT_DIR/macos/zh-Hans.lproj/Localizable.strings"
+LOCALES="$ROOT_DIR/desktop/locales/app.yml"
+SOURCES="$ROOT_DIR/desktop/src"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-for strings_file in "$ENGLISH" "$CHINESE"; do
-  plutil -lint "$strings_file" >/dev/null
-done
+awk '
+  /^[a-z][a-z0-9_.]*:[[:space:]]*$/ { key = substr($0, 1, index($0, ":") - 1); keys[key] = 1; next }
+  /^  en:/ { en[key] = 1 }
+  /^  zh-CN:/ { zh[key] = 1 }
+  END {
+    for (key in keys) {
+      if (!(key in en)) print key " is missing en" > "/dev/stderr"
+      if (!(key in zh)) print key " is missing zh-CN" > "/dev/stderr"
+      if (!(key in en) || !(key in zh)) failed = 1
+      print key
+    }
+    exit failed
+  }
+' "$LOCALES" | LC_ALL=C sort > "$TEMP_DIR/defined.keys"
 
-extract_keys() {
-  plutil -p "$1" \
-    | sed -n 's/^  "\(.*\)" => .*$/\1/p' \
-    | LC_ALL=C sort
-}
-
-extract_keys "$ENGLISH" > "$TEMP_DIR/en.keys"
-extract_keys "$CHINESE" > "$TEMP_DIR/zh-Hans.keys"
-
-if ! diff -u "$TEMP_DIR/en.keys" "$TEMP_DIR/zh-Hans.keys"; then
-  echo "Localizable.strings keys differ between en and zh-Hans" >&2
+if [[ "$(LC_ALL=C sort "$TEMP_DIR/defined.keys" | uniq -d | wc -l)" -ne 0 ]]; then
+  echo "duplicate localization keys" >&2
   exit 1
 fi
 
-# Prefer rg when available, but keep CI runners that only ship stock tools working.
-if command -v rg >/dev/null 2>&1; then
-  rg -o 'AppLocalization\.string\("[^"]+"' "$ROOT_DIR/macos" --glob '*.swift'
-else
-  find "$ROOT_DIR/macos" -name '*.swift' -print0 \
-    | xargs -0 grep -oE 'AppLocalization\.string\("[^"]+"' || true
-fi \
-  | sed -E 's/.*AppLocalization\.string\("([^"]+)"/\1/' \
+# Multi-line t!/tr! calls put the key on the next line, so join lines first.
+find "$SOURCES" -name '*.rs' -print0 \
+  | xargs -0 cat \
+  | tr '\n' ' ' \
+  | grep -oE '(t|tr)!\([[:space:]]*"[a-z][a-z0-9_.]*"' \
+  | sed -E 's/.*"([^"]+)"/\1/' \
   | LC_ALL=C sort -u > "$TEMP_DIR/used.keys"
-if ! comm -23 "$TEMP_DIR/used.keys" "$TEMP_DIR/en.keys" | diff -u /dev/null -; then
-  echo "Swift code references localization keys missing from en.lproj" >&2
+find "$SOURCES" -name '*.rs' -print0 \
+  | xargs -0 grep -ohE '"cli\.[a-z_]+"' \
+  | tr -d '"' \
+  | LC_ALL=C sort -u >> "$TEMP_DIR/used.keys"
+LC_ALL=C sort -u -o "$TEMP_DIR/used.keys" "$TEMP_DIR/used.keys"
+
+if ! comm -23 "$TEMP_DIR/used.keys" "$TEMP_DIR/defined.keys" | diff -u /dev/null -; then
+  echo "desktop sources use localization keys missing from app.yml" >&2
   exit 1
 fi
 
-echo "Localization keys: matched ($(wc -l < "$TEMP_DIR/en.keys" | tr -d '[:space:]'))"
+echo "Localization keys: matched ($(wc -l < "$TEMP_DIR/defined.keys" | tr -d '[:space:]'))"

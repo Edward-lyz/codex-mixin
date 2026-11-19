@@ -1,0 +1,39 @@
+[package]
+name = "codex-mixin-desktop"
+version = "0.8.7"
+edition = "2024"
+license = "CC-BY-NC-4.0"
+publish = false
+
+# The desktop shell builds separately from the CLI workspace so GPUI's
+# dependency tree never enters the gateway build, lockfile or CI gates.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[[bin]]
+name = "codex-mixin-desktop"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.10.0"
+anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+resvg = "0.46"
+rust-embed = { version = "8.7", features = ["include-exclude"] }
+rust-i18n = "4.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+smol = "2"
+sys-locale = "0.3"
+tray-icon = "0.26"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSScreen", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry"] }
+objc2 = "0.6"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

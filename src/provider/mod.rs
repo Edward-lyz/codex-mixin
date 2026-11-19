@@ -51,9 +51,9 @@ pub use spec::{
 };
 pub use types::{
     AwsSigV4AuthConfig, BaiduAuthBridge, CONFIG_VERSION, MANUAL_MODEL_CONTEXT_WINDOW,
-    ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelSource,
-    ProviderProtocol, ProviderQuotaParser, ProviderReadiness, ProviderReadinessStatus,
-    ProviderRequestPolicy,
+    MIN_MODEL_REFRESH_INTERVAL_SECONDS, ModelRefreshPolicy, ProviderAuthConfig, ProviderAuthHeader,
+    ProviderDefinition, ProviderModel, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
+    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy,
 };
 
 pub(crate) use auth::aws_sigv4::sign_request as sign_aws_request;

@@ -447,6 +447,25 @@ fn model_refresh_targets(
                 || provider.discovered_credential.is_some()
                 || !matches!(provider.model_source, ProviderModelSource::Static)
         })
+        // A provider's own refresh policy can turn background refresh off or
+        // space it out; `provider discover` still refreshes on demand.
+        .filter(|provider| {
+            let Some(policy) = provider.model_refresh else {
+                return true;
+            };
+            if !policy.enabled {
+                return false;
+            }
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|time| time.as_millis())
+                .unwrap_or_default();
+            provider.models_refreshed_at_ms.is_none_or(|last| {
+                u128::from(last) > now
+                    || now.saturating_sub(u128::from(last))
+                        >= u128::from(policy.interval_seconds) * 1_000
+            })
+        })
         .filter(|provider| {
             if provider.preset_id.as_deref() != Some("agy") {
                 return true;

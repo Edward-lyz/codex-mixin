@@ -111,7 +111,7 @@ Codex 以「官方账号模式」接入后，自定义模型加入官方模型�
 | 平台 | 安装 | 入口 |
 | --- | --- | --- |
 | macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」 | 菜单栏图标 →「打开控制台…」 |
-| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip | 系统托盘图标 →「打开控制台…」 |
+| Windows | 解压 `windows-x86_64.zip`，运行 `Codex Mixin.exe` | 系统托盘图标 →「打开控制台」 |
 | Linux | 解压 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz` 后运行 `./codex-mixin panel`，也可安装 `.deb` | 浏览器打开终端打印的地址 |
 
 ```bash
@@ -159,7 +159,7 @@ curl http://127.0.0.1:8317/v1/models                      # 返回模型列表�
 
 ## 界面
 
-macOS 提供原生菜单栏与控制台，Windows 提供 WPF 控制台与托盘，Linux 使用 CLI 和 Web 面板。三端功能一致。
+macOS 菜单栏与 Windows 托盘共用同一套 GPUI 界面，Linux 使用 CLI 和 Web 面板。三端功能一致。
 
 <table>
   <tr>
@@ -222,19 +222,19 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
 <table>
   <tr>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/codex.svg" width="36" height="36" alt="Codex logo"><br>
+      <img src="desktop/assets/agents/codex.svg" width="36" height="36" alt="Codex logo"><br>
       <sub>Codex</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/claude.svg" width="36" height="36" alt="Claude Code logo"><br>
+      <img src="desktop/assets/agents/claude.svg" width="36" height="36" alt="Claude Code logo"><br>
       <sub>Claude Code</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/claude-desktop.svg" width="36" height="36" alt="Claude Desktop logo"><br>
+      <img src="desktop/assets/agents/claude-desktop.svg" width="36" height="36" alt="Claude Desktop logo"><br>
       <sub>Claude Desktop</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/dsh.svg" width="36" height="36" alt="DSH logo"><br>
+      <img src="desktop/assets/agents/dsh.svg" width="36" height="36" alt="DSH logo"><br>
       <sub>DSH</sub>
     </td>
     <td width="20%" align="center">
@@ -248,7 +248,7 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Pi</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/openchamber.svg" width="36" height="36" alt="OpenChamber logo"><br>
+      <img src="desktop/assets/agents/openchamber.svg" width="36" height="36" alt="OpenChamber logo"><br>
       <sub>OpenChamber</sub>
     </td>
     <td width="20%" align="center">
@@ -278,7 +278,7 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Copilot (JetBrains)</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/air.svg" width="36" height="36" alt="Air logo"><br>
+      <img src="desktop/assets/agents/air.svg" width="36" height="36" alt="Air logo"><br>
       <sub>Air</sub>
     </td>
     <td width="20%" align="center">
@@ -296,7 +296,7 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Hermes Agent</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/morph.svg" width="36" height="36" alt="Mister Morph logo"><br>
+      <img src="desktop/assets/agents/morph.svg" width="36" height="36" alt="Mister Morph logo"><br>
       <sub>Mister Morph</sub>
     </td>
     <td width="20%" align="center">
@@ -304,7 +304,7 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Kimi Code</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/qwen.svg" width="36" height="36" alt="Qwen Code logo"><br>
+      <img src="desktop/assets/agents/qwen.svg" width="36" height="36" alt="Qwen Code logo"><br>
       <sub>Qwen Code</sub>
     </td>
   </tr>
@@ -332,19 +332,19 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
   </tr>
   <tr>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/workbuddy.svg" width="36" height="36" alt="WorkBuddy logo"><br>
+      <img src="desktop/assets/agents/workbuddy.svg" width="36" height="36" alt="WorkBuddy logo"><br>
       <sub>WorkBuddy</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/codebuddy.svg" width="36" height="36" alt="CodeBuddy logo"><br>
+      <img src="desktop/assets/agents/codebuddy.svg" width="36" height="36" alt="CodeBuddy logo"><br>
       <sub>CodeBuddy</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/pencil.svg" width="36" height="36" alt="Pencil logo"><br>
+      <img src="desktop/assets/agents/pencil.svg" width="36" height="36" alt="Pencil logo"><br>
       <sub>Pencil</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/t3code.svg" width="36" height="36" alt="T3 Code logo"><br>
+      <img src="desktop/assets/agents/t3code.svg" width="36" height="36" alt="T3 Code logo"><br>
       <sub>T3 Code</sub>
     </td>
     <td width="20%" align="center">
@@ -358,7 +358,7 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>VSCodium</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/reasonix.svg" width="36" height="36" alt="Reasonix logo"><br>
+      <img src="desktop/assets/agents/reasonix.svg" width="36" height="36" alt="Reasonix logo"><br>
       <sub>Reasonix</sub>
     </td>
     <td width="20%" align="center">
@@ -370,17 +370,17 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>fx</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/empryo.svg" width="36" height="36" alt="Empryo logo"><br>
+      <img src="desktop/assets/agents/empryo.svg" width="36" height="36" alt="Empryo logo"><br>
       <sub>Empryo</sub>
     </td>
   </tr>
   <tr>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/ante.svg" width="36" height="36" alt="Ante logo"><br>
+      <img src="desktop/assets/agents/ante.svg" width="36" height="36" alt="Ante logo"><br>
       <sub>Ante</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/minimax-code.svg" width="36" height="36" alt="MiniMax Code logo"><br>
+      <img src="desktop/assets/agents/minimax-code.svg" width="36" height="36" alt="MiniMax Code logo"><br>
       <sub>MiniMax Code</sub>
     </td>
     <td width="20%" align="center">
@@ -388,11 +388,11 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Cline</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
+      <img src="desktop/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
       <sub>Gemini CLI</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
+      <img src="desktop/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
       <sub>agy</sub>
     </td>
   </tr>
@@ -420,11 +420,11 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
   </tr>
   <tr>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
+      <img src="desktop/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
       <sub>Aside</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
+      <img src="desktop/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
       <sub>Muse</sub>
     </td>
     <td width="20%" align="center">
