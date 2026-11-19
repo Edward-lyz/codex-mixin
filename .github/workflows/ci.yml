@@ -43,7 +43,7 @@ jobs:
         run: |
           while IFS= read -r script; do
             bash -n "$script"
-          done < <(find scripts macos -type f -name '*.sh' -print)
+          done < <(find scripts desktop/macos -type f -name '*.sh' -print)
           while IFS= read -r script; do
             node --check "$script"
           done < <(find scripts panel/assets -type f \
@@ -160,8 +160,7 @@ jobs:
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: "13.1"
-          CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
-        run: ./macos/build_app.sh
+        run: ./desktop/macos/build_app.sh
       - name: Verify macOS application icons
         if: runner.os == 'macOS'
         run: ./scripts/verify_macos_app_icon.sh

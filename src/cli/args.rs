@@ -857,6 +857,12 @@ pub(super) struct UpdateProviderArgs {
     pub(super) codex_thread_title_model: Option<String>,
     #[arg(long, conflicts_with = "codex_thread_title_model")]
     pub(super) clear_codex_thread_title_model: bool,
+    /// Refresh this provider's model list in the background.
+    #[arg(long, value_name = "BOOL")]
+    pub(super) auto_refresh_models: Option<bool>,
+    /// Seconds between background model-list refreshes for this provider.
+    #[arg(long, value_name = "SECONDS")]
+    pub(super) model_refresh_interval_seconds: Option<u64>,
 }
 
 impl From<AddProviderArgs> for AddProviderInput {
@@ -934,6 +940,8 @@ impl From<UpdateProviderArgs> for UpdateProviderInput {
             clear_auto_review_model: args.clear_auto_review_model,
             codex_thread_title_model: args.codex_thread_title_model,
             clear_codex_thread_title_model: args.clear_codex_thread_title_model,
+            auto_refresh_models: args.auto_refresh_models,
+            model_refresh_interval_seconds: args.model_refresh_interval_seconds,
         }
     }
 }

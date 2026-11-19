@@ -250,6 +250,7 @@ impl ProviderSpec {
             models_refreshed_at_ms: None,
             models_refresh_error: None,
             discovered_credential: None,
+            model_refresh: None,
         }
     }
 }

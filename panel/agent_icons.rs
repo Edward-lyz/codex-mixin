@@ -1,257 +1,257 @@
 //! Agent and provider logos shared with the macOS app (see the ATTRIBUTION.md
 //! files next to them).
-//! Generated from macos/assets/agents/manifest.json; keep the two in sync.
+//! Generated from desktop/assets/agents/manifest.json; keep the two in sync.
 
 pub(super) const AGENT_ICONS: &[(&str, &str, &[u8])] = &[
     (
         "agy",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/agy.svg"),
+        include_bytes!("../desktop/assets/agents/agy.svg"),
     ),
     (
         "air",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/air.svg"),
+        include_bytes!("../desktop/assets/agents/air.svg"),
     ),
     (
         "alma",
         "image/png",
-        include_bytes!("../macos/assets/agents/alma.png"),
+        include_bytes!("../desktop/assets/agents/alma.png"),
     ),
     (
         "ante",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/ante.svg"),
+        include_bytes!("../desktop/assets/agents/ante.svg"),
     ),
     (
         "aside",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/aside.svg"),
+        include_bytes!("../desktop/assets/agents/aside.svg"),
     ),
     (
         "atomcode",
         "image/png",
-        include_bytes!("../macos/assets/agents/atomcode.png"),
+        include_bytes!("../desktop/assets/agents/atomcode.png"),
     ),
     (
         "cindy",
         "image/png",
-        include_bytes!("../macos/assets/agents/cindy.png"),
+        include_bytes!("../desktop/assets/agents/cindy.png"),
     ),
     (
         "claude",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/claude.svg"),
+        include_bytes!("../desktop/assets/agents/claude.svg"),
     ),
     (
         "claude-desktop",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/claude-desktop.svg"),
+        include_bytes!("../desktop/assets/agents/claude-desktop.svg"),
     ),
     (
         "cline",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/cline.svg"),
+        include_bytes!("../desktop/assets/agents/cline.svg"),
     ),
     (
         "codebuddy",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/codebuddy.svg"),
+        include_bytes!("../desktop/assets/agents/codebuddy.svg"),
     ),
     (
         "codex",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/codex.svg"),
+        include_bytes!("../desktop/assets/agents/codex.svg"),
     ),
     (
         "commandcode",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/commandcode.svg"),
+        include_bytes!("../desktop/assets/agents/commandcode.svg"),
     ),
     (
         "copilot",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/copilot.svg"),
+        include_bytes!("../desktop/assets/agents/copilot.svg"),
     ),
     (
         "copilot-jetbrains",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/copilot-jetbrains.svg"),
+        include_bytes!("../desktop/assets/agents/copilot-jetbrains.svg"),
     ),
     (
         "crush",
         "image/png",
-        include_bytes!("../macos/assets/agents/crush.png"),
+        include_bytes!("../desktop/assets/agents/crush.png"),
     ),
     (
         "cursor",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/cursor.svg"),
+        include_bytes!("../desktop/assets/agents/cursor.svg"),
     ),
     (
         "cursor-local",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/cursor-local.svg"),
+        include_bytes!("../desktop/assets/agents/cursor-local.svg"),
     ),
     (
         "devin",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/devin.svg"),
+        include_bytes!("../desktop/assets/agents/devin.svg"),
     ),
     (
         "droid",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/droid.svg"),
+        include_bytes!("../desktop/assets/agents/droid.svg"),
     ),
     (
         "dsh",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/dsh.svg"),
+        include_bytes!("../desktop/assets/agents/dsh.svg"),
     ),
     (
         "empryo",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/empryo.svg"),
+        include_bytes!("../desktop/assets/agents/empryo.svg"),
     ),
     (
         "fx",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/fx.svg"),
+        include_bytes!("../desktop/assets/agents/fx.svg"),
     ),
     (
         "gemini",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/gemini.svg"),
+        include_bytes!("../desktop/assets/agents/gemini.svg"),
     ),
     (
         "goose",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/goose.svg"),
+        include_bytes!("../desktop/assets/agents/goose.svg"),
     ),
     (
         "grok",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/grok.svg"),
+        include_bytes!("../desktop/assets/agents/grok.svg"),
     ),
     (
         "hanako",
         "image/png",
-        include_bytes!("../macos/assets/agents/hanako.png"),
+        include_bytes!("../desktop/assets/agents/hanako.png"),
     ),
     (
         "hermes",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/hermes.svg"),
+        include_bytes!("../desktop/assets/agents/hermes.svg"),
     ),
     (
         "kimi",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/kimi.svg"),
+        include_bytes!("../desktop/assets/agents/kimi.svg"),
     ),
     (
         "mimocode",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/mimocode.svg"),
+        include_bytes!("../desktop/assets/agents/mimocode.svg"),
     ),
     (
         "minimax-code",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/minimax-code.svg"),
+        include_bytes!("../desktop/assets/agents/minimax-code.svg"),
     ),
     (
         "morph",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/morph.svg"),
+        include_bytes!("../desktop/assets/agents/morph.svg"),
     ),
     (
         "muse",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/muse.svg"),
+        include_bytes!("../desktop/assets/agents/muse.svg"),
     ),
     (
         "omo",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/omo.svg"),
+        include_bytes!("../desktop/assets/agents/omo.svg"),
     ),
     (
         "omp",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/omp.svg"),
+        include_bytes!("../desktop/assets/agents/omp.svg"),
     ),
     (
         "openchamber",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/openchamber.svg"),
+        include_bytes!("../desktop/assets/agents/openchamber.svg"),
     ),
     (
         "opencode",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/opencode.svg"),
+        include_bytes!("../desktop/assets/agents/opencode.svg"),
     ),
     (
         "pencil",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/pencil.svg"),
+        include_bytes!("../desktop/assets/agents/pencil.svg"),
     ),
     (
         "pi",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/pi.svg"),
+        include_bytes!("../desktop/assets/agents/pi.svg"),
     ),
     (
         "qoder",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/qoder.svg"),
+        include_bytes!("../desktop/assets/agents/qoder.svg"),
     ),
     (
         "qoder-cn",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/qoder-cn.svg"),
+        include_bytes!("../desktop/assets/agents/qoder-cn.svg"),
     ),
     (
         "qwen",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/qwen.svg"),
+        include_bytes!("../desktop/assets/agents/qwen.svg"),
     ),
     (
         "reasonix",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/reasonix.svg"),
+        include_bytes!("../desktop/assets/agents/reasonix.svg"),
     ),
     (
         "t3code",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/t3code.svg"),
+        include_bytes!("../desktop/assets/agents/t3code.svg"),
     ),
     (
         "vscode",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/vscode.svg"),
+        include_bytes!("../desktop/assets/agents/vscode.svg"),
     ),
     (
         "vscode-insiders",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/vscode-insiders.svg"),
+        include_bytes!("../desktop/assets/agents/vscode-insiders.svg"),
     ),
     (
         "vscodium",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/vscodium.svg"),
+        include_bytes!("../desktop/assets/agents/vscodium.svg"),
     ),
     (
         "workbuddy",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/workbuddy.svg"),
+        include_bytes!("../desktop/assets/agents/workbuddy.svg"),
     ),
     (
         "zcode",
         "image/png",
-        include_bytes!("../macos/assets/agents/zcode.png"),
+        include_bytes!("../desktop/assets/agents/zcode.png"),
     ),
     (
         "zed",
         "image/svg+xml",
-        include_bytes!("../macos/assets/agents/zed.svg"),
+        include_bytes!("../desktop/assets/agents/zed.svg"),
     ),
 ];
 
@@ -284,38 +284,41 @@ pub(super) const TEMPLATE_AGENT_ICONS: &[&str] = &[
 ];
 
 /// Provider preset logos shared with the macOS app (see
-/// macos/assets/providers/ATTRIBUTION.md), keyed by the `icon` field of
+/// desktop/assets/providers/ATTRIBUTION.md), keyed by the `icon` field of
 /// `providers list --json`.
 pub(super) const PROVIDER_ICONS: &[(&str, &[u8])] = &[
-    ("agy", include_bytes!("../macos/assets/agents/agy.svg")),
-    ("aws", include_bytes!("../macos/assets/providers/aws.svg")),
+    ("agy", include_bytes!("../desktop/assets/agents/agy.svg")),
+    ("aws", include_bytes!("../desktop/assets/providers/aws.svg")),
     (
         "baidu",
-        include_bytes!("../macos/assets/providers/baidu.svg"),
+        include_bytes!("../desktop/assets/providers/baidu.svg"),
     ),
     (
         "claude",
-        include_bytes!("../macos/assets/providers/claude.svg"),
+        include_bytes!("../desktop/assets/providers/claude.svg"),
     ),
     (
         "custom",
-        include_bytes!("../macos/assets/providers/custom.svg"),
+        include_bytes!("../desktop/assets/providers/custom.svg"),
     ),
     (
         "deepseek",
-        include_bytes!("../macos/assets/providers/deepseek.svg"),
+        include_bytes!("../desktop/assets/providers/deepseek.svg"),
     ),
-    ("kiro", include_bytes!("../macos/assets/providers/kiro.svg")),
+    (
+        "kiro",
+        include_bytes!("../desktop/assets/providers/kiro.svg"),
+    ),
     (
         "openai",
-        include_bytes!("../macos/assets/providers/openai.svg"),
+        include_bytes!("../desktop/assets/providers/openai.svg"),
     ),
     (
         "opencode",
-        include_bytes!("../macos/assets/providers/opencode.svg"),
+        include_bytes!("../desktop/assets/providers/opencode.svg"),
     ),
     (
         "openrouter",
-        include_bytes!("../macos/assets/providers/openrouter.svg"),
+        include_bytes!("../desktop/assets/providers/openrouter.svg"),
     ),
 ];

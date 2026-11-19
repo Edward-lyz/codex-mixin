@@ -8,7 +8,7 @@
 
 ## 产品原则：CLI 是核心，GUI 是外壳
 
-Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WPF App 和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
+Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。GPUI 桌面 App（macOS 菜单栏与 Windows 托盘共用一套界面）和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
 
 - 新增业务必须先提供可在 `--no-tui` 下使用的 CLI 入口及可验证的 Rust 用例；自动化调用需要稳定 JSON 输出与结构化错误。无 GUI 环境也必须能配置、运行、诊断和恢复。
 - “CLI 是核心”不等于把业务都塞进 `src/cli/`。参数、输入、渲染与退出码属于 CLI；业务规则、提交顺序和可复用能力属于 `application` 及下层模块。
@@ -38,7 +38,7 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 | `crates/platform/` | OS adapter | 路径、权限、进程、终端、系统服务、安装与签名的平台差异 |
 | `src/catalog/` | 模型目录 | 来源合并、生成、缓存；不参与请求发送或 UI |
 | `src/benchmark/`、`src/web_search/`、`src/images/`、`src/ech/` | 专用能力 | 按 `src/AGENTS.md` 处理探测、媒体或连接；不引用上层控制面 |
-| `macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
+| `desktop/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
 
 `crates/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达（`check_arch.sh` 检查）。`tests/` 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
 
@@ -73,17 +73,15 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 
 ## 测试范围
 
-- 测试只验证端到端的正常行为：`tests/` 驱动真实 CLI、HTTP/WS 与存储路径，CI 另跑 `scripts/e2e_*.sh`、Windows 真实 CLI 契约与安装/升级脚本。
+- 测试只验证端到端的正常行为：`tests/` 驱动真实 CLI、HTTP/WS 与存储路径，CI 另跑 `scripts/e2e_*.sh`。
 - 不写单元测试、逐分支的实现细节测试，也不写扫描源码或登记表的元测试；结构约束交给 `check_arch.sh`。
-- Windows 原生壳使用微软 winapp 的 UI Automation 命令驱动真实发布包，并通过真实 CLI 核对操作结果；CI 在 PR、main 和 merge_group 上执行。桌面不可用、操作失败或状态不符必须失败，保留脱敏窗口树、截图和日志。
-- macOS、Web 面板及受管理客户端仍禁止新增 UI 自动化项目、脚本、依赖和 CI；界面变更通过构建、资源检查和人工操作验收。Windows 测试不扩展到这些界面。
-- Windows 自动化只编排原生控件和 CLI，不增加测试专用业务路径或自建 UI 驱动框架；未执行的操作必须明确列为未覆盖。
+- 桌面 App、Web 面板及受管理客户端禁止新增 UI 自动化项目、脚本、依赖和 CI；界面变更通过构建、资源检查和人工操作验收。
 
 ## 验证与交付
 
 实现前读相邻源码、契约和测试；若提供 LSP，优先用于定位引用。没有可用 LSP 接口时使用文件搜索与原生读取，不宣称执行了语义分析。
 
-验证命令默认从仓库根运行，Windows .NET 命令另标工作目录。修 bug 先写 E2E 复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
+验证命令默认从仓库根运行。修 bug 先写 E2E 复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
 
 Rust/分层改动的门禁：
 

@@ -243,7 +243,23 @@ pub struct ProviderDefinition {
     /// switched account invalidates the cached model directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovered_credential: Option<String>,
+    /// Background model-list refresh chosen for this provider. `None` keeps
+    /// the gateway default of refreshing on every cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_refresh: Option<ModelRefreshPolicy>,
 }
+
+/// Whether the gateway refreshes a provider's model list in the background,
+/// and how long it waits after a successful refresh. Manual
+/// `provider discover` runs are not affected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ModelRefreshPolicy {
+    pub enabled: bool,
+    pub interval_seconds: u64,
+}
+
+/// Shortest background refresh interval a provider may request.
+pub const MIN_MODEL_REFRESH_INTERVAL_SECONDS: u64 = 30;
 
 impl ProviderDefinition {
     pub fn owned_oauth_path(&self) -> Option<std::path::PathBuf> {

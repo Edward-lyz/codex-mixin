@@ -139,6 +139,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "custom_headers_from_env": provider.request_policy.custom_headers_from_env,
                     "baidu_auth_bridge": provider.request_policy.baidu_auth_bridge,
                     "baidu_code_report": provider.request_policy.baidu_code_report,
+                    "model_refresh": provider.model_refresh,
                     "selected_models": provider.selected_models,
                     "model_order": provider.model_order,
                     "new_models": provider.new_models,

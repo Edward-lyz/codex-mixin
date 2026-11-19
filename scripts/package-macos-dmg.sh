@@ -38,7 +38,7 @@ cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/LICENSE"
 cp "$ROOT_DIR/NOTICE" "$STAGING_DIR/NOTICE"
 ln -s /Applications "$STAGING_DIR/Applications"
 
-swift "$ROOT_DIR/macos/make_dmg_background.swift" "$STAGING_DIR/.background/background.png"
+swift "$ROOT_DIR/desktop/macos/make_dmg_background.swift" "$STAGING_DIR/.background/background.png"
 
 rm -f "$TEMP_DMG" "$ATTACH_PLIST" "$DMG_PATH"
 rm -rf "$MOUNT_DIR"

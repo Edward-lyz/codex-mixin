@@ -1,0 +1,982 @@
+_version: 2
+cli.missing:
+  en: "Cannot find the codex-mixin CLI. Use the complete app package or build the Rust CLI first."
+  zh-CN: "找不到 codex-mixin CLI。请使用完整应用包，或先构建 Rust CLI。"
+cli.invalid_json:
+  en: "%{command} returned invalid JSON: %{error}"
+  zh-CN: "%{command} 返回了无效 JSON：%{error}"
+cli.gate_poisoned:
+  en: "The change queue stopped after an earlier failure. Restart Codex Mixin."
+  zh-CN: "更改队列在之前的失败后停止了，请重启 Codex Mixin。"
+cli.apply_failed:
+  en: "The configuration was saved, but applying it failed: %{error}"
+  zh-CN: "配置已保存，但应用配置失败：%{error}"
+cli.spawn_failed:
+  en: "Cannot start the Rust CLI: %{error}"
+  zh-CN: "无法启动 Rust CLI：%{error}"
+cli.query_timeout:
+  en: "The query timed out. Try again."
+  zh-CN: "查询超时，请重试。"
+cli.change_timeout:
+  en: "The CLI timed out. The configuration may already be saved; refresh to check."
+  zh-CN: "CLI 超时，配置可能已保存，请刷新确认状态。"
+cli.output_limit:
+  en: "The CLI output exceeded the 8 MiB limit."
+  zh-CN: "CLI 输出超过 8 MiB 限制。"
+cli.exit_code:
+  en: "CLI exit code %{code}: %{detail}"
+  zh-CN: "CLI 退出码 %{code}：%{detail}"
+common.apply:
+  en: "Apply Changes"
+  zh-CN: "应用更改"
+common.cancel:
+  en: "Cancel"
+  zh-CN: "取消"
+common.discard:
+  en: "Discard"
+  zh-CN: "放弃"
+notice.done:
+  en: "%{label} finished"
+  zh-CN: "%{label}完成"
+notice.saved_with_error:
+  en: "%{label}: saved, but %{error}"
+  zh-CN: "%{label}：已保存，但 %{error}"
+notice.failed:
+  en: "%{label} failed: %{error}"
+  zh-CN: "%{label}失败：%{error}"
+console.window_title:
+  en: "Codex Mixin Console"
+  zh-CN: "Codex Mixin 控制台"
+console.page.providers:
+  en: "Providers"
+  zh-CN: "服务商"
+console.page.agents:
+  en: "Agents"
+  zh-CN: "Agent"
+console.page.usage:
+  en: "Usage"
+  zh-CN: "用量"
+console.page.context:
+  en: "Context"
+  zh-CN: "上下文"
+console.page.routing:
+  en: "Routing"
+  zh-CN: "路由"
+console.page.settings:
+  en: "Settings"
+  zh-CN: "设置"
+providers.add:
+  en: "Add Provider…"
+  zh-CN: "添加服务商…"
+providers.row_detail:
+  en: "%{state} · %{selected}/%{total} models"
+  zh-CN: "%{state} · %{selected}/%{total} 个模型"
+providers.ready:
+  en: "Ready"
+  zh-CN: "配置就绪"
+providers.official:
+  en: "Official"
+  zh-CN: "官方"
+providers.state.healthy:
+  en: "Healthy"
+  zh-CN: "正常"
+providers.state.degraded:
+  en: "Needs attention"
+  zh-CN: "需要处理"
+providers.state.disabled:
+  en: "Disabled"
+  zh-CN: "已停用"
+providers.tab.models:
+  en: "Models"
+  zh-CN: "模型"
+providers.tab.connection:
+  en: "Connection"
+  zh-CN: "连接设置"
+providers.loading:
+  en: "Reading providers…"
+  zh-CN: "正在读取服务商…"
+providers.load_failed:
+  en: "Cannot read providers"
+  zh-CN: "读取服务商失败"
+providers.empty_title:
+  en: "Connect a model service"
+  zh-CN: "开始连接模型服务"
+providers.empty_detail:
+  en: "Add a provider, choose its models, then connect your agents."
+  zh-CN: "先添加一个服务商，再选择模型并接入 Agent。"
+models.search:
+  en: "Search this provider's models"
+  zh-CN: "搜索当前服务商的模型"
+models.filter.all:
+  en: "All"
+  zh-CN: "全部"
+models.filter.added:
+  en: "Added"
+  zh-CN: "已加入"
+models.filter.not_added:
+  en: "Not added"
+  zh-CN: "未加入"
+models.order_tooltip:
+  en: "Model order"
+  zh-CN: "模型排序"
+models.order.family:
+  en: "Family and version"
+  zh-CN: "家族与版本"
+models.order.manual:
+  en: "Manual order"
+  zh-CN: "手动排序"
+models.add:
+  en: "Add Model…"
+  zh-CN: "添加模型…"
+models.add_placeholder:
+  en: "e.g. deepseek-chat"
+  zh-CN: "例如 deepseek-chat"
+models.model_id:
+  en: "Model ID"
+  zh-CN: "模型 ID"
+models.add_confirm:
+  en: "Add and Include"
+  zh-CN: "添加并加入"
+models.manual:
+  en: "Manual"
+  zh-CN: "手动"
+models.unavailable:
+  en: "Unavailable"
+  zh-CN: "不可用"
+models.refresh:
+  en: "Refresh"
+  zh-CN: "刷新"
+models.refresh_label:
+  en: "Refresh models"
+  zh-CN: "刷新模型"
+models.refresh_settings:
+  en: "Refresh settings"
+  zh-CN: "刷新设置"
+models.refresh_policy_label:
+  en: "Update auto refresh"
+  zh-CN: "更新自动刷新"
+models.auto_refresh:
+  en: "Auto refresh"
+  zh-CN: "自动刷新"
+models.refresh_interval:
+  en: "Refresh interval"
+  zh-CN: "刷新间隔"
+models.last_refreshed:
+  en: "Last refreshed %{time}"
+  zh-CN: "上次刷新 %{time}"
+models.never_refreshed:
+  en: "Not refreshed yet"
+  zh-CN: "尚未刷新"
+models.benchmark:
+  en: "Test %{count} Models"
+  zh-CN: "测速 %{count} 个模型"
+models.benchmark_label:
+  en: "Start benchmark"
+  zh-CN: "启动模型测速"
+models.benchmark_settings:
+  en: "Benchmark settings"
+  zh-CN: "测速设置"
+models.benchmark_content:
+  en: "Measure"
+  zh-CN: "测速内容"
+models.benchmark_ttft:
+  en: "Latency only (TTFT)"
+  zh-CN: "仅测试延迟（TTFT）"
+models.benchmark_full:
+  en: "Latency and throughput"
+  zh-CN: "测试延迟与吞吐"
+models.benchmark_timeout:
+  en: "Request timeout"
+  zh-CN: "请求超时"
+models.benchmark_progress:
+  en: "Testing %{done}/%{total}"
+  zh-CN: "测速中 %{done}/%{total}"
+models.measuring:
+  en: "Testing…"
+  zh-CN: "测速中…"
+models.failed:
+  en: "Failed"
+  zh-CN: "失败"
+models.column.join:
+  en: "In Codex"
+  zh-CN: "加入 Codex"
+models.column.order:
+  en: "Order"
+  zh-CN: "顺序"
+models.column.model:
+  en: "Model"
+  zh-CN: "模型"
+models.column.ttft:
+  en: "First Token"
+  zh-CN: "首 Token"
+models.column.speed:
+  en: "Speed"
+  zh-CN: "生成速度"
+models.column.context:
+  en: "Context"
+  zh-CN: "上下文"
+models.column.capabilities:
+  en: "Capabilities"
+  zh-CN: "能力"
+models.capability.image:
+  en: "Image input"
+  zh-CN: "图片输入"
+models.capability.tools:
+  en: "Tool calls"
+  zh-CN: "工具调用"
+models.capability.thinking:
+  en: "Reasoning"
+  zh-CN: "推理"
+models.summary:
+  en: "%{visible} shown · %{selected} added"
+  zh-CN: "当前结果 %{visible} 个 · 已加入 %{selected} 个"
+models.select_visible:
+  en: "Add All"
+  zh-CN: "全部加入"
+models.deselect_visible:
+  en: "Remove All"
+  zh-CN: "全部移出"
+models.no_results:
+  en: "No matching models"
+  zh-CN: "没有匹配的模型"
+models.probe:
+  en: "Detect Capabilities…"
+  zh-CN: "检测模型能力…"
+models.probe_title:
+  en: "Detect model capabilities?"
+  zh-CN: "检测模型能力？"
+models.probe_detail:
+  en: "Sends real requests to the %{count} added models of this provider and updates the Capabilities column."
+  zh-CN: "将向此服务商已加入的 %{count} 个模型发送真实请求，并更新「能力」列。"
+models.probe_confirm:
+  en: "Detect"
+  zh-CN: "开始检测"
+models.probe_label:
+  en: "Detect capabilities"
+  zh-CN: "检测模型能力"
+models.apply_label:
+  en: "Apply model changes"
+  zh-CN: "应用模型更改"
+models.unapplied:
+  en: "Model changes are not applied yet"
+  zh-CN: "模型更改尚未应用"
+time.seconds:
+  en: "%{count} s"
+  zh-CN: "%{count} 秒"
+time.minutes:
+  en: "%{count} min"
+  zh-CN: "%{count} 分钟"
+time.hours:
+  en: "%{count} h"
+  zh-CN: "%{count} 小时"
+tray.open_console:
+  en: "Open Console"
+  zh-CN: "打开控制台"
+tray.quit:
+  en: "Quit Codex Mixin"
+  zh-CN: "退出 Codex Mixin"
+tray.tooltip_running:
+  en: "Codex Mixin: running"
+  zh-CN: "Codex Mixin：运行中"
+tray.tooltip_stopped:
+  en: "Codex Mixin: stopped"
+  zh-CN: "Codex Mixin：已停止"
+connection.add_title:
+  en: "Add Provider"
+  zh-CN: "添加服务商"
+connection.add_confirm:
+  en: "Add"
+  zh-CN: "添加"
+connection.add_label:
+  en: "Add provider"
+  zh-CN: "添加服务商"
+connection.save_label:
+  en: "Save connection"
+  zh-CN: "保存连接设置"
+connection.settings:
+  en: "Connection"
+  zh-CN: "连接"
+connection.new_hint:
+  en: "Choose a type, then fill in what it needs. Secrets go to the CLI through the environment."
+  zh-CN: "选择类型后填写所需字段；密钥通过环境变量传给 CLI。"
+connection.edit_hint:
+  en: "Leave secrets empty to keep the saved ones."
+  zh-CN: "密钥留空即保留已保存的值。"
+connection.id:
+  en: "Provider ID"
+  zh-CN: "服务商 ID"
+connection.id_placeholder:
+  en: "Optional, defaults to the preset ID"
+  zh-CN: "可选，默认使用预设 ID"
+connection.name:
+  en: "Display name"
+  zh-CN: "显示名称"
+connection.base_url:
+  en: "Base URL"
+  zh-CN: "Base URL"
+connection.base_url_placeholder:
+  en: "Leave empty to use the preset"
+  zh-CN: "预设可留空"
+connection.website:
+  en: "Website"
+  zh-CN: "网站"
+connection.protocol:
+  en: "Protocol"
+  zh-CN: "协议"
+connection.protocol_auto:
+  en: "Detect automatically"
+  zh-CN: "自动检测"
+connection.api_path:
+  en: "API path"
+  zh-CN: "API 路径"
+connection.image_path:
+  en: "Image generation path"
+  zh-CN: "图像生成路径"
+connection.key_optional:
+  en: "API Key (optional, local OAuth when empty)"
+  zh-CN: "API Key（可选，留空使用本地 OAuth）"
+connection.key_local_session:
+  en: "API Key (optional, native client sign-in when empty)"
+  zh-CN: "API Key（可选，留空使用原生客户端登录）"
+connection.keep_secret:
+  en: "Saved · leave empty to keep"
+  zh-CN: "已保存 · 留空保留"
+connection.optional:
+  en: "Optional"
+  zh-CN: "可选"
+connection.oauth_timeout:
+  en: "Authorization timeout (s)"
+  zh-CN: "授权超时（秒）"
+connection.oauth_hint:
+  en: "Authorization opens in your browser. Closing the page does not cancel; cancel here to stop waiting."
+  zh-CN: "将在浏览器中授权。关闭网页不会取消，可在此取消等待。"
+connection.quota_username:
+  en: "Quota username"
+  zh-CN: "额度用户名"
+connection.bridge:
+  en: "Auth bridge"
+  zh-CN: "认证桥接"
+connection.bridge_disabled:
+  en: "Off"
+  zh-CN: "关闭"
+connection.bridge_ducx:
+  en: "DUCX loopback"
+  zh-CN: "DUCX 本地回环"
+connection.code_report:
+  en: "Report code changes to OneAPI"
+  zh-CN: "向 OneAPI 上报代码变更"
+connection.cookie:
+  en: "OpenCode Go cookie"
+  zh-CN: "OpenCode Go Cookie"
+connection.review_model:
+  en: "Codex review model"
+  zh-CN: "Codex 审查模型"
+connection.title_model:
+  en: "Thread title model"
+  zh-CN: "会话命名模型"
+connection.override_hint:
+  en: "Overrides the model Codex uses for automatic review."
+  zh-CN: "覆盖 Codex 自动审查使用的模型。"
+connection.follow_default:
+  en: "Follow default"
+  zh-CN: "跟随默认"
+connection.manage:
+  en: "Manage"
+  zh-CN: "管理"
+connection.enabled:
+  en: "Enabled"
+  zh-CN: "启用"
+connection.enabled_detail:
+  en: "Disabled providers keep their settings but serve no models."
+  zh-CN: "停用后保留配置，不再提供模型。"
+connection.enable_label:
+  en: "Enable provider"
+  zh-CN: "启用服务商"
+connection.disable_label:
+  en: "Disable provider"
+  zh-CN: "停用服务商"
+connection.credentials:
+  en: "Credentials"
+  zh-CN: "凭据"
+connection.credentials_detail:
+  en: "Sign in again or remove the saved key."
+  zh-CN: "重新授权，或清除已保存的密钥。"
+connection.reauthorize:
+  en: "Reauthorize"
+  zh-CN: "重新授权"
+connection.clear_key:
+  en: "Clear Key"
+  zh-CN: "清除密钥"
+connection.remove:
+  en: "Remove Provider"
+  zh-CN: "删除服务商"
+connection.remove_detail:
+  en: "Removes the provider and its model selection from Codex."
+  zh-CN: "从 Codex 移除此服务商及其模型。"
+connection.remove_title:
+  en: "Remove %{name}?"
+  zh-CN: "删除 %{name}？"
+connection.remove_confirm:
+  en: "Its models disappear from Codex after the change is applied."
+  zh-CN: "应用后其模型将从 Codex 中消失。"
+connection.remove_label:
+  en: "Remove provider"
+  zh-CN: "删除服务商"
+connection.unsaved:
+  en: "Connection changes are not applied yet"
+  zh-CN: "连接设置尚未应用"
+connection.official:
+  en: "Official OpenAI"
+  zh-CN: "官方 OpenAI"
+connection.official_auth:
+  en: "Signed in with Codex"
+  zh-CN: "由 Codex 登录管理"
+connection.official_auth_detail:
+  en: "Codex OAuth manages this connection; its settings are read-only."
+  zh-CN: "官方服务商由 Codex OAuth 管理，连接参数只读。"
+connection.ech:
+  en: "ECH proxy for GPT"
+  zh-CN: "ECH 代理访问 GPT"
+connection.ech_detail:
+  en: "Encrypts the TLS client hello of official requests."
+  zh-CN: "加密官方请求的 TLS Client Hello。"
+panel.reading:
+  en: "Reading gateway status…"
+  zh-CN: "正在读取网关状态…"
+panel.status_unknown:
+  en: "Gateway status unknown"
+  zh-CN: "网关状态未知"
+panel.waiting_config:
+  en: "Waiting for an upstream API"
+  zh-CN: "等待配置上游 API"
+panel.waiting_config_detail:
+  en: "Add a provider and its API key first"
+  zh-CN: "请先设置服务商与 API Key"
+panel.running:
+  en: "Local gateway running"
+  zh-CN: "本地服务运行中"
+panel.running_with_issues:
+  en: "Running · %{count} providers need attention"
+  zh-CN: "本地服务运行中 · %{count} 个服务商需要处理"
+panel.running_no_provider:
+  en: "Running · no enabled provider"
+  zh-CN: "本地服务运行中 · 无启用服务商"
+panel.stopped:
+  en: "Local gateway stopped"
+  zh-CN: "本地网关已停止"
+panel.stopped_detail:
+  en: "The gateway is not running"
+  zh-CN: "网关当前未运行"
+panel.start_label:
+  en: "Start gateway"
+  zh-CN: "启动网关"
+panel.stop_label:
+  en: "Stop gateway"
+  zh-CN: "停止网关"
+panel.quota_percent:
+  en: "%{used}% used"
+  zh-CN: "已用 %{used}%"
+panel.quota_remaining:
+  en: "%{remaining} %{currency} left"
+  zh-CN: "剩余 %{remaining} %{currency}"
+panel.open_console:
+  en: "Open Console"
+  zh-CN: "打开控制台"
+panel.copy_endpoint:
+  en: "Copy Local Endpoint"
+  zh-CN: "复制本地接口地址"
+panel.open_log:
+  en: "Show Gateway Log"
+  zh-CN: "打开运行日志"
+panel.open_state:
+  en: "Open Configuration Folder"
+  zh-CN: "打开配置目录"
+panel.settings:
+  en: "Settings…"
+  zh-CN: "设置…"
+panel.lightweight:
+  en: "Lightweight Mode (keep gateway)"
+  zh-CN: "轻量模式（保留网关）"
+panel.quit:
+  en: "Quit Mixin Completely"
+  zh-CN: "彻底退出 Mixin"
+agents.check_versions:
+  en: "Check for Updates"
+  zh-CN: "检查版本更新"
+agents.codex_mode_title:
+  en: "Connect Codex"
+  zh-CN: "接入 Codex"
+agents.codex_mode_detail:
+  en: "Keep your official OpenAI account beside custom models, or use custom models only."
+  zh-CN: "保留官方账号并加入自定义模型，或仅使用自定义模型。"
+agents.codex_mode_official:
+  en: "Official Account + Custom Models"
+  zh-CN: "官方账号 + 自定义模型"
+agents.codex_mode_custom:
+  en: "Custom Models Only"
+  zh-CN: "仅自定义模型"
+agents.connect_label:
+  en: "Connect agent"
+  zh-CN: "接入 Agent"
+agents.disconnect:
+  en: "Disconnect"
+  zh-CN: "断开"
+agents.disconnect_title:
+  en: "Disconnect %{name}?"
+  zh-CN: "断开 %{name}？"
+agents.disconnect_detail:
+  en: "The CLI restores or removes the configuration Mixin manages for this agent."
+  zh-CN: "CLI 将恢复或移除此 Agent 的托管配置。"
+agents.disconnect_label:
+  en: "Disconnect agent"
+  zh-CN: "断开 Agent"
+agents.load_failed:
+  en: "Cannot read agents"
+  zh-CN: "读取 Agent 失败"
+agents.loading:
+  en: "Detecting agents…"
+  zh-CN: "正在检测 Agent…"
+agents.mode.confirmed_import:
+  en: "Confirmed in app"
+  zh-CN: "应用内确认导入"
+agents.mode.native_app:
+  en: "Native app API"
+  zh-CN: "原生应用 API"
+agents.mode.native_credentials:
+  en: "Native credential store"
+  zh-CN: "原生凭据存储"
+agents.mode.native_runtime:
+  en: "Native runtime"
+  zh-CN: "原生运行时"
+agents.not_detected:
+  en: "· Installer not detected"
+  zh-CN: "· 未检测到安装程序"
+agents.show_undetected:
+  en: "%{count} agents not installed"
+  zh-CN: "显示未检测到的 %{count} 个 Agent"
+agents.state.drift:
+  en: "Configuration changed"
+  zh-CN: "配置已改变"
+agents.state.error:
+  en: "Detection failed"
+  zh-CN: "检测失败"
+agents.state.managed:
+  en: "Connected"
+  zh-CN: "已接入"
+agents.state.native_managed:
+  en: "Native models managed"
+  zh-CN: "原生模型已托管"
+agents.state.pending:
+  en: "Waiting for the app to confirm"
+  zh-CN: "等待原生应用确认"
+agents.state.pending_removal:
+  en: "Waiting for the app to remove"
+  zh-CN: "等待原生应用移除"
+agents.state.unknown:
+  en: "Unknown state: %{state}"
+  zh-CN: "未知状态：%{state}"
+agents.state.unmanaged:
+  en: "Not connected"
+  zh-CN: "未接入"
+agents.state.unsupported:
+  en: "Not supported yet"
+  zh-CN: "暂不支持接入"
+agents.summary:
+  en: "%{connected} connected · %{detected} detected"
+  zh-CN: "已接入 %{connected} 个 · 已检测到 %{detected} 个"
+agents.upgrade_label:
+  en: "Upgrade agent"
+  zh-CN: "升级 Agent"
+agents.upgrade_to:
+  en: "Update to %{version}"
+  zh-CN: "更新到 %{version}"
+agents.version_failed:
+  en: "Version check failed: %{error}"
+  zh-CN: "版本检查失败：%{error}"
+context.archived:
+  en: "%{count} archived messages"
+  zh-CN: "%{count} 条归档消息"
+context.cache_hit:
+  en: "Cache hit"
+  zh-CN: "缓存命中"
+context.column.cache:
+  en: "Cache"
+  zh-CN: "缓存"
+context.column.compressions:
+  en: "Compressions"
+  zh-CN: "压缩"
+context.column.messages:
+  en: "Messages"
+  zh-CN: "消息"
+context.column.saved:
+  en: "Saved"
+  zh-CN: "节省"
+context.column.session:
+  en: "Session"
+  zh-CN: "会话"
+context.column.view:
+  en: "View"
+  zh-CN: "当前视图"
+context.compressions:
+  en: "Compressions"
+  zh-CN: "压缩次数"
+context.enabled:
+  en: "Context engine"
+  zh-CN: "启用上下文引擎"
+context.enabled_detail:
+  en: "Compresses long conversations into summaries before they exceed the context window."
+  zh-CN: "在超出上下文窗口前，把长对话压缩为精简摘要。"
+context.engine:
+  en: "Engine"
+  zh-CN: "上下文引擎"
+context.guidance_only:
+  en: "Guidance only"
+  zh-CN: "仅注入指引"
+context.guidance_only_detail:
+  en: "Inject compression guidance without the compression tools."
+  zh-CN: "只注入压缩指引，不提供压缩工具。"
+context.load_failed:
+  en: "Cannot read context settings"
+  zh-CN: "读取上下文设置失败"
+context.loading:
+  en: "Reading context settings…"
+  zh-CN: "正在读取上下文设置…"
+context.max_tier:
+  en: "Highest tier"
+  zh-CN: "最高压缩层级"
+context.max_tier_detail:
+  en: "Higher tiers merge more history into shorter summaries."
+  zh-CN: "层级越高，合并的历史越多、摘要越短。"
+context.messages:
+  en: "%{count} messages"
+  zh-CN: "%{count} 条消息"
+context.no_sessions:
+  en: "No sessions yet"
+  zh-CN: "暂无会话"
+context.pressure:
+  en: "Compression threshold"
+  zh-CN: "压缩阈值"
+context.pressure_detail:
+  en: "Share of the context window that triggers compression."
+  zh-CN: "上下文窗口占用达到该比例时开始压缩。"
+context.protected:
+  en: "Protected messages"
+  zh-CN: "保护最近消息"
+context.protected_detail:
+  en: "The newest messages always stay uncompressed."
+  zh-CN: "最新的消息始终保持原文。"
+context.save_label:
+  en: "Save context settings"
+  zh-CN: "保存上下文设置"
+context.saved:
+  en: "Tokens saved"
+  zh-CN: "节省 Token"
+context.sessions:
+  en: "Sessions"
+  zh-CN: "会话"
+context.subtitle:
+  en: "Keeps long agent sessions inside the model's context window."
+  zh-CN: "让长时间的 Agent 会话始终处于模型上下文窗口内。"
+context.tier:
+  en: "Tier %{tier}"
+  zh-CN: "第 %{tier} 层"
+context.view:
+  en: "Current view %{count}"
+  zh-CN: "当前视图 %{count}"
+routing.add_fallback:
+  en: "Add Fallback"
+  zh-CN: "添加备用模型"
+routing.add_slot:
+  en: "Add Time Slot"
+  zh-CN: "添加时间段"
+routing.choose_model:
+  en: "Choose a model"
+  zh-CN: "选择模型"
+routing.delete:
+  en: "Delete Route"
+  zh-CN: "删除路由"
+routing.delete_title:
+  en: "Delete this route?"
+  zh-CN: "删除模型路由？"
+routing.delete_detail:
+  en: "%{model} will be deleted and the gateway restarts after saving."
+  zh-CN: "将删除 %{model}，保存后网关自动重启。"
+routing.delete_label:
+  en: "Delete route"
+  zh-CN: "删除模型路由"
+routing.empty:
+  en: "Choose or create a route"
+  zh-CN: "选择或新建路由"
+routing.empty_detail:
+  en: "Routes retry failed requests on fallback models, merge several models, or switch models by time of day."
+  zh-CN: "路由可以把失败请求转给备用模型、融合多个模型，或按时段切换模型。"
+routing.entry:
+  en: "Entry"
+  zh-CN: "入口"
+routing.entry_detail:
+  en: "Requests for this model enter the route."
+  zh-CN: "请求此模型时进入路由。"
+routing.fallback_model:
+  en: "Model"
+  zh-CN: "模型"
+routing.fallbacks:
+  en: "Fallbacks"
+  zh-CN: "备用模型"
+routing.fallbacks_detail:
+  en: "Tried in order when the entry model fails."
+  zh-CN: "入口模型失败时按顺序尝试。"
+routing.final:
+  en: "Final answer"
+  zh-CN: "最终回答"
+routing.final_detail:
+  en: "Writes the reply the client receives."
+  zh-CN: "生成客户端收到的回复。"
+routing.intermediate:
+  en: "Show intermediate results"
+  zh-CN: "显示中间结果"
+routing.intermediate_detail:
+  en: "Stream each panel model's answer before the final one."
+  zh-CN: "在最终回答前展示各参与模型的结果。"
+routing.judge:
+  en: "Judge"
+  zh-CN: "评审模型"
+routing.judge_detail:
+  en: "Compares the panel answers."
+  zh-CN: "比较各参与模型的回答。"
+routing.kind.failover:
+  en: "Failover"
+  zh-CN: "故障转移"
+routing.kind.failover_detail:
+  en: "Retry a failed request on fallback models"
+  zh-CN: "失败请求自动转给备用模型"
+routing.kind.fusion:
+  en: "Fusion"
+  zh-CN: "多模型融合"
+routing.kind.fusion_detail:
+  en: "Ask several models and merge their answers"
+  zh-CN: "并行询问多个模型并合并回答"
+routing.kind.schedule:
+  en: "Schedule"
+  zh-CN: "定时切换"
+routing.kind.schedule_detail:
+  en: "Use a different model by time of day"
+  zh-CN: "按本地时段切换模型"
+routing.load_failed:
+  en: "Cannot read routes"
+  zh-CN: "读取路由失败"
+routing.loading:
+  en: "Reading routes…"
+  zh-CN: "正在读取路由…"
+routing.merge:
+  en: "Merging"
+  zh-CN: "合并方式"
+routing.min_successful:
+  en: "Minimum answers"
+  zh-CN: "最少成功回答"
+routing.missing:
+  en: "Missing model"
+  zh-CN: "模型缺失"
+routing.name:
+  en: "Name"
+  zh-CN: "名称"
+routing.name_hint:
+  en: "Clients request %{prefix}<name>"
+  zh-CN: "客户端以 %{prefix}<名称> 调用"
+routing.name_placeholder:
+  en: "e.g. never-stuck"
+  zh-CN: "例如 never-stuck"
+routing.new:
+  en: "New Route"
+  zh-CN: "新建路由"
+routing.new_kind:
+  en: "New %{kind}"
+  zh-CN: "新建%{kind}"
+routing.no_models:
+  en: "No models available"
+  zh-CN: "暂无可用模型"
+routing.no_models_detail:
+  en: "Add a provider and choose models on the Providers page first."
+  zh-CN: "先在「服务商」中添加服务商并选择模型，再配置路由。"
+routing.otherwise:
+  en: "Other times"
+  zh-CN: "其他时段"
+routing.panel:
+  en: "Panel"
+  zh-CN: "参与模型"
+routing.panel_detail:
+  en: "%{count} models answer in parallel."
+  zh-CN: "%{count} 个模型并行回答。"
+routing.save:
+  en: "Save and Restart Gateway"
+  zh-CN: "保存并重启网关"
+routing.save_label:
+  en: "Save route"
+  zh-CN: "保存模型路由"
+routing.slots:
+  en: "Time slots"
+  zh-CN: "时间段"
+routing.slots_detail:
+  en: "Local time; the first matching slot wins."
+  zh-CN: "按本地时间，命中的第一个时间段生效。"
+routing.source:
+  en: "Model"
+  zh-CN: "模型"
+routing.timeout:
+  en: "Timeout"
+  zh-CN: "超时"
+routing.toggle_label:
+  en: "Update route"
+  zh-CN: "更新路由"
+routing.unsaved:
+  en: "Route changes are not saved yet"
+  zh-CN: "路由更改尚未保存"
+settings.autostart:
+  en: "Start gateway at login"
+  zh-CN: "登录时启动网关"
+settings.autostart_detail:
+  en: "The CLI keeps the gateway running in the background after you sign in."
+  zh-CN: "登录系统后由 CLI 在后台启动网关。"
+settings.backup:
+  en: "Backup"
+  zh-CN: "配置备份"
+settings.backup_detail:
+  en: "Backups are Base64 text, not encryption. Keep them private."
+  zh-CN: "备份是 Base64 文本，并非加密，请妥善保管。"
+settings.check_update:
+  en: "Check for Updates"
+  zh-CN: "检查更新"
+settings.diagnostics:
+  en: "Diagnostics"
+  zh-CN: "诊断"
+settings.doctor:
+  en: "Health check"
+  zh-CN: "健康检查"
+settings.doctor_detail:
+  en: "Checks the configuration, gateway and agent integration."
+  zh-CN: "检查配置、网关与 Agent 接入。"
+settings.doctor_issues:
+  en: "Some checks need attention"
+  zh-CN: "部分检查需要处理"
+settings.doctor_ok:
+  en: "All checks passed"
+  zh-CN: "所有检查通过"
+settings.doctor_run:
+  en: "Run Check"
+  zh-CN: "运行诊断"
+settings.download:
+  en: "Download"
+  zh-CN: "前往下载"
+settings.export:
+  en: "Export"
+  zh-CN: "导出配置"
+settings.export_button:
+  en: "Export…"
+  zh-CN: "导出…"
+settings.export_detail:
+  en: "Saves providers, models and routes to a file."
+  zh-CN: "把服务商、模型与路由保存到文件。"
+settings.export_label:
+  en: "Export backup"
+  zh-CN: "导出配置"
+settings.gateway:
+  en: "Gateway"
+  zh-CN: "本地网关"
+settings.import:
+  en: "Import"
+  zh-CN: "导入配置"
+settings.import_button:
+  en: "Import…"
+  zh-CN: "导入…"
+settings.import_detail:
+  en: "Replaces the current configuration and applies it."
+  zh-CN: "替换当前配置并应用。"
+settings.import_label:
+  en: "Import backup"
+  zh-CN: "导入配置"
+settings.import_prompt:
+  en: "Import"
+  zh-CN: "导入"
+settings.repository:
+  en: "Open the project on GitHub"
+  zh-CN: "在 GitHub 打开项目"
+settings.restart:
+  en: "Restart"
+  zh-CN: "重启"
+settings.restart_label:
+  en: "Restart gateway"
+  zh-CN: "重启网关"
+settings.start:
+  en: "Start"
+  zh-CN: "启动"
+settings.stop:
+  en: "Stop"
+  zh-CN: "停止"
+settings.up_to_date:
+  en: "Version %{version} · up to date"
+  zh-CN: "版本 %{version} · 已是最新"
+settings.update_available:
+  en: "Version %{version} is available"
+  zh-CN: "可更新到 %{version}"
+settings.version:
+  en: "Version %{version}"
+  zh-CN: "版本 %{version}"
+usage.cache_hit:
+  en: "Cache hit"
+  zh-CN: "缓存命中"
+usage.change:
+  en: "%{arrow} %{percent}% vs previous"
+  zh-CN: "%{arrow} %{percent}% 较上期"
+usage.column.cost:
+  en: "Cost"
+  zh-CN: "费用"
+usage.column.model:
+  en: "Model"
+  zh-CN: "模型"
+usage.column.requests:
+  en: "Requests"
+  zh-CN: "请求"
+usage.column.speed:
+  en: "Speed"
+  zh-CN: "速度"
+usage.column.tokens:
+  en: "Tokens"
+  zh-CN: "Token"
+usage.column.ttft:
+  en: "First Token"
+  zh-CN: "首 Token"
+usage.cost:
+  en: "Estimated cost"
+  zh-CN: "预估费用"
+usage.daily_tokens:
+  en: "Daily tokens"
+  zh-CN: "每日 Token"
+usage.empty:
+  en: "No requests in this period"
+  zh-CN: "此期间没有请求"
+usage.errors:
+  en: "%{count} requests failed in this period"
+  zh-CN: "此期间有 %{count} 个请求失败"
+usage.latency:
+  en: "Avg. first token"
+  zh-CN: "平均首 Token"
+usage.load_failed:
+  en: "Cannot read usage"
+  zh-CN: "读取用量失败"
+usage.loading:
+  en: "Reading usage…"
+  zh-CN: "正在读取用量…"
+usage.no_previous:
+  en: "No earlier data"
+  zh-CN: "无上期数据"
+usage.range:
+  en: "%{days} days"
+  zh-CN: "%{days} 天"
+usage.requests:
+  en: "Requests"
+  zh-CN: "请求数"
+usage.tokens:
+  en: "Tokens"
+  zh-CN: "Token 总量"
+cli.worker_stopped:
+  en: "The CLI worker stopped unexpectedly."
+  zh-CN: "CLI 工作线程意外停止。"

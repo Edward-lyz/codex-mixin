@@ -19,7 +19,7 @@ fi
 
 INFO_PLIST="$APP_DIR/Contents/Info.plist"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
-ICON_PACKAGE="$ROOT_DIR/macos/CodexMixin.icon"
+ICON_PACKAGE="$ROOT_DIR/desktop/macos/CodexMixin.icon"
 ICON_JSON="$ICON_PACKAGE/icon.json"
 
 plutil -convert json -o - "$ICON_JSON" >/dev/null

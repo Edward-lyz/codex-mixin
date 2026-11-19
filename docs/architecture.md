@@ -20,7 +20,7 @@
 | `context` | 原始消息归档、压缩视图、会话 revision、检索与导出 | `config`（仅取配置路径），不依赖 `server`/`gateway`/`cli` |
 | `clients` | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
 | `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
-| `macos` / `panel` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
+| `desktop` / `panel` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
 依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，
 `server -> gateway -> upstream -> provider/protocol`。`gateway` 与 `fusion`
