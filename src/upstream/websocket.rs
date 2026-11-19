@@ -6,7 +6,7 @@ use tokio_tungstenite_proxy::tungstenite::http::Uri;
 use tokio_tungstenite_proxy::tungstenite::proxy::ProxyConfig;
 use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream, client_async_tls_with_config};
 
-pub(super) fn log_official_websocket(
+fn log_official_websocket(
     stream: &WebSocketStream<MaybeTlsStream<TcpStream>>,
     host: &str,
 ) -> anyhow::Result<()> {
@@ -29,7 +29,7 @@ pub(super) fn log_official_websocket(
     Ok(())
 }
 
-pub(super) async fn connect_official_websocket<R>(
+pub(crate) async fn connect_official_websocket<R>(
     request: R,
     upstream: &crate::upstream::UpstreamAccess,
     proxy_env: &ProxySelection,
@@ -55,7 +55,7 @@ where
     Ok(stream)
 }
 
-pub(super) async fn connect_upstream_websocket<R>(
+pub(crate) async fn connect_upstream_websocket<R>(
     request: R,
     proxy_env: &ProxySelection,
 ) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>>
