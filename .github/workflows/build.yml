@@ -1,7 +1,7 @@
 name: Build
 
-# Manual runs always build the latest main. Release calls the same jobs with
-# its tag commit, so packaging logic exists only here.
+# Manual runs build the head of the branch they are dispatched on. Release
+# calls the same jobs with its tag commit, so packaging logic exists only here.
 on:
   workflow_dispatch:
     inputs:
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref || 'main' }}
+          ref: ${{ inputs.ref || github.ref }}
       - id: plan
         shell: bash
         env:
@@ -107,11 +107,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
-      - name: Install musl linker
+      - name: Install musl linker and desktop libraries
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes musl-tools
+          sudo apt-get install --yes musl-tools pkg-config libfontconfig-dev libfreetype-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libvulkan-dev
       - name: Refresh bundled models.dev snapshot
         shell: bash
         run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
@@ -143,20 +144,79 @@ jobs:
             echo "$xcode_version" >&2
             exit 1
           fi
+      - name: Import Developer ID certificate
+        if: matrix.os == 'macos'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [[ -z "$MACOS_CERTIFICATE_P12_BASE64" ]]; then
+            echo "no Developer ID certificate configured; the app is signed ad hoc"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/certificate.p12"
       - name: Build macOS app
         if: matrix.os == 'macos'
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: "13.1"
-        run: ./desktop/macos/build_app.sh
+          CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
+          # Ad-hoc signing unless a Developer ID certificate is configured.
+          CODE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_BASE64: ${{ secrets.NOTARY_KEY_BASE64 }}
+        shell: bash
+        run: |
+          if [[ -n "$NOTARY_KEY_BASE64" ]]; then
+            export NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"
+            printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          fi
+          ./desktop/macos/build_app.sh
+          rm -f "$RUNNER_TEMP/notary.p8"
       - name: Verify macOS application icons
         if: matrix.os == 'macos'
-        run: ./scripts/verify_macos_app_icon.sh
+        run: ./scripts/verify_macos_app_icon.sh --require-adaptive
+      - name: Package signed update archive
+        if: matrix.os == 'macos'
+        shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          mkdir -p dist/release
+          archive="dist/release/codex-mixin-app-$VERSION-${{ matrix.target }}.zip"
+          ditto -c -k --keepParent "dist/Codex Mixin.app" "$archive"
+          if [[ -z "$UPDATE_SIGNING_KEY" ]]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not set; the update archive is unsigned and the app will reject it"
+            exit 0
+          fi
+          OPENSSL="$(brew --prefix openssl@3)/bin/openssl" ./scripts/sign_update.sh "$archive"
       - name: Package CLI archive
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "$VERSION" dist/release
       - name: Package Linux installer
         if: matrix.os == 'linux'
         run: ./scripts/package-linux-deb.sh "${{ matrix.target }}" "${{ matrix.deb_arch }}" "$VERSION" dist/release
+      - name: Build and package the Linux desktop app
+        if: matrix.os == 'linux'
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          ./desktop/linux/package.sh "${{ matrix.target }}" "$VERSION" dist/release
+          if [[ -z "$UPDATE_SIGNING_KEY" ]]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not set; the update archive is unsigned and the app will reject it"
+            exit 0
+          fi
+          ./scripts/sign_update.sh dist/release/codex-mixin-app-"$VERSION"-*-linux-gnu.tar.gz
       - name: Package macOS installer
         if: matrix.os == 'macos'
         run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "$VERSION" dist/release
@@ -187,11 +247,24 @@ jobs:
       - name: Refresh bundled models.dev snapshot
         shell: bash
         run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
+      - name: Install NSIS
+        shell: pwsh
+        run: ./desktop/windows/install-nsis.ps1
       - name: Build and package the desktop app
         shell: pwsh
         run: |
-          ./desktop/windows/package.ps1 -OutDirectory dist/release
+          ./desktop/windows/package.ps1 -OutDirectory dist/release -Installer
           Rename-Item "dist/release/codex-mixin-$env:VERSION-x86_64-pc-windows-msvc.zip" "codex-mixin-$env:VERSION-windows-x86_64.zip"
+      - name: Sign the update archive
+        shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [[ -z "$UPDATE_SIGNING_KEY" ]]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not set; the update archive is unsigned and the app will reject it"
+            exit 0
+          fi
+          ./scripts/sign_update.sh "dist/release/codex-mixin-app-$VERSION-x86_64-pc-windows-msvc.zip"
       - name: Package standalone Windows CLI
         shell: pwsh
         run: |
@@ -208,7 +281,9 @@ jobs:
         run: |
           $version = $env:VERSION
           foreach ($path in @(
-            "dist\release\codex-mixin-$version-windows-x86_64.zip"
+            "dist\release\codex-mixin-$version-windows-x86_64.zip",
+            "dist\release\codex-mixin-$version-windows-x86_64-setup.exe",
+            "dist\release\codex-mixin-app-$version-x86_64-pc-windows-msvc.zip"
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
               throw "Missing Windows release artifact: $path"
@@ -219,6 +294,8 @@ jobs:
         with:
           name: codex-mixin-windows-x86_64
           path: |
+            dist/release/*.exe
             dist/release/*.zip
+            dist/release/*.sig
             dist/release/*.tar.gz
           if-no-files-found: error

@@ -88,11 +88,17 @@ impl Cli {
             if !ancestor.join("Cargo.toml").is_file() || !ancestor.join("src/main.rs").is_file() {
                 continue;
             }
-            for profile in ["release", "debug"] {
-                let candidate = ancestor.join("target").join(profile).join(CLI_NAME);
-                if candidate.is_file() {
-                    return Ok(Arc::new(Self::new(candidate)));
-                }
+            // Development builds use whichever profile was built last.
+            let newest = ["release", "debug"]
+                .iter()
+                .map(|profile| ancestor.join("target").join(profile).join(CLI_NAME))
+                .filter_map(|candidate| {
+                    let modified = candidate.metadata().and_then(|meta| meta.modified()).ok()?;
+                    Some((modified, candidate))
+                })
+                .max_by_key(|(modified, _)| *modified);
+            if let Some((_, candidate)) = newest {
+                return Ok(Arc::new(Self::new(candidate)));
             }
         }
         anyhow::bail!("{}", rust_i18n::t!("cli.missing"))
@@ -131,14 +137,22 @@ impl Cli {
             .change_gate
             .lock()
             .map_err(|_| CliError::new(rust_i18n::t!("cli.gate_poisoned")))?;
-        let output = self.execute(args, secrets, CHANGE_TIMEOUT, false, progress.clone())?;
-        if !apply {
-            return Ok(output);
+        let result = self.execute(args, secrets, CHANGE_TIMEOUT, false, progress.clone());
+        // A failure after the configuration was committed still applies it,
+        // so the gateway serves what the CLI saved.
+        let saved = match &result {
+            Ok(_) => true,
+            Err(error) => error.committed == Some(true),
+        };
+        if !apply || !saved {
+            return result;
         }
         let apply_args = ["config".to_owned(), "apply".to_owned()];
-        match self.execute(&apply_args, &[], CHANGE_TIMEOUT, false, progress) {
-            Ok(applied) => Ok(format!("{output}\n{applied}").trim().to_owned()),
-            Err(error) => Err(CliError {
+        let applied = self.execute(&apply_args, &[], CHANGE_TIMEOUT, false, progress);
+        match (result, applied) {
+            (Ok(output), Ok(applied)) => Ok(format!("{output}\n{applied}").trim().to_owned()),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(CliError {
                 message: rust_i18n::t!("cli.apply_failed", error = error.message).into(),
                 committed: Some(true),
             }),
@@ -176,8 +190,8 @@ impl Cli {
         let mut child = command.spawn().map_err(|error| {
             CliError::new(rust_i18n::t!("cli.spawn_failed", error = error.to_string()))
         })?;
-        let stdout = PipeReader::spawn(child.stdout.take(), None);
-        let stderr = PipeReader::spawn(child.stderr.take(), progress);
+        let stdout = PipeReader::spawn(child.stdout.take(), None, Vec::new());
+        let stderr = PipeReader::spawn(child.stderr.take(), progress, secrets.to_vec());
         let status = wait_with_deadline(&mut child, timeout, read_only)?;
         let output = redact(&stdout.collect()?, secrets);
         let errors = redact(&stderr.collect()?, secrets);
@@ -214,36 +228,59 @@ fn wait_with_deadline(
 }
 
 /// Collects one pipe on its own thread so stdout and stderr never block each
-/// other. Progress lines on stderr are forwarded as they arrive.
+/// other. Progress lines on stderr are redacted and forwarded as they arrive.
 struct PipeReader {
-    receiver: mpsc::Receiver<CliResult<String>>,
+    buffer: Arc<Mutex<PipeBuffer>>,
+    done: mpsc::Receiver<()>,
+}
+
+#[derive(Default)]
+struct PipeBuffer {
+    bytes: Vec<u8>,
+    overflowed: bool,
+    error: Option<String>,
 }
 
 impl PipeReader {
-    fn spawn<R: Read + Send + 'static>(pipe: Option<R>, progress: Option<Progress>) -> Self {
-        let (sender, receiver) = mpsc::channel();
+    fn spawn<R: Read + Send + 'static>(
+        pipe: Option<R>,
+        progress: Option<Progress>,
+        secrets: Vec<Secret>,
+    ) -> Self {
+        let buffer = Arc::new(Mutex::new(PipeBuffer::default()));
+        let (sender, done) = mpsc::channel();
         let Some(mut pipe) = pipe else {
-            let _ = sender.send(Ok(String::new()));
-            return Self { receiver };
+            let _ = sender.send(());
+            return Self { buffer, done };
         };
+        let shared = buffer.clone();
         thread::spawn(move || {
-            let mut output = Vec::new();
             let mut line = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            let result = loop {
-                let count = match pipe.read(&mut buffer) {
-                    Ok(0) => break Ok(String::from_utf8_lossy(&output).into_owned()),
+            let mut chunk = [0_u8; 4096];
+            loop {
+                let count = match pipe.read(&mut chunk) {
+                    Ok(0) => break,
                     Ok(count) => count,
-                    Err(error) => break Err(CliError::new(error.to_string())),
+                    Err(error) => {
+                        if let Ok(mut state) = shared.lock() {
+                            state.error = Some(error.to_string());
+                        }
+                        break;
+                    }
                 };
-                if output.len() + count > OUTPUT_LIMIT {
-                    break Err(CliError::new(rust_i18n::t!("cli.output_limit")));
+                if let Ok(mut state) = shared.lock() {
+                    // Past the limit the pipe keeps draining so the child
+                    // never blocks on a full pipe; the excess is dropped.
+                    if state.bytes.len() + count > OUTPUT_LIMIT {
+                        state.overflowed = true;
+                    } else {
+                        state.bytes.extend_from_slice(&chunk[..count]);
+                    }
                 }
-                output.extend_from_slice(&buffer[..count]);
                 let Some(progress) = &progress else {
                     continue;
                 };
-                for byte in &buffer[..count] {
+                for byte in &chunk[..count] {
                     if *byte != b'\n' {
                         line.push(*byte);
                         continue;
@@ -251,21 +288,31 @@ impl PipeReader {
                     let text = String::from_utf8_lossy(&line).trim_end().to_owned();
                     line.clear();
                     if let Some(message) = text.strip_prefix(PROGRESS_PREFIX) {
-                        progress(message.to_owned());
+                        progress(redact(message, &secrets));
                     }
                 }
-            };
-            let _ = sender.send(result);
+            }
+            let _ = sender.send(());
         });
-        Self { receiver }
+        Self { buffer, done }
     }
 
+    /// Returns what the pipe produced. A daemon may keep the pipe open after
+    /// the CLI exits; after the drain window the bytes read so far are the
+    /// CLI's complete output.
     fn collect(self) -> CliResult<String> {
-        match self.receiver.recv_timeout(PIPE_DRAIN) {
-            Ok(result) => result,
-            // A daemon still holds the pipe; the CLI's own output has ended.
-            Err(_) => Ok(String::new()),
+        let _ = self.done.recv_timeout(PIPE_DRAIN);
+        let state = self
+            .buffer
+            .lock()
+            .map_err(|_| CliError::new(rust_i18n::t!("cli.worker_stopped")))?;
+        if state.overflowed {
+            return Err(CliError::new(rust_i18n::t!("cli.output_limit")));
         }
+        if let Some(error) = &state.error {
+            return Err(CliError::new(error.clone()));
+        }
+        Ok(String::from_utf8_lossy(&state.bytes).into_owned())
     }
 }
 

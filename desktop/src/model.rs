@@ -188,7 +188,6 @@ pub struct ProtocolOption {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct QuotaEntry {
-    pub provider_id: String,
     pub label: String,
     #[serde(default)]
     pub error: Option<String>,

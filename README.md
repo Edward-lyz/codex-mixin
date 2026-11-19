@@ -106,12 +106,12 @@ Codex 以「官方账号模式」接入后，自定义模型加入官方模型�
 
 ### 安装
 
-从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载对应平台的发布包，无需安装 Rust 或从源码编译。
+从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载对应平台的发布包，无需安装 Rust 或从源码编译。桌面 App 会自动检查新版本，在「设置」或菜单栏面板里一键下载并重启；更新包用内置的 Ed25519 公钥校验签名。
 
 | 平台 | 安装 | 入口 |
 | --- | --- | --- |
 | macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」 | 菜单栏图标 →「打开控制台…」 |
-| Windows | 解压 `windows-x86_64.zip`，运行 `Codex Mixin.exe` | 系统托盘图标 →「打开控制台」 |
+| Windows | 运行 `windows-x86_64-setup.exe`（安装到当前用户，无需管理员），或解压 `windows-x86_64.zip` 后运行 `Codex Mixin.exe` | 系统托盘图标 →「打开控制台」 |
 | Linux | 解压 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz` 后运行 `./codex-mixin panel`，也可安装 `.deb` | 浏览器打开终端打印的地址 |
 
 ```bash

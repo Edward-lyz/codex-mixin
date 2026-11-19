@@ -43,7 +43,7 @@ jobs:
         run: |
           while IFS= read -r script; do
             bash -n "$script"
-          done < <(find scripts desktop/macos -type f -name '*.sh' -print)
+          done < <(find scripts desktop/macos desktop/linux -type f -name '*.sh' -print)
           while IFS= read -r script; do
             node --check "$script"
           done < <(find scripts panel/assets -type f \

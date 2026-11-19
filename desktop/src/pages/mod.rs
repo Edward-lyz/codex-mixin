@@ -24,8 +24,15 @@ pub fn run_change(change: Change, cx: &mut App) {
         .detach();
 }
 
+/// Queues a change and returns whether it succeeded, for callers that keep a
+/// draft until the CLI confirms it.
+pub fn run_change_then(change: Change, cx: &mut App) -> gpui_kit::Task<bool> {
+    let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
+    cx.spawn(async move |_| task.await.is_ok())
+}
+
 pub fn is_busy(cx: &App) -> bool {
-    Store::global(cx).read(cx).busy.is_some()
+    Store::global(cx).read(cx).busy().is_some()
 }
 
 /// A centered empty, loading or failure state with an optional action.

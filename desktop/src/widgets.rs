@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use gpui_kit::base::motion::transition;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement,
@@ -21,7 +22,6 @@ pub struct Segmented {
     id: ElementId,
     items: Vec<SharedString>,
     selected: usize,
-    large: bool,
     on_change: Option<ChangeHandler>,
 }
 
@@ -31,7 +31,6 @@ impl Segmented {
             id: id.into(),
             items: Vec::new(),
             selected: 0,
-            large: false,
             on_change: None,
         }
     }
@@ -43,12 +42,6 @@ impl Segmented {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = selected;
-        self
-    }
-
-    /// Window-level navigation uses wider, taller segments.
-    pub fn large(mut self) -> Self {
-        self.large = true;
         self
     }
 
@@ -91,8 +84,9 @@ impl RenderOnce for Segmented {
                 .flex()
                 .items_center()
                 .justify_center()
-                .when(self.large, |segment| segment.w_24().h_7().text_sm())
-                .when(!self.large, |segment| segment.w_20().h_6().text_xs())
+                .w_20()
+                .h_6()
+                .text_xs()
                 .font_medium()
                 .cursor_pointer()
                 .text_color(if selected {
@@ -187,7 +181,25 @@ pub fn pill(label: impl Into<SharedString>, color: Hsla) -> impl IntoElement {
         .child(label.into())
 }
 
-/// A titled, bordered group of settings rows.
+/// A label whose explanation appears on hover instead of as a second line.
+fn explained(label: SharedString, detail: Option<SharedString>) -> impl IntoElement {
+    // Section titles and row labels can repeat on a page; the explanation
+    // tells them apart, so hover state is never shared.
+    let id = format!(
+        "explained-{label}-{}",
+        detail.as_deref().unwrap_or_default()
+    );
+    div()
+        .id(ElementId::Name(id.into()))
+        .truncate()
+        .child(label)
+        .when_some(detail, |label, detail| {
+            label.tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
+        })
+}
+
+/// A titled group of settings rows. The title is a quiet label; its
+/// explanation shows on hover.
 pub fn section(
     title: impl Into<SharedString>,
     detail: Option<SharedString>,
@@ -196,19 +208,14 @@ pub fn section(
 ) -> impl IntoElement {
     let colors = cx.theme().colors;
     v_flex()
-        .gap_2()
+        .gap_1p5()
         .child(
-            v_flex()
-                .gap_0p5()
-                .child(div().text_sm().font_semibold().child(title.into()))
-                .when_some(detail, |header, detail| {
-                    header.child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(detail),
-                    )
-                }),
+            div()
+                .px_1()
+                .text_xs()
+                .font_medium()
+                .text_color(colors.muted_foreground)
+                .child(explained(title.into(), detail)),
         )
         .child(
             v_flex()
@@ -220,34 +227,26 @@ pub fn section(
         )
 }
 
-/// One row inside a [`section`]: label and detail on the left, control on
-/// the right.
+/// One row inside a [`section`]: the label on the left, its control on the
+/// right. The explanation shows when hovering the label.
 pub fn setting_row(
     label: impl Into<SharedString>,
     detail: Option<SharedString>,
     control: impl IntoElement,
-    cx: &App,
+    _: &App,
 ) -> impl IntoElement {
-    let colors = cx.theme().colors;
     h_flex()
         .gap_4()
         .px_4()
-        .py_3()
+        .min_h_11()
+        .py_1p5()
         .justify_between()
         .child(
-            v_flex()
+            div()
                 .flex_1()
                 .min_w_0()
-                .gap_0p5()
-                .child(div().text_sm().child(label.into()))
-                .when_some(detail, |text, detail| {
-                    text.child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(detail),
-                    )
-                }),
+                .text_sm()
+                .child(explained(label.into(), detail)),
         )
         .child(div().flex_none().child(control))
 }

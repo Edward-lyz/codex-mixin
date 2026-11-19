@@ -454,7 +454,7 @@ panel.waiting_config_detail:
   zh-CN: "请先设置服务商与 API Key"
 panel.running:
   en: "Local gateway running"
-  zh-CN: "本地服务运行中"
+  zh-CN: "本地网关运行中"
 panel.running_with_issues:
   en: "Running · %{count} providers need attention"
   zh-CN: "本地服务运行中 · %{count} 个服务商需要处理"
@@ -980,3 +980,228 @@ usage.tokens:
 cli.worker_stopped:
   en: "The CLI worker stopped unexpectedly."
   zh-CN: "CLI 工作线程意外停止。"
+models.keep_one:
+  en: "Keep at least one model in Codex"
+  zh-CN: "至少保留一个已加入的模型"
+update.not_packaged:
+  en: "Development builds do not update themselves. Install the release app to get updates."
+  zh-CN: "开发版本不会自动更新，请安装正式发布的 App。"
+update.not_writable:
+  en: "Cannot write to %{path}; move Codex Mixin to a folder you can write to"
+  zh-CN: "无法写入 %{path}，请把 Codex Mixin 放到可写的文件夹"
+update.bad_signature:
+  en: "The update's signature does not match; it was not installed."
+  zh-CN: "更新包签名校验失败，未安装。"
+update.checking:
+  en: "Checking for updates…"
+  zh-CN: "正在检查更新…"
+update.downloading:
+  en: "Downloading %{version} · %{percent}%"
+  zh-CN: "正在下载 %{version} · %{percent}%"
+update.ready:
+  en: "Version %{version} is ready; restart to finish"
+  zh-CN: "%{version} 已就绪，重启即可完成更新"
+update.install:
+  en: "Download and Install"
+  zh-CN: "下载并安装"
+update.restart:
+  en: "Restart to Update"
+  zh-CN: "重启以更新"
+panel.update_available:
+  en: "Update to %{version}"
+  zh-CN: "更新到 %{version}"
+panel.update_ready:
+  en: "Restart to finish updating to %{version}"
+  zh-CN: "重启完成更新到 %{version}"
+menu.settings:
+  en: "Settings…"
+  zh-CN: "设置…"
+menu.services:
+  en: "Services"
+  zh-CN: "服务"
+menu.hide:
+  en: "Hide Codex Mixin"
+  zh-CN: "隐藏 Codex Mixin"
+menu.hide_others:
+  en: "Hide Others"
+  zh-CN: "隐藏其他"
+menu.show_all:
+  en: "Show All"
+  zh-CN: "全部显示"
+menu.quit:
+  en: "Quit Codex Mixin"
+  zh-CN: "退出 Codex Mixin"
+menu.edit:
+  en: "Edit"
+  zh-CN: "编辑"
+menu.undo:
+  en: "Undo"
+  zh-CN: "撤销"
+menu.redo:
+  en: "Redo"
+  zh-CN: "重做"
+menu.cut:
+  en: "Cut"
+  zh-CN: "剪切"
+menu.copy:
+  en: "Copy"
+  zh-CN: "拷贝"
+menu.paste:
+  en: "Paste"
+  zh-CN: "粘贴"
+menu.select_all:
+  en: "Select All"
+  zh-CN: "全选"
+menu.window:
+  en: "Window"
+  zh-CN: "窗口"
+menu.minimize:
+  en: "Minimize"
+  zh-CN: "最小化"
+menu.zoom:
+  en: "Zoom"
+  zh-CN: "缩放"
+menu.close:
+  en: "Close Window"
+  zh-CN: "关闭窗口"
+console.gateway_running:
+  en: "Gateway running"
+  zh-CN: "网关运行中"
+console.gateway_stopped:
+  en: "Gateway stopped"
+  zh-CN: "网关已停止"
+console.gateway_unknown:
+  en: "Reading gateway status"
+  zh-CN: "正在读取网关状态"
+routing.entry_model:
+  en: "Entry Model"
+  zh-CN: "入口模型"
+routing.simulated_failure:
+  en: "Simulated failure"
+  zh-CN: "模拟失败"
+routing.trying:
+  en: "Trying"
+  zh-CN: "正在尝试"
+routing.finish:
+  en: "Response"
+  zh-CN: "返回响应"
+routing.flow_success:
+  en: "Entry succeeds"
+  zh-CN: "入口成功"
+routing.flow_failure:
+  en: "Entry fails"
+  zh-CN: "入口失败"
+routing.simulate_failure:
+  en: "Simulate Entry Failure"
+  zh-CN: "模拟入口失败"
+routing.stop_simulation:
+  en: "Stop Preview"
+  zh-CN: "暂停预览"
+panel.copy:
+  en: "Copy"
+  zh-CN: "复制"
+panel.copied:
+  en: "Copied"
+  zh-CN: "已复制"
+panel.quota_windows:
+  en: "%{count} windows"
+  zh-CN: "%{count} 个额度窗口"
+panel.show_all:
+  en: "Show All"
+  zh-CN: "查看全部"
+panel.collapse:
+  en: "Collapse"
+  zh-CN: "收起"
+usage.view_overview:
+  en: "Overview"
+  zh-CN: "用量概览"
+usage.view_turns:
+  en: "Turns"
+  zh-CN: "Turn 记录"
+usage.turn.search:
+  en: "Search sessions or models"
+  zh-CN: "搜索会话或模型"
+usage.turn.all:
+  en: "All"
+  zh-CN: "全部"
+usage.turn.failed_only:
+  en: "Failed"
+  zh-CN: "失败"
+usage.turn.following:
+  en: "Following live"
+  zh-CN: "实时跟随"
+usage.turn.paused:
+  en: "Paused"
+  zh-CN: "已暂停"
+usage.turn.pause:
+  en: "Pause"
+  zh-CN: "暂停跟随"
+usage.turn.resume:
+  en: "Follow"
+  zh-CN: "继续跟随"
+usage.turn.column.time:
+  en: "Time"
+  zh-CN: "时间"
+usage.turn.column.session:
+  en: "Session / Agent"
+  zh-CN: "会话 / Agent"
+usage.turn.column.model:
+  en: "Model"
+  zh-CN: "模型"
+usage.turn.column.status:
+  en: "Status"
+  zh-CN: "状态"
+usage.turn.column.tokens:
+  en: "Tokens"
+  zh-CN: "Token"
+usage.turn.completed:
+  en: "Done"
+  zh-CN: "完成"
+usage.turn.failed:
+  en: "Failed"
+  zh-CN: "失败"
+usage.turn.details:
+  en: "Turn Details"
+  zh-CN: "Turn 详情"
+usage.turn.agent:
+  en: "Agent"
+  zh-CN: "Agent"
+usage.turn.provider:
+  en: "Provider"
+  zh-CN: "服务商"
+usage.turn.model:
+  en: "Model"
+  zh-CN: "模型"
+usage.turn.ttft:
+  en: "First Token"
+  zh-CN: "首 Token"
+usage.turn.speed:
+  en: "Output Speed"
+  zh-CN: "输出速度"
+usage.turn.input:
+  en: "Input"
+  zh-CN: "输入"
+usage.turn.output:
+  en: "Output"
+  zh-CN: "输出"
+usage.turn.cache:
+  en: "Cache Read"
+  zh-CN: "缓存读取"
+usage.turn.cost:
+  en: "Cost"
+  zh-CN: "费用"
+usage.turn.session_requests:
+  en: "Requests in this session · %{count}"
+  zh-CN: "同会话请求 · %{count}"
+usage.turn.empty:
+  en: "No turns match."
+  zh-CN: "没有符合条件的 Turn。"
+usage.turn.loading:
+  en: "Loading turns…"
+  zh-CN: "正在读取 Turn 记录…"
+usage.turn.load_failed:
+  en: "Cannot load turns"
+  zh-CN: "无法读取 Turn 记录"
+usage.turn.none_selected:
+  en: "Select a turn to see its details."
+  zh-CN: "选择一条记录查看详情。"
