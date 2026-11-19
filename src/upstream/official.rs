@@ -66,7 +66,7 @@ impl UpstreamAccess {
         headers: &HeaderMap,
         mut body: Value,
     ) -> Result<(reqwest::Response, Value, bool), GatewayError> {
-        let saved = crate::protocol::convert::collaboration::prepare_request(&mut body)?;
+        let saved = crate::protocol::convert::collaboration::prepare_request(&mut body, None)?;
         let plaintext_collaboration = saved.active();
         let body = OfficialResponsesBody::new(body)?;
         let (response, body) = self.send_official_body(headers, body).await?;

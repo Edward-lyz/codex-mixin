@@ -14,6 +14,7 @@ use super::super::websocket_proxy::connect_official_websocket;
 use super::{
     OfficialWebSocket, ResponsesWsContext, take_custom_request_input, tungstenite_to_axum_message,
 };
+use crate::protocol::convert::collaboration::{self, NAMESPACE as COLLABORATION_NAMESPACE};
 use crate::upstream::FORWARDED_OFFICIAL_HEADERS;
 
 #[derive(Debug)]
@@ -27,7 +28,9 @@ struct OfficialWebSocketRequestError {
 pub(super) struct OfficialWebSocketState {
     response_id: String,
     model: String,
-    history: Vec<Value>,
+    pub(super) history: Vec<Value>,
+    plaintext_collaboration: bool,
+    collaboration_tool: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -43,7 +46,7 @@ pub(super) async fn proxy_official_ws_request(
     context: &mut ResponsesWsContext<'_>,
     body: &mut Value,
     model: &str,
-    request_history: &mut Option<Vec<Value>>,
+    request_history: &mut Option<OfficialWebSocketState>,
     usage_observer: &mut Option<crate::gateway::UpstreamCacheObserver>,
 ) -> anyhow::Result<Option<(anyhow::Error, Option<String>)>> {
     let mut retry_available = true;
@@ -65,7 +68,16 @@ pub(super) async fn proxy_official_ws_request(
             }
             return Ok(Some((error, None)));
         }
-        let saved = crate::protocol::convert::collaboration::prepare_request(body)?;
+        let inherited_tools = request_history
+            .as_ref()
+            .filter(|previous| previous.plaintext_collaboration)
+            .map(|previous| {
+                (
+                    previous.history.as_slice(),
+                    previous.collaboration_tool.as_ref(),
+                )
+            });
+        let saved = collaboration::prepare_request(body, inherited_tools)?;
         let plaintext_collaboration = saved.active();
         let result = proxy_official_responses_ws(
             context
@@ -79,21 +91,32 @@ pub(super) async fn proxy_official_ws_request(
             plaintext_collaboration,
         )
         .await;
-        crate::protocol::convert::collaboration::restore_request(body, saved);
+        collaboration::restore_request(body, saved);
         match result {
             Ok(OfficialWebSocketResponse::Completed {
                 response_id,
                 items_added,
             }) => {
-                let mut history = match request_history.take() {
-                    Some(history) => history,
-                    None => take_custom_request_input(body)?,
+                let (mut history, previous_tool) = match request_history.take() {
+                    Some(previous) => (previous.history, previous.collaboration_tool),
+                    None => (take_custom_request_input(body)?, None),
                 };
                 history.extend(items_added);
+                let collaboration_tool = body["tools"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|tool| {
+                        tool["type"] == "namespace" && tool["name"] == COLLABORATION_NAMESPACE
+                    })
+                    .cloned()
+                    .or(previous_tool);
                 *context.official_state = Some(OfficialWebSocketState {
                     response_id,
                     model: model.to_owned(),
                     history,
+                    plaintext_collaboration,
+                    collaboration_tool,
                 });
                 return Ok(None);
             }
@@ -124,18 +147,28 @@ async fn connect_and_expand_official_request(
     headers: &HeaderMap,
     official_socket: &mut Option<OfficialWebSocket>,
     body: &mut Value,
-    request_history: &mut Option<Vec<Value>>,
+    request_history: &mut Option<OfficialWebSocketState>,
 ) -> anyhow::Result<()> {
     *official_socket = Some(connect_official_responses_ws(state, headers).await?);
-    if body.get("previous_response_id").is_some() {
-        body["input"] = Value::Array(
-            request_history
-                .take()
-                .expect("previous response history is available"),
-        );
+    if let Some(previous) = request_history.take() {
+        body["input"] = Value::Array(previous.history);
         body.as_object_mut()
             .expect("responses request is an object")
             .remove("previous_response_id");
+        // Dynamic declarations are in the replayed input. On reconnect the
+        // original top-level declaration must also be sent to the new socket.
+        if let Some(tool) = previous.collaboration_tool {
+            if body["tools"].is_null() {
+                body["tools"] = json!([]);
+            }
+            if let Some(tools) = body["tools"].as_array_mut()
+                && !tools.iter().any(|tool| {
+                    tool["type"] == "namespace" && tool["name"] == COLLABORATION_NAMESPACE
+                })
+            {
+                tools.push(tool);
+            }
+        }
     }
     Ok(())
 }
@@ -231,7 +264,7 @@ async fn proxy_official_responses_ws(
             _ => None,
         };
         if plaintext_collaboration && let Some(event) = event.as_mut() {
-            crate::protocol::convert::collaboration::restore_event(event).map_err(|error| {
+            collaboration::restore_event(event).map_err(|error| {
                 OfficialWebSocketRequestError {
                     source: error.into(),
                     // A protocol rejection must never replay executable calls.
@@ -401,7 +434,7 @@ fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Va
 pub(super) fn official_websocket_request_history(
     body: &Value,
     state: Option<OfficialWebSocketState>,
-) -> anyhow::Result<Option<Vec<Value>>> {
+) -> anyhow::Result<Option<OfficialWebSocketState>> {
     let incremental_input = body
         .get("input")
         .and_then(Value::as_array)
@@ -410,7 +443,7 @@ pub(super) fn official_websocket_request_history(
     else {
         return Ok(None);
     };
-    let state = state.ok_or_else(|| {
+    let mut state = state.ok_or_else(|| {
         anyhow::anyhow!("unknown official previous_response_id: {previous_response_id}")
     })?;
     if previous_response_id != state.response_id {
@@ -426,9 +459,8 @@ pub(super) fn official_websocket_request_history(
             state.model
         );
     }
-    let mut history = state.history;
-    history.extend(incremental_input.iter().cloned());
-    Ok(Some(history))
+    state.history.extend(incremental_input.iter().cloned());
+    Ok(Some(state))
 }
 
 fn websocket_url_from_http_url(url: &str) -> anyhow::Result<String> {

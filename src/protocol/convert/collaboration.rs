@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::error::GatewayError;
 
-const NAMESPACE: &str = "collaboration";
+pub(crate) const NAMESPACE: &str = "collaboration";
 const PLAINTEXT_NAMESPACE: &str = "codex_mixin_collaboration";
 
 fn is_message_tool(namespace: Option<&str>, name: &str) -> bool {
@@ -90,16 +90,23 @@ impl RequestRestore {
     }
 }
 
-fn declared_tools(body: &Value) -> impl Iterator<Item = &Value> {
+type InheritedCollaboration<'a> = (&'a [Value], Option<&'a Value>);
+
+fn declared_tools<'a>(
+    body: &'a Value,
+    inherited: Option<InheritedCollaboration<'a>>,
+) -> impl Iterator<Item = &'a Value> {
     body.get("tools")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
+        .chain(inherited.into_iter().flat_map(|(_, tool)| tool))
         .chain(
             body.get("input")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
+                .chain(inherited.into_iter().flat_map(|(input, _)| input))
                 .filter(|item| {
                     matches!(
                         item.get("type").and_then(Value::as_str),
@@ -115,10 +122,13 @@ fn declared_tools(body: &Value) -> impl Iterator<Item = &Value> {
         )
 }
 
-pub(crate) fn prepare_request(body: &mut Value) -> Result<RequestRestore, GatewayError> {
-    let mut active = false;
+pub(crate) fn prepare_request(
+    body: &mut Value,
+    inherited: Option<InheritedCollaboration<'_>>,
+) -> Result<RequestRestore, GatewayError> {
+    let mut active = inherited.is_some();
     let mut collision = false;
-    for tool in declared_tools(body) {
+    for tool in declared_tools(body, None) {
         let name = tool.get("name").and_then(Value::as_str);
         active |= tool.get("type").and_then(Value::as_str) == Some("namespace")
             && name == Some(NAMESPACE);
@@ -133,7 +143,7 @@ pub(crate) fn prepare_request(body: &mut Value) -> Result<RequestRestore, Gatewa
         .peekable();
     if active && !collision && alias_history.peek().is_some() {
         // Only index the adapted tool declarations when the request replays the alias.
-        let adapted_function_names: HashSet<_> = declared_tools(body)
+        let adapted_function_names: HashSet<_> = declared_tools(body, inherited)
             .filter(|tool| {
                 tool.get("type").and_then(Value::as_str) == Some("namespace")
                     && tool.get("name").and_then(Value::as_str) == Some(NAMESPACE)

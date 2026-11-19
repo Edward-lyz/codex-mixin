@@ -182,10 +182,10 @@ async fn handle_official_ws_request(
             }
         };
     let observation = {
-        if let Some(request_history) = request_history.as_mut() {
+        if let Some(continuation) = request_history.as_mut() {
             let original_input = std::mem::replace(
                 &mut body["input"],
-                Value::Array(std::mem::take(request_history)),
+                Value::Array(std::mem::take(&mut continuation.history)),
             );
             let previous_response_id = body
                 .as_object_mut()
@@ -197,7 +197,7 @@ async fn handle_official_ws_request(
             let Value::Array(history) = body["input"].take() else {
                 unreachable!("official cache observation input was not an array");
             };
-            *request_history = history;
+            continuation.history = history;
             body["input"] = original_input;
             if let Some(previous_response_id) = previous_response_id {
                 body["previous_response_id"] = previous_response_id;
