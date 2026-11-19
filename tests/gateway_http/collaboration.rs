@@ -342,6 +342,7 @@ async fn adapts_official_collaboration_schema_and_calls_after_reconnect() {
     assert_eq!(completed["response"]["output"][0], *item);
     tokio::time::sleep(Duration::from_millis(25)).await;
     let mut follow = first.clone();
+    follow.as_object_mut().unwrap().remove("tools");
     follow["previous_response_id"] = completed["response"]["id"].clone();
     follow["input"] =
         json!([{"type":"function_call_output","call_id":"call_delegation","output":"child done"}]);
@@ -381,6 +382,116 @@ async fn adapts_official_collaboration_schema_and_calls_after_reconnect() {
     assert_eq!(requests[1]["input"][1]["call_id"], "call_delegation");
     assert_eq!(requests[1]["input"][2]["output"], "child done");
     assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn restores_official_collaboration_across_incremental_websocket_turns() {
+    let (gateway_url, requests, connections, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::PersistentWithCollaborationTool,
+        Duration::from_secs(5),
+    )
+    .await;
+    let mut request = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = json!({
+        "type":"response.create", "model":"gpt-5.5", "tools":[],
+        "input":[{"type":"additional_tools","tools":[
+            {"type":"namespace","name":"collaboration","tools":[
+                {"type":"function","name":"spawn_agent","parameters":{"type":"object",
+                    "properties":{"message":{"type":"string","encrypted":true}}}}
+            ]}
+        ]}]
+    });
+    for (turn, expected_namespace) in [
+        "collaboration",
+        "collaboration",
+        "collaboration",
+        "codex_mixin_collaboration",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        socket
+            .send(WsMessage::Text(body.to_string().into()))
+            .await
+            .unwrap();
+        let events: Vec<Value> = tokio::time::timeout(
+            Duration::from_secs(5),
+            websocket_response_frames(&mut socket),
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|frame| serde_json::from_str(frame).unwrap())
+        .collect();
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let item = &completed["response"]["output"][0];
+        assert_eq!(item["namespace"], expected_namespace, "turn {}", turn + 1);
+        assert_eq!(item["name"], "spawn_agent");
+        if expected_namespace == "collaboration" {
+            assert_eq!(item["encrypted_function_args"], json!([]));
+        } else {
+            assert!(item.get("encrypted_function_args").is_none());
+        }
+        for kind in ["response.output_item.added", "response.output_item.done"] {
+            let event = events.iter().find(|event| event["type"] == kind).unwrap();
+            assert_eq!(event["item"], *item);
+        }
+        body = match turn {
+            2 => json!({
+                "type":"response.create", "model":"gpt-5.5", "input":[],
+                "tools":[{"type":"namespace","name":"codex_mixin_collaboration","tools":[
+                    {"type":"function","name":"spawn_agent","parameters":{"type":"object"}}
+                ]}]
+            }),
+            1 => json!({
+                "type":"response.create", "model":"gpt-5.5", "tools":[],
+                "previous_response_id":completed["response"]["id"],
+                "input":[
+                    {"type":"function_call","namespace":"codex_mixin_collaboration","name":"spawn_agent",
+                        "call_id":"call_legacy","arguments":"{}","encrypted_function_args":[]},
+                    {"type":"function_call_output","call_id":"call_legacy","output":"done"}
+                ]
+            }),
+            0 => json!({
+                "type":"response.create", "model":"gpt-5.5", "tools":[],
+                "previous_response_id":completed["response"]["id"],
+                "input":[{"type":"function_call_output","call_id":"call_delegation","output":"done"}]
+            }),
+            _ => break,
+        };
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(
+        requests[0]["input"][0]["tools"][0]["name"],
+        "codex_mixin_collaboration"
+    );
+    for (index, request) in requests.iter().enumerate().take(3).skip(1) {
+        assert_eq!(
+            request["previous_response_id"],
+            format!("official_1_{index}")
+        );
+        assert!(request.pointer("/tools/0").is_none());
+    }
+    assert_eq!(requests[1]["input"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        requests[2]["input"][0]["namespace"],
+        "codex_mixin_collaboration"
+    );
+    assert!(requests[3].get("previous_response_id").is_none());
+    assert_eq!(connections.load(Ordering::SeqCst), 1);
 }
 
 fn delegation_request() -> Value {

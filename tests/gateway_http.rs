@@ -182,6 +182,7 @@ enum OfficialWebSocketBehavior {
     CloseAfterCreated,
     CloseAfterCompletedWithCustomTool,
     CloseAfterCompletedWithCollaborationTool,
+    PersistentWithCollaborationTool,
     NativeAgentEnvelopeGate,
     TerminalFailuresBeforeRecovery,
     ConnectionLimitThenComplete,
@@ -1380,6 +1381,7 @@ async fn serve_mock_official_websocket(
     connection_id: usize,
 ) {
     let mut last_response_id = None;
+    let mut last_collaboration_namespace = None;
     while let Some(Ok(message)) = socket.next().await {
         let body = match message {
             AxumWsMessage::Text(text) => serde_json::from_str::<Value>(&text).unwrap(),
@@ -1427,15 +1429,31 @@ async fn serve_mock_official_websocket(
         let collaboration_namespace = body
             .get("tools")
             .and_then(Value::as_array)
-            .and_then(|tools| {
-                tools.iter().find(|tool| {
-                    matches!(
-                        tool["name"].as_str(),
-                        Some("collaboration" | "codex_mixin_collaboration")
-                    )
-                })
+            .into_iter()
+            .flatten()
+            .chain(
+                body["input"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| item["type"] == "additional_tools")
+                    .filter_map(|item| item["tools"].as_array())
+                    .flatten(),
+            )
+            .find(|tool| {
+                matches!(
+                    tool["name"].as_str(),
+                    Some("collaboration" | "codex_mixin_collaboration")
+                )
             })
-            .map(|tool| tool["name"].clone());
+            .map(|tool| tool["name"].clone())
+            .or_else(|| {
+                if previous_response_id.is_some() && previous_response_id == last_response_id {
+                    last_collaboration_namespace.clone()
+                } else {
+                    None
+                }
+            });
         let request_number = {
             let mut requests = state.requests.lock().unwrap();
             requests.push(body);
@@ -1579,6 +1597,10 @@ async fn serve_mock_official_websocket(
                 state.websocket_behavior,
                 OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool
             ) && request_number == 1
+                || matches!(
+                    state.websocket_behavior,
+                    OfficialWebSocketBehavior::PersistentWithCollaborationTool
+                ) && collaboration_namespace.is_some()
             {
                 return json!({
                     "type":"function_call", "id":"fc_delegation", "status":"completed",
@@ -1613,6 +1635,7 @@ async fn serve_mock_official_websocket(
             if matches!(
                 state.websocket_behavior,
                 OfficialWebSocketBehavior::CloseAfterCompletedWithCollaborationTool
+                    | OfficialWebSocketBehavior::PersistentWithCollaborationTool
             ) {
                 socket.send(AxumWsMessage::Text(json!({
                     "type":"response.output_item.added", "output_index":0, "item":output_item
@@ -1660,6 +1683,7 @@ async fn serve_mock_official_websocket(
             .await
             .unwrap();
         last_response_id = Some(response_id);
+        last_collaboration_namespace = collaboration_namespace;
         if matches!(
             state.websocket_behavior,
             OfficialWebSocketBehavior::CloseAfterCompletedWithCustomTool

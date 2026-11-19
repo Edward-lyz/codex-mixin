@@ -562,7 +562,7 @@ async fn stream_openai_responses(
         .upstream
         .official_account_headers(provider, headers)
         .await?;
-    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body)?;
+    let saved_collaboration = crate::protocol::convert::collaboration::prepare_request(body, None)?;
     let plaintext_collaboration = saved_collaboration.active();
     let original_model = body
         .as_object_mut()

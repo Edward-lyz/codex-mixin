@@ -33,7 +33,7 @@ fn collaboration_requests_preserve_history_and_restore_native_schemas() {
         ]
     });
     let original = body.clone();
-    let saved = prepare_request(&mut body).unwrap();
+    let saved = prepare_request(&mut body, None).unwrap();
     for tools in [
         &body["tools"],
         &body["input"][0]["tools"],
@@ -344,7 +344,7 @@ fn request_replay_only_renames_calls_with_plaintext_provenance() {
             {"type":"input_text", "text":"header"},
             {"type":"encrypted_content", "encrypted_content":"opaque-native"}]}]});
     let original = body.clone();
-    let saved = prepare_request(&mut body).unwrap();
+    let saved = prepare_request(&mut body, None).unwrap();
     assert!(saved.active());
     assert_eq!(body["input"][0], original["input"][0]);
     assert_eq!(body["input"][1]["namespace"], PLAINTEXT_NAMESPACE);
@@ -368,7 +368,7 @@ fn alias_collisions_fail_before_any_request_mutation() {
         body["tools"].as_array_mut().unwrap().push(collision);
         let original = body.clone();
         assert!(matches!(
-            prepare_request(&mut body),
+            prepare_request(&mut body, None),
             Err(GatewayError::BadRequest(_))
         ));
         assert_eq!(body, original);
@@ -377,7 +377,7 @@ fn alias_collisions_fail_before_any_request_mutation() {
         {"type":"tool_search_output", "tools":[{"type":"namespace", "name":PLAINTEXT_NAMESPACE}]}
     ]});
     let original = body.clone();
-    assert!(prepare_request(&mut body).is_err());
+    assert!(prepare_request(&mut body, None).is_err());
     assert_eq!(body, original);
 }
 
@@ -388,7 +388,7 @@ fn plaintext_agent_messages_use_portable_inputs_and_restore_exactly() {
             {"type":"input_text", "text":"Task completed"},
             {"type":"input_text", "text":"Keep this second part"}]}]});
     let original = body.clone();
-    let saved = prepare_request(&mut body).unwrap();
+    let saved = prepare_request(&mut body, None).unwrap();
     assert!(!saved.active());
     assert_eq!(body["input"][0]["type"], "message");
     assert_eq!(body["input"][0]["role"], "user");
@@ -445,7 +445,7 @@ fn malformed_plaintext_messages_fail_before_tools_or_history_are_changed() {
         ]});
         let original = body.clone();
         assert!(matches!(
-            prepare_request(&mut body),
+            prepare_request(&mut body, None),
             Err(GatewayError::BadRequest(_))
         ));
         assert_eq!(body, original);
