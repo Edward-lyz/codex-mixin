@@ -467,6 +467,15 @@ panel.stopped:
 panel.stopped_detail:
   en: "The gateway is not running"
   zh-CN: "网关当前未运行"
+panel.unresponsive:
+  en: "Gateway unresponsive"
+  zh-CN: "网关未响应"
+panel.quota_heading:
+  en: "Provider usage"
+  zh-CN: "服务商用量"
+panel.no_quota:
+  en: "No usage data available"
+  zh-CN: "暂无用量数据"
 panel.start_label:
   en: "Start gateway"
   zh-CN: "启动网关"
@@ -476,6 +485,9 @@ panel.stop_label:
 panel.quota_percent:
   en: "%{used}% used"
   zh-CN: "已用 %{used}%"
+panel.quota_reset:
+  en: "Resets %{time}"
+  zh-CN: "%{time} 重置"
 panel.quota_remaining:
   en: "%{remaining} %{currency} left"
   zh-CN: "剩余 %{remaining} %{currency}"
@@ -486,20 +498,41 @@ panel.copy_endpoint:
   en: "Copy Local Endpoint"
   zh-CN: "复制本地接口地址"
 panel.open_log:
-  en: "Show Gateway Log"
-  zh-CN: "打开运行日志"
+  en: "Gateway Log"
+  zh-CN: "运行日志"
 panel.open_state:
-  en: "Open Configuration Folder"
-  zh-CN: "打开配置目录"
+  en: "Config Folder"
+  zh-CN: "配置目录"
 panel.settings:
   en: "Settings…"
   zh-CN: "设置…"
 panel.lightweight:
-  en: "Lightweight Mode (keep gateway)"
-  zh-CN: "轻量模式（保留网关）"
+  en: "Lightweight Mode"
+  zh-CN: "轻量模式"
+panel.lightweight_detail:
+  en: "Keep the gateway running and start it at sign-in. The desktop app will close."
+  zh-CN: "保持网关运行并设为登录时启动，同时关闭桌面应用。"
 panel.quit:
   en: "Quit Mixin Completely"
   zh-CN: "彻底退出 Mixin"
+connection.presets:
+  en: "Provider Presets"
+  zh-CN: "服务商预设"
+connection.advanced:
+  en: "Advanced Settings"
+  zh-CN: "高级设置"
+routing.request:
+  en: "Request"
+  zh-CN: "请求"
+routing.schedule_clock:
+  en: "Local Time"
+  zh-CN: "本地时间"
+routing.choose_panel_models:
+  en: "Choose Models"
+  zh-CN: "选择模型"
+routing.none_selected:
+  en: "Select at least one model"
+  zh-CN: "请选择至少一个模型"
 agents.check_versions:
   en: "Check for Updates"
   zh-CN: "检查版本更新"

@@ -187,6 +187,15 @@ fn native_inventory() -> anyhow::Result<&'static NativeInventory> {
         .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
+#[cfg(windows)]
+pub(super) fn registered_codex_cli_candidates() -> impl Iterator<Item = PathBuf> {
+    native_inventory()
+        .into_iter()
+        .flat_map(|inventory| &inventory.apps)
+        .filter(|entry| entry.app == DesktopApp::Codex && entry.path.is_dir())
+        .map(|entry| entry.path.join("app/resources/codex.exe"))
+}
+
 fn query_native_inventory() -> anyhow::Result<NativeInventory> {
     let queries: Vec<_> = DesktopApp::ALL
         .iter()

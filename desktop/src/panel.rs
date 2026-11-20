@@ -7,7 +7,8 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::{
     Animation, AnimationExt as _, AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem,
@@ -20,15 +21,14 @@ use rust_i18n::t;
 
 use crate::console::{Console, Page};
 use crate::model::{QuotaEntry, ServiceStatus};
-use crate::pages::run_change;
 use crate::store::{Change, Store};
 use crate::theme;
 use crate::tr;
 use crate::updater::{UpdateState, Updater};
 use crate::widgets::{provider_logo, status_dot};
 
-pub const PANEL_WIDTH: f32 = 340.0;
-pub const PANEL_HEIGHT: f32 = 560.0;
+pub const PANEL_WIDTH: f32 = 390.0;
+pub const PANEL_HEIGHT: f32 = 405.0;
 /// Gap between the menu bar and the panel's top edge.
 const PANEL_OFFSET: f32 = 6.0;
 
@@ -104,6 +104,7 @@ pub struct StatusPanel {
     expanded: HashSet<String>,
     /// Whether the endpoint was copied since the panel opened.
     copied: bool,
+    action_error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -131,8 +132,26 @@ impl StatusPanel {
         Self {
             expanded: HashSet::new(),
             copied: false,
+            action_error: None,
             _subscriptions: vec![observe, activation, updater],
         }
+    }
+
+    fn gateway_action(&mut self, change: Change, quit: bool, cx: &mut Context<Self>) {
+        self.action_error = None;
+        let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
+        cx.spawn(async move |panel, cx| match task.await {
+            Ok(_) if quit => cx.update(|cx| cx.quit()),
+            Ok(_) => {}
+            Err(error) => {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.action_error = Some(error.message.into());
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
     }
 }
 
@@ -168,7 +187,7 @@ fn request_missing_quotas(store: &gpui_kit::Entity<Store>, cx: &mut App) {
 }
 
 /// Title and detail lines for the gateway, following the menu wording.
-fn gateway_summary(
+pub(crate) fn gateway_summary(
     status: Option<&ServiceStatus>,
     error: Option<&SharedString>,
 ) -> (SharedString, SharedString, bool) {
@@ -184,21 +203,28 @@ fn gateway_summary(
         );
     }
     let running = status.is_running();
-    let degraded = status.degraded_providers().count();
+    let degraded = status.degraded_providers();
     let title: SharedString = if running && degraded > 0 {
         t!("panel.running_with_issues", count = degraded).into()
     } else if running && status.provider_readiness.as_deref() == Some("disabled") {
         t!("panel.running_no_provider").into()
     } else if running {
         t!("panel.running").into()
+    } else if status.gateway.as_deref() == Some("unresponsive") {
+        t!("panel.unresponsive").into()
     } else {
         t!("panel.stopped").into()
     };
-    let detail: SharedString = status
-        .error
-        .clone()
-        .or_else(|| running.then(|| status.endpoint.clone()).flatten())
-        .map_or_else(|| t!("panel.stopped_detail").into(), SharedString::from);
+    let detail = error
+        .cloned()
+        .or_else(|| {
+            status
+                .error
+                .as_ref()
+                .filter(|_| status.gateway.as_deref() != Some("stopped"))
+                .map(|message| SharedString::from(message.clone()))
+        })
+        .unwrap_or_else(|| tr!("panel.stopped_detail"));
     (title, detail, running)
 }
 
@@ -223,12 +249,16 @@ fn quota_value(entry: &QuotaEntry) -> SharedString {
     {
         return format!("{used:.0} / {limit:.0}").into();
     }
-    t!(
-        "panel.quota_remaining",
-        remaining = format!("{:.2}", entry.remaining.unwrap_or_default()),
-        currency = entry.currency.clone().unwrap_or_default()
+    entry.remaining.map_or_else(
+        || "—".into(),
+        |remaining| {
+            tr!(
+                "panel.quota_remaining",
+                remaining = format!("{remaining:.2}"),
+                currency = entry.currency.as_deref().unwrap_or_default()
+            )
+        },
     )
-    .into()
 }
 
 /// One quota window: name, a short level bar and the exact usage, aligned
@@ -242,10 +272,20 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
     } else {
         colors.primary
     };
+    let reset = entry
+        .reset_at
+        .as_deref()
+        .and_then(|reset| chrono::DateTime::parse_from_rfc3339(reset).ok())
+        .map(|reset| {
+            reset
+                .with_timezone(&chrono::Local)
+                .format("%m-%d %H:%M")
+                .to_string()
+        });
     h_flex()
-        .h_6()
+        .h_7()
         .gap_2()
-        .text_xs()
+        .text_size(px(13.0))
         .child(
             h_flex()
                 .flex_1()
@@ -262,7 +302,7 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
         )
         .child(
             div()
-                .w_16()
+                .w_12()
                 .h_1()
                 .flex_none()
                 .rounded_full()
@@ -292,6 +332,18 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
                 .truncate()
                 .child(quota_value(entry)),
         )
+        .when_some(reset, |row, reset| {
+            row.child(
+                div()
+                    .w(px(98.0))
+                    .flex_none()
+                    .text_right()
+                    .text_xs()
+                    .text_color(colors.muted_foreground)
+                    .truncate()
+                    .child(t!("panel.quota_reset", time = reset)),
+            )
+        })
 }
 
 fn shortcut_tile(
@@ -301,16 +353,16 @@ fn shortcut_tile(
     cx: &App,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     let colors = cx.theme().colors;
-    v_flex()
+    h_flex()
         .id(id)
         .flex_1()
         .items_center()
         .justify_center()
-        .gap_1()
-        .h(px(54.0))
-        .rounded_lg()
-        .bg(colors.muted.opacity(0.6))
-        .text_xs()
+        .gap_1p5()
+        .h_8()
+        .rounded_md()
+        .bg(colors.muted.opacity(0.55))
+        .text_size(px(13.0))
         .cursor_pointer()
         .hover(|style| style.bg(colors.accent))
         .child(Icon::new(icon).small().text_color(colors.muted_foreground))
@@ -328,7 +380,7 @@ fn quiet_action(
         .px_2()
         .py_1()
         .rounded_md()
-        .text_xs()
+        .text_size(px(13.0))
         .text_color(colors.muted_foreground)
         .cursor_pointer()
         .hover(|style| style.bg(colors.accent).text_color(colors.foreground))
@@ -346,21 +398,28 @@ impl StatusPanel {
             .filter(|status| status.is_running())
             .and_then(|status| status.endpoint.clone());
         let busy = store.busy();
-        let dot = if !configured {
+        let dot = if !configured
+            || status.is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"))
+        {
             colors.warning
         } else if running {
             colors.success
         } else {
             colors.muted_foreground
         };
-        let detail = busy
-            .as_ref()
-            .map(|(label, progress)| progress.clone().unwrap_or_else(|| label.clone()))
-            .or_else(|| endpoint.is_none().then_some(detail));
+        let detail = self.action_error.clone().or_else(|| {
+            busy.as_ref()
+                .map(|(label, progress)| progress.clone().unwrap_or_else(|| label.clone()))
+                .or_else(|| (endpoint.is_none() || store.service.error.is_some()).then_some(detail))
+        });
         let copied = self.copied;
         v_flex()
             .gap_2()
-            .px_1()
+            .p_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.muted.opacity(0.30))
             .child(
                 h_flex()
                     .gap_3()
@@ -369,11 +428,11 @@ impl StatusPanel {
                         v_flex()
                             .flex_1()
                             .min_w_0()
-                            .child(div().text_sm().font_semibold().child("Codex Mixin"))
+                            .child(div().text_base().font_semibold().child("Codex Mixin"))
                             .child(
                                 h_flex()
                                     .gap_1p5()
-                                    .text_xs()
+                                    .text_size(px(13.0))
                                     .text_color(colors.muted_foreground)
                                     .child(status_dot(dot))
                                     .child(div().truncate().child(title)),
@@ -383,24 +442,29 @@ impl StatusPanel {
                         Switch::new("gateway-switch")
                             .checked(running)
                             .disabled(!configured || busy.is_some())
-                            .on_change(|start, _, cx| {
+                            .on_change(cx.listener(|panel, start, _, cx| {
                                 let (command, label) = if *start {
                                     ("start", t!("panel.start_label"))
                                 } else {
                                     ("stop", t!("panel.stop_label"))
                                 };
-                                run_change(
+                                panel.gateway_action(
                                     Change::new(label, ["service", command, "--managed", "--json"]),
+                                    false,
                                     cx,
                                 );
-                            }),
+                            })),
                     ),
             )
             .when_some(detail, |header, detail| {
                 header.child(
                     div()
-                        .text_xs()
-                        .text_color(colors.muted_foreground)
+                        .text_size(px(13.0))
+                        .text_color(if self.action_error.is_some() {
+                            colors.danger
+                        } else {
+                            colors.muted_foreground
+                        })
                         .line_clamp(2)
                         .child(detail),
                 )
@@ -419,7 +483,7 @@ impl StatusPanel {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_xs()
+                                .text_size(px(13.0))
                                 .font_family("IBM Plex Mono")
                                 .child(endpoint.clone()),
                         )
@@ -469,8 +533,15 @@ impl StatusPanel {
                 continue;
             }
             // A single balance without a limit reads best beside the name.
-            let inline = (entries.len() == 1 && entries[0].used_fraction().is_none())
-                .then(|| quota_value(&entries[0]));
+            let inline = entries
+                .first()
+                .filter(|entry| {
+                    entries.len() == 1
+                        && entry.used_fraction().is_none()
+                        && entry.reset_at.is_none()
+                        && entry.error.is_none()
+                })
+                .map(quota_value);
             let expanded = self.expanded.contains(&provider.id);
             let shown: Vec<&QuotaEntry> = if inline.is_some() {
                 Vec::new()
@@ -570,7 +641,16 @@ impl StatusPanel {
         }
         let count = groups.len();
         v_flex()
-            .px_1()
+            .gap_1()
+            .when(count == 0, |region| {
+                region.child(
+                    div()
+                        .py_2()
+                        .text_sm()
+                        .text_color(colors.muted_foreground)
+                        .child(t!("panel.no_quota")),
+                )
+            })
             .children(groups.into_iter().enumerate().map(|(index, group)| {
                 group.when(index + 1 < count, |group| {
                     group.border_b_1().border_color(colors.border.opacity(0.6))
@@ -580,8 +660,15 @@ impl StatusPanel {
 
     fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let paths = Store::global(cx)
-            .read(cx)
+        let store = Store::global(cx).read(cx);
+        let can_enter_lightweight = store.busy().is_none()
+            && store
+                .service
+                .value
+                .as_ref()
+                .is_some_and(|status| status.configured);
+        let busy = store.busy().is_some();
+        let paths = store
             .interface
             .value
             .as_ref()
@@ -621,6 +708,7 @@ impl StatusPanel {
             .child(
                 Button::new("open-console")
                     .primary()
+                    .small()
                     .w_full()
                     .icon(IconName::AppWindow)
                     .label(t!("panel.open_console"))
@@ -681,29 +769,64 @@ impl StatusPanel {
                     .border_color(colors.border.opacity(0.6))
                     .child(
                         quiet_action("lightweight", t!("panel.lightweight").into(), cx)
-                            .on_click(|_, _, cx| cx.quit()),
-                    )
-                    .child(quiet_action("quit", t!("panel.quit").into(), cx).on_click(
-                        |_, _, cx| {
-                            let change = Change::new(
-                                t!("panel.quit"),
-                                [
-                                    "service",
-                                    "stop",
-                                    "--managed",
-                                    "--allow-codex-disconnect",
-                                    "--json",
-                                ],
-                            );
-                            let task =
-                                Store::global(cx).update(cx, |store, cx| store.run(change, cx));
-                            cx.spawn(async move |cx| {
-                                let _ = task.await;
-                                cx.update(|cx| cx.quit());
+                            .when(can_enter_lightweight, |action| {
+                                action.on_click(cx.listener(|_, _, window, cx| {
+                                    let panel = cx.entity().downgrade();
+                                    window.open_alert_dialog(cx, move |dialog, _, _| {
+                                        let panel = panel.clone();
+                                        dialog
+                                            .title(tr!("panel.lightweight"))
+                                            .description(tr!("panel.lightweight_detail"))
+                                            .confirm()
+                                            .ok_text(t!("panel.lightweight"))
+                                            .cancel_text(t!("common.cancel"))
+                                            .on_ok(move |_, _, cx| {
+                                                let _ = panel.update(cx, |panel, cx| {
+                                                    panel.gateway_action(
+                                                        Change::new(
+                                                            t!("panel.lightweight"),
+                                                            [
+                                                                "service",
+                                                                "autostart",
+                                                                "enable",
+                                                                "--json",
+                                                            ],
+                                                        ),
+                                                        true,
+                                                        cx,
+                                                    );
+                                                });
+                                                true
+                                            })
+                                    });
+                                }))
                             })
-                            .detach();
-                        },
-                    )),
+                            .when(!can_enter_lightweight, |action| {
+                                action.opacity(0.55).cursor_default()
+                            }),
+                    )
+                    .child(
+                        quiet_action("quit", t!("panel.quit").into(), cx)
+                            .when(!busy, |action| {
+                                action.on_click(cx.listener(|panel, _, _, cx| {
+                                    panel.gateway_action(
+                                        Change::new(
+                                            t!("panel.quit"),
+                                            [
+                                                "service",
+                                                "stop",
+                                                "--managed",
+                                                "--allow-codex-disconnect",
+                                                "--json",
+                                            ],
+                                        ),
+                                        true,
+                                        cx,
+                                    );
+                                }))
+                            })
+                            .when(busy, |action| action.opacity(0.55).cursor_default()),
+                    ),
             )
     }
 }
@@ -721,7 +844,7 @@ impl Render for StatusPanel {
             .child(
                 v_flex()
                     .size_full()
-                    .gap_3()
+                    .gap_2()
                     .p_3()
                     .text_color(colors.popover_foreground)
                     .when(!*theme::FROSTED, |card| {
@@ -732,6 +855,14 @@ impl Render for StatusPanel {
                             .shadow_lg()
                     })
                     .child(self.render_header(cx))
+                    .child(
+                        div()
+                            .px_1()
+                            .pt_1()
+                            .text_sm()
+                            .font_semibold()
+                            .child(t!("panel.quota_heading")),
+                    )
                     .child(
                         div()
                             .id("panel-quotas")

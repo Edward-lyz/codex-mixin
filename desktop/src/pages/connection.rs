@@ -11,7 +11,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
     v_flex,
 };
 use gpui_kit::{
@@ -57,6 +57,7 @@ pub struct ConnectionView {
     review_model: Option<String>,
     title_model: Option<String>,
     dirty: bool,
+    advanced: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -162,6 +163,7 @@ impl ConnectionView {
             preset,
             inputs,
             dirty: false,
+            advanced: false,
             _subscriptions: subscriptions,
         }
     }
@@ -344,6 +346,9 @@ impl ConnectionView {
     /// Saves the form; the draft stays dirty until the CLI confirms it, so a
     /// failed save keeps the user's input. Resolves to whether it succeeded.
     pub fn save(&mut self, cx: &mut Context<Self>) -> gpui_kit::Task<bool> {
+        if is_busy(cx) {
+            return gpui_kit::Task::ready(false);
+        }
         let Some(change) = self.save_change(cx) else {
             return gpui_kit::Task::ready(false);
         };
@@ -362,6 +367,9 @@ impl ConnectionView {
     }
 
     pub fn set_preset(&mut self, preset: String, cx: &mut Context<Self>) {
+        if self.preset == preset {
+            return;
+        }
         self.preset = preset;
         self.protocol = None;
         cx.notify();
@@ -435,13 +443,15 @@ impl ConnectionView {
     fn render_preset_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let presets = catalog(cx).presets;
-        let cards = presets.into_iter().map(|preset| {
+        let rows = presets.into_iter().map(|preset| {
             let selected = preset.id == self.preset;
             let id = preset.id.clone();
             h_flex()
                 .id(SharedString::from(format!("preset-{}", preset.id)))
                 .gap_2()
-                .p_2()
+                .h_11()
+                .px_2()
+                .flex_none()
                 .rounded_lg()
                 .border_1()
                 .cursor_pointer()
@@ -455,29 +465,52 @@ impl ConnectionView {
                 .on_click(cx.listener(move |view, _, _, cx| view.set_preset(id.clone(), cx)))
                 .child(provider_logo(&preset.icon, false, cx))
                 .child(
-                    v_flex()
+                    div()
+                        .flex_1()
                         .min_w_0()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_medium()
-                                .truncate()
-                                .child(preset.display_name.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(colors.muted_foreground)
-                                .line_clamp(2)
-                                .child(preset.description.clone()),
-                        ),
+                        .truncate()
+                        .text_sm()
+                        .font_medium()
+                        .child(preset.display_name),
                 )
+                .when(selected, |row| {
+                    row.child(
+                        Icon::new(IconName::Check)
+                            .xsmall()
+                            .text_color(colors.primary),
+                    )
+                })
         });
-        div().grid().grid_cols(2).gap_2().children(cards)
+        v_flex()
+            .w(px(232.0))
+            .h_full()
+            .flex_none()
+            .p_2()
+            .gap_2()
+            .rounded_lg()
+            .bg(colors.muted.opacity(0.5))
+            .child(
+                div()
+                    .px_2()
+                    .pt_1()
+                    .text_sm()
+                    .font_semibold()
+                    .child(t!("connection.presets")),
+            )
+            .child(
+                v_flex()
+                    .id("preset-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .gap_1()
+                    .children(rows),
+            )
     }
 
     fn render_fields(&self, preset: &ProviderPreset, cx: &mut Context<Self>) -> Form {
         let creating = self.provider.is_none();
+        let advanced = !creating || self.advanced;
         let oauth = creating && preset.auth_mode == "local_oauth";
         let aws = preset.auth_mode == "aws_sigv4";
         let entity = cx.entity().downgrade();
@@ -498,14 +531,11 @@ impl ConnectionView {
         let report_view = entity.clone();
         Form::new()
             .label_layout(Axis::Horizontal)
-            .label_width(px(150.0))
-            .when(creating && self.shows_id(preset), |form| {
-                form.child(field(t!("connection.id"), &self.inputs.id))
-            })
+            .label_width(px(if creating { 124.0 } else { 150.0 }))
             .when(!oauth, |form| {
-                form.child(field(t!("connection.name"), &self.inputs.name))
+                form.when(!aws, |form| form.child(field(key_label, &self.inputs.key)))
+                    .child(field(t!("connection.name"), &self.inputs.name))
                     .child(field(t!("connection.base_url"), &self.inputs.base_url))
-                    .child(field(t!("connection.website"), &self.inputs.website))
             })
             .when(preset.custom_endpoint, |form| {
                 form.child(
@@ -527,13 +557,16 @@ impl ConnectionView {
                             },
                         )),
                 )
-                .child(field(t!("connection.api_path"), &self.inputs.api_path))
             })
-            .when(!oauth, |form| {
-                form.child(field(t!("connection.image_path"), &self.inputs.image_path))
+            .when(advanced && creating && self.shows_id(preset), |form| {
+                form.child(field(t!("connection.id"), &self.inputs.id))
             })
-            .when(!oauth && !aws, |form| {
-                form.child(field(key_label, &self.inputs.key))
+            .when(advanced && !oauth, |form| {
+                form.child(field(t!("connection.website"), &self.inputs.website))
+                    .child(field(t!("connection.image_path"), &self.inputs.image_path))
+                    .when(preset.custom_endpoint, |form| {
+                        form.child(field(t!("connection.api_path"), &self.inputs.api_path))
+                    })
             })
             .when(aws, |form| {
                 form.child(field("AWS Access Key ID", &self.inputs.aws_access))
@@ -875,24 +908,84 @@ impl Render for ConnectionView {
         let preset = self.preset_definition(cx);
         let creating = self.provider.is_none();
         let official = self.provider.as_ref().is_some_and(Provider::is_official);
-        let mut body = v_flex().gap_6().w_full().max_w(gpui_kit::rems(46.0));
         if creating {
-            body = body.child(self.render_preset_picker(cx));
+            let colors = cx.theme().colors;
+            let advanced = self.advanced;
+            return h_flex()
+                .h_full()
+                .w_full()
+                .items_start()
+                .gap_4()
+                .child(self.render_preset_picker(cx))
+                .when_some(preset, |layout, preset| {
+                    let show_advanced = preset.auth_mode != "local_oauth" || self.shows_id(&preset);
+                    layout.child(
+                        v_flex()
+                            .id("new-provider-fields")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .gap_4()
+                            .p_3()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(colors.border)
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .items_start()
+                                    .child(provider_logo(&preset.icon, true, cx))
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_base()
+                                                    .font_semibold()
+                                                    .child(preset.display_name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(colors.muted_foreground)
+                                                    .child(preset.description.clone()),
+                                            ),
+                                    ),
+                            )
+                            .child(row_divider(cx))
+                            .child(self.render_fields(&preset, cx))
+                            .when(show_advanced, |pane| {
+                                pane.child(
+                                    Button::new("provider-advanced")
+                                        .ghost()
+                                        .small()
+                                        .icon(if advanced {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        })
+                                        .label(tr!("connection.advanced"))
+                                        .on_click(cx.listener(|view, _, _, cx| {
+                                            view.advanced = !view.advanced;
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
+                })
+                .into_any_element();
         }
+        let mut body = v_flex().gap_6().w_full().max_w(gpui_kit::rems(46.0));
         if official {
             body = body.child(self.render_official(cx));
         } else if let Some(preset) = &preset {
             let form = self.render_fields(preset, cx);
             body = body.child(section(
                 t!("connection.settings"),
-                Some(
-                    if creating {
-                        t!("connection.new_hint")
-                    } else {
-                        t!("connection.edit_hint")
-                    }
-                    .into(),
-                ),
+                Some(tr!("connection.edit_hint")),
                 div().p_4().child(form),
                 cx,
             ));
@@ -908,27 +1001,29 @@ impl Render for ConnectionView {
             .id("connection-scroll")
             .size_full()
             .overflow_y_scroll()
-            .when(!creating, |content| content.px_6().pt_2().pb_24())
+            .px_6()
+            .pt_2()
+            .pb_24()
             .child(body);
         div()
             .relative()
             .size_full()
             .child(content)
-            .when(self.dirty && !creating, |view| {
-                view.child(self.render_save_bar(cx))
-            })
+            .when(self.dirty, |view| view.child(self.render_save_bar(cx)))
+            .into_any_element()
     }
 }
 
 /// Opens the "Add provider" dialog over the current window.
 pub fn open_add_provider(window: &mut Window, cx: &mut App) {
     let view = cx.new(|cx| ConnectionView::new(None, window, cx));
-    window.open_dialog(cx, move |dialog, _, _| {
+    window.open_dialog(cx, move |dialog, _, cx| {
         let save_view = view.clone();
+        let ready = view.read(cx).preset_definition(cx).is_some() && !is_busy(cx);
         dialog
             .title(SharedString::from(t!("connection.add_title")))
-            .w(px(720.0))
-            .child(div().max_h(gpui_kit::rems(34.0)).child(view.clone()))
+            .w(px(730.0))
+            .child(div().h(px(370.0)).child(view.clone()))
             .footer(
                 h_flex()
                     .w_full()
@@ -943,6 +1038,7 @@ pub fn open_add_provider(window: &mut Window, cx: &mut App) {
                     .child(
                         Button::new("confirm-add-provider")
                             .primary()
+                            .disabled(!ready)
                             .icon(IconName::Plus)
                             .label(tr!("connection.add_confirm"))
                             .on_click(move |_, window, cx| {

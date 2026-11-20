@@ -9,7 +9,8 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ServiceStatus {
     pub configured: bool,
-    pub gateway: String,
+    #[serde(default)]
+    pub gateway: Option<String>,
     #[serde(default)]
     pub endpoint: Option<String>,
     #[serde(default)]
@@ -21,18 +22,43 @@ pub struct ServiceStatus {
     #[serde(default)]
     pub official_ech: Option<EchStatus>,
     #[serde(default)]
-    pub providers: Vec<ServiceProvider>,
+    providers: ServiceProviders,
 }
 
 impl ServiceStatus {
     pub fn is_running(&self) -> bool {
-        self.gateway == "running"
+        self.gateway.as_deref() == Some("running")
     }
 
-    pub fn degraded_providers(&self) -> impl Iterator<Item = &ServiceProvider> {
-        self.providers
-            .iter()
-            .filter(|provider| provider.enabled && provider.readiness.status == "degraded")
+    pub fn degraded_providers(&self) -> usize {
+        match &self.providers {
+            ServiceProviders::List(providers) => providers
+                .iter()
+                .filter(|provider| provider.enabled && provider.readiness.status == "degraded")
+                .count(),
+            ServiceProviders::Summary { degraded, .. } => *degraded,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum ServiceProviders {
+    List(Vec<ServiceProvider>),
+    Summary {
+        #[serde(rename = "total")]
+        _total: usize,
+        #[serde(rename = "healthy")]
+        _healthy: usize,
+        degraded: usize,
+        #[serde(rename = "disabled")]
+        _disabled: usize,
+    },
+}
+
+impl Default for ServiceProviders {
+    fn default() -> Self {
+        Self::List(Vec::new())
     }
 }
 
@@ -201,6 +227,8 @@ pub struct QuotaEntry {
     pub unit: Option<String>,
     #[serde(default)]
     pub currency: Option<String>,
+    #[serde(default)]
+    pub reset_at: Option<String>,
 }
 
 impl QuotaEntry {
