@@ -371,12 +371,14 @@ fn shortcut_tile(
 
 fn quiet_action(
     id: &'static str,
+    icon: IconName,
     label: SharedString,
     cx: &App,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     let colors = cx.theme().colors;
-    div()
+    h_flex()
         .id(id)
+        .gap_1p5()
         .px_2()
         .py_1()
         .rounded_md()
@@ -384,6 +386,7 @@ fn quiet_action(
         .text_color(colors.muted_foreground)
         .cursor_pointer()
         .hover(|style| style.bg(colors.accent).text_color(colors.foreground))
+        .child(Icon::new(icon).small())
         .child(label)
 }
 
@@ -457,16 +460,57 @@ impl StatusPanel {
                     ),
             )
             .when_some(detail, |header, detail| {
+                let is_error = self.action_error.is_some()
+                    || store.service.error.is_some()
+                    || status
+                        .is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"));
+                let summary = if is_error
+                    && detail.contains("register gateway scheduled task failed")
+                    && detail.contains("0x80070005")
+                {
+                    tr!("panel.startup_access_denied")
+                } else {
+                    SharedString::from(
+                        detail
+                            .lines()
+                            .find(|line| !line.trim().is_empty())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_owned(),
+                    )
+                };
                 header.child(
-                    div()
-                        .text_size(px(13.0))
-                        .text_color(if self.action_error.is_some() {
-                            colors.danger
-                        } else {
-                            colors.muted_foreground
-                        })
-                        .line_clamp(2)
-                        .child(detail),
+                    h_flex()
+                        .h_7()
+                        .gap_1p5()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.0))
+                                .text_color(if is_error {
+                                    colors.danger
+                                } else {
+                                    colors.muted_foreground
+                                })
+                                .child(summary),
+                        )
+                        .when(is_error, |row| {
+                            row.child(
+                                Button::new("copy-gateway-error")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Copy)
+                                    .tooltip(tr!("panel.copy_diagnostic"))
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            detail.to_string(),
+                                        ));
+                                    }),
+                            )
+                        }),
                 )
             })
             .when_some(endpoint, |header, endpoint| {
@@ -768,45 +812,50 @@ impl StatusPanel {
                     .border_t_1()
                     .border_color(colors.border.opacity(0.6))
                     .child(
-                        quiet_action("lightweight", t!("panel.lightweight").into(), cx)
-                            .when(can_enter_lightweight, |action| {
-                                action.on_click(cx.listener(|_, _, window, cx| {
-                                    let panel = cx.entity().downgrade();
-                                    window.open_alert_dialog(cx, move |dialog, _, _| {
-                                        let panel = panel.clone();
-                                        dialog
-                                            .title(tr!("panel.lightweight"))
-                                            .description(tr!("panel.lightweight_detail"))
-                                            .confirm()
-                                            .ok_text(t!("panel.lightweight"))
-                                            .cancel_text(t!("common.cancel"))
-                                            .on_ok(move |_, _, cx| {
-                                                let _ = panel.update(cx, |panel, cx| {
-                                                    panel.gateway_action(
-                                                        Change::new(
-                                                            t!("panel.lightweight"),
-                                                            [
-                                                                "service",
-                                                                "autostart",
-                                                                "enable",
-                                                                "--json",
-                                                            ],
-                                                        ),
-                                                        true,
-                                                        cx,
-                                                    );
-                                                });
-                                                true
-                                            })
-                                    });
-                                }))
-                            })
-                            .when(!can_enter_lightweight, |action| {
-                                action.opacity(0.55).cursor_default()
-                            }),
+                        quiet_action(
+                            "lightweight",
+                            IconName::Leaf,
+                            t!("panel.lightweight").into(),
+                            cx,
+                        )
+                        .when(can_enter_lightweight, |action| {
+                            action.on_click(cx.listener(|_, _, window, cx| {
+                                let panel = cx.entity().downgrade();
+                                window.open_alert_dialog(cx, move |dialog, _, _| {
+                                    let panel = panel.clone();
+                                    dialog
+                                        .title(tr!("panel.lightweight"))
+                                        .description(tr!("panel.lightweight_detail"))
+                                        .confirm()
+                                        .ok_text(t!("panel.lightweight"))
+                                        .cancel_text(t!("common.cancel"))
+                                        .on_ok(move |_, _, cx| {
+                                            let _ = panel.update(cx, |panel, cx| {
+                                                panel.gateway_action(
+                                                    Change::new(
+                                                        t!("panel.lightweight"),
+                                                        [
+                                                            "service",
+                                                            "autostart",
+                                                            "enable",
+                                                            "--json",
+                                                        ],
+                                                    ),
+                                                    true,
+                                                    cx,
+                                                );
+                                            });
+                                            true
+                                        })
+                                });
+                            }))
+                        })
+                        .when(!can_enter_lightweight, |action| {
+                            action.opacity(0.55).cursor_default()
+                        }),
                     )
                     .child(
-                        quiet_action("quit", t!("panel.quit").into(), cx)
+                        quiet_action("quit", IconName::Power, t!("panel.quit").into(), cx)
                             .when(!busy, |action| {
                                 action.on_click(cx.listener(|panel, _, _, cx| {
                                     panel.gateway_action(

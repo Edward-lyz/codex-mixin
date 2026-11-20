@@ -28,6 +28,22 @@ struct AgentList {
     agents: Vec<Agent>,
 }
 
+#[derive(Deserialize)]
+struct AgentVersions {
+    agents: Vec<AgentVersionEntry>,
+}
+
+#[derive(Deserialize)]
+struct AgentVersionEntry {
+    id: String,
+    cli: AgentVersion,
+}
+
+enum AgentRead {
+    List(AgentList),
+    Versions(AgentVersions),
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Agent {
     id: String,
@@ -157,22 +173,14 @@ impl AgentsPage {
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        self.load(vec!["agent".into(), "list".into(), "--json".into()], cx);
+        self.load(false, cx);
     }
 
     fn check_versions(&mut self, cx: &mut Context<Self>) {
-        self.load(
-            vec![
-                "agent".into(),
-                "versions".into(),
-                "--json".into(),
-                "--refresh".into(),
-            ],
-            cx,
-        );
+        self.load(true, cx);
     }
 
-    fn load(&mut self, args: Vec<String>, cx: &mut Context<Self>) {
+    fn load(&mut self, refresh_versions: bool, cx: &mut Context<Self>) {
         if self.loading {
             // A reload asked for mid-flight runs once the current read lands.
             self.reload_pending = true;
@@ -180,15 +188,29 @@ impl AgentsPage {
         }
         self.loading = true;
         cx.notify();
-        let task = query::<AgentList>(args, cx);
+        let task = if refresh_versions {
+            let versions = query::<AgentVersions>(
+                ["agent", "versions", "--json", "--refresh"]
+                    .map(str::to_owned)
+                    .to_vec(),
+                cx,
+            );
+            cx.spawn(async move |_, _| versions.await.map(AgentRead::Versions))
+        } else {
+            let list =
+                query::<AgentList>(["agent", "list", "--json"].map(str::to_owned).to_vec(), cx);
+            cx.spawn(async move |_, _| list.await.map(AgentRead::List))
+        };
         cx.spawn(async move |page, cx| {
             let result = task.await;
             page.update(cx, |page, cx| {
                 page.loading = false;
                 match result {
-                    // `agent versions` omits integration details; merge versions
-                    // into the listed agents instead of replacing them.
-                    Ok(list) => page.merge(list.agents),
+                    Ok(AgentRead::List(list)) => {
+                        page.agents = Some(list.agents);
+                        page.error = None;
+                    }
+                    Ok(AgentRead::Versions(versions)) => page.merge_versions(versions.agents),
                     Err(error) => page.error = Some(error.message.into()),
                 }
                 if std::mem::take(&mut page.reload_pending) {
@@ -201,17 +223,14 @@ impl AgentsPage {
         .detach();
     }
 
-    fn merge(&mut self, agents: Vec<Agent>) {
+    fn merge_versions(&mut self, versions: Vec<AgentVersionEntry>) {
         self.error = None;
         let Some(current) = &mut self.agents else {
-            self.agents = Some(agents);
             return;
         };
-        for agent in agents {
-            match current.iter_mut().find(|existing| existing.id == agent.id) {
-                Some(existing) if agent.integration.state.is_empty() => existing.cli = agent.cli,
-                Some(existing) => *existing = agent,
-                None => current.push(agent),
+        for version in versions {
+            if let Some(agent) = current.iter_mut().find(|agent| agent.id == version.id) {
+                agent.cli = version.cli;
             }
         }
     }
@@ -311,11 +330,18 @@ impl AgentsPage {
         .flatten()
         .collect();
         let problem = agent.integration.error.clone().or_else(|| {
-            agent
-                .cli
-                .error
-                .clone()
-                .map(|error| t!("agents.version_failed", error = error).into_owned())
+            agent.cli.error.clone().map(|error| {
+                if error
+                    == format!(
+                        "{} upgrade unavailable: no verified updater for this install",
+                        agent.id
+                    )
+                {
+                    t!("agents.update_via_installation").into_owned()
+                } else {
+                    t!("agents.version_failed", error = error).into_owned()
+                }
+            })
         });
         let dot = if connected {
             colors.success
@@ -489,6 +515,7 @@ impl Render for AgentsPage {
                                     .small()
                                     .icon(IconName::RefreshCw)
                                     .label(t!("agents.check_versions"))
+                                    .disabled(self.loading)
                                     .loading(self.loading)
                                     .on_click(
                                         cx.listener(|page, _, _, cx| page.check_versions(cx)),
