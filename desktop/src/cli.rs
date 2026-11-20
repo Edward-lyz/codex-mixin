@@ -131,6 +131,7 @@ impl Cli {
         args: &[String],
         secrets: &[Secret],
         apply: bool,
+        _repair_startup_on_denied: bool,
         progress: Option<Progress>,
     ) -> CliResult<String> {
         let _gate = self
@@ -138,6 +139,17 @@ impl Cli {
             .lock()
             .map_err(|_| CliError::new(rust_i18n::t!("cli.gate_poisoned")))?;
         let result = self.execute(args, secrets, CHANGE_TIMEOUT, false, progress.clone());
+        #[cfg(windows)]
+        let result = match result {
+            Err(error)
+                if _repair_startup_on_denied
+                    && args == ["service", "autostart", "enable", "--json"]
+                    && startup_task_access_denied(&error.message) =>
+            {
+                self.repair_startup_task(progress.clone())
+            }
+            other => other,
+        };
         // A failure after the configuration was committed still applies it,
         // so the gateway serves what the CLI saved.
         let saved = match &result {
@@ -159,6 +171,49 @@ impl Cli {
         }
     }
 
+    #[cfg(windows)]
+    fn repair_startup_task(&self, progress: Option<Progress>) -> CliResult<String> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        const REPAIR_SCRIPT: &str = include_str!("../windows/restore-gateway.ps1");
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute());
+        let Some(powershell) = system_root
+            .map(|root| root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+            .filter(|powershell| powershell.is_file())
+        else {
+            return Err(CliError::new(rust_i18n::t!(
+                "cli.startup_repair_unavailable"
+            )));
+        };
+        if let Some(progress) = &progress {
+            progress(rust_i18n::t!("cli.startup_repair_authorization").into_owned());
+        }
+        // The repair code comes from the app build. Only the paired CLI's
+        // path is passed separately, without interpolating it into scripts.
+        let command_text = format!(
+            "& {{\n{REPAIR_SCRIPT}\n}} -CliPath $env:CODEX_MIXIN_REPAIR_CLI -RestoreAutostart -RepairLegacyTask"
+        );
+        let encoded = STANDARD.encode(
+            command_text
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let mut command = Command::new(powershell);
+        command
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+            .arg(encoded)
+            .env("CODEX_MIXIN_REPAIR_CLI", &self.executable);
+        capture(&mut command, &[], CHANGE_TIMEOUT, false, progress).map_err(|error| {
+            CliError::new(rust_i18n::t!(
+                "cli.startup_repair_failed",
+                error = error.message
+            ))
+        })
+    }
+
     fn execute(
         &self,
         args: &[String],
@@ -168,15 +223,7 @@ impl Cli {
         progress: Option<Progress>,
     ) -> CliResult<String> {
         let mut command = Command::new(&self.executable);
-        command
-            .arg("--no-tui")
-            .arg("--json-errors")
-            .args(args)
-            // GUI callers never hand a terminal to the CLI; DUCX relies on
-            // this to open its own visible QR login window.
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        command.arg("--no-tui").arg("--json-errors").args(args);
         if let Some(directory) = self.executable.parent() {
             command.current_dir(directory);
         }
@@ -186,20 +233,43 @@ impl Cli {
         for secret in secrets {
             command.env(secret.variable, &secret.value);
         }
-        hide_console_window(&mut command);
-        let mut child = command.spawn().map_err(|error| {
-            CliError::new(rust_i18n::t!("cli.spawn_failed", error = error.to_string()))
-        })?;
-        let stdout = PipeReader::spawn(child.stdout.take(), None, Vec::new());
-        let stderr = PipeReader::spawn(child.stderr.take(), progress, secrets.to_vec());
-        let status = wait_with_deadline(&mut child, timeout, read_only)?;
-        let output = redact(&stdout.collect()?, secrets);
-        let errors = redact(&stderr.collect()?, secrets);
-        if status.success() {
-            return Ok(output);
-        }
-        Err(decode_error(&errors, &output, status.code()))
+        capture(&mut command, secrets, timeout, read_only, progress)
     }
+}
+
+pub(crate) fn startup_task_access_denied(message: &str) -> bool {
+    message.contains("0x80070005")
+        && ["register", "start", "stop"].iter().any(|operation| {
+            message.contains(&format!("{operation} gateway scheduled task failed"))
+        })
+}
+
+fn capture(
+    command: &mut Command,
+    secrets: &[Secret],
+    timeout: Duration,
+    read_only: bool,
+    progress: Option<Progress>,
+) -> CliResult<String> {
+    // GUI callers never hand a terminal to the CLI; DUCX relies on this
+    // to open its own visible QR login window.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console_window(command);
+    let mut child = command.spawn().map_err(|error| {
+        CliError::new(rust_i18n::t!("cli.spawn_failed", error = error.to_string()))
+    })?;
+    let stdout = PipeReader::spawn(child.stdout.take(), None, Vec::new());
+    let stderr = PipeReader::spawn(child.stderr.take(), progress, secrets.to_vec());
+    let status = wait_with_deadline(&mut child, timeout, read_only)?;
+    let output = redact(&stdout.collect()?, secrets);
+    let errors = redact(&stderr.collect()?, secrets);
+    if status.success() {
+        return Ok(output);
+    }
+    Err(decode_error(&errors, &output, status.code()))
 }
 
 fn wait_with_deadline(

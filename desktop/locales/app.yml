@@ -518,6 +518,24 @@ panel.lightweight:
 panel.lightweight_detail:
   en: "Keep the gateway running and start it at sign-in. The desktop app will close."
   zh-CN: "保持网关运行并设为登录时启动，同时关闭桌面应用。"
+panel.lightweight_windows_detail:
+  en: "Close the desktop app and keep the gateway running. Starting the gateway at sign-in may require Windows administrator approval to update an older task."
+  zh-CN: "关闭桌面应用并保留网关。选择登录时启动网关时，更新旧任务可能需要 Windows 管理员授权。"
+panel.lightweight_session:
+  en: "This session only"
+  zh-CN: "仅本次登录"
+panel.lightweight_login:
+  en: "Start at sign-in"
+  zh-CN: "登录时启动"
+cli.startup_repair_unavailable:
+  en: "Windows PowerShell is unavailable for gateway startup repair."
+  zh-CN: "无法使用 Windows PowerShell 修复网关登录启动。"
+cli.startup_repair_authorization:
+  en: "Waiting for Windows approval to repair gateway startup"
+  zh-CN: "正在等待 Windows 授权修复网关启动项"
+cli.startup_repair_failed:
+  en: "Could not repair gateway startup at sign-in. You can keep the gateway for this session. %{error}"
+  zh-CN: "无法修复网关登录启动。可以选择仅本次登录保留网关。%{error}"
 panel.lightweight_preference_failed:
   en: "Could not save the desktop lightweight preference (%{error})."
   zh-CN: "无法保存桌面轻量模式设置（%{error}）。"
