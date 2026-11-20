@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$CliPath,
+    [switch]$RestoreAutostart,
     [switch]$RepairLegacyTask
 )
 
@@ -30,37 +31,51 @@ try {
     if (!$requester.Equals($registeredUser) -or $principal.LogonType -ne 3 -or
         $principal.RunLevel -ne 0 -or $definition.Actions.Count -ne 1) { exit 1 }
     $action = $definition.Actions.Item(1)
-    $console = Join-Path ([Environment]::SystemDirectory) 'conhost.exe'
+    $console = Join-Path $env:SystemRoot 'System32\conhost.exe'
     if ($action.Type -ne 0 -or $action.Path -ne $console -or
         $action.Arguments -notlike '--headless *') { exit 1 }
 
     # Give the existing limited task's own principal permission to manage it.
     # Preserve the descriptor's other entries and the task's action and identity.
     $sections = [Security.AccessControl.AccessControlSections]::Access
-    $acl = [Security.AccessControl.CommonSecurityDescriptor]::new(
-        $false, $false, $task.GetSecurityDescriptor(4)
+    # Legacy tasks can store inherited entries ahead of explicit ones.
+    # Append the grant without reordering or replacing their existing entries.
+    $acl = [Security.AccessControl.RawSecurityDescriptor]::new($task.GetSecurityDescriptor(4))
+    $dacl = $acl.DiscretionaryAcl
+    if ($null -eq $dacl) { throw 'The task has no discretionary access list to repair.' }
+    $grant = [Security.AccessControl.CommonAce]::new(
+        [Security.AccessControl.AceFlags]::None,
+        [Security.AccessControl.AceQualifier]::AccessAllowed,
+        0x1f01ff, $requester, $false, $null
     )
-    $acl.DiscretionaryAcl.AddAccess(
-        [Security.AccessControl.AccessControlType]::Allow, $requester, 0x1f01ff,
-        [Security.AccessControl.InheritanceFlags]::None,
-        [Security.AccessControl.PropagationFlags]::None
-    )
+    $dacl.InsertAce($dacl.Count, $grant)
     $task.SetSecurityDescriptor($acl.GetSddlForm($sections), 0x10)
     exit 0
-} catch { exit 1 }
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
 '@
         $repair = $repair.Replace('__REQUESTER_SID__', $userSid)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($repair))
         $powershell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
         $process = Start-Process -FilePath $powershell -Verb RunAs -WindowStyle Hidden -Wait -PassThru `
             -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)
-        if ($process.ExitCode -ne 0) { exit 1 }
+        if ($process.ExitCode -ne 0) {
+            [Console]::Error.WriteLine("The elevated task repair failed (exit $($process.ExitCode)).")
+            exit 1
+        }
     }
 
     # Windows PowerShell wraps native stderr in ErrorRecords. Preserve the
     # native exit status and inspect the HRESULT before reporting the failure.
     $ErrorActionPreference = 'Continue'
-    $result = & $CliPath --no-tui --json-errors service start --managed --json 2>&1
+    $gatewayArgs = if ($RestoreAutostart) {
+        @('autostart', 'enable', '--json')
+    } else {
+        @('start', '--managed', '--json')
+    }
+    $result = & $CliPath --no-tui --json-errors service @gatewayArgs 2>&1
     $status = $LASTEXITCODE
     if ($status -eq 0) { exit 0 }
     $diagnostic = $result | Out-String

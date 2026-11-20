@@ -113,7 +113,12 @@ pub(crate) async fn ensure_ready() -> anyhow::Result<()> {
     match action {
         GatewayLifecycleAction::KeepReady => return Ok(()),
         GatewayLifecycleAction::RestartManaged | GatewayLifecycleAction::StartManaged => {
-            restart_under_service(&command, service).await?;
+            let keep_daemon_if_denied = !service.loaded
+                && !service.current
+                && snapshot.daemon_running()
+                && snapshot.healthy()
+                && snapshot.running_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+            restart_under_service(&command, service, &config, keep_daemon_if_denied).await?;
         }
         GatewayLifecycleAction::RestartDaemon => {
             stop_all_gateways(service).await?;
@@ -146,7 +151,7 @@ pub(crate) async fn restart_managed() -> anyhow::Result<()> {
     let command = ServiceCommandLine::current()?;
     let service = command.status().await?;
     if service.installed {
-        restart_under_service(&command, service).await?;
+        restart_under_service(&command, service, &config, false).await?;
     } else {
         stop_all_gateways(service).await?;
         start_gateway_daemon(config.clone()).await?;
@@ -170,8 +175,14 @@ pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
             return ensure_ready().await;
         }
         let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+        // A denied update of an idle startup job must not stop a working daemon.
+        if !service.loaded {
+            command.install().await?;
+        }
         stop_all_gateways(service).await?;
-        command.install().await?;
+        if service.loaded {
+            command.install().await?;
+        }
         blocking(start_startup_service).await?;
         return wait_for_gateway_ready(&config).await;
     }
@@ -201,10 +212,34 @@ pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
 async fn restart_under_service(
     command: &ServiceCommandLine,
     service: StartupServiceStatus,
+    config: &GatewayConfig,
+    keep_daemon_if_denied: bool,
 ) -> anyhow::Result<()> {
-    stop_all_gateways(service).await?;
+    if !keep_daemon_if_denied {
+        stop_all_gateways(service).await?;
+    }
     if !service.current {
-        command.install().await?;
+        match command.install().await {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied) =>
+            {
+                tracing::warn!(error = %error, "startup service update denied; using the session daemon");
+                super::progress_step(
+                    "Gateway startup service update denied. Using a background gateway for this session.",
+                );
+                if keep_daemon_if_denied {
+                    return Ok(());
+                }
+                return start_gateway_daemon(config.clone()).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if keep_daemon_if_denied {
+        stop_all_gateways(service).await?;
     }
     blocking(start_startup_service).await
 }

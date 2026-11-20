@@ -61,6 +61,8 @@ LangString GatewayRestoreFailed ${LANG_SIMPCHINESE} "安装已完成，但无法
 LangString GatewayRestoreFailed ${LANG_ENGLISH} "Installation completed, but the gateway could not be restarted. Open Codex Mixin to inspect the error and start it again."
 LangString GatewayTaskPermission ${LANG_SIMPCHINESE} "旧版网关的登录启动任务需要管理员授权才能更新。是否授权修复此任务并重试启动网关？"
 LangString GatewayTaskPermission ${LANG_ENGLISH} "The previous gateway startup task needs administrator approval to be updated. Repair permissions on this task and retry starting the gateway?"
+LangString GatewaySessionOnly ${LANG_SIMPCHINESE} "网关已为本次登录启动。旧启动任务的权限仍需修复，之后才能使用新版网关登录启动。"
+LangString GatewaySessionOnly ${LANG_ENGLISH} "The gateway is running for this session. Repair the previous startup task permissions to start the new gateway at sign-in."
 
 Function StopRunning
   nsExec::Exec 'taskkill /IM "${UI_EXE}" /F'
@@ -85,6 +87,8 @@ Function CaptureGatewayState
     Pop $2
     ${If} $1 == "0"
       StrCpy $RestoreGateway "1"
+    ${ElseIf} $1 == "3"
+      StrCpy $RestoreGateway "2"
     ${ElseIf} $1 != "1"
       Abort "$(GatewayStateUnknown)"
     ${EndIf}
@@ -117,28 +121,45 @@ Section "Install"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 
-  ${If} $RestoreGateway == "1"
+  ${If} $RestoreGateway != "0"
     DetailPrint "Restoring the gateway..."
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "/oname=restore-gateway.ps1" "${__FILEDIR__}\restore-gateway.ps1"
     SetOutPath "$INSTDIR"
-    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\restore-gateway.ps1" -CliPath "$INSTDIR\${CLI_EXE}"'
+    StrCpy $3 ""
+    ${If} $RestoreGateway == "2"
+      StrCpy $3 "-RestoreAutostart"
+    ${EndIf}
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\restore-gateway.ps1" -CliPath "$INSTDIR\${CLI_EXE}" $3'
     Pop $0
     Pop $1
     ${If} $0 == "5"
-      IfSilent skip_task_repair
-      MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "$(GatewayTaskPermission)" IDNO skip_task_repair
-      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\restore-gateway.ps1" -CliPath "$INSTDIR\${CLI_EXE}" -RepairLegacyTask'
+      IfSilent start_session_gateway
+      MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "$(GatewayTaskPermission)" IDNO start_session_gateway
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\restore-gateway.ps1" -CliPath "$INSTDIR\${CLI_EXE}" $3 -RepairLegacyTask'
       Pop $0
       Pop $1
+      ${If} $0 == "0"
+        Goto gateway_restore_done
+      ${EndIf}
+      DetailPrint "$1"
+      start_session_gateway:
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\restore-gateway.ps1" -CliPath "$INSTDIR\${CLI_EXE}"'
+      Pop $0
+      Pop $1
+      ${If} $0 == "0"
+        DetailPrint "$(GatewaySessionOnly)"
+        IfSilent gateway_restore_done
+        MessageBox MB_ICONINFORMATION "$(GatewaySessionOnly)"
+      ${EndIf}
     ${EndIf}
-    skip_task_repair:
     ${If} $0 != "0"
       IfSilent +2
       MessageBox MB_ICONEXCLAMATION "$(GatewayRestoreFailed)"
       SetErrorLevel 1
     ${EndIf}
+    gateway_restore_done:
   ${EndIf}
 SectionEnd
 
