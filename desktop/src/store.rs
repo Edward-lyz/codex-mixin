@@ -68,6 +68,7 @@ pub struct Change {
     pub secrets: Vec<Secret>,
     /// Run `config apply` after a successful change.
     pub apply: bool,
+    pub repair_startup_on_denied: bool,
 }
 
 impl Change {
@@ -80,6 +81,7 @@ impl Change {
             args: args.into_iter().map(Into::into).collect(),
             secrets: Vec::new(),
             apply: false,
+            repair_startup_on_denied: false,
         }
     }
 
@@ -288,7 +290,13 @@ impl Store {
                 })
             };
             let result = cli_thread(move || {
-                cli.change(&change.args, &change.secrets, change.apply, Some(progress))
+                cli.change(
+                    &change.args,
+                    &change.secrets,
+                    change.apply,
+                    change.repair_startup_on_denied,
+                    Some(progress),
+                )
             })
             .await;
             drop(progress_task);

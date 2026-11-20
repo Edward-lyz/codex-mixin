@@ -105,6 +105,7 @@ pub struct StatusPanel {
     /// Whether the endpoint was copied since the panel opened.
     copied: bool,
     action_error: Option<SharedString>,
+    authorizing_startup: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -124,10 +125,10 @@ impl StatusPanel {
             cx.notify();
         });
         // Clicking anywhere else dismisses the panel, like a menu.
-        let activation = cx.observe_window_activation(window, |_, window, cx| {
+        let activation = cx.observe_window_activation(window, |panel, window, cx| {
             // Closing from inside the activation change would free the
             // window while AppKit is still delivering it; wait one turn.
-            if !window.is_window_active() {
+            if !window.is_window_active() && !panel.authorizing_startup {
                 window.defer(cx, close);
             }
         });
@@ -140,6 +141,7 @@ impl StatusPanel {
             expanded: HashSet::new(),
             copied: false,
             action_error: None,
+            authorizing_startup: false,
             _subscriptions: vec![observe, activation, updater],
         }
     }
@@ -151,6 +153,7 @@ impl StatusPanel {
         cx: &mut Context<Self>,
     ) {
         self.action_error = None;
+        self.authorizing_startup = change.repair_startup_on_denied;
         let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
         cx.spawn(async move |panel, cx| {
             let outcome = task.await.map_err(|error| error.message).and_then(|_| {
@@ -171,6 +174,7 @@ impl StatusPanel {
                 Err(message) => {
                     let _ = panel.update(cx, |panel, cx| {
                         panel.action_error = Some(message.into());
+                        panel.authorizing_startup = false;
                         cx.notify();
                     });
                 }
@@ -178,6 +182,91 @@ impl StatusPanel {
         })
         .detach();
         cx.notify();
+    }
+
+    fn confirm_lightweight(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = cx.entity().downgrade();
+        #[cfg(windows)]
+        window.open_dialog(cx, move |dialog, _, _| {
+            let session_panel = panel.clone();
+            let login_panel = panel.clone();
+            dialog
+                .title(tr!("panel.lightweight"))
+                .w(px(346.0))
+                .child(
+                    div()
+                        .text_sm()
+                        .child(tr!("panel.lightweight_windows_detail")),
+                )
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .gap_1()
+                        .justify_end()
+                        .child(
+                            Button::new("cancel-lightweight")
+                                .ghost()
+                                .small()
+                                .label(tr!("common.cancel"))
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("lightweight-session")
+                                .secondary()
+                                .small()
+                                .label(tr!("panel.lightweight_session"))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = session_panel.update(cx, |panel, cx| {
+                                        panel.gateway_action(
+                                            Change::new(
+                                                t!("panel.lightweight_session"),
+                                                ["service", "start", "--managed", "--json"],
+                                            ),
+                                            AfterGatewayAction::Quit,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("lightweight-login")
+                                .primary()
+                                .small()
+                                .label(tr!("panel.lightweight_login"))
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = login_panel.update(cx, |panel, cx| {
+                                        panel.start_lightweight_at_login(true, cx);
+                                    });
+                                }),
+                        ),
+                )
+        });
+        #[cfg(not(windows))]
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let panel = panel.clone();
+            dialog
+                .title(tr!("panel.lightweight"))
+                .description(tr!("panel.lightweight_detail"))
+                .confirm()
+                .ok_text(t!("panel.lightweight"))
+                .cancel_text(t!("common.cancel"))
+                .on_ok(move |_, _, cx| {
+                    let _ =
+                        panel.update(cx, |panel, cx| panel.start_lightweight_at_login(false, cx));
+                    true
+                })
+        });
+    }
+
+    fn start_lightweight_at_login(&mut self, repair: bool, cx: &mut Context<Self>) {
+        let mut change = Change::new(
+            t!("panel.lightweight"),
+            ["service", "autostart", "enable", "--json"],
+        );
+        change.repair_startup_on_denied = repair;
+        self.gateway_action(change, AfterGatewayAction::Lightweight, cx);
     }
 }
 
@@ -490,10 +579,7 @@ impl StatusPanel {
                     || store.service.error.is_some()
                     || status
                         .is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"));
-                let summary = if is_error
-                    && detail.contains("register gateway scheduled task failed")
-                    && detail.contains("0x80070005")
-                {
+                let summary = if is_error && crate::cli::startup_task_access_denied(&detail) {
                     tr!("panel.startup_access_denied")
                 } else {
                     SharedString::from(
@@ -845,35 +931,8 @@ impl StatusPanel {
                             cx,
                         )
                         .when(can_enter_lightweight, |action| {
-                            action.on_click(cx.listener(|_, _, window, cx| {
-                                let panel = cx.entity().downgrade();
-                                window.open_alert_dialog(cx, move |dialog, _, _| {
-                                    let panel = panel.clone();
-                                    dialog
-                                        .title(tr!("panel.lightweight"))
-                                        .description(tr!("panel.lightweight_detail"))
-                                        .confirm()
-                                        .ok_text(t!("panel.lightweight"))
-                                        .cancel_text(t!("common.cancel"))
-                                        .on_ok(move |_, _, cx| {
-                                            let _ = panel.update(cx, |panel, cx| {
-                                                panel.gateway_action(
-                                                    Change::new(
-                                                        t!("panel.lightweight"),
-                                                        [
-                                                            "service",
-                                                            "autostart",
-                                                            "enable",
-                                                            "--json",
-                                                        ],
-                                                    ),
-                                                    AfterGatewayAction::Lightweight,
-                                                    cx,
-                                                );
-                                            });
-                                            true
-                                        })
-                                });
+                            action.on_click(cx.listener(|panel, _, window, cx| {
+                                panel.confirm_lightweight(window, cx);
                             }))
                         })
                         .when(!can_enter_lightweight, |action| {
