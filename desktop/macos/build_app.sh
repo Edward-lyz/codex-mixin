@@ -95,6 +95,8 @@ done
 cp "$DESKTOP_TARGET_DIR/codex-mixin-desktop" "$MACOS_DIR/codex-mixin-desktop"
 cp "$CLI_TARGET_DIR/codex-mixin" "$MACOS_DIR/codex-mixin"
 chmod +x "$MACOS_DIR/codex-mixin-desktop" "$MACOS_DIR/codex-mixin"
+# Installed menu LaunchAgents from the SwiftUI app still use this name.
+ln -s codex-mixin-desktop "$MACOS_DIR/CodexMixinMenu"
 
 APP_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS_DIR/Info.plist")"
 CLI_IDENTIFIER="$APP_IDENTIFIER.cli"

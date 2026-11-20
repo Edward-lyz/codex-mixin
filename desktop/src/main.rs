@@ -37,6 +37,10 @@ fn main() {
         return;
     }
     #[cfg(target_os = "macos")]
+    if !background {
+        startup::handoff_desktop_login();
+    }
+    #[cfg(target_os = "macos")]
     disable_touch_bar();
     let locale = sys_locale::get_locale().unwrap_or_default();
     rust_i18n::set_locale(if locale.starts_with("zh") {
