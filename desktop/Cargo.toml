@@ -40,6 +40,7 @@ base64 = "0.23.1"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSScreen", "objc2-core-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString", "NSUserDefaults"] }
 objc2 = "0.6"
+tempfile = "3"
 
 # Build scripts run on the host; Windows packages are built on Windows.
 [target.'cfg(windows)'.dependencies]
