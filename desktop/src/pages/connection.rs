@@ -793,35 +793,11 @@ impl ConnectionView {
                 Button::new("remove-provider")
                     .danger()
                     .small()
+                    .icon(IconName::Trash)
                     .label(tr!("connection.remove"))
                     .disabled(busy)
                     .on_click(move |_, window, cx| {
-                        let id = remove_id.clone();
-                        let name = name.clone();
-                        window.open_alert_dialog(cx, move |dialog, _, _| {
-                            let id = id.clone();
-                            dialog
-                                .title(SharedString::from(t!(
-                                    "connection.remove_title",
-                                    name = name
-                                )))
-                                .description(SharedString::from(t!("connection.remove_confirm")))
-                                .confirm()
-                                .ok_text(t!("connection.remove"))
-                                .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
-                                .cancel_text(t!("common.cancel"))
-                                .on_ok(move |_, _, cx| {
-                                    run_change(
-                                        Change::new(
-                                            t!("connection.remove_label"),
-                                            ["provider", "remove", id.as_str()],
-                                        )
-                                        .applied(),
-                                        cx,
-                                    );
-                                    true
-                                })
-                        });
+                        confirm_remove_provider(&remove_id, &name, window, cx);
                     }),
                 cx,
             ));
@@ -1012,6 +988,32 @@ impl Render for ConnectionView {
             .when(self.dirty, |view| view.child(self.render_save_bar(cx)))
             .into_any_element()
     }
+}
+
+pub(super) fn confirm_remove_provider(id: &str, name: &str, window: &mut Window, cx: &mut App) {
+    let id = id.to_owned();
+    let title = tr!("connection.remove_title", name = name);
+    window.open_alert_dialog(cx, move |dialog, _, _| {
+        let id = id.clone();
+        dialog
+            .title(title.clone())
+            .description(tr!("connection.remove_confirm"))
+            .confirm()
+            .ok_text(t!("connection.remove"))
+            .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+            .cancel_text(t!("common.cancel"))
+            .on_ok(move |_, _, cx| {
+                run_change(
+                    Change::new(
+                        t!("connection.remove_label"),
+                        ["provider", "remove", id.as_str()],
+                    )
+                    .applied(),
+                    cx,
+                );
+                true
+            })
+    });
 }
 
 /// Opens the "Add provider" dialog over the current window.

@@ -5,7 +5,9 @@ use std::collections::HashMap;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
+};
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -13,11 +15,13 @@ use gpui_kit::{
 };
 use rust_i18n::t;
 
-use super::connection::{ConnectionView, open_add_provider};
+use super::connection::{ConnectionView, confirm_remove_provider, open_add_provider};
+use super::is_busy;
 use super::models::ModelsView;
 use super::placeholder;
 use crate::model::Provider;
 use crate::store::Store;
+use crate::tr;
 use crate::widgets::{Segmented, pill, provider_logo, status_dot};
 
 const MODELS_TAB: usize = 0;
@@ -114,6 +118,11 @@ impl ProvidersPage {
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
+        let removable = self
+            .selected_provider(cx)
+            .filter(|provider| !provider.is_official())
+            .map(|provider| (provider.id.clone(), provider.display_name.clone()));
+        let can_remove = removable.is_some() && !is_busy(cx);
         let rows = self.providers(cx).iter().map(|provider| {
             let selected = self.selected.as_ref() == Some(&provider.id);
             let id = provider.id.clone();
@@ -176,18 +185,32 @@ impl ProvidersPage {
                     .children(rows),
             )
             .child(
-                div()
+                h_flex()
                     .p_2()
+                    .gap_2()
                     .border_t_1()
                     .border_color(colors.sidebar_border)
                     .child(
                         Button::new("add-provider")
-                            .ghost()
+                            .secondary()
                             .small()
-                            .w_full()
-                            .icon(IconName::Plus)
+                            .flex_1()
+                            .icon(IconName::CirclePlus)
                             .label(t!("providers.add"))
                             .on_click(|_, window, cx| open_add_provider(window, cx)),
+                    )
+                    .child(
+                        Button::new("remove-selected-provider")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Trash)
+                            .tooltip(tr!("connection.remove"))
+                            .disabled(!can_remove)
+                            .on_click(move |_, window, cx| {
+                                if let Some((id, name)) = &removable {
+                                    confirm_remove_provider(id, name, window, cx);
+                                }
+                            }),
                     ),
             )
     }

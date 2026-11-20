@@ -278,8 +278,7 @@ impl ContextPage {
     ) -> impl IntoElement {
         let colors = cx.theme().colors;
         v_flex()
-            .flex_1()
-            .min_w_32()
+            .min_w_0()
             .gap_1()
             .p_4()
             .rounded_lg()
@@ -353,9 +352,10 @@ impl ContextPage {
         v_flex()
             .gap_4()
             .child(
-                h_flex()
+                div()
+                    .grid()
+                    .grid_cols(4)
                     .gap_3()
-                    .flex_wrap()
                     .child(Self::tile(
                         tr!("context.sessions"),
                         compact_number(totals.sessions as f64),
