@@ -42,6 +42,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2 = "0.6"
 
 # Build scripts run on the host; Windows packages are built on Windows.
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6.1"
+
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1.34"
 
