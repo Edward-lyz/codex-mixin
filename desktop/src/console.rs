@@ -407,7 +407,8 @@ impl Console {
                     cx.listener(move |console, _, window, cx| console.select(page, window, cx)),
                 )
         });
-        let status = Store::global(cx).read(cx).service.value.clone();
+        let service = &Store::global(cx).read(cx).service;
+        let status = service.value.as_ref();
         let running = status.as_ref().is_some_and(|status| status.is_running());
         let endpoint = status
             .as_ref()
@@ -418,10 +419,16 @@ impl Console {
                     .trim_end_matches("/v1")
                     .to_owned()
             });
-        let status_label = if status.is_none() {
+        let status_label = if service.error.is_some() {
+            t!("panel.status_unknown")
+        } else if status.is_none() {
             t!("console.gateway_unknown")
         } else if running {
             t!("console.gateway_running")
+        } else if status.is_some_and(|status| !status.configured) {
+            t!("panel.waiting_config")
+        } else if status.is_some_and(|status| status.gateway.as_deref() == Some("unresponsive")) {
+            t!("panel.unresponsive")
         } else {
             t!("console.gateway_stopped")
         };
@@ -461,13 +468,13 @@ impl Console {
                     .child(
                         h_flex()
                             .gap_2()
-                            .text_xs()
+                            .text_size(px(13.0))
                             .child(status_dot(if running {
                                 colors.success
                             } else {
                                 colors.muted_foreground
                             }))
-                            .child(status_label),
+                            .child(div().truncate().child(status_label)),
                     )
                     .when_some(endpoint, |footer, endpoint| {
                         footer.child(

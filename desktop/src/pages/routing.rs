@@ -777,7 +777,7 @@ impl RoutingPage {
             let checked = panels.contains(&model.id);
             let id = model.id.clone();
             let view = view.clone();
-            div().px_4().py_1p5().child(
+            div().min_w_0().px_3().py_2().child(
                 Checkbox::new(ElementId::Name(format!("panel-{}", model.id).into()))
                     .label(self.model_label(&model.id))
                     .checked(checked)
@@ -813,30 +813,6 @@ impl RoutingPage {
             .unwrap_or(true);
         let toggle_view = view.clone();
         let settings = v_flex()
-            .child(setting_row(
-                t!("routing.judge"),
-                Some(tr!("routing.judge_detail")),
-                self.model_picker(
-                    "fusion-judge",
-                    draft.text("judge_model"),
-                    cx,
-                    |draft, picked| draft.set("judge_model", json!(picked)),
-                ),
-                cx,
-            ))
-            .child(row_divider(cx))
-            .child(setting_row(
-                t!("routing.final"),
-                Some(tr!("routing.final_detail")),
-                self.model_picker(
-                    "fusion-final",
-                    draft.text("final_model"),
-                    cx,
-                    |draft, picked| draft.set("final_model", json!(picked)),
-                ),
-                cx,
-            ))
-            .child(row_divider(cx))
             .child(setting_row(
                 t!("routing.min_successful"),
                 None,
@@ -881,15 +857,140 @@ impl RoutingPage {
                     }),
                 cx,
             ));
+        let outputs = v_flex()
+            .flex_1()
+            .min_w_0()
+            .h(px(FLOW_ROW))
+            .relative()
+            .child(
+                flow_node(cx)
+                    .h_full()
+                    .flex_col()
+                    .items_start()
+                    .justify_center()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("routing.judge")),
+                    )
+                    .child(self.model_picker(
+                        "fusion-judge",
+                        draft.text("judge_model"),
+                        cx,
+                        |draft, picked| draft.set("judge_model", json!(picked)),
+                    )),
+            )
+            .child(
+                v_flex()
+                    .absolute()
+                    .top(px(FLOW_ROW))
+                    .left_0()
+                    .right_0()
+                    .child(
+                        h_flex().h_6().justify_center().child(
+                            Icon::new(IconName::ArrowDown)
+                                .small()
+                                .text_color(colors.primary),
+                        ),
+                    )
+                    .child(
+                        flow_node(cx)
+                            .h(px(FLOW_ROW))
+                            .flex_col()
+                            .items_start()
+                            .justify_center()
+                            .px_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(colors.muted_foreground)
+                                    .child(t!("routing.final")),
+                            )
+                            .child(self.model_picker(
+                                "fusion-final",
+                                draft.text("final_model"),
+                                cx,
+                                |draft, picked| draft.set("final_model", json!(picked)),
+                            )),
+                    ),
+            );
+        let count = panels.len().max(1);
+        let branches = v_flex()
+            .flex_1()
+            .min_w_0()
+            .when(panels.is_empty(), |list| {
+                list.child(
+                    h_flex().h(px(FLOW_ROW)).child(
+                        flow_node(cx)
+                            .w_full()
+                            .px_3()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("routing.none_selected")),
+                    ),
+                )
+            })
+            .children(panels.iter().map(|model| {
+                h_flex().h(px(FLOW_ROW)).child(
+                    flow_node(cx)
+                        .w_full()
+                        .min_w_0()
+                        .px_3()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::Layers)
+                                .xsmall()
+                                .text_color(colors.primary),
+                        )
+                        .child(div().min_w_0().truncate().child(self.model_label(model))),
+                )
+            }));
+        let map = h_flex()
+            .w_full()
+            .min_w(px(495.0))
+            .px_4()
+            .pt_4()
+            .pb(px(88.0))
+            .child(
+                flow_node(cx)
+                    .flex_none()
+                    .px_3()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::LogIn)
+                            .small()
+                            .text_color(colors.primary),
+                    )
+                    .child(t!("routing.request")),
+            )
+            .child(flow_branches(count, false, cx))
+            .child(branches)
+            .child(flow_branches(count, true, cx))
+            .child(outputs);
         v_flex()
             .gap_5()
             .child(section(
                 t!("routing.panel"),
                 Some(tr!("routing.panel_detail", count = panels.len())),
                 v_flex()
-                    .py_1()
-                    .children(members)
-                    .text_color(colors.foreground),
+                    .child(
+                        div()
+                            .id("fusion-map")
+                            .w_full()
+                            .overflow_x_scroll()
+                            .child(map),
+                    )
+                    .child(row_divider(cx))
+                    .child(
+                        div()
+                            .px_4()
+                            .pt_3()
+                            .text_sm()
+                            .font_semibold()
+                            .child(t!("routing.choose_panel_models")),
+                    )
+                    .child(div().grid().grid_cols(2).px_1().pb_2().children(members)),
                 cx,
             ))
             .child(section(t!("routing.merge"), None, settings, cx))
@@ -897,6 +998,7 @@ impl RoutingPage {
     }
 
     fn render_schedule(&self, draft: &Draft, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors;
         let slots: Vec<Value> = draft
             .payload
             .get("time_routes")
@@ -933,53 +1035,60 @@ impl RoutingPage {
                 }
             };
             let remove_view = view.clone();
-            h_flex()
-                .gap_2()
-                .px_4()
-                .py_2()
-                .child(self.number_picker(
-                    ElementId::Name(format!("slot-start-{index}").into()),
-                    start,
-                    times.clone(),
-                    cx,
-                    move |draft, minute| edit("start_minute", json!(minute))(draft),
-                ))
-                .child(div().text_xs().child("–"))
-                .child(self.number_picker(
-                    ElementId::Name(format!("slot-end-{index}").into()),
-                    end,
-                    times.clone(),
-                    cx,
-                    move |draft, minute| edit("end_minute", json!(minute))(draft),
-                ))
-                .child(Icon::new(IconName::ArrowRight).xsmall())
-                .child(self.model_picker(
-                    ElementId::Name(format!("slot-model-{index}").into()),
-                    model,
-                    cx,
-                    move |draft, picked| edit("model", json!(picked))(draft),
-                ))
-                .child(div().flex_1())
-                .child(
-                    Button::new(ElementId::Name(format!("slot-remove-{index}").into()))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::Trash)
-                        .on_click(move |_, _, cx| {
-                            Self::update_draft(&remove_view, cx, |draft| {
-                                let mut slots: Vec<Value> = draft
-                                    .payload
-                                    .get("time_routes")
-                                    .and_then(Value::as_array)
-                                    .cloned()
-                                    .unwrap_or_default();
-                                if index < slots.len() {
-                                    slots.remove(index);
-                                }
-                                draft.set("time_routes", Value::Array(slots));
-                            });
-                        }),
-                )
+            h_flex().h(px(FLOW_ROW)).child(
+                flow_node(cx)
+                    .w_full()
+                    .min_w_0()
+                    .gap_2()
+                    .px_2()
+                    .child(self.number_picker(
+                        ElementId::Name(format!("slot-start-{index}").into()),
+                        start,
+                        times.clone(),
+                        cx,
+                        move |draft, minute| edit("start_minute", json!(minute))(draft),
+                    ))
+                    .child(div().text_xs().child("–"))
+                    .child(self.number_picker(
+                        ElementId::Name(format!("slot-end-{index}").into()),
+                        end,
+                        times.clone(),
+                        cx,
+                        move |draft, minute| edit("end_minute", json!(minute))(draft),
+                    ))
+                    .child(
+                        Icon::new(IconName::ArrowRight)
+                            .xsmall()
+                            .text_color(colors.primary),
+                    )
+                    .child(self.model_picker(
+                        ElementId::Name(format!("slot-model-{index}").into()),
+                        model,
+                        cx,
+                        move |draft, picked| edit("model", json!(picked))(draft),
+                    ))
+                    .child(div().flex_1().min_w_0())
+                    .child(
+                        Button::new(ElementId::Name(format!("slot-remove-{index}").into()))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Trash)
+                            .on_click(move |_, _, cx| {
+                                Self::update_draft(&remove_view, cx, |draft| {
+                                    let mut slots: Vec<Value> = draft
+                                        .payload
+                                        .get("time_routes")
+                                        .and_then(Value::as_array)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    if index < slots.len() {
+                                        slots.remove(index);
+                                    }
+                                    draft.set("time_routes", Value::Array(slots));
+                                });
+                            }),
+                    ),
+            )
         });
         let add_view = view.clone();
         let first = self
@@ -987,45 +1096,27 @@ impl RoutingPage {
             .first()
             .map(|model| model.id.clone())
             .unwrap_or_default();
-        let schedule = v_flex().children(rows).child(
-            div().px_4().py_2().child(
-                Button::new("add-slot")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Plus)
-                    .label(t!("routing.add_slot"))
-                    .on_click(move |_, _, cx| {
-                        let first = first.clone();
-                        Self::update_draft(&add_view, cx, move |draft| {
-                            let mut slots: Vec<Value> = draft
-                                .payload
-                                .get("time_routes")
-                                .and_then(Value::as_array)
-                                .cloned()
-                                .unwrap_or_default();
-                            slots.push(
-                                json!({ "start_minute": 0, "end_minute": 6 * 60, "model": first }),
-                            );
-                            draft.set("time_routes", Value::Array(slots));
-                        });
-                    }),
-            ),
-        );
-        v_flex()
-            .gap_5()
-            .child(section(
-                t!("routing.slots"),
-                Some(tr!("routing.slots_detail")),
-                schedule,
-                cx,
-            ))
-            .child(section(
-                t!("routing.otherwise"),
-                None,
-                v_flex().child(setting_row(
-                    t!("routing.fallback_model"),
-                    None,
-                    self.model_picker(
+        let count = slots.len() + 1;
+        let branches = v_flex().flex_1().min_w_0().children(rows).child(
+            h_flex().h(px(FLOW_ROW)).child(
+                flow_node(cx)
+                    .w_full()
+                    .min_w_0()
+                    .px_2()
+                    .gap_2()
+                    .child(
+                        div()
+                            .ml_1()
+                            .text_sm()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("routing.otherwise")),
+                    )
+                    .child(
+                        Icon::new(IconName::ArrowRight)
+                            .xsmall()
+                            .text_color(colors.primary),
+                    )
+                    .child(self.model_picker(
                         "schedule-final",
                         draft.text("final_model"),
                         cx,
@@ -1033,9 +1124,66 @@ impl RoutingPage {
                             draft.set("judge_model", json!(picked.clone()));
                             draft.set("final_model", json!(picked));
                         },
-                    ),
-                    cx,
-                )),
+                    )),
+            ),
+        );
+        let map = h_flex()
+            .w_full()
+            .min_w(px(575.0))
+            .px_4()
+            .pt_3()
+            .child(
+                flow_node(cx)
+                    .flex_none()
+                    .px_3()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Clock)
+                            .small()
+                            .text_color(colors.primary),
+                    )
+                    .child(t!("routing.schedule_clock")),
+            )
+            .child(flow_branches(count, false, cx))
+            .child(branches);
+        let schedule = v_flex()
+            .child(
+                div()
+                    .id("schedule-map")
+                    .w_full()
+                    .overflow_x_scroll()
+                    .child(map),
+            )
+            .child(
+                div().px_4().py_2().child(
+                    Button::new("add-slot")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Plus)
+                        .label(t!("routing.add_slot"))
+                        .on_click(move |_, _, cx| {
+                            let first = first.clone();
+                            Self::update_draft(&add_view, cx, move |draft| {
+                                let mut slots: Vec<Value> = draft
+                                    .payload
+                                    .get("time_routes")
+                                    .and_then(Value::as_array)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                slots.push(
+                                json!({ "start_minute": 0, "end_minute": 6 * 60, "model": first }),
+                            );
+                                draft.set("time_routes", Value::Array(slots));
+                            });
+                        }),
+                ),
+            );
+        v_flex()
+            .gap_5()
+            .child(section(
+                t!("routing.slots"),
+                Some(tr!("routing.slots_detail")),
+                schedule,
                 cx,
             ))
             .into_any_element()
@@ -1302,6 +1450,47 @@ struct Curve {
     control_a: Point<Pixels>,
     control_b: Point<Pixels>,
     to: Point<Pixels>,
+}
+
+const FLOW_ROW: f32 = 52.0;
+
+fn flow_node(cx: &App) -> gpui_kit::Div {
+    let colors = cx.theme().colors;
+    h_flex()
+        .min_h_8()
+        .rounded_lg()
+        .border_1()
+        .border_color(colors.primary.opacity(0.32))
+        .bg(colors.primary.opacity(0.07))
+        .text_sm()
+}
+
+fn flow_branches(children: usize, reverse: bool, cx: &App) -> impl IntoElement {
+    let color = cx.theme().colors.primary.opacity(0.58);
+    div()
+        .w_8()
+        .flex_none()
+        .h(px(FLOW_ROW * children as f32))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let left = bounds.left();
+                    let right = bounds.right();
+                    let center = bounds.center().y;
+                    for index in 0..children {
+                        let row = bounds.top() + px((index as f32 + 0.5) * FLOW_ROW);
+                        let (from, to) = if reverse {
+                            (point(left, row), point(right, center))
+                        } else {
+                            (point(left, center), point(right, row))
+                        };
+                        Curve::level(from, to).stroke(1.5, false, window, color);
+                    }
+                },
+            )
+            .size_full(),
+        )
 }
 
 impl Curve {

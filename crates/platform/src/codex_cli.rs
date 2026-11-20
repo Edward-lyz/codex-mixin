@@ -57,7 +57,9 @@ fn windows_codex_cli_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(install_dir).join("codex.exe"));
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(local_app_data).join("Programs/OpenAI/Codex/bin/codex.exe"));
+        let local = PathBuf::from(local_app_data);
+        candidates.push(local.join("Programs/OpenAI/Codex/bin/codex.exe"));
+        candidates.push(local.join("Microsoft/WindowsApps/codex.exe"));
     }
     if let Ok(home) = super::home_dir_required() {
         let current = home.join(".codex/packages/standalone/current");
@@ -68,6 +70,7 @@ fn windows_codex_cli_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(app_data).join("npm/codex.cmd"));
     }
     candidates.push(PathBuf::from("C:/Program Files/OpenAI/Codex/codex.exe"));
+    candidates.extend(super::agent_apps::registered_codex_cli_candidates());
     candidates
 }
 

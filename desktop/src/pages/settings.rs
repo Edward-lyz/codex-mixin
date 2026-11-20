@@ -183,6 +183,8 @@ impl SettingsPage {
         let status = store.service.value.clone();
         let running = status.as_ref().is_some_and(|status| status.is_running());
         let configured = status.as_ref().is_some_and(|status| status.configured);
+        let (status_label, status_detail, _) =
+            crate::panel::gateway_summary(status.as_ref(), store.service.error.as_ref());
         let endpoint = status.as_ref().and_then(|status| status.endpoint.clone());
         let version = status
             .as_ref()
@@ -191,7 +193,7 @@ impl SettingsPage {
         let detail: SharedString = match (running, endpoint, version) {
             (true, Some(endpoint), Some(version)) => format!("{endpoint} · v{version}").into(),
             (true, Some(endpoint), None) => endpoint.into(),
-            _ => tr!("panel.stopped_detail"),
+            _ => status_detail,
         };
         let service = |command: &'static str, label: SharedString| {
             move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
@@ -203,11 +205,7 @@ impl SettingsPage {
         };
         let body = v_flex()
             .child(setting_row(
-                if running {
-                    t!("panel.running")
-                } else {
-                    t!("panel.stopped")
-                },
+                status_label,
                 Some(detail),
                 h_flex()
                     .gap_2()

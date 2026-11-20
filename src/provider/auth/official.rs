@@ -218,11 +218,12 @@ pub async fn fetch_resource(path: &Path, models: bool) -> anyhow::Result<Value> 
 
 pub(crate) async fn models_url() -> anyhow::Result<reqwest::Url> {
     let mut url = reqwest::Url::parse("https://chatgpt.com/backend-api/codex/models")?;
-    if let Some(version) = local_codex_version().await? {
-        // The backend's compatibility version describes the Codex wire contract.
-        url.query_pairs_mut()
-            .append_pair("client_version", &version);
-    }
+    let version = local_codex_version().await?.context(
+        "Cannot determine the Codex client version for official model discovery; install or update Codex CLI",
+    )?;
+    // Codex sends only the numeric components of its own version.
+    url.query_pairs_mut()
+        .append_pair("client_version", &version);
     Ok(url)
 }
 
@@ -237,7 +238,7 @@ async fn local_codex_version() -> anyhow::Result<Option<String>> {
     }
     let version = tokio::task::spawn_blocking(|| -> anyhow::Result<Option<String>> {
         let pattern = regex::Regex::new(
-            r"(?m)^codex-cli ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:\s|$)",
+            r"(?m)^codex-cli ([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?(?:\s|$)",
         )?;
         let candidates = crate::platform::codex_cli_candidates()
             .into_iter()
@@ -254,7 +255,6 @@ async fn local_codex_version() -> anyhow::Result<Option<String>> {
                 Err(error) => tracing::debug!(error = %error, "Codex version probe failed"),
             }
         }
-        tracing::warn!("No recognizable local Codex CLI version; omitting client_version from the official models URL");
         Ok(None)
     })
     .await
