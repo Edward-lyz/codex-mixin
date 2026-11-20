@@ -23,9 +23,13 @@ SetCompressor /SOLID lzma
 
 !define APPNAME "Codex Mixin"
 !define UI_EXE "Codex Mixin.exe"
+!define LEGACY_UI_EXE "codex_mixin_ui.exe"
 !define CLI_EXE "codex-mixin.exe"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CodexMixin"
+!define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
+!define RUN_VALUE "CodexMixin"
 Var RestoreGateway
+Var LegacyInstall
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -63,18 +67,49 @@ LangString GatewayTaskPermission ${LANG_SIMPCHINESE} "旧版网关的登录启�
 LangString GatewayTaskPermission ${LANG_ENGLISH} "The previous gateway startup task needs administrator approval to be updated. Repair permissions on this task and retry starting the gateway?"
 LangString GatewaySessionOnly ${LANG_SIMPCHINESE} "网关已为本次登录启动。旧启动任务的权限仍需修复，之后才能使用新版网关登录启动。"
 LangString GatewaySessionOnly ${LANG_ENGLISH} "The gateway is running for this session. Repair the previous startup task permissions to start the new gateway at sign-in."
+LangString DesktopStartupHandoffFailed ${LANG_SIMPCHINESE} "无法将 Codex Mixin 的桌面登录启动项更新为新版。"
+LangString DesktopStartupHandoffFailed ${LANG_ENGLISH} "Failed to move Codex Mixin desktop startup to the new installation."
 
 Function StopRunning
   nsExec::Exec 'taskkill /IM "${UI_EXE}" /F'
+  nsExec::Exec 'taskkill /IM ${LEGACY_UI_EXE} /F'
   nsExec::Exec 'taskkill /IM ${CLI_EXE} /T /F'
   Sleep 600
+FunctionEnd
+
+Function HandoffDesktopStartup
+  ReadRegStr $0 HKCU "${RUN_KEY}" "${RUN_VALUE}"
+  ${If} $0 == ""
+    Return
+  ${EndIf}
+  StrCpy $1 ""
+  ${If} $LegacyInstall != ""
+    StrCpy $1 '$\"$LegacyInstall\${LEGACY_UI_EXE}$\" --background'
+  ${EndIf}
+  ; Preserve the existing value name so Windows keeps its Startup Apps choice.
+  ; A fresh install or an unrelated command is left alone.
+  ${If} $0 == '$\"$PROGRAMFILES64\${APPNAME}\${LEGACY_UI_EXE}$\" --background'
+  ${OrIf} $0 == '$\"$INSTDIR\${LEGACY_UI_EXE}$\" --background'
+  ${OrIf} $0 == $1
+    ClearErrors
+    WriteRegStr HKCU "${RUN_KEY}" "${RUN_VALUE}" '$\"$INSTDIR\${UI_EXE}$\" --background'
+    IfErrors 0 +2
+    Abort "$(DesktopStartupHandoffFailed)"
+  ${EndIf}
 FunctionEnd
 
 ; Remembers whether the gateway of an existing install should run again
 ; after the files are replaced.
 Function CaptureGatewayState
   StrCpy $RestoreGateway "0"
+  SetRegView 64
+  ReadRegStr $LegacyInstall HKLM "${UNINST_KEY}" "InstallLocation"
+  SetRegView lastused
   StrCpy $3 "$INSTDIR\${CLI_EXE}"
+  ${IfNot} ${FileExists} "$3"
+  ${AndIf} $LegacyInstall != ""
+    StrCpy $3 "$LegacyInstall\${CLI_EXE}"
+  ${EndIf}
   ${IfNot} ${FileExists} "$3"
     StrCpy $3 "$PROGRAMFILES64\${APPNAME}\${CLI_EXE}"
   ${EndIf}
@@ -120,6 +155,7 @@ Section "Install"
   WriteRegStr   HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+  Call HandoffDesktopStartup
 
   ${If} $RestoreGateway != "0"
     DetailPrint "Restoring the gateway..."
@@ -169,7 +205,10 @@ Section "Uninstall"
   Sleep 600
   ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\update-user-path.ps1" -InstallRoot "$INSTDIR" -Remove'
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "CodexMixin"
+  ReadRegStr $0 HKCU "${RUN_KEY}" "${RUN_VALUE}"
+  ${If} $0 == '$\"$INSTDIR\${UI_EXE}$\" --background'
+    DeleteRegValue HKCU "${RUN_KEY}" "${RUN_VALUE}"
+  ${EndIf}
   RMDir /r "$INSTDIR"
   DeleteRegKey HKCU "${UNINST_KEY}"
 SectionEnd

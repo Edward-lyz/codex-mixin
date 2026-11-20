@@ -8,6 +8,7 @@ mod console;
 mod model;
 mod pages;
 mod panel;
+mod startup;
 mod store;
 mod theme;
 mod tray;
@@ -31,6 +32,10 @@ fn main() {
         return;
     }
     updater::clean_up_after_update();
+    let background = std::env::args_os().any(|arg| arg == "--background");
+    if startup::skip_launch(background) {
+        return;
+    }
     #[cfg(target_os = "macos")]
     disable_touch_bar();
     let locale = sys_locale::get_locale().unwrap_or_default();
@@ -43,7 +48,7 @@ fn main() {
     let application = gpui_kit::application().with_assets(assets::Assets);
     // Launching the app again from Finder or the Dock shows the console.
     application.on_reopen(|cx| console::Console::open(None, cx));
-    application.run(|cx| {
+    application.run(move |cx| {
         gpui_kit::init(cx);
         if let Err(error) = theme::init(cx) {
             eprintln!("cannot load the product theme: {error:#}");
@@ -64,7 +69,7 @@ fn main() {
         store::Store::init(cli, cx);
         updater::Updater::init(cx);
         tray::install(cx);
-        if std::env::args().all(|arg| arg != "--background") {
+        if !background {
             console::Console::open(None, cx);
         }
     });

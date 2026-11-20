@@ -16,9 +16,15 @@ try {
 $ErrorActionPreference = 'Stop'
 try {
     $requester = [Security.Principal.SecurityIdentifier]::new('__REQUESTER_SID__')
+    $newCli = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__CLI_PATH__'))
+    if (![IO.Path]::IsPathRooted($newCli) -or [IO.Path]::GetFileName($newCli) -ne 'codex-mixin.exe' -or
+        $newCli -match '[\r\n\x00]' -or !(Test-Path -LiteralPath $newCli -PathType Leaf)) {
+        throw 'Invalid replacement gateway executable.'
+    }
     $scheduler = New-Object -ComObject 'Schedule.Service'
     $scheduler.Connect()
-    $task = $scheduler.GetFolder('\').GetTask('Codex Mixin Gateway')
+    $folder = $scheduler.GetFolder('\')
+    $task = $folder.GetTask('Codex Mixin Gateway')
     $definition = $task.Definition
     $principal = $definition.Principal
     $registeredUser = if ($principal.UserId -match '^S-1-') {
@@ -29,14 +35,25 @@ try {
         )
     }
     if (!$requester.Equals($registeredUser) -or $principal.LogonType -ne 3 -or
-        $principal.RunLevel -ne 0 -or $definition.Actions.Count -ne 1) { exit 1 }
+        $principal.RunLevel -ne 0 -or $definition.Actions.Count -ne 1) {
+        throw 'The existing gateway task does not belong to the current limited user.'
+    }
     $action = $definition.Actions.Item(1)
     $console = Join-Path $env:SystemRoot 'System32\conhost.exe'
-    if ($action.Type -ne 0 -or $action.Path -ne $console -or
-        $action.Arguments -notlike '--headless *') { exit 1 }
+    $launcher = [regex]::Match($action.Arguments, '^(--headless .+ -EncodedCommand )([A-Za-z0-9+/=]+)$')
+    if ($action.Type -ne 0 -or $action.Path -ne $console -or !$launcher.Success) {
+        throw 'The existing gateway task has an unrecognized launcher.'
+    }
+    $body = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($launcher.Groups[2].Value))
+    $oldCli = [regex]::Match($body, "(?<=; & )'(?<exe>(?:[^']|'')+\\codex-mixin\.exe)'(?= 'start' '--log-file' )",
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (!$oldCli.Success) { throw 'The existing task does not launch the Codex Mixin gateway.' }
+    $quotedCli = "'" + $newCli.Replace("'", "''") + "'"
+    $body = $body.Remove($oldCli.Index, $oldCli.Length).Insert($oldCli.Index, $quotedCli)
+    $action.Arguments = $launcher.Groups[1].Value + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($body))
 
     # Give the existing limited task's own principal permission to manage it.
-    # Preserve the descriptor's other entries and the task's action and identity.
+    # Preserve the descriptor's other entries, trigger and limited identity.
     $sections = [Security.AccessControl.AccessControlSections]::Access
     # Legacy tasks can store inherited entries ahead of explicit ones.
     # Append the grant without reordering or replacing their existing entries.
@@ -48,15 +65,25 @@ try {
         [Security.AccessControl.AceQualifier]::AccessAllowed,
         0x1f01ff, $requester, $false, $null
     )
-    $dacl.InsertAce($dacl.Count, $grant)
-    $task.SetSecurityDescriptor($acl.GetSddlForm($sections), 0x10)
+    $alreadyGranted = $dacl | Where-Object {
+        $_ -is [Security.AccessControl.CommonAce] -and $_.SecurityIdentifier.Equals($requester) -and
+        $_.AceQualifier -eq $grant.AceQualifier -and ($_.AccessMask -band $grant.AccessMask) -eq $grant.AccessMask
+    }
+    if (!$alreadyGranted) { $dacl.InsertAce($dacl.Count, $grant) }
+
+    if ($task.State -eq 4) { $task.Stop(0) }
+    # TASK_UPDATE | TASK_DONT_ADD_PRINCIPAL_ACE | TASK_IGNORE_REGISTRATION_TRIGGERS.
+    # Update both the command and permissions before returning to the normal CLI.
+    $null = $folder.RegisterTaskDefinition($task.Name, $definition, 0x34,
+        $principal.UserId, $null, 3, $acl.GetSddlForm($sections))
     exit 0
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
 }
 '@
-        $repair = $repair.Replace('__REQUESTER_SID__', $userSid)
+        $encodedPath = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($CliPath))
+        $repair = $repair.Replace('__REQUESTER_SID__', $userSid).Replace('__CLI_PATH__', $encodedPath)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($repair))
         $powershell = Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe'
         $process = Start-Process -FilePath $powershell -Verb RunAs -WindowStyle Hidden -Wait -PassThru `

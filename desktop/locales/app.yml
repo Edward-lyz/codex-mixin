@@ -518,6 +518,9 @@ panel.lightweight:
 panel.lightweight_detail:
   en: "Keep the gateway running and start it at sign-in. The desktop app will close."
   zh-CN: "保持网关运行并设为登录时启动，同时关闭桌面应用。"
+panel.lightweight_preference_failed:
+  en: "Could not save the desktop lightweight preference (%{error})."
+  zh-CN: "无法保存桌面轻量模式设置（%{error}）。"
 panel.quit:
   en: "Quit Mixin Completely"
   zh-CN: "彻底退出 Mixin"

@@ -108,6 +108,13 @@ pub struct StatusPanel {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Clone, Copy)]
+enum AfterGatewayAction {
+    Stay,
+    Lightweight,
+    Quit,
+}
+
 impl StatusPanel {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
@@ -137,17 +144,36 @@ impl StatusPanel {
         }
     }
 
-    fn gateway_action(&mut self, change: Change, quit: bool, cx: &mut Context<Self>) {
+    fn gateway_action(
+        &mut self,
+        change: Change,
+        after: AfterGatewayAction,
+        cx: &mut Context<Self>,
+    ) {
         self.action_error = None;
         let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
-        cx.spawn(async move |panel, cx| match task.await {
-            Ok(_) if quit => cx.update(|cx| cx.quit()),
-            Ok(_) => {}
-            Err(error) => {
-                let _ = panel.update(cx, |panel, cx| {
-                    panel.action_error = Some(error.message.into());
-                    cx.notify();
-                });
+        cx.spawn(async move |panel, cx| {
+            let outcome = task.await.map_err(|error| error.message).and_then(|_| {
+                if matches!(after, AfterGatewayAction::Lightweight) {
+                    crate::startup::enter_lightweight().map_err(|error| {
+                        t!(
+                            "panel.lightweight_preference_failed",
+                            error = error.to_string()
+                        )
+                        .into_owned()
+                    })?;
+                }
+                Ok(())
+            });
+            match outcome {
+                Ok(()) if !matches!(after, AfterGatewayAction::Stay) => cx.update(|cx| cx.quit()),
+                Ok(()) => {}
+                Err(message) => {
+                    let _ = panel.update(cx, |panel, cx| {
+                        panel.action_error = Some(message.into());
+                        cx.notify();
+                    });
+                }
             }
         })
         .detach();
@@ -453,7 +479,7 @@ impl StatusPanel {
                                 };
                                 panel.gateway_action(
                                     Change::new(label, ["service", command, "--managed", "--json"]),
-                                    false,
+                                    AfterGatewayAction::Stay,
                                     cx,
                                 );
                             })),
@@ -841,7 +867,7 @@ impl StatusPanel {
                                                             "--json",
                                                         ],
                                                     ),
-                                                    true,
+                                                    AfterGatewayAction::Lightweight,
                                                     cx,
                                                 );
                                             });
@@ -869,7 +895,7 @@ impl StatusPanel {
                                                 "--json",
                                             ],
                                         ),
-                                        true,
+                                        AfterGatewayAction::Quit,
                                         cx,
                                     );
                                 }))
