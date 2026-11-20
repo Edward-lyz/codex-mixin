@@ -1,3 +1,4 @@
+use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -20,8 +21,18 @@ $action = New-ScheduledTaskAction -Execute $env:CODEX_MIXIN_TASK_EXECUTE -Argume
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable -RestartCount 3 -RestartInterval ([TimeSpan]::FromMinutes(1))
-Register-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+try {
+  Register-ScheduledTask -TaskName $env:CODEX_MIXIN_TASK_NAME -TaskPath '\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+} catch {
+  if ($_.FullyQualifiedErrorId -eq 'HRESULT 0x80070005,Register-ScheduledTask') {
+    [Console]::Error.WriteLine(($_ | Out-String).Trim())
+    exit 5
+  }
+  throw
+}
 "#;
+
+const TASK_REGISTRATION_ACCESS_DENIED: i32 = 5;
 
 const CONTROL_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
@@ -185,15 +196,24 @@ pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
         .to_str()
         .context("console host path is not valid UTF-8")?;
     let arguments = windows_task_arguments(spec)?;
-    checked(
+    let output = powershell(
         INSTALL_SCRIPT,
         &[
             ("CODEX_MIXIN_TASK_EXECUTE", host),
             ("CODEX_MIXIN_TASK_ARGUMENTS", &arguments),
         ],
-        "register gateway scheduled task",
-    )
-    .map(drop)
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let message = format!(
+        "register gateway scheduled task failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    if output.status.code() == Some(TASK_REGISTRATION_ACCESS_DENIED) {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, message).into());
+    }
+    bail!("{message}")
 }
 
 fn control(operation: &str) -> anyhow::Result<()> {

@@ -12,7 +12,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect gateway autostart.' }
     $startup = $startupJson | ConvertFrom-Json
     if ($null -eq $startup -or $startup.enabled -isnot [bool]) { throw 'Gateway autostart status is invalid.' }
-    if ($status.gateway -in @('running', 'unresponsive') -or $startup.enabled -eq $true) { exit 0 }
+    if ($startup.enabled) { exit 3 }
+    if ($status.gateway -in @('running', 'unresponsive')) { exit 0 }
     if ($status.gateway -ne 'stopped' -or $startup.enabled -ne $false) { throw 'Gateway status is unknown.' }
     exit 1
 } catch {
