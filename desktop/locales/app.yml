@@ -470,9 +470,6 @@ panel.stopped_detail:
 panel.unresponsive:
   en: "Gateway unresponsive"
   zh-CN: "网关未响应"
-panel.quota_heading:
-  en: "Providers"
-  zh-CN: "服务商"
 panel.no_quota:
   en: "No usage data available"
   zh-CN: "暂无用量数据"
@@ -485,15 +482,15 @@ panel.stop_label:
 panel.quota_usage:
   en: "%{used} used of %{limit}"
   zh-CN: "已用 %{used} / 共 %{limit}"
-panel.quota_left_heading:
-  en: "Left"
-  zh-CN: "剩余"
-panel.quota_reset_heading:
-  en: "Reset"
-  zh-CN: "重置"
-panel.quota_unavailable:
-  en: "Unavailable"
-  zh-CN: "暂不可用"
+panel.reset_in_minutes:
+  en: "Resets in %{count} min"
+  zh-CN: "%{count} 分钟后重置"
+panel.reset_in_hours:
+  en: "Resets in %{count} h"
+  zh-CN: "%{count} 小时后重置"
+panel.reset_in_days:
+  en: "Resets in %{count} d"
+  zh-CN: "%{count} 天后重置"
 panel.quota_remaining:
   en: "%{remaining} %{currency} left"
   zh-CN: "剩余 %{remaining} %{currency}"

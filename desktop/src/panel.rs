@@ -11,11 +11,11 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Bounds, Context, ElementId, Global,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowKind, WindowOptions, div, img, point, prelude::FluentBuilder as _, px,
-    relative, size, svg,
+    Animation, AnimationExt as _, AnyWindowHandle, App, AppContext as _, Bounds, Context,
+    ElementId, Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder,
+    Pixels, Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
+    canvas, div, img, point, prelude::FluentBuilder as _, px, size, svg,
 };
 #[cfg(target_os = "macos")]
 use objc2::{MainThreadMarker, rc::Retained};
@@ -24,6 +24,7 @@ use objc2_app_kit::{NSApplication, NSScreen, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSPoint;
 use rust_i18n::t;
+use std::time::Duration;
 
 use crate::console::{Console, Page};
 use crate::model::{QuotaEntry, ServiceStatus};
@@ -54,10 +55,10 @@ struct PanelWindow {
 
 impl Global for PanelWindow {}
 
-/// The provider the user expanded, or None when the list is collapsed.
-struct ExpandedProvider(Option<String>);
+/// The provider whose quotas the panel shows; None picks the first one.
+struct SelectedProvider(Option<String>);
 
-impl Global for ExpandedProvider {}
+impl Global for SelectedProvider {}
 
 /// Opens the panel under `anchor`, or closes it when it is already open.
 pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
@@ -420,8 +421,12 @@ pub(crate) fn gateway_summary(
 
 /// Warn at or below 20 percent remaining.
 const QUOTA_WARNING: f32 = 0.2;
-const QUOTA_PERCENT_WIDTH: Pixels = px(44.0);
-const QUOTA_RESET_WIDTH: Pixels = px(86.0);
+/// Outer diameter of the activity rings, their stroke and the gap between them.
+const RING_SIZE: f32 = 104.0;
+const RING_STROKE: f32 = 9.0;
+const RING_GAP: f32 = 2.5;
+/// Ring colours, outermost first, after the Apple Fitness rings.
+const RING_COLORS: [u32; 3] = [0x0a84ff, 0x34c759, 0x5ac8fa];
 
 fn quota_value(entry: &QuotaEntry) -> SharedString {
     if let Some(error) = &entry.error {
@@ -442,12 +447,15 @@ fn quota_value(entry: &QuotaEntry) -> SharedString {
     )
 }
 
-fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
+/// One legend line beside the rings: the ring colour, the quota name and
+/// what is left, with the reset time and spent amount underneath.
+fn quota_line(entry: &QuotaEntry, ring: Option<Hsla>, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors;
-    let remaining = entry.remaining_fraction();
-    let low = remaining.is_some_and(|fraction| fraction <= QUOTA_WARNING);
+    let low = entry
+        .remaining_fraction()
+        .is_some_and(|fraction| fraction <= QUOTA_WARNING);
     // Amounts are shown for metered quotas such as a monthly budget; window
-    // quotas reported only as percentages already say everything in the bar.
+    // quotas reported only as percentages already say everything in the ring.
     let usage = entry
         .used
         .zip(entry.limit)
@@ -469,85 +477,68 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
         .reset_at
         .as_deref()
         .and_then(|reset| chrono::DateTime::parse_from_rfc3339(reset).ok())
-        .map(|reset| {
-            let reset = reset.with_timezone(&chrono::Local);
-            let format = if reset.date_naive() == chrono::Local::now().date_naive() {
-                "%H:%M"
+        .map(|reset| (reset.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_minutes())
+        // A reset already in the past is stale until the next refresh.
+        .filter(|minutes| *minutes >= 0)
+        .map(|minutes| {
+            let label: SharedString = if minutes < 60 {
+                t!("panel.reset_in_minutes", count = minutes.max(1)).into()
+            } else if minutes < 48 * 60 {
+                t!("panel.reset_in_hours", count = minutes / 60).into()
             } else {
-                "%m-%d %H:%M"
+                t!("panel.reset_in_days", count = minutes / (24 * 60)).into()
             };
-            reset.format(format).to_string()
+            label
         });
-    h_flex()
-        .min_h(px(26.0))
-        .gap_2()
-        .text_size(px(12.5))
+    let detail = [reset, usage]
+        .into_iter()
+        .flatten()
+        .map(|part| part.to_string())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    v_flex()
+        .min_w_0()
+        .gap_0p5()
         .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .py_0p5()
+            h_flex()
+                .gap_2()
+                .text_size(px(13.0))
+                .when_some(ring, |line, ring| {
+                    line.child(div().flex_none().size_2().rounded_full().bg(ring))
+                })
                 .child(
                     div()
-                        .when(entry.error.is_none(), |label| label.truncate())
+                        .flex_1()
+                        .min_w_0()
+                        .font_medium()
+                        .truncate()
                         .child(entry.label.clone()),
                 )
-                .when_some(usage, |label, usage| {
-                    label.child(
-                        div()
-                            .truncate()
-                            .text_size(px(11.5))
-                            .text_color(colors.muted_foreground)
-                            .child(usage),
-                    )
-                }),
+                .child(
+                    div()
+                        .flex_none()
+                        .when(entry.error.is_some(), |value| {
+                            value.max_w(px(150.0)).truncate()
+                        })
+                        .font_semibold()
+                        .text_color(if low || entry.error.is_some() {
+                            colors.danger
+                        } else {
+                            colors.foreground
+                        })
+                        .child(quota_value(entry)),
+                ),
         )
-        .when_some(remaining, |row, fraction| {
-            row.child(
+        .when(!detail.is_empty(), |line| {
+            line.child(
                 div()
-                    .flex_none()
-                    .w(px(56.0))
-                    .h(px(4.0))
-                    .rounded_full()
-                    .bg(colors.muted_foreground.opacity(0.16))
-                    .child(
-                        div()
-                            .h_full()
-                            .w(relative(fraction))
-                            .rounded_full()
-                            .bg(if low {
-                                colors.danger
-                            } else {
-                                colors.muted_foreground.opacity(0.7)
-                            }),
-                    ),
+                    .when(ring.is_some(), |detail| detail.pl_4())
+                    .truncate()
+                    .text_size(px(11.5))
+                    .text_color(colors.muted_foreground)
+                    .child(detail),
             )
         })
-        .child(
-            div()
-                .when(remaining.is_some(), |value| {
-                    value.w(QUOTA_PERCENT_WIDTH).flex_none()
-                })
-                .when(entry.error.is_some(), |value| value.max_w(px(180.0)).py_1())
-                .text_right()
-                .text_size(px(13.0))
-                .font_medium()
-                .text_color(if low || entry.error.is_some() {
-                    colors.danger
-                } else {
-                    colors.foreground
-                })
-                .child(quota_value(entry)),
-        )
-        .child(
-            div()
-                .w(QUOTA_RESET_WIDTH)
-                .flex_none()
-                .text_right()
-                .text_size(px(12.0))
-                .text_color(colors.muted_foreground)
-                .child(reset.unwrap_or_else(|| "—".to_owned())),
-        )
 }
 
 impl StatusPanel {
@@ -638,195 +629,261 @@ impl StatusPanel {
             })
     }
 
+    /// Provider icons to switch between, then the selected provider's quotas
+    /// as concentric activity rings with a legend beside them.
     fn render_quotas(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let store = Store::global(cx).read(cx);
-        let mut groups = Vec::new();
-        let selection = cx
-            .try_global::<ExpandedProvider>()
-            .and_then(|state| state.0.as_deref());
-        for provider in store
+        let providers: Vec<_> = store
             .providers
             .value
             .iter()
             .flat_map(|list| &list.providers)
             .filter(|provider| provider.enabled)
-        {
-            let Some(snapshot) = store.quotas.get(&provider.id) else {
-                continue;
-            };
-            let entries = snapshot.value.as_deref().unwrap_or_default();
-            if entries.is_empty() && !snapshot.loading && snapshot.error.is_none() {
-                continue;
-            }
-            let balance = entries.first().filter(|entry| {
-                entries.len() == 1
-                    && entry.remaining.is_some()
-                    && entry.remaining_fraction().is_none()
-                    && entry.reset_at.is_none()
-                    && entry.error.is_none()
-            });
-            let expandable = balance.is_none() && (!entries.is_empty() || snapshot.error.is_some());
-            let expanded = expandable && selection == Some(provider.id.as_str());
-            let lowest = entries
-                .iter()
-                .filter_map(QuotaEntry::remaining_fraction)
-                .reduce(f32::min);
-            let summary = if expanded {
-                None
-            } else if let Some(entry) = balance {
-                Some(quota_value(entry))
-            } else if let Some(fraction) = lowest {
-                Some(SharedString::from(format!("{:.0}%", fraction * 100.0)))
-            } else if snapshot.error.is_some() || entries.iter().any(|entry| entry.error.is_some())
-            {
-                Some(tr!("panel.quota_unavailable"))
-            } else {
-                None
-            };
-            let id = provider.id.clone();
-            let details = expanded.then(|| {
-                v_flex()
-                    .ml_3()
-                    .pl_2()
-                    .pr_2()
-                    .mb_1()
-                    .border_l_1()
-                    .border_color(colors.border)
-                    .child(
-                        h_flex()
-                            .h_5()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(div().flex_1())
-                            .child(
-                                div()
-                                    .w(QUOTA_PERCENT_WIDTH)
-                                    .text_right()
-                                    .child(t!("panel.quota_left_heading")),
-                            )
-                            .child(
-                                div()
-                                    .w(QUOTA_RESET_WIDTH)
-                                    .text_right()
-                                    .child(t!("panel.quota_reset_heading")),
-                            ),
-                    )
-                    .children(entries.iter().map(|entry| quota_line(entry, cx)))
-                    .when_some(snapshot.error.clone(), |details, error| {
-                        details.child(
-                            div()
-                                .py_1()
-                                .text_xs()
-                                .text_color(colors.danger)
-                                .child(error),
-                        )
-                    })
-            });
-            groups.push(
-                v_flex()
-                    .flex_none()
-                    .child(
-                        h_flex()
-                            .id(ElementId::Name(format!("quota-provider-{id}").into()))
-                            .h(px(34.0))
-                            .px_2()
-                            .gap_2()
-                            .rounded_md()
-                            .when(expanded, |row| row.bg(colors.accent.opacity(0.7)))
-                            .when(expandable, |row| {
-                                row.cursor_pointer()
-                                    .hover(|style| style.bg(colors.accent))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.set_global(ExpandedProvider(
-                                            (!expanded).then(|| id.clone()),
-                                        ));
-                                        cx.notify();
-                                    }))
-                            })
-                            .child(
-                                svg()
-                                    .path(provider_icon_path(&provider.icon))
-                                    .size_3p5()
-                                    .flex_none()
-                                    .text_color(colors.muted_foreground),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(14.0))
-                                    .truncate()
-                                    .child(provider.display_name.clone()),
-                            )
-                            .when(snapshot.loading, |row| {
-                                row.child(gpui_kit::component::spinner::Spinner::new().xsmall())
-                            })
-                            .when_some(lowest.filter(|_| !expanded), |row, fraction| {
-                                row.child(
-                                    div()
-                                        .flex_none()
-                                        .w(px(64.0))
-                                        .h(px(5.0))
-                                        .rounded_full()
-                                        .bg(colors.muted_foreground.opacity(0.16))
-                                        .child(
-                                            div().h_full().w(relative(fraction)).rounded_full().bg(
-                                                if fraction <= QUOTA_WARNING {
-                                                    colors.danger
-                                                } else {
-                                                    colors.muted_foreground.opacity(0.7)
-                                                },
-                                            ),
-                                        ),
-                                )
-                            })
-                            .when_some(summary, |row, summary| {
-                                row.child(
-                                    div()
-                                        .when(lowest.is_some(), |value| {
-                                            value.w(QUOTA_PERCENT_WIDTH).text_right()
-                                        })
-                                        .text_size(px(14.0))
-                                        .font_semibold()
-                                        .text_color(
-                                            if lowest.is_some_and(|left| left <= QUOTA_WARNING) {
-                                                colors.danger
-                                            } else {
-                                                colors.foreground
-                                            },
-                                        )
-                                        .child(summary),
-                                )
-                            })
-                            .child(div().size_4().flex_none().when(expandable, |slot| {
-                                slot.child(
-                                    Icon::new(if expanded {
-                                        IconName::ChevronDown
-                                    } else {
-                                        IconName::ChevronRight
-                                    })
-                                    .xsmall()
-                                    .text_color(colors.muted_foreground),
-                                )
-                            })),
-                    )
-                    .children(details),
-            );
-        }
-        v_flex()
-            .when(groups.is_empty(), |region| {
-                region.child(
-                    div()
-                        .px_2()
-                        .py_2()
-                        .text_xs()
-                        .text_color(colors.muted_foreground)
-                        .child(t!("panel.no_quota")),
-                )
+            .filter_map(|provider| {
+                let snapshot = store.quotas.get(&provider.id)?;
+                let empty = snapshot.value.as_deref().unwrap_or_default().is_empty();
+                (!empty || snapshot.loading || snapshot.error.is_some())
+                    .then_some((provider, snapshot))
             })
-            .children(groups)
+            .collect();
+        let chosen = cx
+            .try_global::<SelectedProvider>()
+            .and_then(|state| state.0.as_deref());
+        let Some(&(selected, snapshot)) = providers
+            .iter()
+            .find(|(provider, _)| Some(provider.id.as_str()) == chosen)
+            .or_else(|| providers.first())
+        else {
+            return v_flex().child(
+                div()
+                    .px_2()
+                    .py_3()
+                    .text_xs()
+                    .text_color(colors.muted_foreground)
+                    .child(t!("panel.no_quota")),
+            );
+        };
+        let tabs = providers.iter().map(|(provider, snapshot)| {
+            let active = provider.id == selected.id;
+            let entries = snapshot.value.as_deref().unwrap_or_default();
+            let low = snapshot.error.is_some()
+                || entries.iter().any(|entry| {
+                    entry.error.is_some()
+                        || entry
+                            .remaining_fraction()
+                            .is_some_and(|fraction| fraction <= QUOTA_WARNING)
+                });
+            let id = provider.id.clone();
+            let name = provider.display_name.clone();
+            div()
+                .id(ElementId::Name(format!("quota-tab-{id}").into()))
+                .relative()
+                .size(px(30.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .cursor_pointer()
+                .when(active, |tab| {
+                    tab.bg(colors.accent)
+                        .border_1()
+                        .border_color(colors.border.opacity(0.7))
+                })
+                .when(!active, |tab| {
+                    tab.hover(|style| style.bg(colors.accent.opacity(0.6)))
+                })
+                .child(
+                    svg()
+                        .path(provider_icon_path(&provider.icon))
+                        .size(px(17.0))
+                        .text_color(if active {
+                            colors.foreground
+                        } else {
+                            colors.muted_foreground
+                        }),
+                )
+                .when(low, |tab| {
+                    tab.child(
+                        div()
+                            .absolute()
+                            .top(px(3.0))
+                            .right(px(3.0))
+                            .size(px(6.0))
+                            .rounded_full()
+                            .bg(colors.danger),
+                    )
+                })
+                .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.set_global(SelectedProvider(Some(id.clone())));
+                    cx.notify();
+                }))
+        });
+        let tab_row = h_flex()
+            .gap_2()
+            .px_1()
+            .child(
+                h_flex()
+                    .id("quota-tabs")
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .overflow_x_scroll()
+                    .children(tabs),
+            )
+            .when(snapshot.loading, |row| {
+                row.child(gpui_kit::component::spinner::Spinner::new().xsmall())
+            })
+            .child(
+                div()
+                    .max_w(px(150.0))
+                    .truncate()
+                    .text_xs()
+                    .text_color(colors.muted_foreground)
+                    .child(selected.display_name.clone()),
+            );
+
+        let entries = snapshot.value.as_deref().unwrap_or_default();
+        let ring_count = entries
+            .iter()
+            .filter(|entry| entry.remaining_fraction().is_some())
+            .count()
+            .min(RING_COLORS.len());
+        let mut ring_index = 0;
+        let mut rings = Vec::new();
+        let legend = entries.iter().map(|entry| {
+            let ring = entry
+                .remaining_fraction()
+                .filter(|_| ring_index < ring_count)
+                .map(|fraction| {
+                    let color: Hsla = gpui_kit::rgb(RING_COLORS[ring_index]).into();
+                    rings.push((fraction, color));
+                    ring_index += 1;
+                    color
+                });
+            quota_line(entry, ring, cx).into_any_element()
+        });
+        let legend = v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_2p5()
+            .children(legend.collect::<Vec<_>>())
+            .when_some(snapshot.error.clone(), |legend, error| {
+                legend.child(div().text_xs().text_color(colors.danger).child(error))
+            });
+        let lowest = rings.iter().map(|(fraction, _)| *fraction).reduce(f32::min);
+        let track_color = colors.muted_foreground.opacity(0.14);
+        let ring_view = lowest.map(|lowest| {
+            div()
+                .relative()
+                .flex_none()
+                .size(px(RING_SIZE))
+                .with_animation(
+                    ElementId::Name(format!("quota-rings-{}", selected.id).into()),
+                    Animation::new(Duration::from_millis(720))
+                        .with_easing(theme::curve(theme::ENTER_CURVE)),
+                    move |view, progress| {
+                        let rings = rings.clone();
+                        view.child(
+                            canvas(
+                                |_, _, _| {},
+                                move |bounds, _, window, _| {
+                                    let center = bounds.center();
+                                    let at = |radius: f32, turn: f32| {
+                                        let angle = (turn - 0.25) * std::f32::consts::TAU;
+                                        point(
+                                            center.x + px(radius * angle.cos()),
+                                            center.y + px(radius * angle.sin()),
+                                        )
+                                    };
+                                    let dot =
+                                        |position: Point<Pixels>, window: &mut Window, color| {
+                                            let radius = px(RING_STROKE / 2.0);
+                                            let mut cap = PathBuilder::fill();
+                                            cap.move_to(point(position.x - radius, position.y));
+                                            cap.arc_to(
+                                                point(radius, radius),
+                                                px(0.0),
+                                                false,
+                                                true,
+                                                point(position.x + radius, position.y),
+                                            );
+                                            cap.arc_to(
+                                                point(radius, radius),
+                                                px(0.0),
+                                                false,
+                                                true,
+                                                point(position.x - radius, position.y),
+                                            );
+                                            if let Ok(cap) = cap.build() {
+                                                window.paint_path(cap, color);
+                                            }
+                                        };
+                                    for (index, (fraction, color)) in rings.iter().enumerate() {
+                                        let radius = RING_SIZE / 2.0
+                                            - RING_STROKE / 2.0
+                                            - index as f32 * (RING_STROKE + RING_GAP);
+                                        let sweep = fraction * progress;
+                                        // Arcs are drawn as fine polylines; 96 steps per turn look round.
+                                        let steps = ((sweep * 96.0).ceil() as usize).max(1);
+                                        let mut track = PathBuilder::stroke(px(RING_STROKE));
+                                        let mut arc = PathBuilder::stroke(px(RING_STROKE));
+                                        track.move_to(at(radius, 0.0));
+                                        arc.move_to(at(radius, 0.0));
+                                        for step in 1..=96 {
+                                            track.line_to(at(radius, step as f32 / 96.0));
+                                        }
+                                        for step in 1..=steps {
+                                            arc.line_to(at(
+                                                radius,
+                                                sweep * step as f32 / steps as f32,
+                                            ));
+                                        }
+                                        if let Ok(track) = track.build() {
+                                            window.paint_path(track, track_color);
+                                        }
+                                        if sweep > 0.0 {
+                                            if let Ok(arc) = arc.build() {
+                                                window.paint_path(arc, *color);
+                                            }
+                                            dot(at(radius, 0.0), window, *color);
+                                            dot(at(radius, sweep), window, *color);
+                                        }
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
+                    },
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(19.0))
+                        .font_semibold()
+                        .text_color(if lowest <= QUOTA_WARNING {
+                            colors.danger
+                        } else {
+                            colors.foreground
+                        })
+                        .child(format!("{:.0}%", lowest * 100.0)),
+                )
+        });
+        v_flex().gap_3().child(tab_row).child(
+            h_flex()
+                .px_1()
+                .pb_1()
+                .gap_4()
+                .children(ring_view)
+                .child(legend),
+        )
     }
 
     fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -926,19 +983,7 @@ impl Render for StatusPanel {
                 panel.rounded_lg().border_1().border_color(colors.border)
             })
             .child(self.render_header(cx))
-            .child(
-                h_flex()
-                    .px_2()
-                    .pt_1()
-                    .gap_2()
-                    .text_xs()
-                    .font_medium()
-                    .text_color(colors.muted_foreground)
-                    .child(div().flex_1().child(t!("panel.quota_heading")))
-                    .child(t!("panel.quota_left_heading"))
-                    .child(div().size_4().flex_none()),
-            )
-            .child(quotas.child(self.render_quotas(cx)))
+            .child(quotas.py_2().child(self.render_quotas(cx)))
             .child(self.render_actions(cx));
         let panel = div().size_full();
         #[cfg(target_os = "macos")]
