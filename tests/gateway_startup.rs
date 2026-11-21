@@ -592,23 +592,29 @@ async fn running_gateway_serves_a_rotated_client_key() {
                 .bearer_auth(key)
                 .send()
                 .await
-                .unwrap()
-                .status()
+                .map(|response| response.status())
         }
     };
-    assert_eq!(status("rotation-before").await, reqwest::StatusCode::OK);
+    assert_eq!(
+        status("rotation-before").await.unwrap(),
+        reqwest::StatusCode::OK
+    );
 
     save_stored_config_to_path(&gateway_config_path, &stored_config("rotation-after")).unwrap();
 
     tokio::time::timeout(Duration::from_secs(10), async {
-        while status("rotation-after").await != reqwest::StatusCode::OK {
+        // Reloading the listener can interrupt an in-flight request.
+        while !status("rotation-after")
+            .await
+            .is_ok_and(|code| code == reqwest::StatusCode::OK)
+        {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     })
     .await
     .expect("the running gateway never served the rotated client key");
     assert_eq!(
-        status("rotation-before").await,
+        status("rotation-before").await.unwrap(),
         reqwest::StatusCode::UNAUTHORIZED
     );
     child.kill().await.unwrap();
