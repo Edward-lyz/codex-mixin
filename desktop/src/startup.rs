@@ -27,7 +27,7 @@ pub fn skip_launch(background: bool) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::skip_launch;
+pub(crate) use macos::skip_launch;
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn skip_launch(_: bool) -> bool {
@@ -66,7 +66,7 @@ mod macos {
 
     const MENU_LABEL: &str = "local.codex-mixin.menu-launch";
 
-    pub(super) fn skip_launch(background: bool) -> bool {
+    pub(crate) fn skip_launch(background: bool) -> bool {
         let defaults = NSUserDefaults::standardUserDefaults();
         let key = ns_string!("lightweightMode");
         if background {
