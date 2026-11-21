@@ -3,15 +3,17 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::{
-    App, Context, Entity, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _,
-    PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    StyledImage as _, Subscription, Window, div, img, prelude::FluentBuilder as _,
+    App, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ObjectFit,
+    ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, StyledImage as _, Subscription, Window, div, img, prelude::FluentBuilder as _,
 };
 use rust_i18n::t;
 use serde::Deserialize;
@@ -190,9 +192,9 @@ impl SettingsPage {
             .as_ref()
             .and_then(|status| status.gateway_version.clone());
         let busy = is_busy(cx);
-        let detail: SharedString = match (running, endpoint, version) {
+        let detail: SharedString = match (running, endpoint.as_deref(), version) {
             (true, Some(endpoint), Some(version)) => format!("{endpoint} · v{version}").into(),
-            (true, Some(endpoint), None) => endpoint.into(),
+            (true, Some(endpoint), None) => endpoint.to_owned().into(),
             _ => status_detail,
         };
         let service = |command: &'static str, label: SharedString| {
@@ -209,6 +211,25 @@ impl SettingsPage {
                 Some(detail),
                 h_flex()
                     .gap_2()
+                    .when_some(endpoint.filter(|_| running), |row, endpoint| {
+                        row.child(
+                            Button::new("copy-gateway-endpoint")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Copy)
+                                .accessibility_label(tr!("settings.copy_endpoint"))
+                                .tooltip(tr!("settings.copy_endpoint"))
+                                .on_click(move |_, window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        endpoint.clone(),
+                                    ));
+                                    window.push_notification(
+                                        Notification::success(t!("settings.endpoint_copied")),
+                                        cx,
+                                    );
+                                }),
+                        )
+                    })
                     .when(!running, |row| {
                         row.child(
                             Button::new("start-gateway")
@@ -350,6 +371,12 @@ impl SettingsPage {
             Some(Ok(_)) => tr!("settings.doctor_issues"),
             _ => tr!("settings.doctor_detail"),
         };
+        let paths = Store::global(cx)
+            .read(cx)
+            .interface
+            .value
+            .as_ref()
+            .map(|interface| interface.paths.clone());
         let body = v_flex()
             .child(setting_row(
                 t!("settings.doctor"),
@@ -363,7 +390,36 @@ impl SettingsPage {
                     .on_click(cx.listener(|page, _, _, cx| page.run_doctor(cx))),
                 cx,
             ))
-            .children(results);
+            .children(results)
+            .when_some(paths, |body, paths| {
+                body.child(row_divider(cx)).child(setting_row(
+                    t!("settings.files"),
+                    None,
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("open-gateway-log")
+                                .secondary()
+                                .small()
+                                .icon(IconName::FileText)
+                                .label(t!("settings.open_log"))
+                                .on_click(move |_, _, cx| {
+                                    cx.reveal_path(std::path::Path::new(&paths.gateway_log));
+                                }),
+                        )
+                        .child(
+                            Button::new("open-config-folder")
+                                .secondary()
+                                .small()
+                                .icon(IconName::Folder)
+                                .label(t!("settings.open_state"))
+                                .on_click(move |_, _, cx| {
+                                    cx.reveal_path(std::path::Path::new(&paths.state));
+                                }),
+                        ),
+                    cx,
+                ))
+            });
         section(t!("settings.diagnostics"), None, body, cx)
     }
 

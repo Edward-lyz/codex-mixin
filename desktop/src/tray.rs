@@ -1,13 +1,13 @@
 //! The menu bar (macOS), notification area (Windows) or StatusNotifierItem
 //! (Linux) icon. A left click toggles the status panel; the context menu
-//! offers the console and quit.
+//! offers settings and quit.
 
 use gpui_kit::{App, Global, Pixels, Point, point, px};
 use tray_icon::dpi::PhysicalPosition;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::console::Console;
+use crate::console::{Console, Page};
 use crate::panel;
 use crate::store::Store;
 
@@ -16,7 +16,7 @@ const ICON_PIXELS: u32 = 44;
 #[cfg(not(target_os = "macos"))]
 const ICON_PIXELS: u32 = 32;
 
-const OPEN_CONSOLE: &str = "open-console";
+const OPEN_SETTINGS: &str = "open-settings";
 const QUIT: &str = "quit";
 
 struct Tray {
@@ -33,7 +33,7 @@ enum TrayInput {
 
 pub fn install(cx: &mut App) {
     let menu = Menu::new();
-    let open = MenuItem::with_id(OPEN_CONSOLE, rust_i18n::t!("tray.open_console"), true, None);
+    let open = MenuItem::with_id(OPEN_SETTINGS, rust_i18n::t!("panel.settings"), true, None);
     let quit = MenuItem::with_id(QUIT, rust_i18n::t!("tray.quit"), true, None);
     let built = menu
         .append_items(&[&open, &PredefinedMenuItem::separator(), &quit])
@@ -82,7 +82,9 @@ pub fn install(cx: &mut App) {
         while let Ok(input) = receiver.recv().await {
             cx.update(|cx| match input {
                 TrayInput::Clicked(rect, position) => panel::toggle(anchor(rect, position, cx), cx),
-                TrayInput::Menu(id) if id == OPEN_CONSOLE => Console::open(None, cx),
+                TrayInput::Menu(id) if id == OPEN_SETTINGS => {
+                    Console::open(Some(Page::Settings), cx)
+                }
                 TrayInput::Menu(id) if id == QUIT => cx.quit(),
                 TrayInput::Menu(_) => {}
             });

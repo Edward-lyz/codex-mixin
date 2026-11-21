@@ -45,8 +45,8 @@ notice.failed:
   en: "%{label} failed: %{error}"
   zh-CN: "%{label}失败：%{error}"
 console.window_title:
-  en: "Codex Mixin Console"
-  zh-CN: "Codex Mixin 控制台"
+  en: "Codex Mixin Settings"
+  zh-CN: "Codex Mixin 设置"
 console.page.providers:
   en: "Providers"
   zh-CN: "服务商"
@@ -269,9 +269,6 @@ time.minutes:
 time.hours:
   en: "%{count} h"
   zh-CN: "%{count} 小时"
-tray.open_console:
-  en: "Open Console"
-  zh-CN: "打开控制台"
 tray.quit:
   en: "Quit Codex Mixin"
   zh-CN: "退出 Codex Mixin"
@@ -449,9 +446,6 @@ panel.status_unknown:
 panel.startup_access_denied:
   en: "Windows denied changes to the gateway startup task"
   zh-CN: "Windows 拒绝更新网关启动任务"
-panel.copy_diagnostic:
-  en: "Copy full diagnostic"
-  zh-CN: "复制完整诊断信息"
 panel.waiting_config:
   en: "Waiting for an upstream API"
   zh-CN: "等待配置上游 API"
@@ -477,8 +471,8 @@ panel.unresponsive:
   en: "Gateway unresponsive"
   zh-CN: "网关未响应"
 panel.quota_heading:
-  en: "Provider usage"
-  zh-CN: "服务商用量"
+  en: "Providers"
+  zh-CN: "服务商"
 panel.no_quota:
   en: "No usage data available"
   zh-CN: "暂无用量数据"
@@ -488,25 +482,31 @@ panel.start_label:
 panel.stop_label:
   en: "Stop gateway"
   zh-CN: "停止网关"
-panel.quota_percent:
-  en: "%{used}% used"
-  zh-CN: "已用 %{used}%"
-panel.quota_reset:
-  en: "Resets %{time}"
-  zh-CN: "%{time} 重置"
+panel.quota_left_heading:
+  en: "Left"
+  zh-CN: "剩余"
+panel.quota_reset_heading:
+  en: "Reset"
+  zh-CN: "重置"
+panel.quota_lowest:
+  en: "%{remaining}% min"
+  zh-CN: "最低 %{remaining}%"
+panel.quota_unavailable:
+  en: "Unavailable"
+  zh-CN: "暂不可用"
 panel.quota_remaining:
   en: "%{remaining} %{currency} left"
   zh-CN: "剩余 %{remaining} %{currency}"
-panel.open_console:
-  en: "Open Console"
-  zh-CN: "打开控制台"
-panel.copy_endpoint:
+settings.copy_endpoint:
   en: "Copy Local Endpoint"
   zh-CN: "复制本地接口地址"
-panel.open_log:
+settings.endpoint_copied:
+  en: "Local endpoint copied"
+  zh-CN: "已复制本地接口地址"
+settings.open_log:
   en: "Gateway Log"
   zh-CN: "运行日志"
-panel.open_state:
+settings.open_state:
   en: "Config Folder"
   zh-CN: "配置目录"
 panel.settings:
@@ -911,6 +911,9 @@ settings.check_update:
 settings.diagnostics:
   en: "Diagnostics"
   zh-CN: "诊断"
+settings.files:
+  en: "Files"
+  zh-CN: "本地文件"
 settings.doctor:
   en: "Health check"
   zh-CN: "健康检查"
@@ -1070,12 +1073,6 @@ update.install:
 update.restart:
   en: "Restart to Update"
   zh-CN: "重启以更新"
-panel.update_available:
-  en: "Update to %{version}"
-  zh-CN: "更新到 %{version}"
-panel.update_ready:
-  en: "Restart to finish updating to %{version}"
-  zh-CN: "重启完成更新到 %{version}"
 menu.settings:
   en: "Settings…"
   zh-CN: "设置…"
@@ -1160,21 +1157,6 @@ routing.simulate_failure:
 routing.stop_simulation:
   en: "Stop Preview"
   zh-CN: "暂停预览"
-panel.copy:
-  en: "Copy"
-  zh-CN: "复制"
-panel.copied:
-  en: "Copied"
-  zh-CN: "已复制"
-panel.quota_windows:
-  en: "%{count} windows"
-  zh-CN: "%{count} 个额度窗口"
-panel.show_all:
-  en: "Show All"
-  zh-CN: "查看全部"
-panel.collapse:
-  en: "Collapse"
-  zh-CN: "收起"
 usage.view_overview:
   en: "Overview"
   zh-CN: "用量概览"

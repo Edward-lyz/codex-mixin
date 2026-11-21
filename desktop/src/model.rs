@@ -232,13 +232,19 @@ pub struct QuotaEntry {
 }
 
 impl QuotaEntry {
-    /// Used fraction in 0..=1 when both bounds are known.
-    pub fn used_fraction(&self) -> Option<f32> {
-        let limit = self.limit.filter(|limit| *limit > 0.0)?;
-        let used = self
-            .used
-            .or_else(|| self.remaining.map(|remaining| limit - remaining))?;
-        Some((used / limit).clamp(0.0, 1.0) as f32)
+    /// Remaining fraction in 0..=1 when the quota has a known limit.
+    pub fn remaining_fraction(&self) -> Option<f32> {
+        if self.error.is_some() {
+            return None;
+        }
+        let limit = self
+            .limit
+            .or_else(|| (self.unit.as_deref() == Some("percent")).then_some(100.0))
+            .filter(|limit| *limit > 0.0)?;
+        let remaining = self
+            .remaining
+            .or_else(|| self.used.map(|used| limit - used))?;
+        Some((remaining / limit).clamp(0.0, 1.0) as f32)
     }
 }
 

@@ -1,22 +1,28 @@
 //! The status panel that drops from the tray icon: gateway switch, quota
 //! dashboard and quick actions.
 
-use std::collections::HashSet;
-
+#[cfg(target_os = "macos")]
+use gpui_kit::WeakEntity;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
     v_flex,
 };
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem,
-    Context, ElementId, Global, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, img, point,
-    prelude::FluentBuilder as _, px, relative, size,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, ElementId, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowOptions, div, img, point, prelude::FluentBuilder as _, px,
+    relative, size, svg,
 };
+#[cfg(target_os = "macos")]
+use objc2::{MainThreadMarker, rc::Retained};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSScreen, NSWindow};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSPoint;
 use rust_i18n::t;
 
 use crate::console::{Console, Page};
@@ -24,27 +30,37 @@ use crate::model::{QuotaEntry, ServiceStatus};
 use crate::store::{Change, Store};
 use crate::theme;
 use crate::tr;
-use crate::updater::{UpdateState, Updater};
-use crate::widgets::{provider_logo, status_dot};
+use crate::widgets::{provider_icon_path, status_dot};
 
-pub const PANEL_WIDTH: f32 = 390.0;
-pub const PANEL_HEIGHT: f32 = 405.0;
+pub const PANEL_WIDTH: f32 = 360.0;
+#[cfg(not(target_os = "macos"))]
+pub const PANEL_HEIGHT: f32 = 380.0;
+#[cfg(target_os = "macos")]
+const PANEL_HEIGHT: f32 = 224.0;
+#[cfg(target_os = "macos")]
+const MAX_QUOTA_HEIGHT: Pixels = px(265.0);
 /// Gap between the menu bar and the panel's top edge.
 const PANEL_OFFSET: f32 = 6.0;
+#[cfg(target_os = "macos")]
+const PANEL_TITLE: &str = "Codex Mixin Provider Usage";
 
-struct PanelWindow(AnyWindowHandle);
+struct PanelWindow {
+    handle: AnyWindowHandle,
+    #[cfg(target_os = "macos")]
+    native: Option<Retained<NSWindow>>,
+    #[cfg(target_os = "macos")]
+    view: WeakEntity<StatusPanel>,
+}
 
 impl Global for PanelWindow {}
 
+/// The provider the user expanded, or None when the list is collapsed.
+struct ExpandedProvider(Option<String>);
+
+impl Global for ExpandedProvider {}
+
 /// Opens the panel under `anchor`, or closes it when it is already open.
 pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
-    if let Some(handle) = cx.try_global::<PanelWindow>().map(|panel| panel.0)
-        && cx.windows().contains(&handle)
-    {
-        let _ = handle.update(cx, |_, window, _| window.remove_window());
-        cx.remove_global::<PanelWindow>();
-        return;
-    }
     let origin = anchor.map_or_else(
         || point(px(0.0), px(0.0)),
         |anchor| {
@@ -54,6 +70,48 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
             )
         },
     );
+    if let Some(panel) = cx.try_global::<PanelWindow>() {
+        let handle = panel.handle;
+        #[cfg(target_os = "macos")]
+        let view = panel.view.clone();
+        #[cfg(target_os = "macos")]
+        if let Some(native) = panel.native.clone()
+            && !native.isVisible()
+            && handle
+                .update(cx, |_, window, cx| {
+                    let _ = view.update(cx, |panel, cx| {
+                        panel.action_error = None;
+                        cx.notify();
+                    });
+                    if anchor.is_some()
+                        && let Some(main) = MainThreadMarker::new()
+                            .and_then(|marker| NSScreen::screens(marker).firstObject())
+                    {
+                        native.setFrameTopLeftPoint(NSPoint::new(
+                            origin.x.into(),
+                            main.frame().size.height - f64::from(origin.y),
+                        ));
+                    }
+                    let store = Store::global(cx);
+                    store.update(cx, |store, cx| {
+                        store.refresh_status(cx);
+                        let ids: Vec<_> = store.quotas.keys().cloned().collect();
+                        for id in ids {
+                            store.refresh_quota(&id, cx);
+                        }
+                    });
+                    request_missing_quotas(&store, cx);
+                    window.activate_window();
+                    cx.activate(true);
+                })
+                .is_ok()
+        {
+            return;
+        }
+        if handle.update(cx, |_, window, cx| close(window, cx)).is_ok() {
+            return;
+        }
+    }
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
             origin,
@@ -66,22 +124,38 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
         is_minimizable: false,
         focus: true,
         show: true,
-        // On macOS the system rounds and shadows the window frame and the
-        // blur fills it; elsewhere the panel draws its own rounded card.
-        window_background: if *theme::FROSTED {
-            WindowBackgroundAppearance::Blurred
+        window_background: if cfg!(target_os = "macos") {
+            WindowBackgroundAppearance::Opaque
         } else {
             WindowBackgroundAppearance::Transparent
         },
         ..Default::default()
     };
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
+        #[cfg(target_os = "macos")]
+        window.set_window_title(PANEL_TITLE);
         theme::follow_system_appearance(window, cx);
         cx.new(|cx| StatusPanel::new(window, cx))
     });
     match opened {
-        Ok((handle, _)) => {
-            cx.set_global(PanelWindow(handle));
+        Ok((handle, _view)) => {
+            #[cfg(target_os = "macos")]
+            let native = MainThreadMarker::new().and_then(|marker| {
+                NSApplication::sharedApplication(marker)
+                    .windows()
+                    .iter()
+                    .find(|window| window.title().to_string() == PANEL_TITLE)
+                    .inspect(|window| window.setExcludedFromWindowsMenu(true))
+            });
+            cx.set_global(PanelWindow {
+                handle,
+                #[cfg(target_os = "macos")]
+                native,
+                #[cfg(target_os = "macos")]
+                view: _view.downgrade(),
+            });
+            #[cfg(target_os = "macos")]
+            let _ = handle.update(cx, |_, window, _| window.refresh());
             cx.activate(true);
         }
         Err(error) => eprintln!("cannot open the status panel: {error:#}"),
@@ -89,21 +163,23 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
 }
 
 fn close(window: &mut Window, cx: &mut App) {
-    window.remove_window();
     // A deferred close can run after a newer panel replaced this one.
     let current = cx
         .try_global::<PanelWindow>()
-        .is_some_and(|panel| panel.0 == window.window_handle());
-    if current {
+        .filter(|panel| panel.handle == window.window_handle());
+    if current.is_some() {
+        #[cfg(target_os = "macos")]
+        if let Some(native) = current.and_then(|panel| panel.native.as_ref()) {
+            // Reuse the window so GPUI does not tear down AppKit's observed view.
+            native.orderOut(None);
+            return;
+        }
         cx.remove_global::<PanelWindow>();
     }
+    window.remove_window();
 }
 
 pub struct StatusPanel {
-    /// Providers whose quota windows are all shown.
-    expanded: HashSet<String>,
-    /// Whether the endpoint was copied since the panel opened.
-    copied: bool,
     action_error: Option<SharedString>,
     authorizing_startup: bool,
     _subscriptions: Vec<Subscription>,
@@ -111,7 +187,6 @@ pub struct StatusPanel {
 
 #[derive(Clone, Copy)]
 enum AfterGatewayAction {
-    Stay,
     Lightweight,
     Quit,
 }
@@ -119,7 +194,6 @@ enum AfterGatewayAction {
 impl StatusPanel {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
-        let updater = cx.observe(&Updater::global(cx), |_, _, cx| cx.notify());
         let observe = cx.observe(&store, |_, store, cx| {
             request_missing_quotas(&store, cx);
             cx.notify();
@@ -129,7 +203,11 @@ impl StatusPanel {
             // Closing from inside the activation change would free the
             // window while AppKit is still delivering it; wait one turn.
             if !window.is_window_active() && !panel.authorizing_startup {
-                window.defer(cx, close);
+                window.defer(cx, |window, cx| {
+                    if !window.is_window_active() {
+                        close(window, cx);
+                    }
+                });
             }
         });
         store.update(cx, |store, cx| {
@@ -138,11 +216,9 @@ impl StatusPanel {
         });
         request_missing_quotas(&store, cx);
         Self {
-            expanded: HashSet::new(),
-            copied: false,
             action_error: None,
             authorizing_startup: false,
-            _subscriptions: vec![observe, activation, updater],
+            _subscriptions: vec![observe, activation],
         }
     }
 
@@ -169,8 +245,7 @@ impl StatusPanel {
                 Ok(())
             });
             match outcome {
-                Ok(()) if !matches!(after, AfterGatewayAction::Stay) => cx.update(|cx| cx.quit()),
-                Ok(()) => {}
+                Ok(()) => cx.update(|cx| cx.quit()),
                 Err(message) => {
                     let _ = panel.update(cx, |panel, cx| {
                         panel.action_error = Some(message.into());
@@ -343,26 +418,17 @@ pub(crate) fn gateway_summary(
     (title, detail, running)
 }
 
-/// Quota windows shown per provider before "Show All".
-const PREVIEW_QUOTAS: usize = 2;
-/// Used fraction from which a quota window is drawn as a warning.
-const QUOTA_WARNING: f32 = 0.8;
+/// Warn at or below 20 percent remaining.
+const QUOTA_WARNING: f32 = 0.2;
+const QUOTA_PERCENT_WIDTH: Pixels = px(36.0);
+const QUOTA_RESET_WIDTH: Pixels = px(86.0);
 
 fn quota_value(entry: &QuotaEntry) -> SharedString {
     if let Some(error) = &entry.error {
         return error.clone().into();
     }
-    if entry.unit.as_deref() == Some("percent") {
-        return t!(
-            "panel.quota_percent",
-            used = format!("{:.0}", entry.used.unwrap_or_default())
-        )
-        .into();
-    }
-    if entry.currency.is_none()
-        && let (Some(used), Some(limit)) = (entry.used, entry.limit)
-    {
-        return format!("{used:.0} / {limit:.0}").into();
+    if let Some(fraction) = entry.remaining_fraction() {
+        return format!("{:.0}%", fraction * 100.0).into();
     }
     entry.remaining.map_or_else(
         || "—".into(),
@@ -376,133 +442,74 @@ fn quota_value(entry: &QuotaEntry) -> SharedString {
     )
 }
 
-/// One quota window: name, a short level bar and the exact usage, aligned
-/// on the same three columns for every provider.
 fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors;
-    let fraction = entry.used_fraction();
-    let warning = fraction.is_some_and(|value| value >= QUOTA_WARNING);
-    let color = if warning {
-        colors.warning
-    } else {
-        colors.primary
-    };
+    let remaining = entry.remaining_fraction();
+    let low = remaining.is_some_and(|fraction| fraction <= QUOTA_WARNING);
     let reset = entry
         .reset_at
         .as_deref()
         .and_then(|reset| chrono::DateTime::parse_from_rfc3339(reset).ok())
         .map(|reset| {
-            reset
-                .with_timezone(&chrono::Local)
-                .format("%m-%d %H:%M")
-                .to_string()
+            let reset = reset.with_timezone(&chrono::Local);
+            let format = if reset.date_naive() == chrono::Local::now().date_naive() {
+                "%H:%M"
+            } else {
+                "%m-%d %H:%M"
+            };
+            reset.format(format).to_string()
         });
     h_flex()
-        .h_7()
+        .min_h(px(22.0))
         .gap_2()
-        .text_size(px(13.0))
+        .text_size(px(12.0))
         .child(
-            h_flex()
+            div()
                 .flex_1()
                 .min_w_0()
-                .gap_1()
-                .child(div().truncate().child(entry.label.clone()))
-                .when(warning, |name| {
-                    name.child(
-                        Icon::new(IconName::TriangleAlert)
-                            .xsmall()
-                            .text_color(colors.warning),
-                    )
-                }),
+                .when(entry.error.is_none(), |label| label.truncate())
+                .child(entry.label.clone()),
         )
-        .child(
-            div()
-                .w_12()
-                .h_1()
-                .flex_none()
-                .rounded_full()
-                .bg(colors.muted_foreground.opacity(0.18))
-                .when_some(fraction, |track, fraction| {
-                    track.child(
-                        div()
-                            .h_full()
-                            .rounded_full()
-                            .bg(color)
-                            .w(relative(fraction.max(0.04))),
-                    )
-                }),
-        )
-        .child(
-            div()
-                .w_20()
-                .flex_none()
-                .text_right()
-                .text_color(if entry.error.is_some() {
-                    colors.danger
-                } else if warning {
-                    colors.warning
-                } else {
-                    colors.muted_foreground
-                })
-                .truncate()
-                .child(quota_value(entry)),
-        )
-        .when_some(reset, |row, reset| {
+        .when_some(remaining, |row, fraction| {
             row.child(
                 div()
-                    .w(px(98.0))
                     .flex_none()
-                    .text_right()
-                    .text_xs()
-                    .text_color(colors.muted_foreground)
-                    .truncate()
-                    .child(t!("panel.quota_reset", time = reset)),
+                    .w(px(50.0))
+                    .h(px(3.0))
+                    .rounded_full()
+                    .bg(colors.muted_foreground.opacity(0.18))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(fraction))
+                            .rounded_full()
+                            .bg(if low { colors.danger } else { colors.primary }),
+                    ),
             )
         })
-}
-
-fn shortcut_tile(
-    id: &'static str,
-    icon: IconName,
-    label: SharedString,
-    cx: &App,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let colors = cx.theme().colors;
-    h_flex()
-        .id(id)
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap_1p5()
-        .h_8()
-        .rounded_md()
-        .bg(colors.muted.opacity(0.55))
-        .text_size(px(13.0))
-        .cursor_pointer()
-        .hover(|style| style.bg(colors.accent))
-        .child(Icon::new(icon).small().text_color(colors.muted_foreground))
-        .child(label)
-}
-
-fn quiet_action(
-    id: &'static str,
-    icon: IconName,
-    label: SharedString,
-    cx: &App,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let colors = cx.theme().colors;
-    h_flex()
-        .id(id)
-        .gap_1p5()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .text_size(px(13.0))
-        .text_color(colors.muted_foreground)
-        .cursor_pointer()
-        .hover(|style| style.bg(colors.accent).text_color(colors.foreground))
-        .child(Icon::new(icon).small())
-        .child(label)
+        .child(
+            div()
+                .when(remaining.is_some(), |value| {
+                    value.w(QUOTA_PERCENT_WIDTH).flex_none()
+                })
+                .when(entry.error.is_some(), |value| value.max_w(px(180.0)).py_1())
+                .text_right()
+                .text_color(if low || entry.error.is_some() {
+                    colors.danger
+                } else {
+                    colors.foreground
+                })
+                .child(quota_value(entry)),
+        )
+        .child(
+            div()
+                .w(QUOTA_RESET_WIDTH)
+                .flex_none()
+                .text_right()
+                .text_xs()
+                .text_color(colors.muted_foreground)
+                .child(reset.unwrap_or_else(|| "—".to_owned())),
+        )
 }
 
 impl StatusPanel {
@@ -512,13 +519,10 @@ impl StatusPanel {
         let status = store.service.value.as_ref();
         let (title, detail, running) = gateway_summary(status, store.service.error.as_ref());
         let configured = status.is_some_and(|status| status.configured);
-        let endpoint = status
-            .filter(|status| status.is_running())
-            .and_then(|status| status.endpoint.clone());
         let busy = store.busy();
-        let dot = if !configured
-            || status.is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"))
-        {
+        let unresponsive =
+            status.is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"));
+        let dot = if !configured || unresponsive {
             colors.warning
         } else if running {
             colors.success
@@ -528,57 +532,39 @@ impl StatusPanel {
         let detail = self.action_error.clone().or_else(|| {
             busy.as_ref()
                 .map(|(label, progress)| progress.clone().unwrap_or_else(|| label.clone()))
-                .or_else(|| (endpoint.is_none() || store.service.error.is_some()).then_some(detail))
+                .or_else(|| (unresponsive || store.service.error.is_some()).then_some(detail))
         });
-        let copied = self.copied;
+
         v_flex()
-            .gap_2()
-            .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.muted.opacity(0.30))
+            .gap_1()
+            .px_1()
+            .pb_2()
+            .border_b_1()
+            .border_color(colors.border.opacity(0.6))
             .child(
                 h_flex()
-                    .gap_3()
-                    .child(img("app/app-icon.png").size_9().flex_none())
+                    .h_8()
+                    .gap_2()
+                    .child(img("app/app-icon.png").size_6().flex_none())
                     .child(
-                        v_flex()
+                        div()
                             .flex_1()
-                            .min_w_0()
-                            .child(div().text_base().font_semibold().child("Codex Mixin"))
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .text_size(px(13.0))
-                                    .text_color(colors.muted_foreground)
-                                    .child(status_dot(dot))
-                                    .child(div().truncate().child(title)),
-                            ),
+                            .text_sm()
+                            .font_semibold()
+                            .child("Codex Mixin"),
                     )
                     .child(
-                        Switch::new("gateway-switch")
-                            .checked(running)
-                            .disabled(!configured || busy.is_some())
-                            .on_change(cx.listener(|panel, start, _, cx| {
-                                let (command, label) = if *start {
-                                    ("start", t!("panel.start_label"))
-                                } else {
-                                    ("stop", t!("panel.stop_label"))
-                                };
-                                panel.gateway_action(
-                                    Change::new(label, ["service", command, "--managed", "--json"]),
-                                    AfterGatewayAction::Stay,
-                                    cx,
-                                );
-                            })),
+                        h_flex()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(colors.muted_foreground)
+                            .child(status_dot(dot))
+                            .child(title),
                     ),
             )
             .when_some(detail, |header, detail| {
-                let is_error = self.action_error.is_some()
-                    || store.service.error.is_some()
-                    || status
-                        .is_some_and(|status| status.gateway.as_deref() == Some("unresponsive"));
+                let is_error =
+                    self.action_error.is_some() || store.service.error.is_some() || unresponsive;
                 let summary = if is_error && crate::cli::startup_task_access_denied(&detail) {
                     tr!("panel.startup_access_denied")
                 } else {
@@ -592,74 +578,21 @@ impl StatusPanel {
                     )
                 };
                 header.child(
-                    h_flex()
-                        .h_7()
-                        .gap_1p5()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(13.0))
-                                .text_color(if is_error {
-                                    colors.danger
-                                } else {
-                                    colors.muted_foreground
-                                })
-                                .child(summary),
-                        )
-                        .when(is_error, |row| {
-                            row.child(
-                                Button::new("copy-gateway-error")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(IconName::Copy)
-                                    .tooltip(tr!("panel.copy_diagnostic"))
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            detail.to_string(),
-                                        ));
-                                    }),
-                            )
+                    div()
+                        .id("gateway-detail")
+                        .truncate()
+                        .text_xs()
+                        .text_color(if is_error {
+                            colors.danger
+                        } else {
+                            colors.muted_foreground
+                        })
+                        .child(summary)
+                        .when(is_error, |summary| {
+                            summary.tooltip(move |window, cx| {
+                                Tooltip::new(detail.clone()).build(window, cx)
+                            })
                         }),
-                )
-            })
-            .when_some(endpoint, |header, endpoint| {
-                header.child(
-                    h_flex()
-                        .h_8()
-                        .pl_2p5()
-                        .pr_1()
-                        .gap_2()
-                        .rounded_lg()
-                        .bg(colors.muted.opacity(0.6))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(13.0))
-                                .font_family("IBM Plex Mono")
-                                .child(endpoint.clone()),
-                        )
-                        .child(
-                            Button::new("copy-endpoint")
-                                .ghost()
-                                .xsmall()
-                                .label(if copied {
-                                    t!("panel.copied")
-                                } else {
-                                    t!("panel.copy")
-                                })
-                                .on_click(cx.listener(move |panel, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        endpoint.clone(),
-                                    ));
-                                    panel.copied = true;
-                                    cx.notify();
-                                })),
-                        ),
                 )
             })
     }
@@ -667,108 +600,125 @@ impl StatusPanel {
     fn render_quotas(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let store = Store::global(cx).read(cx);
-        let providers: Vec<_> = store
+        let mut groups = Vec::new();
+        let selection = cx
+            .try_global::<ExpandedProvider>()
+            .and_then(|state| state.0.as_deref());
+        for provider in store
             .providers
             .value
-            .as_ref()
-            .map(|list| {
-                list.providers
-                    .iter()
-                    .filter(|provider| provider.enabled)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut groups = Vec::new();
-        for provider in providers {
+            .iter()
+            .flat_map(|list| &list.providers)
+            .filter(|provider| provider.enabled)
+        {
             let Some(snapshot) = store.quotas.get(&provider.id) else {
                 continue;
             };
-            let entries = snapshot.value.clone().unwrap_or_default();
+            let entries = snapshot.value.as_deref().unwrap_or_default();
             if entries.is_empty() && !snapshot.loading && snapshot.error.is_none() {
                 continue;
             }
-            // A single balance without a limit reads best beside the name.
-            let inline = entries
-                .first()
-                .filter(|entry| {
-                    entries.len() == 1
-                        && entry.used_fraction().is_none()
-                        && entry.reset_at.is_none()
-                        && entry.error.is_none()
-                })
-                .map(quota_value);
-            let expanded = self.expanded.contains(&provider.id);
-            let shown: Vec<&QuotaEntry> = if inline.is_some() {
-                Vec::new()
-            } else if expanded || entries.len() <= PREVIEW_QUOTAS {
-                entries.iter().collect()
-            } else {
-                // Collapsed, the windows closest to their limit stay visible,
-                // in their original order.
-                let mut fullest: Vec<usize> = (0..entries.len()).collect();
-                fullest.sort_by(|a, b| {
-                    let used = |index: &usize| entries[*index].used_fraction().unwrap_or(0.0);
-                    used(b).total_cmp(&used(a))
-                });
-                fullest.truncate(PREVIEW_QUOTAS);
-                fullest.sort_unstable();
-                fullest.into_iter().map(|index| &entries[index]).collect()
-            };
-            let toggle = (entries.len() > PREVIEW_QUOTAS).then(|| {
-                let id = provider.id.clone();
-                h_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(t!("panel.quota_windows", count = entries.len())),
-                    )
-                    .child(
-                        Button::new(ElementId::Name(format!("quota-toggle-{id}").into()))
-                            .ghost()
-                            .xsmall()
-                            .label(if expanded {
-                                t!("panel.collapse")
-                            } else {
-                                t!("panel.show_all")
-                            })
-                            .icon(if expanded {
-                                IconName::ChevronUp
-                            } else {
-                                IconName::ChevronDown
-                            })
-                            .on_click(cx.listener(move |panel, _, _, cx| {
-                                if !panel.expanded.remove(&id) {
-                                    panel.expanded.insert(id.clone());
-                                }
-                                cx.notify();
-                            })),
-                    )
+            let balance = entries.first().filter(|entry| {
+                entries.len() == 1
+                    && entry.remaining.is_some()
+                    && entry.remaining_fraction().is_none()
+                    && entry.reset_at.is_none()
+                    && entry.error.is_none()
             });
-            let lines = v_flex()
-                .children(shown.into_iter().map(|entry| quota_line(entry, cx)))
-                .with_animation(
-                    ElementId::Name(format!("quota-lines-{}-{expanded}", provider.id).into()),
-                    Animation::new(theme::ENTER_DURATION)
-                        .with_easing(theme::curve(theme::ENTER_CURVE)),
-                    |lines, progress| lines.opacity(progress).mt(px(-4.0 * (1.0 - progress))),
-                );
-            groups.push(
+            let expandable = balance.is_none() && (!entries.is_empty() || snapshot.error.is_some());
+            let expanded = expandable && selection == Some(provider.id.as_str());
+            let lowest = entries
+                .iter()
+                .filter_map(QuotaEntry::remaining_fraction)
+                .reduce(f32::min);
+            let summary = if expanded {
+                None
+            } else if let Some(entry) = balance {
+                Some(quota_value(entry))
+            } else if let Some(fraction) = lowest {
+                Some(tr!(
+                    "panel.quota_lowest",
+                    remaining = format!("{:.0}", fraction * 100.0)
+                ))
+            } else if snapshot.error.is_some() || entries.iter().any(|entry| entry.error.is_some())
+            {
+                Some(tr!("panel.quota_unavailable"))
+            } else {
+                None
+            };
+            let id = provider.id.clone();
+            let details = expanded.then(|| {
                 v_flex()
-                    .gap_1()
-                    .py_2()
+                    .ml_3()
+                    .pl_2()
+                    .pr_2()
+                    .mb_1()
+                    .border_l_1()
+                    .border_color(colors.border)
                     .child(
                         h_flex()
-                            .h_7()
+                            .h_5()
                             .gap_2()
-                            .child(provider_logo(&provider.icon, false, cx))
+                            .text_xs()
+                            .text_color(colors.muted_foreground)
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .w(QUOTA_PERCENT_WIDTH)
+                                    .text_right()
+                                    .child(t!("panel.quota_left_heading")),
+                            )
+                            .child(
+                                div()
+                                    .w(QUOTA_RESET_WIDTH)
+                                    .text_right()
+                                    .child(t!("panel.quota_reset_heading")),
+                            ),
+                    )
+                    .children(entries.iter().map(|entry| quota_line(entry, cx)))
+                    .when_some(snapshot.error.clone(), |details, error| {
+                        details.child(
+                            div()
+                                .py_1()
+                                .text_xs()
+                                .text_color(colors.danger)
+                                .child(error),
+                        )
+                    })
+            });
+            groups.push(
+                v_flex()
+                    .flex_none()
+                    .child(
+                        h_flex()
+                            .id(ElementId::Name(format!("quota-provider-{id}").into()))
+                            .h(px(29.0))
+                            .px_2()
+                            .gap_2()
+                            .rounded_md()
+                            .when(expanded, |row| row.bg(colors.accent.opacity(0.7)))
+                            .when(expandable, |row| {
+                                row.cursor_pointer()
+                                    .hover(|style| style.bg(colors.accent))
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.set_global(ExpandedProvider(
+                                            (!expanded).then(|| id.clone()),
+                                        ));
+                                        cx.notify();
+                                    }))
+                            })
+                            .child(
+                                svg()
+                                    .path(provider_icon_path(&provider.icon))
+                                    .size_3p5()
+                                    .flex_none()
+                                    .text_color(colors.muted_foreground),
+                            )
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_sm()
+                                    .text_size(px(13.0))
                                     .font_medium()
                                     .truncate()
                                     .child(provider.display_name.clone()),
@@ -776,242 +726,179 @@ impl StatusPanel {
                             .when(snapshot.loading, |row| {
                                 row.child(gpui_kit::component::spinner::Spinner::new().xsmall())
                             })
-                            .when_some(inline, |row, value| {
+                            .when_some(summary, |row, summary| {
                                 row.child(
                                     div()
                                         .text_xs()
-                                        .text_color(colors.muted_foreground)
-                                        .child(value),
+                                        .text_color(
+                                            if lowest.is_some_and(|left| left <= QUOTA_WARNING) {
+                                                colors.danger
+                                            } else {
+                                                colors.muted_foreground
+                                            },
+                                        )
+                                        .child(summary),
                                 )
                             })
-                            .children(toggle),
+                            .child(div().size_4().flex_none().when(expandable, |slot| {
+                                slot.child(
+                                    Icon::new(if expanded {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    })
+                                    .xsmall()
+                                    .text_color(colors.muted_foreground),
+                                )
+                            })),
                     )
-                    .child(lines)
-                    .when_some(
-                        snapshot.error.clone().filter(|_| entries.is_empty()),
-                        |group, error| {
-                            group.child(div().text_xs().text_color(colors.danger).child(error))
-                        },
-                    ),
+                    .children(details),
             );
         }
-        let count = groups.len();
         v_flex()
-            .gap_1()
-            .when(count == 0, |region| {
+            .when(groups.is_empty(), |region| {
                 region.child(
                     div()
+                        .px_2()
                         .py_2()
-                        .text_sm()
+                        .text_xs()
                         .text_color(colors.muted_foreground)
                         .child(t!("panel.no_quota")),
                 )
             })
-            .children(groups.into_iter().enumerate().map(|(index, group)| {
-                group.when(index + 1 < count, |group| {
-                    group.border_b_1().border_color(colors.border.opacity(0.6))
-                })
-            }))
+            .children(groups)
     }
 
     fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let store = Store::global(cx).read(cx);
-        let can_enter_lightweight = store.busy().is_none()
-            && store
-                .service
-                .value
-                .as_ref()
-                .is_some_and(|status| status.configured);
-        let busy = store.busy().is_some();
-        let paths = store
-            .interface
+        let configured = store
+            .service
             .value
             .as_ref()
-            .map(|interface| interface.paths.clone());
-        let log = paths.as_ref().map(|paths| paths.gateway_log.clone());
-        let state = paths.map(|paths| paths.state);
-        let update = match Updater::global(cx).read(cx).state.clone() {
-            UpdateState::Available { version } => {
-                Some(tr!("panel.update_available", version = version))
-            }
-            UpdateState::Ready { version } => Some(tr!("panel.update_ready", version = version)),
-            _ => None,
-        };
+            .is_some_and(|status| status.configured);
+        let busy = store.busy().is_some();
+        let actions = [
+            (
+                Button::new("open-settings").on_click(|_, window, cx| {
+                    close(window, cx);
+                    Console::open(Some(Page::Settings), cx);
+                }),
+                IconName::Settings,
+                tr!("panel.settings"),
+            ),
+            (
+                Button::new("lightweight")
+                    .disabled(!configured || busy)
+                    .on_click(cx.listener(|panel, _, window, cx| {
+                        panel.confirm_lightweight(window, cx);
+                    })),
+                IconName::Leaf,
+                tr!("panel.lightweight"),
+            ),
+            (
+                Button::new("quit")
+                    .disabled(busy)
+                    .on_click(cx.listener(|panel, _, _, cx| {
+                        panel.gateway_action(
+                            Change::new(
+                                t!("panel.quit"),
+                                [
+                                    "service",
+                                    "stop",
+                                    "--managed",
+                                    "--allow-codex-disconnect",
+                                    "--json",
+                                ],
+                            ),
+                            AfterGatewayAction::Quit,
+                            cx,
+                        );
+                    })),
+                IconName::Power,
+                tr!("panel.quit"),
+            ),
+        ];
         v_flex()
-            .gap_2()
-            .when_some(update, |actions, label| {
-                actions.child(
-                    Button::new("update")
-                        .ghost()
-                        .small()
-                        .w_full()
-                        .icon(IconName::CircleArrowUp)
-                        .label(label)
-                        .on_click(|_, window, cx| {
-                            let updater = Updater::global(cx);
-                            let ready = matches!(updater.read(cx).state, UpdateState::Ready { .. });
-                            if ready {
-                                updater.update(cx, |updater, cx| updater.restart(cx));
-                                return;
-                            }
-                            updater.update(cx, |updater, cx| updater.download(cx));
-                            close(window, cx);
-                            Console::open(Some(Page::Settings), cx);
-                        }),
-                )
-            })
-            .child(
-                Button::new("open-console")
-                    .primary()
+            .pt_1()
+            .border_t_1()
+            .border_color(colors.border.opacity(0.6))
+            .children(actions.into_iter().map(|(button, icon, label)| {
+                button
+                    .ghost()
                     .small()
                     .w_full()
-                    .icon(IconName::AppWindow)
-                    .label(t!("panel.open_console"))
-                    .on_click(|_, window, cx| {
-                        close(window, cx);
-                        Console::open(Some(Page::Providers), cx);
-                    }),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
+                    .accessibility_label(label.clone())
                     .child(
-                        shortcut_tile(
-                            "open-log",
-                            IconName::FileText,
-                            t!("panel.open_log").into(),
-                            cx,
-                        )
-                        .when_some(log, |tile, log| {
-                            tile.on_click(move |_, window, cx| {
-                                cx.reveal_path(std::path::Path::new(&log));
-                                close(window, cx);
-                            })
-                        }),
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(Icon::new(icon).small().text_color(colors.muted_foreground))
+                            .child(label),
                     )
-                    .child(
-                        shortcut_tile(
-                            "open-state",
-                            IconName::Folder,
-                            t!("panel.open_state").into(),
-                            cx,
-                        )
-                        .when_some(state, |tile, state| {
-                            tile.on_click(move |_, window, cx| {
-                                cx.reveal_path(std::path::Path::new(&state));
-                                close(window, cx);
-                            })
-                        }),
-                    )
-                    .child(
-                        shortcut_tile(
-                            "open-settings",
-                            IconName::Settings,
-                            t!("panel.settings").into(),
-                            cx,
-                        )
-                        .on_click(|_, window, cx| {
-                            close(window, cx);
-                            Console::open(Some(Page::Settings), cx);
-                        }),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .justify_between()
-                    .pt_1()
-                    .border_t_1()
-                    .border_color(colors.border.opacity(0.6))
-                    .child(
-                        quiet_action(
-                            "lightweight",
-                            IconName::Leaf,
-                            t!("panel.lightweight").into(),
-                            cx,
-                        )
-                        .when(can_enter_lightweight, |action| {
-                            action.on_click(cx.listener(|panel, _, window, cx| {
-                                panel.confirm_lightweight(window, cx);
-                            }))
-                        })
-                        .when(!can_enter_lightweight, |action| {
-                            action.opacity(0.55).cursor_default()
-                        }),
-                    )
-                    .child(
-                        quiet_action("quit", IconName::Power, t!("panel.quit").into(), cx)
-                            .when(!busy, |action| {
-                                action.on_click(cx.listener(|panel, _, _, cx| {
-                                    panel.gateway_action(
-                                        Change::new(
-                                            t!("panel.quit"),
-                                            [
-                                                "service",
-                                                "stop",
-                                                "--managed",
-                                                "--allow-codex-disconnect",
-                                                "--json",
-                                            ],
-                                        ),
-                                        AfterGatewayAction::Quit,
-                                        cx,
-                                    );
-                                }))
-                            })
-                            .when(busy, |action| action.opacity(0.55).cursor_default()),
-                    ),
-            )
+            }))
     }
 }
 
 impl Render for StatusPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        div()
-            .size_full()
-            .when_else(
-                *theme::FROSTED,
-                |surface| surface.bg(colors.sidebar.opacity(theme::FROSTED_TINT)),
-                |surface| surface.p_1(),
-            )
+        let quotas = div().id("panel-quotas").overflow_y_scroll();
+        #[cfg(target_os = "macos")]
+        let quotas = quotas.flex_none().max_h(MAX_QUOTA_HEIGHT);
+        #[cfg(not(target_os = "macos"))]
+        let quotas = quotas.flex_1().min_h_0();
+        let content = v_flex()
+            .w_full()
+            .when(!cfg!(target_os = "macos"), |panel| panel.h_full())
+            .p_3()
+            .gap_1()
+            .bg(colors.popover)
+            .text_color(colors.popover_foreground)
+            .when(!cfg!(target_os = "macos"), |panel| {
+                panel.rounded_lg().border_1().border_color(colors.border)
+            })
+            .child(self.render_header(cx))
             .child(
-                v_flex()
-                    .size_full()
-                    .gap_2()
-                    .p_3()
-                    .text_color(colors.popover_foreground)
-                    .when(!*theme::FROSTED, |card| {
-                        card.rounded_xl()
-                            .bg(colors.popover)
-                            .border_1()
-                            .border_color(colors.border)
-                            .shadow_lg()
-                    })
-                    .child(self.render_header(cx))
-                    .child(
-                        div()
-                            .px_1()
-                            .pt_1()
-                            .text_sm()
-                            .font_semibold()
-                            .child(t!("panel.quota_heading")),
-                    )
-                    .child(
-                        div()
-                            .id("panel-quotas")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.render_quotas(cx)),
-                    )
-                    .child(self.render_actions(cx))
-                    .with_animation(
-                        "panel-enter",
-                        Animation::new(theme::ENTER_DURATION)
-                            .with_easing(theme::curve(theme::ENTER_CURVE)),
-                        |panel, progress| panel.opacity(progress).mt(px(-8.0 * (1.0 - progress))),
-                    ),
+                div()
+                    .px_2()
+                    .pt_1()
+                    .text_xs()
+                    .font_medium()
+                    .text_color(colors.muted_foreground)
+                    .child(t!("panel.quota_heading")),
             )
+            .child(quotas.child(self.render_quotas(cx)))
+            .child(self.render_actions(cx));
+        let panel = div().size_full();
+        #[cfg(target_os = "macos")]
+        let panel = panel
+            .bg(colors.popover)
+            .on_children_prepainted(|bounds, window, cx| {
+                let [content] = bounds.as_slice() else {
+                    return;
+                };
+                let Some(native) = cx
+                    .try_global::<PanelWindow>()
+                    .filter(|panel| panel.handle == window.window_handle())
+                    .and_then(|panel| panel.native.clone())
+                else {
+                    return;
+                };
+                let height = f64::from(content.size.height).ceil();
+                if (native.frame().size.height - height).abs() < 0.5 {
+                    return;
+                }
+                // Resize after painting, preserving the top edge under the menu bar.
+                cx.foreground_executor()
+                    .spawn(async move {
+                        let mut frame = native.frame();
+                        frame.origin.y += frame.size.height - height;
+                        frame.size.height = height;
+                        native.setFrame_display(frame, true);
+                    })
+                    .detach();
+            });
+        panel.child(content)
     }
 }
