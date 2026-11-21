@@ -49,10 +49,10 @@ const SIDEBAR_WIDTH: f32 = 212.0;
 const SHEET_INSET: f32 = 8.0;
 /// Space above page content inside the sheet: the rest of the drag strip,
 /// which the title bar overlay covers.
-const SHEET_HEADROOM: f32 = 30.0;
-const NAV_ITEM_HEIGHT: f32 = 32.0;
+const SHEET_HEADROOM: f32 = 14.0;
+const NAV_ITEM_HEIGHT: f32 = 30.0;
 /// Item height plus the gap between items.
-const NAV_STEP: f32 = 34.0;
+const NAV_STEP: f32 = 32.0;
 /// Height of the traffic-light strip; matches GPUI Kit's title bar.
 const TITLE_BAR_HEIGHT: Pixels = px(38.0);
 
@@ -374,8 +374,9 @@ impl Console {
             .right_0()
             .top(px(position * NAV_STEP))
             .h(px(NAV_ITEM_HEIGHT))
-            .rounded_lg()
-            .bg(colors.sidebar_accent);
+            .rounded_md()
+            .bg(colors.sidebar_accent)
+            .shadow_xs();
         let items = PAGES.iter().enumerate().map(|(index, page)| {
             let active = index == selected;
             let page = *page;
@@ -385,7 +386,7 @@ impl Console {
                 .h(px(NAV_ITEM_HEIGHT))
                 .px_2p5()
                 .gap_2p5()
-                .rounded_lg()
+                .rounded_md()
                 .text_sm()
                 .cursor_pointer()
                 .text_color(if active {
@@ -395,10 +396,10 @@ impl Console {
                 })
                 .when(active, |item| item.font_medium())
                 .when(!active, |item| {
-                    item.hover(|style| style.bg(colors.sidebar_accent.opacity(0.4)))
+                    item.hover(|style| style.bg(colors.sidebar_accent.opacity(0.5)))
                 })
                 .child(Icon::new(page.icon()).size_4().text_color(if active {
-                    colors.primary
+                    colors.sidebar_accent_foreground
                 } else {
                     colors.muted_foreground
                 }))
@@ -441,16 +442,26 @@ impl Console {
             .pb_3()
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_2p5()
                     .px_1()
-                    .pb_4()
-                    .child(img("app/app-icon.png").size_5())
+                    .pt_1()
+                    .pb_5()
+                    .child(img("app/app-icon.png").size_8())
                     .child(
-                        div()
-                            .text_sm()
-                            .font_semibold()
-                            .text_color(colors.sidebar_foreground)
-                            .child("Codex Mixin"),
+                        v_flex()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_semibold()
+                                    .text_color(colors.sidebar_accent_foreground)
+                                    .child("Codex Mixin"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(colors.muted_foreground)
+                                    .child(format!("v{}", crate::updater::APP_VERSION)),
+                            ),
                     ),
             )
             .child(
@@ -463,17 +474,55 @@ impl Console {
             .child(div().flex_1())
             .child(
                 v_flex()
-                    .gap_0p5()
-                    .px_2p5()
+                    .gap_1()
+                    .px_3()
+                    .py_2p5()
+                    .rounded_lg()
+                    .bg(colors.background.opacity(0.55))
+                    .border_1()
+                    .border_color(colors.sidebar_border)
                     .child(
                         h_flex()
                             .gap_2()
-                            .text_size(px(13.0))
-                            .child(status_dot(if running {
-                                colors.success
-                            } else {
-                                colors.muted_foreground
-                            }))
+                            .text_xs()
+                            .font_medium()
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size_2()
+                                    .when(running, |dot| {
+                                        // A soft ring breathes around the dot
+                                        // while the gateway serves requests.
+                                        dot.child(
+                                            div()
+                                                .absolute()
+                                                .size_2()
+                                                .rounded_full()
+                                                .bg(colors.success)
+                                                .with_animation(
+                                                    "gateway-pulse",
+                                                    Animation::new(
+                                                        std::time::Duration::from_millis(1800),
+                                                    )
+                                                    .repeat()
+                                                    .with_easing(theme::curve(theme::ENTER_CURVE)),
+                                                    |ring, progress| {
+                                                        let grow = px(8.0 + 8.0 * progress);
+                                                        ring.size(grow)
+                                                            .opacity(0.45 * (1.0 - progress))
+                                                    },
+                                                ),
+                                        )
+                                    })
+                                    .child(status_dot(if running {
+                                        colors.success
+                                    } else {
+                                        colors.muted_foreground
+                                    })),
+                            )
                             .child(div().truncate().child(status_label)),
                     )
                     .when_some(endpoint, |footer, endpoint| {
@@ -481,6 +530,7 @@ impl Console {
                             div()
                                 .pl_4()
                                 .text_xs()
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_color(colors.muted_foreground)
                                 .truncate()
                                 .child(endpoint),
@@ -530,6 +580,7 @@ impl Render for Console {
                                     .rounded_xl()
                                     .overflow_hidden()
                                     .bg(colors.background)
+                                    .shadow_sm()
                                     .border_1()
                                     .border_color(colors.border)
                                     .child(div().flex_none().h(px(SHEET_HEADROOM)))

@@ -9,9 +9,9 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    prelude::FluentBuilder as _,
+    AnyElement, App, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, div, prelude::FluentBuilder as _,
 };
 use rust_i18n::t;
 use serde::Deserialize;
@@ -20,7 +20,7 @@ use super::usage::compact_number;
 use super::{is_busy, placeholder, run_change};
 use crate::store::{Change, Store, query};
 use crate::tr;
-use crate::widgets::{row_divider, section, setting_row};
+use crate::widgets::{page_header, row_divider, section, setting_row};
 
 const SESSION_LIMIT: usize = 30;
 
@@ -279,21 +279,32 @@ impl ContextPage {
         let colors = cx.theme().colors;
         v_flex()
             .min_w_0()
-            .gap_1()
+            .gap_2()
             .p_4()
-            .rounded_lg()
+            .rounded_xl()
             .border_1()
             .border_color(colors.border)
             .bg(colors.group_box)
+            .shadow_xs()
             .child(
                 h_flex()
-                    .gap_1p5()
+                    .gap_2()
                     .text_xs()
+                    .font_medium()
                     .text_color(colors.muted_foreground)
-                    .child(Icon::new(icon).xsmall())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size_6()
+                            .rounded_md()
+                            .bg(colors.muted)
+                            .child(Icon::new(icon).xsmall().text_color(colors.muted_foreground)),
+                    )
                     .child(title),
             )
-            .child(div().text_xl().font_semibold().child(value))
+            .child(div().text_2xl().font_semibold().child(value))
             .when_some(note, |tile, note| {
                 tile.child(
                     div()
@@ -330,9 +341,13 @@ impl ContextPage {
                     .child(text)
             };
             h_flex()
+                .id(ElementId::Name(format!("context-session-{index}").into()))
                 .px_4()
-                .h_10()
-                .when(index % 2 == 1, |row| row.bg(colors.table_even))
+                .h_9()
+                .when(index > 0, |row| {
+                    row.border_t_1().border_color(colors.border)
+                })
+                .hover(|style| style.bg(colors.table_hover))
                 .child(div().flex_1().min_w_0().text_sm().truncate().child(title))
                 .child(cell(session.messages.to_string()))
                 .child(cell(session.compressions.to_string()))
@@ -399,14 +414,17 @@ impl ContextPage {
             )
             .child(
                 v_flex()
-                    .rounded_lg()
+                    .rounded_xl()
                     .border_1()
                     .border_color(colors.border)
+                    .bg(colors.group_box)
+                    .shadow_xs()
                     .overflow_hidden()
                     .child(
                         h_flex()
                             .px_4()
                             .h_9()
+                            .bg(colors.muted.opacity(0.5))
                             .border_b_1()
                             .border_color(colors.border)
                             .child(
@@ -439,7 +457,6 @@ impl ContextPage {
 
 impl Render for ContextPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors;
         let Some(config) = self.config.clone() else {
             return match self.error.clone() {
                 Some(error) => placeholder(
@@ -471,34 +488,20 @@ impl Render for ContextPage {
                     .w_full()
                     .max_w(gpui_kit::rems(60.0))
                     .px_6()
-                    .py_5()
+                    .pt_3()
+                    .pb_6()
                     .gap_5()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(
-                                v_flex()
-                                    .child(
-                                        div()
-                                            .text_2xl()
-                                            .font_semibold()
-                                            .child(t!("console.page.context")),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(colors.muted_foreground)
-                                            .child(t!("context.subtitle")),
-                                    ),
-                            )
-                            .child(
-                                Button::new("reload-context")
-                                    .ghost()
-                                    .small()
-                                    .icon(IconName::RefreshCw)
-                                    .on_click(cx.listener(|page, _, _, cx| page.reload(cx))),
-                            ),
-                    )
+                    .child(page_header(
+                        IconName::Layers,
+                        t!("console.page.context"),
+                        Some(tr!("context.subtitle")),
+                        Button::new("reload-context")
+                            .ghost()
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .on_click(cx.listener(|page, _, _, cx| page.reload(cx))),
+                        cx,
+                    ))
                     .child(self.render_settings(&config, cx))
                     .children(stats.map(|stats| self.render_stats(&stats, cx).into_any_element())),
             )

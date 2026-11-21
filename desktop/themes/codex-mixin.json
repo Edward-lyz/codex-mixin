@@ -6,7 +6,7 @@
     {
       "name": "Codex Mixin Light",
       "mode": "light",
-      "font.size": 16,
+      "font.size": 15,
       "radius": 6,
       "radius.lg": 8,
       "shadow": false,
@@ -103,7 +103,7 @@
     {
       "name": "Codex Mixin Dark",
       "mode": "dark",
-      "font.size": 16,
+      "font.size": 15,
       "radius": 6,
       "radius.lg": 8,
       "shadow": false,

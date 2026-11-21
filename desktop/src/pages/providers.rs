@@ -118,6 +118,7 @@ impl ProvidersPage {
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
+        // The official provider is built in; only added providers can be removed.
         let removable = self
             .selected_provider(cx)
             .filter(|provider| !provider.is_official())
@@ -127,21 +128,32 @@ impl ProvidersPage {
             let selected = self.selected.as_ref() == Some(&provider.id);
             let id = provider.id.clone();
             let (dot, state) = readiness(provider, cx);
+            let enabled = provider.enabled;
             h_flex()
                 .id(ElementId::Name(format!("provider-{}", provider.id).into()))
                 .gap_2p5()
                 .px_2()
                 .py_1p5()
                 .rounded_lg()
+                .border_1()
+                .border_color(gpui_kit::transparent_black())
                 .cursor_pointer()
-                .when(selected, |row| row.bg(colors.list_active))
+                .when(selected, |row| {
+                    row.bg(colors.background)
+                        .border_color(colors.border)
+                        .shadow_xs()
+                })
                 .when(!selected, |row| {
                     row.hover(|style| style.bg(colors.list_hover))
                 })
                 .on_click(
                     cx.listener(move |page, _, window, cx| page.select(id.clone(), window, cx)),
                 )
-                .child(provider_logo(&provider.icon, false, cx))
+                .child(
+                    div()
+                        .when(!enabled, |logo| logo.opacity(0.5))
+                        .child(provider_logo(&provider.icon, false, cx)),
+                )
                 .child(
                     v_flex()
                         .min_w_0()
@@ -151,6 +163,7 @@ impl ProvidersPage {
                                 .text_sm()
                                 .font_medium()
                                 .truncate()
+                                .when(!enabled, |name| name.text_color(colors.muted_foreground))
                                 .child(provider.display_name.clone()),
                         )
                         .child(
@@ -174,44 +187,66 @@ impl ProvidersPage {
             .h_full()
             .border_r_1()
             .border_color(colors.border)
+            .bg(colors.muted.opacity(0.35))
+            .child(
+                h_flex()
+                    .pl_4()
+                    .pr_2()
+                    .pt_2()
+                    .pb_1()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_semibold()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("console.page.providers")),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(colors.input)
+                            .bg(colors.background)
+                            .shadow_xs()
+                            .overflow_hidden()
+                            .child(
+                                Button::new("add-provider")
+                                    .ghost()
+                                    .small()
+                                    .rounded_none()
+                                    .icon(IconName::Plus)
+                                    .tooltip(tr!("providers.add"))
+                                    .on_click(|_, window, cx| open_add_provider(window, cx)),
+                            )
+                            .child(div().w_px().h_4().bg(colors.border))
+                            .child(
+                                Button::new("remove-selected-provider")
+                                    .ghost()
+                                    .small()
+                                    .rounded_none()
+                                    .icon(IconName::Minus)
+                                    .tooltip(tr!("connection.remove"))
+                                    .disabled(!can_remove)
+                                    .on_click(move |_, window, cx| {
+                                        if let Some((id, name)) = &removable {
+                                            confirm_remove_provider(id, name, window, cx);
+                                        }
+                                    }),
+                            ),
+                    ),
+            )
             .child(
                 v_flex()
                     .id("provider-list")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p_2()
-                    .gap_0p5()
+                    .px_2()
+                    .pb_2()
+                    .gap_1()
                     .children(rows),
-            )
-            .child(
-                h_flex()
-                    .p_2()
-                    .gap_2()
-                    .border_t_1()
-                    .border_color(colors.sidebar_border)
-                    .child(
-                        Button::new("add-provider")
-                            .secondary()
-                            .small()
-                            .flex_1()
-                            .icon(IconName::CirclePlus)
-                            .label(t!("providers.add"))
-                            .on_click(|_, window, cx| open_add_provider(window, cx)),
-                    )
-                    .child(
-                        Button::new("remove-selected-provider")
-                            .ghost()
-                            .small()
-                            .icon(IconName::Trash)
-                            .tooltip(tr!("connection.remove"))
-                            .disabled(!can_remove)
-                            .on_click(move |_, window, cx| {
-                                if let Some((id, name)) = &removable {
-                                    confirm_remove_provider(id, name, window, cx);
-                                }
-                            }),
-                    ),
             )
     }
 

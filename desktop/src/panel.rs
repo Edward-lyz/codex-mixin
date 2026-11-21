@@ -420,7 +420,7 @@ pub(crate) fn gateway_summary(
 
 /// Warn at or below 20 percent remaining.
 const QUOTA_WARNING: f32 = 0.2;
-const QUOTA_PERCENT_WIDTH: Pixels = px(36.0);
+const QUOTA_PERCENT_WIDTH: Pixels = px(44.0);
 const QUOTA_RESET_WIDTH: Pixels = px(86.0);
 
 fn quota_value(entry: &QuotaEntry) -> SharedString {
@@ -446,6 +446,25 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
     let colors = cx.theme().colors;
     let remaining = entry.remaining_fraction();
     let low = remaining.is_some_and(|fraction| fraction <= QUOTA_WARNING);
+    // Amounts are shown for metered quotas such as a monthly budget; window
+    // quotas reported only as percentages already say everything in the bar.
+    let usage = entry
+        .used
+        .zip(entry.limit)
+        .filter(|_| entry.unit.as_deref() != Some("percent") && entry.error.is_none())
+        .map(|(used, limit)| {
+            let amount = |value: f64| match entry.currency.as_deref() {
+                Some("CNY") => format!("¥{value:.2}"),
+                Some("USD") => format!("${value:.2}"),
+                Some(code) => format!("{value:.2} {code}"),
+                None => crate::pages::usage::compact_number(value),
+            };
+            tr!(
+                "panel.quota_usage",
+                used = amount(used),
+                limit = amount(limit)
+            )
+        });
     let reset = entry
         .reset_at
         .as_deref()
@@ -460,30 +479,47 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
             reset.format(format).to_string()
         });
     h_flex()
-        .min_h(px(22.0))
+        .min_h(px(26.0))
         .gap_2()
-        .text_size(px(12.0))
+        .text_size(px(12.5))
         .child(
-            div()
+            v_flex()
                 .flex_1()
                 .min_w_0()
-                .when(entry.error.is_none(), |label| label.truncate())
-                .child(entry.label.clone()),
+                .py_0p5()
+                .child(
+                    div()
+                        .when(entry.error.is_none(), |label| label.truncate())
+                        .child(entry.label.clone()),
+                )
+                .when_some(usage, |label, usage| {
+                    label.child(
+                        div()
+                            .truncate()
+                            .text_size(px(11.5))
+                            .text_color(colors.muted_foreground)
+                            .child(usage),
+                    )
+                }),
         )
         .when_some(remaining, |row, fraction| {
             row.child(
                 div()
                     .flex_none()
-                    .w(px(50.0))
-                    .h(px(3.0))
+                    .w(px(56.0))
+                    .h(px(4.0))
                     .rounded_full()
-                    .bg(colors.muted_foreground.opacity(0.18))
+                    .bg(colors.muted_foreground.opacity(0.16))
                     .child(
                         div()
                             .h_full()
                             .w(relative(fraction))
                             .rounded_full()
-                            .bg(if low { colors.danger } else { colors.primary }),
+                            .bg(if low {
+                                colors.danger
+                            } else {
+                                colors.muted_foreground.opacity(0.7)
+                            }),
                     ),
             )
         })
@@ -494,6 +530,8 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
                 })
                 .when(entry.error.is_some(), |value| value.max_w(px(180.0)).py_1())
                 .text_right()
+                .text_size(px(13.0))
+                .font_medium()
                 .text_color(if low || entry.error.is_some() {
                     colors.danger
                 } else {
@@ -506,7 +544,7 @@ fn quota_line(entry: &QuotaEntry, cx: &App) -> impl IntoElement {
                 .w(QUOTA_RESET_WIDTH)
                 .flex_none()
                 .text_right()
-                .text_xs()
+                .text_size(px(12.0))
                 .text_color(colors.muted_foreground)
                 .child(reset.unwrap_or_else(|| "—".to_owned())),
         )
@@ -543,23 +581,26 @@ impl StatusPanel {
             .border_color(colors.border.opacity(0.6))
             .child(
                 h_flex()
-                    .h_8()
-                    .gap_2()
-                    .child(img("app/app-icon.png").size_6().flex_none())
+                    .gap_2p5()
+                    .child(img("app/app-icon.png").size_8().flex_none())
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
-                            .text_sm()
-                            .font_semibold()
-                            .child("Codex Mixin"),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(status_dot(dot))
-                            .child(title),
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(15.0))
+                                    .font_semibold()
+                                    .child("Codex Mixin"),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .text_xs()
+                                    .text_color(colors.muted_foreground)
+                                    .child(status_dot(dot))
+                                    .child(div().truncate().child(title)),
+                            ),
                     ),
             )
             .when_some(detail, |header, detail| {
@@ -636,10 +677,7 @@ impl StatusPanel {
             } else if let Some(entry) = balance {
                 Some(quota_value(entry))
             } else if let Some(fraction) = lowest {
-                Some(tr!(
-                    "panel.quota_lowest",
-                    remaining = format!("{:.0}", fraction * 100.0)
-                ))
+                Some(SharedString::from(format!("{:.0}%", fraction * 100.0)))
             } else if snapshot.error.is_some() || entries.iter().any(|entry| entry.error.is_some())
             {
                 Some(tr!("panel.quota_unavailable"))
@@ -692,7 +730,7 @@ impl StatusPanel {
                     .child(
                         h_flex()
                             .id(ElementId::Name(format!("quota-provider-{id}").into()))
-                            .h(px(29.0))
+                            .h(px(34.0))
                             .px_2()
                             .gap_2()
                             .rounded_md()
@@ -718,23 +756,45 @@ impl StatusPanel {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_size(px(13.0))
-                                    .font_medium()
+                                    .text_size(px(14.0))
                                     .truncate()
                                     .child(provider.display_name.clone()),
                             )
                             .when(snapshot.loading, |row| {
                                 row.child(gpui_kit::component::spinner::Spinner::new().xsmall())
                             })
+                            .when_some(lowest.filter(|_| !expanded), |row, fraction| {
+                                row.child(
+                                    div()
+                                        .flex_none()
+                                        .w(px(64.0))
+                                        .h(px(5.0))
+                                        .rounded_full()
+                                        .bg(colors.muted_foreground.opacity(0.16))
+                                        .child(
+                                            div().h_full().w(relative(fraction)).rounded_full().bg(
+                                                if fraction <= QUOTA_WARNING {
+                                                    colors.danger
+                                                } else {
+                                                    colors.muted_foreground.opacity(0.7)
+                                                },
+                                            ),
+                                        ),
+                                )
+                            })
                             .when_some(summary, |row, summary| {
                                 row.child(
                                     div()
-                                        .text_xs()
+                                        .when(lowest.is_some(), |value| {
+                                            value.w(QUOTA_PERCENT_WIDTH).text_right()
+                                        })
+                                        .text_size(px(14.0))
+                                        .font_semibold()
                                         .text_color(
                                             if lowest.is_some_and(|left| left <= QUOTA_WARNING) {
                                                 colors.danger
                                             } else {
-                                                colors.muted_foreground
+                                                colors.foreground
                                             },
                                         )
                                         .child(summary),
@@ -828,6 +888,8 @@ impl StatusPanel {
                     .ghost()
                     .small()
                     .w_full()
+                    .h(px(30.0))
+                    .text_size(px(13.5))
                     .accessibility_label(label.clone())
                     .child(
                         h_flex()
@@ -853,6 +915,11 @@ impl Render for StatusPanel {
             .when(!cfg!(target_os = "macos"), |panel| panel.h_full())
             .p_3()
             .gap_1()
+            // Tabular figures keep percentages and reset times aligned.
+            .font_features(gpui_kit::FontFeatures(std::sync::Arc::new(vec![(
+                "tnum".into(),
+                1,
+            )])))
             .bg(colors.popover)
             .text_color(colors.popover_foreground)
             .when(!cfg!(target_os = "macos"), |panel| {
@@ -860,13 +927,16 @@ impl Render for StatusPanel {
             })
             .child(self.render_header(cx))
             .child(
-                div()
+                h_flex()
                     .px_2()
                     .pt_1()
+                    .gap_2()
                     .text_xs()
                     .font_medium()
                     .text_color(colors.muted_foreground)
-                    .child(t!("panel.quota_heading")),
+                    .child(div().flex_1().child(t!("panel.quota_heading")))
+                    .child(t!("panel.quota_left_heading"))
+                    .child(div().size_4().flex_none()),
             )
             .child(quotas.child(self.render_quotas(cx)))
             .child(self.render_actions(cx));

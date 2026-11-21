@@ -22,7 +22,7 @@ use super::placeholder;
 use crate::store::query;
 use crate::theme;
 use crate::tr;
-use crate::widgets::{Segmented, pill, status_dot};
+use crate::widgets::{Segmented, page_header, pill, status_dot};
 
 const RANGES: [u64; 3] = [7, 30, 90];
 const SECONDS_PER_DAY: i64 = 86_400;
@@ -383,6 +383,7 @@ impl UsagePage {
     }
 
     fn card(
+        icon: IconName,
         title: SharedString,
         value: String,
         current: f64,
@@ -421,16 +422,29 @@ impl UsagePage {
         v_flex()
             .flex_1()
             .min_w_32()
-            .gap_1p5()
-            .p_5()
+            .gap_2()
+            .p_4()
             .rounded_xl()
             .border_1()
             .border_color(colors.border)
             .bg(colors.group_box)
+            .shadow_xs()
             .child(
-                div()
+                h_flex()
+                    .gap_2()
                     .text_xs()
+                    .font_medium()
                     .text_color(colors.muted_foreground)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size_6()
+                            .rounded_md()
+                            .bg(colors.muted)
+                            .child(Icon::new(icon).xsmall().text_color(colors.muted_foreground)),
+                    )
                     .child(title),
             )
             .child(div().text_2xl().font_semibold().child(value))
@@ -499,7 +513,13 @@ impl UsagePage {
                     gpui_kit::linear_color_stop(primary, 1.0),
                 ]
             })
-            .corner_radii(px(3.0))
+            .corner_radii(px(5.0))
+            .padding_inner(0.5)
+            .max_band_width(px(36.0))
+            .min_length(2.0)
+            .grid_dashed(true)
+            .value_tick_count(4)
+            .appear_key(days)
             .value_axis(true)
             .value_tick_format(compact_number)
             .tooltip_value(|_, value| SharedString::from(compact_number(value)))
@@ -520,11 +540,13 @@ impl UsagePage {
                 .map(|(index, ((model, provider), (totals, tps)))| {
                     let cell = |text: String| div().w_24().text_right().text_sm().child(text);
                     h_flex()
+                        .id(ElementId::Name(format!("usage-model-{index}").into()))
                         .px_5()
-                        .h_12()
+                        .h_11()
                         .when(index > 0, |row| {
                             row.border_t_1().border_color(colors.border)
                         })
+                        .hover(|style| style.bg(colors.table_hover))
                         .child(
                             v_flex()
                                 .flex_1()
@@ -554,7 +576,8 @@ impl UsagePage {
             .child(
                 h_flex()
                     .px_5()
-                    .h_10()
+                    .h_9()
+                    .bg(colors.muted.opacity(0.5))
                     .border_b_1()
                     .border_color(colors.border)
                     .child(
@@ -582,6 +605,7 @@ impl UsagePage {
             .gap_3()
             .flex_wrap()
             .child(Self::card(
+                IconName::Activity,
                 tr!("usage.requests"),
                 current.requests.to_string(),
                 current.requests as f64,
@@ -590,6 +614,7 @@ impl UsagePage {
                 cx,
             ))
             .child(Self::card(
+                IconName::Coins,
                 tr!("usage.tokens"),
                 compact_number((current.input + current.output) as f64),
                 (current.input + current.output) as f64,
@@ -598,6 +623,7 @@ impl UsagePage {
                 cx,
             ))
             .child(Self::card(
+                IconName::DollarSign,
                 tr!("usage.cost"),
                 format!("${:.2}", current.cost),
                 current.cost,
@@ -606,6 +632,7 @@ impl UsagePage {
                 cx,
             ))
             .child(Self::card(
+                IconName::Zap,
                 tr!("usage.cache_hit"),
                 cache_hit,
                 current.cache_hit().unwrap_or_default(),
@@ -614,6 +641,7 @@ impl UsagePage {
                 cx,
             ))
             .child(Self::card(
+                IconName::Timer,
                 tr!("usage.latency"),
                 latency,
                 current.latency().unwrap_or_default(),
@@ -631,9 +659,9 @@ impl UsagePage {
                     .w_full()
                     .max_w(gpui_kit::rems(64.0))
                     .px_6()
-                    .pt_5()
+                    .pt_4()
                     .pb_6()
-                    .gap_5()
+                    .gap_4()
                     .child(cards)
                     .child(
                         v_flex()
@@ -643,6 +671,7 @@ impl UsagePage {
                             .border_1()
                             .border_color(colors.border)
                             .bg(colors.group_box)
+                            .shadow_xs()
                             .child(
                                 div()
                                     .text_sm()
@@ -658,6 +687,7 @@ impl UsagePage {
                             .border_1()
                             .border_color(colors.border)
                             .bg(colors.group_box)
+                            .shadow_xs()
                             .overflow_hidden()
                             .when(models.is_empty(), |list| {
                                 list.child(
@@ -1134,14 +1164,15 @@ impl Render for UsagePage {
                     .w_full()
                     .max_w(gpui_kit::rems(64.0))
                     .px_6()
-                    .pt_2()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_semibold()
-                            .child(t!("console.page.usage")),
-                    )
+                    .pt_3()
+                    .gap_3()
+                    .child(page_header(
+                        IconName::ChartColumn,
+                        t!("console.page.usage"),
+                        None,
+                        div(),
+                        cx,
+                    ))
                     .child(
                         Segmented::new("usage-view")
                             .items([tr!("usage.view_overview"), tr!("usage.view_turns")])

@@ -22,7 +22,7 @@ use super::{is_busy, run_change};
 use crate::store::{Change, Store, query};
 use crate::tr;
 use crate::updater::{APP_VERSION, UpdateState, Updater};
-use crate::widgets::{row_divider, section, setting_row};
+use crate::widgets::{page_header, row_divider, section, setting_row};
 
 const REPOSITORY_URL: &str = "https://github.com/Edward-lyz/codex-mixin";
 const WALLPAPERS: [&str; 3] = [
@@ -454,11 +454,12 @@ impl SettingsPage {
         };
         div()
             .relative()
-            .h_48()
+            .h_40()
             .rounded_xl()
             .overflow_hidden()
             .border_1()
             .border_color(colors.border)
+            .shadow_sm()
             .child(
                 img(WALLPAPERS[self.wallpaper])
                     .absolute()
@@ -471,9 +472,15 @@ impl SettingsPage {
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .p_4()
+                    .px_4()
+                    .pt_10()
+                    .pb_4()
                     .gap_3()
-                    .bg(gpui_kit::black().opacity(0.45))
+                    .bg(gpui_kit::linear_gradient(
+                        180.0,
+                        gpui_kit::linear_color_stop(gpui_kit::black().opacity(0.0), 0.0),
+                        gpui_kit::linear_color_stop(gpui_kit::black().opacity(0.7), 1.0),
+                    ))
                     .text_color(gpui_kit::white())
                     .child(
                         h_flex()
@@ -534,14 +541,16 @@ impl Render for SettingsPage {
                     .w_full()
                     .max_w(gpui_kit::rems(52.0))
                     .px_6()
-                    .py_5()
-                    .gap_6()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_semibold()
-                            .child(t!("console.page.settings")),
-                    )
+                    .pt_3()
+                    .pb_6()
+                    .gap_5()
+                    .child(page_header(
+                        IconName::Settings,
+                        t!("console.page.settings"),
+                        None,
+                        div(),
+                        cx,
+                    ))
                     .child(self.render_about(cx))
                     .child(self.render_gateway(cx))
                     .child(self.render_backup(cx))

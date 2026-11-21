@@ -2,9 +2,10 @@
 
 use std::rc::Rc;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::base::motion::transition;
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, StyledExt as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement,
     RenderOnce, SharedString, StatefulInteractiveElement as _, Styled, Window, div, img,
@@ -144,11 +145,12 @@ pub fn logo_tile(path: SharedString, template: bool, large: bool, cx: &App) -> A
         .flex_none()
         .items_center()
         .justify_center()
-        .when(large, |tile| tile.size_9().rounded_lg())
-        .when(!large, |tile| tile.size_8().rounded_md())
+        .when(large, |tile| tile.size_9().rounded_xl())
+        .when(!large, |tile| tile.size_8().rounded_lg())
         .bg(colors.background)
         .border_1()
         .border_color(colors.border)
+        .shadow_xs()
         .child(logo)
         .into_any_element()
 }
@@ -165,6 +167,53 @@ pub fn provider_logo(icon: &str, large: bool, cx: &App) -> AnyElement {
 /// A small filled status dot.
 pub fn status_dot(color: Hsla) -> impl IntoElement {
     div().flex_none().size_2().rounded_full().bg(color)
+}
+
+/// The title block shared by the console pages: a tinted icon badge, the
+/// page title with its one-line summary, and the page's actions on the right.
+pub fn page_header(
+    icon: IconName,
+    title: impl Into<SharedString>,
+    subtitle: Option<SharedString>,
+    actions: impl IntoElement,
+    cx: &App,
+) -> impl IntoElement {
+    let colors = cx.theme().colors;
+    h_flex()
+        .gap_3()
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size_9()
+                .rounded_xl()
+                .bg(colors.muted)
+                .border_1()
+                .border_color(colors.border)
+                .child(
+                    Icon::new(icon)
+                        .size(gpui_kit::px(18.0))
+                        .text_color(colors.muted_foreground),
+                ),
+        )
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_lg().font_semibold().child(title.into()))
+                .when_some(subtitle, |text, subtitle| {
+                    text.child(
+                        div()
+                            .text_xs()
+                            .text_color(colors.muted_foreground)
+                            .truncate()
+                            .child(subtitle),
+                    )
+                }),
+        )
+        .child(h_flex().flex_none().gap_2().child(actions))
 }
 
 /// A compact capsule label, tinted by its meaning.
@@ -213,16 +262,18 @@ pub fn section(
             div()
                 .px_1()
                 .text_xs()
-                .font_medium()
+                .font_semibold()
                 .text_color(colors.muted_foreground)
                 .child(explained(title.into(), detail)),
         )
         .child(
             v_flex()
-                .rounded_lg()
+                .rounded_xl()
+                .overflow_hidden()
                 .border_1()
                 .border_color(colors.border)
                 .bg(colors.group_box)
+                .shadow_xs()
                 .child(body),
         )
 }
@@ -238,7 +289,7 @@ pub fn setting_row(
     h_flex()
         .gap_4()
         .px_4()
-        .min_h_11()
+        .min_h_10()
         .py_1p5()
         .justify_between()
         .child(

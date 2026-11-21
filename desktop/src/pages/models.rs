@@ -843,7 +843,7 @@ impl ModelsView {
             ))
     }
 
-    fn render_row(&self, index: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(&self, row: &Row, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors;
         let position = self.selected.iter().position(|id| id == &row.id);
         let selected = position.is_some();
@@ -873,6 +873,12 @@ impl ModelsView {
             supported.filter(|supported| *supported).map(|_| {
                 div()
                     .id(ElementId::Name(tooltip.clone()))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size_5()
+                    .rounded_md()
+                    .bg(colors.muted)
                     .child(Icon::new(icon).xsmall().text_color(colors.muted_foreground))
             })
         };
@@ -883,7 +889,6 @@ impl ModelsView {
             .h_9()
             .text_sm()
             .rounded_md()
-            .when(index % 2 == 1, |row| row.bg(colors.table_even))
             .hover(|style| style.bg(colors.table_hover))
             .child(
                 column(Column::Join).child(
@@ -894,18 +899,33 @@ impl ModelsView {
                         })),
                 ),
             )
-            .child(
-                column(Column::Order)
-                    .text_xs()
-                    .text_color(colors.muted_foreground)
-                    .when_some(position, |cell, position| {
-                        cell.child((position + 1).to_string())
-                    }),
-            )
+            .child(column(Column::Order).when_some(position, |cell, position| {
+                cell.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .min_w_5()
+                        .h_5()
+                        .px_1()
+                        .rounded_full()
+                        .bg(colors.muted)
+                        .text_xs()
+                        .font_semibold()
+                        .text_color(colors.foreground)
+                        .child((position + 1).to_string()),
+                )
+            }))
             .child(
                 column(Column::Model)
                     .gap_2()
-                    .child(div().truncate().child(row.id.clone()))
+                    .child(
+                        div()
+                            .truncate()
+                            .when(selected, |name| name.font_medium())
+                            .when(!selected, |name| name.text_color(colors.muted_foreground))
+                            .child(row.id.clone()),
+                    )
                     .when_some(
                         model
                             .and_then(|model| model.display_name.clone())
@@ -965,7 +985,7 @@ impl ModelsView {
             }))
             .child(
                 column(Column::Capabilities)
-                    .gap_1p5()
+                    .gap_1()
                     .children(capability(
                         model.and_then(|model| model.supports_image),
                         IconName::Image,
@@ -1123,7 +1143,7 @@ impl Render for ModelsView {
             cx.processor(|view, range: std::ops::Range<usize>, _, cx| {
                 let rows = view.rows();
                 range
-                    .filter_map(|index| rows.get(index).map(|row| view.render_row(index, row, cx)))
+                    .filter_map(|index| rows.get(index).map(|row| view.render_row(row, cx)))
                     .collect::<Vec<_>>()
             }),
         )

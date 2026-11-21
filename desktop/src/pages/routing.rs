@@ -15,10 +15,11 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context, ElementId,
-    Entity, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, Pixels,
-    Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    WeakEntity, Window, canvas, div, fill, point, prelude::FluentBuilder as _, px, size,
+    Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context,
+    ElementId, Entity, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder,
+    Pixels, Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, WeakEntity, Window, canvas, div, fill, point, prelude::FluentBuilder as _, px,
+    size,
 };
 use rust_i18n::t;
 use serde::Deserialize;
@@ -407,8 +408,54 @@ impl RoutingPage {
             .into_any_element()
     }
 
+    /// The list's minus button: discards a route that was never saved, or
+    /// deletes the saved route open in the editor after a confirmation.
+    fn remove_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = &self.draft else {
+            return;
+        };
+        let Some(model) = draft.replace_model.clone() else {
+            self.draft = None;
+            self.selected = None;
+            cx.notify();
+            return;
+        };
+        let view = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let model = model.clone();
+            let view = view.clone();
+            dialog
+                .title(tr!("routing.delete_title"))
+                .description(tr!("routing.delete_detail", model = model))
+                .confirm()
+                .ok_text(t!("routing.delete"))
+                .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                .cancel_text(t!("common.cancel"))
+                .on_ok(move |_, _, cx| {
+                    // Close the editor so unsaved edits cannot recreate the
+                    // deleted route.
+                    view.update(cx, |page, cx| {
+                        page.draft = None;
+                        page.selected = None;
+                        cx.notify();
+                    })
+                    .ok();
+                    run_change(
+                        Change::new(
+                            t!("routing.delete_label"),
+                            ["route", "delete", "--model", model.as_str()],
+                        )
+                        .applied(),
+                        cx,
+                    );
+                    true
+                })
+        });
+    }
+
     fn render_list(&self, routes: &[Value], cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
+        let can_remove = self.draft.is_some() && !is_busy(cx);
         let view = cx.entity().downgrade();
         let rows = routes.iter().map(|route| {
             let model = route_model(route);
@@ -428,10 +475,16 @@ impl RoutingPage {
                 .id(ElementId::Name(format!("route-{model}").into()))
                 .gap_2p5()
                 .px_2()
-                .py_2()
+                .py_1p5()
                 .rounded_lg()
+                .border_1()
+                .border_color(gpui_kit::transparent_black())
                 .cursor_pointer()
-                .when(selected, |row| row.bg(colors.list_active))
+                .when(selected, |row| {
+                    row.bg(colors.background)
+                        .border_color(colors.border)
+                        .shadow_xs()
+                })
                 .when(!selected, |row| {
                     row.hover(|style| style.bg(colors.list_hover))
                 })
@@ -444,8 +497,12 @@ impl RoutingPage {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(colors.primary.opacity(0.12))
-                        .child(Icon::new(kind.icon()).small().text_color(colors.primary)),
+                        .bg(colors.muted)
+                        .child(
+                            Icon::new(kind.icon())
+                                .small()
+                                .text_color(colors.muted_foreground),
+                        ),
                 )
                 .child(
                     v_flex()
@@ -487,53 +544,141 @@ impl RoutingPage {
                         }),
                 )
         });
+        // A route being created shows in the list until it is saved or
+        // discarded, so the list never looks empty while the editor is open.
+        let new_draft = self
+            .draft
+            .as_ref()
+            .filter(|draft| draft.replace_model.is_none())
+            .map(|draft| {
+                h_flex()
+                    .gap_2p5()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.background)
+                    .shadow_xs()
+                    .child(
+                        div()
+                            .size_8()
+                            .flex_none()
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(colors.muted)
+                            .child(
+                                Icon::new(draft.kind.icon())
+                                    .small()
+                                    .text_color(colors.muted_foreground),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_medium()
+                                    .truncate()
+                                    .child(tr!("routing.new_kind", kind = draft.kind.title())),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(colors.muted_foreground)
+                                    .child(t!("routing.draft_state")),
+                            ),
+                    )
+            });
         v_flex()
             .w_72()
             .flex_none()
             .h_full()
             .border_r_1()
             .border_color(colors.border)
+            .bg(colors.muted.opacity(0.35))
+            .child(
+                h_flex()
+                    .pl_4()
+                    .pr_2()
+                    .pt_2()
+                    .pb_1()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_semibold()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("console.page.routing")),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(colors.input)
+                            .bg(colors.background)
+                            .shadow_xs()
+                            .overflow_hidden()
+                            .child(
+                                Button::new("new-route")
+                                    .ghost()
+                                    .small()
+                                    .rounded_none()
+                                    .icon(IconName::Plus)
+                                    .tooltip(t!("routing.new"))
+                                    .disabled(self.models.is_empty())
+                                    .dropdown_menu_with_anchor(
+                                        Anchor::TopRight,
+                                        move |menu, _, _| {
+                                            [Kind::Failover, Kind::Fusion, Kind::Schedule]
+                                                .into_iter()
+                                                .fold(menu, |menu, kind| {
+                                                    let view = view.clone();
+                                                    menu.item(
+                                                        PopupMenuItem::new(kind.title())
+                                                            .icon(kind.icon())
+                                                            .on_click(move |_, window, cx| {
+                                                                view.update(cx, |page, cx| {
+                                                                    page.create(kind, window, cx)
+                                                                })
+                                                                .ok();
+                                                            }),
+                                                    )
+                                                })
+                                        },
+                                    ),
+                            )
+                            .child(div().w_px().h_4().bg(colors.border))
+                            .child(
+                                Button::new("delete-route")
+                                    .ghost()
+                                    .small()
+                                    .rounded_none()
+                                    .icon(IconName::Minus)
+                                    .tooltip(t!("routing.delete"))
+                                    .disabled(!can_remove)
+                                    .on_click(cx.listener(|page, _, window, cx| {
+                                        page.remove_selected(window, cx)
+                                    })),
+                            ),
+                    ),
+            )
             .child(
                 v_flex()
                     .id("route-list")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p_2()
-                    .gap_0p5()
+                    .px_2()
+                    .pb_2()
+                    .gap_1()
+                    .children(new_draft)
                     .children(rows),
-            )
-            .child(
-                div()
-                    .p_2()
-                    .border_t_1()
-                    .border_color(colors.sidebar_border)
-                    .child(
-                        Button::new("new-route")
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .icon(IconName::Plus)
-                            .label(t!("routing.new"))
-                            .disabled(self.models.is_empty())
-                            .dropdown_menu(move |menu, _, _| {
-                                [Kind::Failover, Kind::Fusion, Kind::Schedule]
-                                    .into_iter()
-                                    .fold(menu, |menu, kind| {
-                                        let view = view.clone();
-                                        menu.item(
-                                            PopupMenuItem::new(kind.title())
-                                                .icon(kind.icon())
-                                                .on_click(move |_, window, cx| {
-                                                    view.update(cx, |page, cx| {
-                                                        page.create(kind, window, cx)
-                                                    })
-                                                    .ok();
-                                                }),
-                                        )
-                                    })
-                            }),
-                    ),
             )
     }
 
@@ -892,7 +1037,7 @@ impl RoutingPage {
                         h_flex().h_6().justify_center().child(
                             Icon::new(IconName::ArrowDown)
                                 .small()
-                                .text_color(colors.primary),
+                                .text_color(colors.muted_foreground),
                         ),
                     )
                     .child(
@@ -941,7 +1086,7 @@ impl RoutingPage {
                         .child(
                             Icon::new(IconName::Layers)
                                 .xsmall()
-                                .text_color(colors.primary),
+                                .text_color(colors.muted_foreground),
                         )
                         .child(div().min_w_0().truncate().child(self.model_label(model))),
                 )
@@ -960,7 +1105,7 @@ impl RoutingPage {
                     .child(
                         Icon::new(IconName::LogIn)
                             .small()
-                            .text_color(colors.primary),
+                            .text_color(colors.muted_foreground),
                     )
                     .child(t!("routing.request")),
             )
@@ -1059,7 +1204,7 @@ impl RoutingPage {
                     .child(
                         Icon::new(IconName::ArrowRight)
                             .xsmall()
-                            .text_color(colors.primary),
+                            .text_color(colors.muted_foreground),
                     )
                     .child(self.model_picker(
                         ElementId::Name(format!("slot-model-{index}").into()),
@@ -1114,7 +1259,7 @@ impl RoutingPage {
                     .child(
                         Icon::new(IconName::ArrowRight)
                             .xsmall()
-                            .text_color(colors.primary),
+                            .text_color(colors.muted_foreground),
                     )
                     .child(self.model_picker(
                         "schedule-final",
@@ -1140,7 +1285,7 @@ impl RoutingPage {
                     .child(
                         Icon::new(IconName::Clock)
                             .small()
-                            .text_color(colors.primary),
+                            .text_color(colors.muted_foreground),
                     )
                     .child(t!("routing.schedule_clock")),
             )
@@ -1197,8 +1342,7 @@ impl RoutingPage {
     ) -> impl IntoElement {
         let colors = cx.theme().colors;
         let kind = draft.kind;
-        let saved = draft.replace_model.clone();
-        let title = saved.as_deref().map_or_else(
+        let title = draft.replace_model.as_deref().map_or_else(
             || tr!("routing.new_kind", kind = kind.title()),
             |model| self.model_label(model),
         );
@@ -1208,37 +1352,6 @@ impl RoutingPage {
             Kind::Schedule => self.render_schedule(draft, cx),
         };
         let _ = window;
-        let delete = saved.map(|model| {
-            Button::new("delete-route")
-                .ghost()
-                .small()
-                .icon(IconName::Trash)
-                .label(t!("routing.delete"))
-                .on_click(move |_, window, cx| {
-                    let model = model.clone();
-                    window.open_alert_dialog(cx, move |dialog, _, _| {
-                        let model = model.clone();
-                        dialog
-                            .title(tr!("routing.delete_title"))
-                            .description(tr!("routing.delete_detail", model = model))
-                            .confirm()
-                            .ok_text(t!("routing.delete"))
-                            .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
-                            .cancel_text(t!("common.cancel"))
-                            .on_ok(move |_, _, cx| {
-                                run_change(
-                                    Change::new(
-                                        t!("routing.delete_label"),
-                                        ["route", "delete", "--model", model.as_str()],
-                                    )
-                                    .applied(),
-                                    cx,
-                                );
-                                true
-                            })
-                    });
-                })
-        });
         v_flex()
             .w_full()
             .max_w(gpui_kit::rems(48.0))
@@ -1253,8 +1366,10 @@ impl RoutingPage {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .bg(colors.primary.opacity(0.12))
-                            .child(Icon::new(kind.icon()).text_color(colors.primary)),
+                            .bg(colors.muted)
+                            .border_1()
+                            .border_color(colors.border)
+                            .child(Icon::new(kind.icon()).text_color(colors.muted_foreground)),
                     )
                     .child(
                         v_flex()
@@ -1283,8 +1398,7 @@ impl RoutingPage {
                                     cx.notify();
                                 })),
                         )
-                    })
-                    .children(delete),
+                    }),
             )
             .when(
                 kind != Kind::Failover || draft.payload.contains_key("id"),
@@ -1334,14 +1448,137 @@ impl Render for RoutingPage {
                 cx,
             )
             .into_any_element(),
-            None => placeholder(
-                IconName::Route,
-                t!("routing.empty"),
-                Some(tr!("routing.empty_detail")),
-                None,
-                cx,
-            )
-            .into_any_element(),
+            None => {
+                // The start page: one card per route type, each showing how
+                // the route sends a request and creating a draft on click.
+                let cards = [
+                    (
+                        Kind::Fusion,
+                        tr!("routing.kind.fusion_detail"),
+                        [
+                            tr!("routing.flow.panels"),
+                            tr!("routing.flow.judge"),
+                            tr!("routing.flow.final"),
+                        ],
+                    ),
+                    (
+                        Kind::Schedule,
+                        tr!("routing.kind.schedule_detail"),
+                        [
+                            tr!("routing.flow.clock"),
+                            tr!("routing.flow.slot_model"),
+                            tr!("routing.flow.default_model"),
+                        ],
+                    ),
+                    (
+                        Kind::Failover,
+                        tr!("routing.kind.failover_detail"),
+                        [
+                            tr!("routing.flow.source"),
+                            tr!("routing.flow.backup_1"),
+                            tr!("routing.flow.backup_2"),
+                        ],
+                    ),
+                ]
+                .into_iter()
+                .map(|(kind, detail, steps)| {
+                    let chain = steps.into_iter().enumerate().fold(
+                        h_flex().gap_1().flex_wrap(),
+                        |chain, (index, step)| {
+                            chain
+                                .when(index > 0, |chain| {
+                                    chain.child(
+                                        Icon::new(IconName::ChevronRight)
+                                            .xsmall()
+                                            .text_color(colors.muted_foreground.opacity(0.6)),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(colors.border)
+                                        .text_xs()
+                                        .text_color(colors.muted_foreground)
+                                        .child(step),
+                                )
+                        },
+                    );
+                    v_flex()
+                        .id(ElementId::Name(format!("route-kind-{}", kind.id()).into()))
+                        .gap_3()
+                        .p_5()
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.background)
+                        .cursor_pointer()
+                        .hover(|style| {
+                            style
+                                .border_color(colors.muted_foreground.opacity(0.4))
+                                .shadow_sm()
+                        })
+                        .on_click(
+                            cx.listener(move |page, _, window, cx| page.create(kind, window, cx)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size_10()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(colors.border)
+                                .child(Icon::new(kind.icon()).text_color(colors.foreground)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(div().text_sm().font_semibold().child(kind.title()))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(colors.muted_foreground)
+                                        .child(detail),
+                                ),
+                        )
+                        .child(chain)
+                        .child(
+                            h_flex()
+                                .pt_3()
+                                .gap_1()
+                                .text_sm()
+                                .font_medium()
+                                .child(t!("routing.gallery.create"))
+                                .child(Icon::new(IconName::ArrowRight).xsmall()),
+                        )
+                });
+                v_flex()
+                    .w_full()
+                    .max_w(gpui_kit::rems(52.0))
+                    .gap_5()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_semibold()
+                                    .child(t!("routing.gallery.title")),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(colors.muted_foreground)
+                                    .child(t!("routing.gallery.subtitle")),
+                            ),
+                    )
+                    .child(div().grid().grid_cols(2).gap_4().children(cards))
+                    .into_any_element()
+            }
         };
         let dirty = self.draft.as_ref().is_some_and(|draft| draft.dirty);
         h_flex()
@@ -1460,13 +1697,14 @@ fn flow_node(cx: &App) -> gpui_kit::Div {
         .min_h_8()
         .rounded_lg()
         .border_1()
-        .border_color(colors.primary.opacity(0.32))
-        .bg(colors.primary.opacity(0.07))
+        .border_color(colors.border)
+        .bg(colors.background)
+        .shadow_xs()
         .text_sm()
 }
 
 fn flow_branches(children: usize, reverse: bool, cx: &App) -> impl IntoElement {
-    let color = cx.theme().colors.primary.opacity(0.58);
+    let color = cx.theme().colors.muted_foreground.opacity(0.45);
     div()
         .w_8()
         .flex_none()

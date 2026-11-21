@@ -7,7 +7,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
     v_flex,
 };
 use gpui_kit::{
@@ -21,7 +21,7 @@ use serde::Deserialize;
 use super::{is_busy, placeholder, run_change};
 use crate::store::{Change, Store, query};
 use crate::tr;
-use crate::widgets::{logo_tile, status_dot};
+use crate::widgets::{logo_tile, page_header, status_dot};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct AgentList {
@@ -350,14 +350,22 @@ impl AgentsPage {
         } else {
             colors.muted_foreground
         };
+        // The group already says whether the agent is connected; the row
+        // only spells out states that need attention or name a mode.
+        let plain = matches!(agent.integration.state.as_str(), "managed" | "unmanaged")
+            && agent.integration.mode.is_none();
+        let show_state = agent.integration.state != "unsupported" && !plain;
+        let missing_installer = connected && !agent.detected;
         let id = agent.id.clone();
         let name = agent.name.clone();
         let upgrade_id = agent.id.clone();
         h_flex()
+            .id(SharedString::from(format!("agent-row-{}", agent.id)))
             .gap_3()
             .px_4()
-            .py_3()
+            .py_2p5()
             .when(!first, |row| row.border_t_1().border_color(colors.border))
+            .hover(|style| style.bg(colors.list_hover))
             .child(agent_logo(&agent.id, cx))
             .child(
                 v_flex()
@@ -368,22 +376,28 @@ impl AgentsPage {
                         h_flex()
                             .gap_2()
                             .child(div().text_sm().font_semibold().child(agent.name.clone()))
-                            .child(
+                            .children(versions.into_iter().map(|version| {
                                 div()
+                                    .px_1p5()
+                                    .rounded_sm()
+                                    .bg(colors.muted)
                                     .text_xs()
+                                    .font_family(cx.theme().mono_font_family.clone())
                                     .text_color(colors.muted_foreground)
-                                    .child(versions.join("  ")),
-                            ),
+                                    .child(version)
+                            })),
                     )
-                    .when(agent.integration.state != "unsupported", |text| {
+                    .when(show_state || missing_installer, |text| {
                         text.child(
                             h_flex()
                                 .gap_1p5()
                                 .text_xs()
                                 .text_color(colors.muted_foreground)
-                                .child(status_dot(dot))
-                                .child(div().truncate().child(agent.integration.label()))
-                                .when(connected && !agent.detected, |line| {
+                                .when(show_state, |line| {
+                                    line.child(status_dot(dot))
+                                        .child(div().truncate().child(agent.integration.label()))
+                                })
+                                .when(missing_installer, |line| {
                                     line.child(t!("agents.not_detected"))
                                 }),
                         )
@@ -448,34 +462,68 @@ impl Render for AgentsPage {
                     .into_any_element(),
             };
         };
-        let (visible, hidden): (Vec<_>, Vec<_>) = agents
-            .iter()
-            .partition(|agent| agent.detected || agent.integration.connected());
-        let connected = agents
+        let connected: Vec<&Agent> = agents
             .iter()
             .filter(|agent| agent.integration.connected())
-            .count();
-        let detected = agents.iter().filter(|agent| agent.detected).count();
-        let list = |rows: Vec<gpui_kit::AnyElement>| {
-            v_flex()
-                .rounded_lg()
-                .border_1()
-                .border_color(colors.border)
-                .bg(colors.group_box)
-                .children(rows)
+            .collect();
+        let available: Vec<&Agent> = agents
+            .iter()
+            .filter(|agent| agent.detected && !agent.integration.connected())
+            .collect();
+        let missing: Vec<&Agent> = agents
+            .iter()
+            .filter(|agent| !agent.detected && !agent.integration.connected())
+            .collect();
+        let group_title = |label: SharedString, count: usize| {
+            h_flex()
+                .gap_1p5()
+                .px_1()
+                .text_xs()
+                .font_semibold()
+                .text_color(colors.muted_foreground)
+                .child(label)
+                .child(div().font_normal().child(count.to_string()))
         };
-        let mut visible_rows = Vec::new();
-        for (index, agent) in visible.iter().enumerate() {
-            visible_rows.push(self.render_agent(agent, index == 0, cx).into_any_element());
-        }
-        let mut hidden_rows = Vec::new();
-        if self.show_undetected {
-            for (index, agent) in hidden.iter().enumerate() {
-                hidden_rows.push(self.render_agent(agent, index == 0, cx).into_any_element());
+        let mut groups = Vec::new();
+        for (label, members) in [
+            (tr!("agents.group.connected"), &connected),
+            (tr!("agents.group.available"), &available),
+        ] {
+            if members.is_empty() {
+                continue;
             }
+            let rows: Vec<_> = members
+                .iter()
+                .enumerate()
+                .map(|(index, agent)| self.render_agent(agent, index == 0, cx).into_any_element())
+                .collect();
+            groups.push(
+                v_flex()
+                    .gap_1p5()
+                    .child(group_title(label, members.len()))
+                    .child(
+                        v_flex()
+                            .rounded_xl()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(colors.border)
+                            .bg(colors.group_box)
+                            .shadow_xs()
+                            .children(rows),
+                    )
+                    .into_any_element(),
+            );
         }
-        let visible_list = list(visible_rows);
-        let hidden_list = self.show_undetected.then(|| list(hidden_rows));
+        let missing_rows: Vec<_> = if self.show_undetected {
+            missing
+                .iter()
+                .enumerate()
+                .map(|(index, agent)| self.render_agent(agent, index == 0, cx).into_any_element())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let missing_count = missing.len();
         div()
             .id("agents-scroll")
             .size_full()
@@ -486,64 +534,72 @@ impl Render for AgentsPage {
                     .w_full()
                     .max_w(gpui_kit::rems(56.0))
                     .px_6()
-                    .py_5()
+                    .pt_3()
+                    .pb_6()
                     .gap_4()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(
-                                v_flex()
-                                    .child(
-                                        div()
-                                            .text_2xl()
-                                            .font_semibold()
-                                            .child(t!("console.page.agents")),
-                                    )
-                                    .child(
-                                        div().text_xs().text_color(colors.muted_foreground).child(
-                                            t!(
-                                                "agents.summary",
-                                                connected = connected,
-                                                detected = detected
-                                            ),
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                Button::new("check-agent-versions")
-                                    .ghost()
-                                    .small()
-                                    .icon(IconName::RefreshCw)
-                                    .label(t!("agents.check_versions"))
-                                    .disabled(self.loading)
-                                    .loading(self.loading)
-                                    .on_click(
-                                        cx.listener(|page, _, _, cx| page.check_versions(cx)),
-                                    ),
-                            ),
-                    )
+                    .child(page_header(
+                        IconName::Bot,
+                        t!("console.page.agents"),
+                        Some(tr!(
+                            "agents.summary",
+                            connected = connected.len(),
+                            detected = agents.iter().filter(|agent| agent.detected).count()
+                        )),
+                        Button::new("check-agent-versions")
+                            .ghost()
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .label(t!("agents.check_versions"))
+                            .disabled(self.loading)
+                            .loading(self.loading)
+                            .on_click(cx.listener(|page, _, _, cx| page.check_versions(cx))),
+                        cx,
+                    ))
                     .when_some(self.error.clone(), |body, error| {
                         body.child(div().text_xs().text_color(colors.danger).child(error))
                     })
-                    .child(visible_list)
-                    .when(!hidden.is_empty(), |body| {
+                    .children(groups)
+                    .when(missing_count > 0, |body| {
                         body.child(
-                            Button::new("toggle-undetected")
-                                .ghost()
-                                .small()
-                                .icon(if self.show_undetected {
-                                    IconName::ChevronDown
-                                } else {
-                                    IconName::ChevronRight
-                                })
-                                .label(t!("agents.show_undetected", count = hidden.len()))
-                                .on_click(cx.listener(|page, _, _, cx| {
-                                    page.show_undetected = !page.show_undetected;
-                                    cx.notify();
-                                })),
+                            v_flex()
+                                .gap_1p5()
+                                .child(
+                                    h_flex()
+                                        .id("toggle-undetected")
+                                        .gap_1()
+                                        .cursor_pointer()
+                                        .child(group_title(
+                                            tr!("agents.group.missing"),
+                                            missing_count,
+                                        ))
+                                        .child(
+                                            Icon::new(if self.show_undetected {
+                                                IconName::ChevronDown
+                                            } else {
+                                                IconName::ChevronRight
+                                            })
+                                            .xsmall()
+                                            .text_color(colors.muted_foreground),
+                                        )
+                                        .on_click(cx.listener(|page, _, _, cx| {
+                                            page.show_undetected = !page.show_undetected;
+                                            cx.notify();
+                                        })),
+                                )
+                                .when(!missing_rows.is_empty(), |group| {
+                                    group.child(
+                                        v_flex()
+                                            .rounded_xl()
+                                            .overflow_hidden()
+                                            .border_1()
+                                            .border_color(colors.border)
+                                            .bg(colors.group_box)
+                                            .shadow_xs()
+                                            .children(missing_rows),
+                                    )
+                                }),
                         )
-                    })
-                    .children(hidden_list),
+                    }),
             )
             .into_any_element()
     }

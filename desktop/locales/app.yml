@@ -482,15 +482,15 @@ panel.start_label:
 panel.stop_label:
   en: "Stop gateway"
   zh-CN: "停止网关"
+panel.quota_usage:
+  en: "%{used} used of %{limit}"
+  zh-CN: "已用 %{used} / 共 %{limit}"
 panel.quota_left_heading:
   en: "Left"
   zh-CN: "剩余"
 panel.quota_reset_heading:
   en: "Reset"
   zh-CN: "重置"
-panel.quota_lowest:
-  en: "%{remaining}% min"
-  zh-CN: "最低 %{remaining}%"
 panel.quota_unavailable:
   en: "Unavailable"
   zh-CN: "暂不可用"
@@ -609,11 +609,17 @@ agents.mode.native_runtime:
   en: "Native runtime"
   zh-CN: "原生运行时"
 agents.not_detected:
-  en: "· Installer not detected"
-  zh-CN: "· 未检测到安装程序"
-agents.show_undetected:
-  en: "%{count} agents not installed"
-  zh-CN: "显示未检测到的 %{count} 个 Agent"
+  en: "Installer not detected"
+  zh-CN: "未检测到安装程序"
+agents.group.connected:
+  en: "Connected"
+  zh-CN: "已接入"
+agents.group.available:
+  en: "Not Connected"
+  zh-CN: "未接入"
+agents.group.missing:
+  en: "Not Installed"
+  zh-CN: "未安装"
 agents.state.drift:
   en: "Configuration changed"
   zh-CN: "配置已改变"
@@ -767,12 +773,42 @@ routing.delete_detail:
 routing.delete_label:
   en: "Delete route"
   zh-CN: "删除模型路由"
-routing.empty:
-  en: "Choose or create a route"
-  zh-CN: "选择或新建路由"
-routing.empty_detail:
-  en: "Routes retry failed requests on fallback models, merge several models, or switch models by time of day."
-  zh-CN: "路由可以把失败请求转给备用模型、融合多个模型，或按时段切换模型。"
+routing.gallery.title:
+  en: "Put several models behind one model name"
+  zh-CN: "让一个模型名背后有多个模型"
+routing.gallery.subtitle:
+  en: "Routes run in the local gateway, so connected agents need no changes. Pick a type to start; saving restarts the gateway and refreshes the model catalog."
+  zh-CN: "路由由本地网关执行，已接入的 Agent 无需改动。选择一种类型开始，保存后网关会自动重启并刷新模型目录。"
+routing.gallery.create:
+  en: "Create"
+  zh-CN: "创建"
+routing.flow.panels:
+  en: "Panel × N"
+  zh-CN: "Panel × N"
+routing.flow.judge:
+  en: "Judge"
+  zh-CN: "Judge"
+routing.flow.final:
+  en: "Final"
+  zh-CN: "Final"
+routing.flow.clock:
+  en: "Local time"
+  zh-CN: "当前时间"
+routing.flow.slot_model:
+  en: "Slot model"
+  zh-CN: "时段模型"
+routing.flow.default_model:
+  en: "Default"
+  zh-CN: "默认模型"
+routing.flow.source:
+  en: "Model fails"
+  zh-CN: "原模型出错"
+routing.flow.backup_1:
+  en: "Backup 1"
+  zh-CN: "备用 1"
+routing.flow.backup_2:
+  en: "Backup 2"
+  zh-CN: "备用 2"
 routing.entry:
   en: "Entry"
   zh-CN: "入口"
@@ -890,6 +926,9 @@ routing.timeout:
 routing.toggle_label:
   en: "Update route"
   zh-CN: "更新路由"
+routing.draft_state:
+  en: "Not saved"
+  zh-CN: "未保存"
 routing.unsaved:
   en: "Route changes are not saved yet"
   zh-CN: "路由更改尚未保存"
