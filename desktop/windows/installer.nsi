@@ -155,8 +155,6 @@ Section "Install"
   WriteRegStr   HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
-  Call HandoffDesktopStartup
-
   ${If} $RestoreGateway != "0"
     DetailPrint "Restoring the gateway..."
     InitPluginsDir
@@ -197,6 +195,9 @@ Section "Install"
     ${EndIf}
     gateway_restore_done:
   ${EndIf}
+
+  ; Restore the running gateway even if moving the desktop Run entry fails.
+  Call HandoffDesktopStartup
 SectionEnd
 
 Section "Uninstall"
