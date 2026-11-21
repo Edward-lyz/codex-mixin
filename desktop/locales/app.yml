@@ -207,11 +207,11 @@ models.column.model:
   en: "Model"
   zh-CN: "模型"
 models.column.ttft:
-  en: "First Token"
-  zh-CN: "首 Token"
+  en: "TTFT"
+  zh-CN: "TTFT"
 models.column.speed:
-  en: "Speed"
-  zh-CN: "生成速度"
+  en: "Throughput"
+  zh-CN: "吞吐"
 models.column.context:
   en: "Context"
   zh-CN: "上下文"

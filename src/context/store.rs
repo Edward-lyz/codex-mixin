@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at INTEGER NOT NULL,
     last_error TEXT
 );
+CREATE TABLE IF NOT EXISTS inherited_checkpoints (
+    session_key TEXT PRIMARY KEY,
+    token_digest BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nudge_state (
     session_key TEXT PRIMARY KEY,
     state_json TEXT NOT NULL
@@ -943,6 +947,134 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn inherited_checkpoint(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        self.connection
+            .query_row(
+                "SELECT token_digest FROM inherited_checkpoints WHERE session_key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("read inherited context checkpoint")
+    }
+
+    /// Takes a snapshot of the checkpoint prefix. Copying only the reachable
+    /// rows keeps later parent turns out of the child's archive and search.
+    pub(super) fn inherit_checkpoint(
+        &self,
+        key: &str,
+        checkpoint: &super::checkpoint::Checkpoint,
+        prefix_len: usize,
+        token_digest: &[u8],
+    ) -> Result<SessionRow> {
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+                .context("begin inherited context archive")?;
+        let source = &checkpoint.session;
+        let parent = self.session_row(&transaction, source)?;
+        if checkpoint.revision > parent.revision {
+            bail!("inherited compaction checkpoint is newer than the archived parent revision");
+        }
+        self.validate_history_anchor(source, prefix_len, checkpoint.history_tip.as_deref())?;
+        let prefix_len = i64::try_from(prefix_len).context("context checkpoint prefix length")?;
+        transaction
+            .execute(
+                "INSERT INTO history (session_key, position, reference)
+                 SELECT ?1, position, reference FROM history WHERE session_key = ?2 AND position < ?3",
+                params![key, source, prefix_len],
+            )
+            .context("copy checkpoint history")?;
+        transaction
+            .execute(
+                "INSERT INTO messages (session_key,reference,fingerprint,item_json,created_at,expired_at,
+                                       body_codec,body_bytes,body_checksum,body_kind,body_tool)
+                 SELECT ?1,m.reference,m.fingerprint,m.item_json,m.created_at,m.expired_at,
+                        m.body_codec,m.body_bytes,m.body_checksum,m.body_kind,m.body_tool
+                 FROM history h JOIN messages m ON m.reference = h.reference AND m.session_key = ?2
+                 WHERE h.session_key = ?1",
+                params![key, source],
+            )
+            .context("copy checkpoint originals")?;
+        transaction
+            .execute(
+                "INSERT INTO segments (session_key,revision,position,end_position,kind,reference)
+                 SELECT ?1,revision,position,end_position,kind,reference FROM segments
+                 WHERE session_key = ?2 AND revision = ?3 AND end_position < ?4",
+                params![key, source, parent.revision, prefix_len],
+            )
+            .context("copy checkpoint segments")?;
+        transaction
+            .execute(
+                "WITH RECURSIVE block_tree(id) AS (
+                     SELECT reference FROM segments WHERE session_key = ?1 AND kind = 'block'
+                     UNION
+                     SELECT json_extract(ref.value, '$.reference')
+                     FROM block_tree t JOIN blocks b ON b.session_key = ?2 AND b.block_id = t.id,
+                          json_each(b.direct_refs) ref
+                     WHERE json_extract(ref.value, '$.kind') = 'block'
+                 )
+                 INSERT INTO blocks (session_key,block_id,tier,topic,summary,direct_refs,full_refs,
+                                     start_position,end_position,superseded_by,covered_tokens,
+                                     replacement_tokens,created_at)
+                 SELECT ?1,b.block_id,b.tier,b.topic,b.summary,b.direct_refs,b.full_refs,
+                        b.start_position,b.end_position,b.superseded_by,b.covered_tokens,
+                        b.replacement_tokens,b.created_at
+                 FROM block_tree t JOIN blocks b ON b.session_key = ?2 AND b.block_id = t.id",
+                params![key, source],
+            )
+            .context("copy checkpoint summary blocks")?;
+        // Later parent compression may span the checkpoint boundary. Restore
+        // only the part covered by the checkpoint, from retained originals.
+        let covered: i64 = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(end_position) + 1, 0) FROM segments WHERE session_key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .context("read inherited segment coverage")?;
+        let expired: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM history h LEFT JOIN messages m
+                         ON m.session_key = h.session_key AND m.reference = h.reference
+                     WHERE h.session_key = ?1 AND h.position >= ?2
+                         AND (m.reference IS NULL OR m.expired_at IS NOT NULL OR m.item_json = '')
+                 )",
+                params![key, covered],
+                |row| row.get(0),
+            )
+            .context("check checkpoint originals")?;
+        if expired {
+            bail!(
+                "cannot inherit compaction checkpoint: originals needed at the fork point expired"
+            );
+        }
+        transaction
+            .execute(
+                "INSERT INTO segments (session_key,revision,position,end_position,kind,reference)
+                 SELECT ?1,?2,position,position,'message',reference FROM history
+                 WHERE session_key = ?1 AND position >= ?3",
+                params![key, parent.revision, covered],
+            )
+            .context("restore checkpoint originals at the fork point")?;
+        transaction
+            .execute(
+                "UPDATE sessions SET revision=?2,next_ref=?3,next_block=?4,updated_at=?5 WHERE session_key=?1",
+                params![key, parent.revision, parent.next_ref, parent.next_block, unix_now()],
+            )
+            .context("initialize inherited context session")?;
+        transaction
+            .execute(
+                "INSERT INTO inherited_checkpoints (session_key, token_digest) VALUES (?1, ?2)",
+                params![key, token_digest],
+            )
+            .context("record inherited context checkpoint")?;
+        transaction
+            .commit()
+            .context("commit inherited context archive")?;
+        Ok(parent)
+    }
+
     /// Continues from a known history prefix without loading expired bodies.
     /// An already appended prefix is deduplicated; divergent suffixes fork.
     pub(crate) fn sync_history_from(
@@ -951,45 +1083,8 @@ impl Store {
         items: &[Value],
         fingerprint: impl Fn(&Value) -> Result<String>,
         prefix_len: usize,
-        source: Option<&str>,
     ) -> Result<()> {
         let mut session = self.ensure_session(key)?;
-        if let Some(source) = source {
-            if source == key || session.next_ref != 1 || !self.history(key)?.is_empty() {
-                bail!("context archive inheritance requires a new child session");
-            }
-            let parent = self.ensure_session(source)?;
-            let transaction = self
-                .connection
-                .transaction()
-                .context("begin inherited context archive")?;
-            for (table, columns) in [
-                (
-                    "messages",
-                    "reference,fingerprint,item_json,created_at,expired_at,body_codec,body_bytes,body_checksum,body_kind,body_tool",
-                ),
-                ("history", "position,reference"),
-                (
-                    "blocks",
-                    "block_id,tier,topic,summary,direct_refs,full_refs,start_position,end_position,superseded_by,covered_tokens,replacement_tokens,created_at",
-                ),
-                ("segments", "revision,position,end_position,kind,reference"),
-            ] {
-                // Identifiers are constants; all request-derived values stay bound.
-                transaction.execute(
-                    &format!("INSERT INTO {table} (session_key,{columns}) SELECT ?1,{columns} FROM {table} WHERE session_key=?2"),
-                    params![key, source],
-                ).context("copy inherited context archive rows")?;
-            }
-            transaction.execute(
-                "UPDATE sessions SET revision=?2,next_ref=?3,next_block=?4,updated_at=?5 WHERE session_key=?1",
-                params![key, parent.revision, parent.next_ref, parent.next_block, unix_now()],
-            ).context("initialize inherited context session")?;
-            transaction
-                .commit()
-                .context("commit inherited context archive")?;
-            session = parent;
-        }
         let history = self.history(key)?;
         let history_len = history.len();
         if prefix_len > history_len {

@@ -2,8 +2,9 @@
 //!
 //! A checkpoint replaces the history the client gave up. It is bound to one
 //! context session and to the revision the engine had when the checkpoint was
-//! issued, so a token cannot be replayed against another session, and a token
-//! from a newer engine state fails instead of silently losing messages.
+//! issued. An eligible fork can inherit that checkpoint and replay it against
+//! its own archive. A token from a newer engine state fails instead of silently
+//! losing messages.
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

@@ -450,9 +450,9 @@ fn column(kind: Column) -> gpui_kit::Div {
         Column::Join => cell.w_20().justify_center(),
         Column::Order => cell.w_12().justify_center(),
         Column::Model => div().flex_1().min_w_0().flex().items_center(),
-        Column::Latency | Column::Speed => cell.w_24().justify_end(),
         Column::Context => cell.w_20().justify_end(),
         Column::Capabilities => cell.w_24().justify_center(),
+        Column::Latency | Column::Speed => cell.w_24().justify_end(),
     }
 }
 
@@ -461,10 +461,10 @@ enum Column {
     Join,
     Order,
     Model,
-    Latency,
-    Speed,
     Context,
     Capabilities,
+    Latency,
+    Speed,
 }
 
 impl ModelsView {
@@ -834,13 +834,13 @@ impl ModelsView {
             .child(cell(Column::Join, t!("models.column.join").into()))
             .child(cell(Column::Order, t!("models.column.order").into()))
             .child(cell(Column::Model, t!("models.column.model").into()))
-            .child(cell(Column::Latency, t!("models.column.ttft").into()))
-            .child(cell(Column::Speed, t!("models.column.speed").into()))
             .child(cell(Column::Context, t!("models.column.context").into()))
             .child(cell(
                 Column::Capabilities,
                 t!("models.column.capabilities").into(),
             ))
+            .child(cell(Column::Latency, t!("models.column.ttft").into()))
+            .child(cell(Column::Speed, t!("models.column.speed").into()))
     }
 
     fn render_row(&self, row: &Row, cx: &mut Context<Self>) -> AnyElement {
@@ -849,6 +849,10 @@ impl ModelsView {
         let selected = position.is_some();
         let unavailable = self.provider.unavailable_selected_models.contains(&row.id);
         let model = row.model.as_ref();
+        let name = model
+            .and_then(|model| model.display_name.as_deref())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&row.id);
         let context = self
             .contexts
             .get(&row.id)
@@ -924,21 +928,7 @@ impl ModelsView {
                             .truncate()
                             .when(selected, |name| name.font_medium())
                             .when(!selected, |name| name.text_color(colors.muted_foreground))
-                            .child(row.id.clone()),
-                    )
-                    .when_some(
-                        model
-                            .and_then(|model| model.display_name.clone())
-                            .filter(|name| name != &row.id),
-                        |cell, name| {
-                            cell.child(
-                                div()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(colors.muted_foreground)
-                                    .child(name),
-                            )
-                        },
+                            .child(name.to_owned()),
                     )
                     .when(model.is_none(), |cell| {
                         cell.child(crate::widgets::pill(
@@ -978,8 +968,6 @@ impl ModelsView {
                         )
                     }),
             )
-            .child(column(Column::Latency).when_some(latency, |cell, text| cell.child(muted(text))))
-            .child(column(Column::Speed).when_some(speed, |cell, text| cell.child(muted(text))))
             .child(column(Column::Context).when_some(context, |cell, tokens| {
                 cell.child(muted(format_context(tokens)))
             }))
@@ -1002,6 +990,8 @@ impl ModelsView {
                         t!("models.capability.thinking").into(),
                     )),
             )
+            .child(column(Column::Latency).when_some(latency, |cell, text| cell.child(muted(text))))
+            .child(column(Column::Speed).when_some(speed, |cell, text| cell.child(muted(text))))
             .into_any_element()
     }
 }

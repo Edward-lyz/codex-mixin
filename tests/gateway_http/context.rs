@@ -1217,9 +1217,10 @@ async fn context_checkpoint_replaces_local_compaction() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
     let mut config = test_config(upstream_url);
     config.context.enabled = true;
+    config.gateway_client_keys.claude_desktop = Some("desktop-key".to_owned());
     let database = tempfile::tempdir().unwrap();
     let database_path = database.path().join("context.db");
-    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let gateway_url = spawn_gateway_with_context(config.clone(), &database_path).await;
     let session = "thread-context-checkpoint";
 
     let client = reqwest::Client::new();
@@ -1336,6 +1337,106 @@ async fn context_checkpoint_replaces_local_compaction() {
         !replay.contains("codex-mixin:context:v2:"),
         "a local checkpoint reached the provider: {replay}"
     );
+
+    // A Desktop fork has a separate thread ID and no parent hint.
+    let thread = "checkpoint-desktop-fork";
+    let mut child = responses_request();
+    child["input"] = json!([
+        {"type":"compaction","encrypted_content":token},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"first Desktop fork question"}]}
+    ]);
+    let foreign = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("desktop-key")
+        .header("thread-id", thread)
+        .json(&child)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        foreign
+            .text()
+            .await
+            .unwrap()
+            .contains("another context client")
+    );
+
+    let mut request = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("thread-id", thread.parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    child["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(child.to_string().into()))
+        .await
+        .unwrap();
+    let frames = tokio::time::timeout(WS_RESPONSE_TIMEOUT, websocket_response_frames(&mut socket))
+        .await
+        .expect("Desktop fork WebSocket timed out")
+        .join("\n");
+    assert!(frames.contains("response.completed"), "{frames}");
+    drop(socket);
+
+    // Reopen the archive with the engine disabled. Desktop can still resend
+    // the inherited checkpoint until it compacts the child conversation.
+    config.context.enabled = false;
+    let reopened = spawn_gateway_with_context(config, &database_path).await;
+    child.as_object_mut().unwrap().remove("type");
+    child["input"].as_array_mut().unwrap().push(json!({
+        "type":"message","role":"user","content":[{"type":"input_text","text":"second Desktop fork question"}]
+    }));
+    let response = client
+        .post(format!("{reopened}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", thread)
+        .json(&child)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let stream = response.text().await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Desktop fork retry failed: {stream}"
+    );
+    assert!(stream.contains("response.completed"), "{stream}");
+    let history = requests.lock().unwrap().last().unwrap()["messages"].to_string();
+    for text in [
+        "distinctive opening request",
+        "first Desktop fork question",
+        "second Desktop fork question",
+    ] {
+        assert!(history.contains(text), "{history}");
+    }
+    assert!(!history.contains("next question"), "{history}");
+
+    let connection = rusqlite::Connection::open(&database_path).unwrap();
+    let leaked_parent_suffix: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages
+             WHERE session_key = ?1 AND item_json LIKE '%next question%')",
+            [format!(
+                "gateway\u{1f}{}",
+                uuid::Uuid::new_v5(
+                    &uuid::Uuid::NAMESPACE_URL,
+                    b"thread-id\0checkpoint-desktop-fork"
+                )
+            )],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!leaked_parent_suffix);
 }
 
 #[tokio::test]

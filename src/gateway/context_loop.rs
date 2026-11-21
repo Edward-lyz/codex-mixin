@@ -791,6 +791,11 @@ pub(crate) async fn context_input(
     body: &Value,
     window_tokens: u64,
 ) -> Result<TurnView, GatewayError> {
+    // Desktop forks have their own explicit thread ID and no parent hint.
+    // Other session identifiers keep the existing checkpoint binding.
+    let allow_desktop_fork = headers
+        .get("thread-id")
+        .is_some_and(|value| !value.is_empty());
     let parent_session = super::stable_oneapi_routing(headers, body)?
         .filter(|routing| routing.hash_key != routing.context_hash_key)
         .and_then(|routing| {
@@ -806,6 +811,7 @@ pub(crate) async fn context_input(
             &engine,
             &session,
             parent_session.as_deref(),
+            allow_desktop_fork,
             &body,
             window_tokens,
         )
@@ -837,6 +843,7 @@ fn prepare_context_input(
     engine: &ContextEngine,
     session: &str,
     parent_session: Option<&str>,
+    allow_desktop_fork: bool,
     body: &Value,
     window_tokens: u64,
 ) -> Result<TurnView, GatewayError> {
@@ -865,7 +872,14 @@ fn prepare_context_input(
     if incoming.iter().any(checkpoint::is_checkpoint_item) {
         let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
         return engine
-            .begin_checkpoint_turn(session, parent_session, &incoming, &secret, window_tokens)
+            .begin_checkpoint_turn(
+                session,
+                parent_session,
+                allow_desktop_fork,
+                &incoming,
+                &secret,
+                window_tokens,
+            )
             .map_err(|error| GatewayError::BadRequest(error.to_string()));
     }
     match body.get("previous_response_id").and_then(Value::as_str) {
