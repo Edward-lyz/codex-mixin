@@ -254,8 +254,11 @@ impl Console {
                     && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
                 {
                     console.update(cx, |console, cx| {
-                        console.logo_spin += 1;
-                        console.select(page.unwrap_or(console.page), window, cx);
+                        let page = page.unwrap_or(console.page);
+                        if page == console.page {
+                            console.logo_spin += 1;
+                        }
+                        console.select(page, window, cx);
                     });
                 }
             });
@@ -358,6 +361,9 @@ impl Console {
     }
 
     pub fn select(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if page != self.page {
+            self.logo_spin += 1;
+        }
         self.page = page;
         match page {
             Page::Providers => {}
