@@ -12,6 +12,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
+use gpui_kit::component::progress::Progress;
 use gpui_kit::component::radio::Radio;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
@@ -21,16 +22,16 @@ use gpui_kit::component::{
 use gpui_kit::{
     Anchor, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context, ElementId,
     Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, WeakEntity, Window, div, prelude::FluentBuilder as _,
-    uniform_list,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, uniform_list,
 };
 use rust_i18n::t;
 
-use super::{is_busy, run_change};
+use super::{is_busy, run_change, run_change_then};
 use crate::model::{
     BenchmarkResult, BenchmarkSnapshot, BenchmarkStatus, ModelRefresh, Provider, ProviderModel,
 };
-use crate::store::{Change, query};
+use crate::store::{Change, Store, query};
 use crate::theme;
 
 /// Manually added models start with this context window; the user edits it
@@ -76,7 +77,11 @@ pub struct ModelsView {
     manual: Vec<String>,
     manual_order: bool,
     add_open: bool,
+    refreshing: bool,
+    benchmark_starting: bool,
     benchmark: Option<BenchmarkSnapshot>,
+    benchmark_run: Option<String>,
+    benchmark_status_error: Option<SharedString>,
     benchmark_ttft_only: bool,
     benchmark_timeout: u64,
     _benchmark_poll: Option<Task<()>>,
@@ -115,7 +120,11 @@ impl ModelsView {
             filter: Filter::All,
             manual: Vec::new(),
             add_open: false,
+            refreshing: false,
+            benchmark_starting: false,
             benchmark: None,
+            benchmark_run: None,
+            benchmark_status_error: None,
             benchmark_ttft_only: false,
             benchmark_timeout: 60,
             _benchmark_poll: None,
@@ -441,9 +450,20 @@ impl ModelsView {
         cx.notify();
     }
 
-    fn refresh_models(&self, cx: &mut App) {
+    fn refresh_models(&mut self, cx: &mut Context<Self>) {
+        self.refreshing = true;
         let args = ["provider", "discover", self.provider.id.as_str()];
-        run_change(Change::new(t!("models.refresh_label"), args).applied(), cx);
+        let task = run_change_then(Change::new(t!("models.refresh_label"), args).applied(), cx);
+        cx.notify();
+        cx.spawn(async move |view, cx| {
+            task.await;
+            view.update(cx, |view, cx| {
+                view.refreshing = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn set_model_refresh(&self, policy: ModelRefresh, cx: &mut App) {
@@ -467,6 +487,7 @@ impl ModelsView {
     }
 
     fn start_benchmark(&mut self, cx: &mut Context<Self>) {
+        self.benchmark_starting = true;
         let mut args = vec![
             "benchmark".to_owned(),
             "start".to_owned(),
@@ -478,19 +499,37 @@ impl ModelsView {
         if self.benchmark_ttft_only {
             args.extend(["--target-output-tokens".to_owned(), "1".to_owned()]);
         }
-        let task = crate::store::Store::global(cx).update(cx, |store, cx| {
+        let task = Store::global(cx).update(cx, |store, cx| {
             store.run(Change::new(t!("models.benchmark_label"), args), cx)
         });
+        cx.notify();
         cx.spawn(async move |view, cx| {
-            if task.await.is_ok() {
-                view.update(cx, |view, cx| view.poll_benchmark(cx)).ok();
-            }
+            let started = task.await;
+            view.update(cx, |view, cx| {
+                view.benchmark_starting = false;
+                if let Ok(output) = started {
+                    let acknowledged = serde_json::from_str::<BenchmarkStatus>(&output)
+                        .ok()
+                        .and_then(|status| status.snapshot);
+                    view.benchmark_run = acknowledged
+                        .as_ref()
+                        .map(|snapshot| snapshot.run_id.clone());
+                    if let Some(snapshot) = acknowledged {
+                        view.benchmark = Some(snapshot);
+                    }
+                    view.poll_benchmark(cx);
+                }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
 
     /// Polls `benchmark status` while a run is in progress.
     fn poll_benchmark(&mut self, cx: &mut Context<Self>) {
+        self.benchmark_status_error = None;
+        cx.notify();
         self._benchmark_poll = Some(cx.spawn(async move |view, cx| {
             loop {
                 let status = cx
@@ -498,18 +537,23 @@ impl ModelsView {
                         query::<BenchmarkStatus>(vec!["benchmark".into(), "status".into()], cx)
                     })
                     .await;
-                let Ok(status) = status else {
-                    break;
-                };
-                let running = status
-                    .snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.status == "running");
-                let updated = view.update(cx, |view, cx| {
-                    view.benchmark = status.snapshot;
-                    cx.notify();
+                let running = view.update(cx, |view, cx| match status {
+                    Ok(status) => {
+                        if view.benchmark != status.snapshot {
+                            view.benchmark = status.snapshot;
+                            cx.notify();
+                        }
+                        view.benchmark_running()
+                    }
+                    Err(error) => {
+                        if view.benchmark_running() {
+                            view.benchmark_status_error = Some(error.message.into());
+                            cx.notify();
+                        }
+                        false
+                    }
                 });
-                if updated.is_err() || !running {
+                if !matches!(running, Ok(true)) {
                     break;
                 }
                 cx.background_executor()
@@ -667,6 +711,7 @@ impl ModelsView {
                 }
             });
         let saved_count = self.provider.selected_models.len();
+        let retry_status = self.benchmark_status_error.is_some();
         h_flex()
             .px_6()
             .gap_2()
@@ -706,6 +751,7 @@ impl ModelsView {
                             .small()
                             .icon(IconName::RefreshCw)
                             .label(t!("models.refresh"))
+                            .loading(self.refreshing)
                             .disabled(busy)
                             .on_click(cx.listener(|view, _, _, cx| view.refresh_models(cx))),
                     )
@@ -732,9 +778,23 @@ impl ModelsView {
                             .secondary()
                             .small()
                             .icon(IconName::Gauge)
-                            .label(t!("models.benchmark", count = saved_count))
-                            .disabled(busy || saved_count == 0 || self.benchmark_running())
-                            .on_click(cx.listener(|view, _, _, cx| view.start_benchmark(cx))),
+                            .label(if retry_status {
+                                t!("models.benchmark_retry_status")
+                            } else {
+                                t!("models.benchmark", count = saved_count)
+                            })
+                            .loading(self.benchmark_starting)
+                            .disabled(
+                                !retry_status
+                                    && (busy || saved_count == 0 || self.benchmark_running()),
+                            )
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                if view.benchmark_status_error.is_some() {
+                                    view.poll_benchmark(cx);
+                                } else {
+                                    view.start_benchmark(cx);
+                                }
+                            })),
                     )
                     .child(
                         Popover::new("benchmark-settings")
@@ -1223,26 +1283,85 @@ impl ModelsView {
     }
 
     fn benchmark_progress(&self, cx: &App) -> Option<impl IntoElement> {
-        let snapshot = self
-            .benchmark
-            .as_ref()
-            .filter(|snapshot| snapshot.status == "running")?;
-        let done = snapshot
+        let snapshot = self.benchmark.as_ref()?;
+        let running = snapshot.status == "running";
+        let own_run = self.benchmark_run.as_deref() == Some(snapshot.run_id.as_str());
+        let colors = cx.theme().colors;
+        let done = snapshot.results.len();
+        let total = snapshot.total_models;
+        let failed = snapshot
             .results
             .iter()
-            .filter(|result| result.status != "running")
+            .filter(|result| result.status != "completed")
             .count();
+        let (label, icon, color) = match snapshot.status.as_str() {
+            "running" if self.benchmark_status_error.is_some() => (
+                t!("models.benchmark_status_unavailable"),
+                Some(IconName::CircleAlert),
+                colors.warning,
+            ),
+            "running" => (
+                t!("models.benchmark_progress", done = done, total = total),
+                None,
+                colors.muted_foreground,
+            ),
+            "completed" if own_run && failed > 0 => (
+                t!("models.benchmark_errors", failed = failed, total = total),
+                Some(IconName::CircleAlert),
+                colors.warning,
+            ),
+            "completed" if own_run => (
+                t!("models.benchmark_completed", count = done),
+                Some(IconName::CircleCheck),
+                colors.success,
+            ),
+            "interrupted" if own_run => (
+                t!("models.benchmark_interrupted"),
+                Some(IconName::CircleAlert),
+                colors.warning,
+            ),
+            "failed" if own_run => (
+                t!("models.benchmark_failed"),
+                Some(IconName::CircleAlert),
+                colors.danger,
+            ),
+            _ => return None,
+        };
         Some(
             h_flex()
+                .id("benchmark-status")
                 .gap_2()
+                .min_w_0()
                 .text_xs()
-                .text_color(cx.theme().colors.muted_foreground)
-                .child(gpui_kit::component::spinner::Spinner::new().xsmall())
-                .child(t!(
-                    "models.benchmark_progress",
-                    done = done,
-                    total = snapshot.total_models
-                )),
+                .text_color(color)
+                .when_some(icon, |status, icon| {
+                    status.child(Icon::new(icon).xsmall().flex_none())
+                })
+                .when(
+                    running && self.benchmark_status_error.is_none() && total > 0,
+                    |status| {
+                        status.child(
+                            Progress::new((SharedString::from(snapshot.run_id.clone()), 0usize))
+                                .xsmall()
+                                .w_16()
+                                .flex_none()
+                                .value(100.0 * done as f32 / total as f32)
+                                .accessibility_label(t!("models.measuring")),
+                        )
+                    },
+                )
+                .child(div().truncate().child(label))
+                .when_some(
+                    self.benchmark_status_error
+                        .clone()
+                        .or_else(|| snapshot.error.clone().map(SharedString::from)),
+                    |status, error| {
+                        status.tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(error.clone())
+                                .build(window, cx)
+                        })
+                    },
+                ),
         )
     }
 

@@ -2,6 +2,7 @@
 //! the saved route JSON so fields it does not show are preserved; the CLI
 //! validates and stores the result.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName;
@@ -9,10 +10,12 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::searchable_list::SearchableListItem;
+use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IndexPath, Sizable as _, StyledExt as _,
+    WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::{
     Anchor, Animation, AnimationExt as _, AnyElement, App, AppContext as _, Bounds, Context,
@@ -90,11 +93,53 @@ struct RouteModels {
     models: Vec<RouteModel>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 struct RouteModel {
     id: String,
     #[serde(default)]
     display_name: Option<String>,
+}
+
+impl SearchableListItem for RouteModel {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.display_name.as_deref().unwrap_or(&self.id).into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.id
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let query = query.to_lowercase();
+        self.id.to_lowercase().contains(&query)
+            || self
+                .display_name
+                .as_ref()
+                .is_some_and(|name| name.to_lowercase().contains(&query))
+    }
+
+    fn render(&self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let name = self.display_name.as_ref().filter(|name| *name != &self.id);
+        v_flex()
+            .h_8()
+            .min_w_0()
+            .flex_1()
+            .justify_center()
+            .when_some(name, |row, name| {
+                row.child(div().truncate().child(SharedString::from(name.clone())))
+            })
+            .child(
+                div()
+                    .truncate()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .when(name.is_some(), |id| {
+                        id.text_xs().text_color(cx.theme().colors.muted_foreground)
+                    })
+                    .child(SharedString::from(self.id.clone())),
+            )
+    }
 }
 
 struct Draft {
@@ -135,7 +180,7 @@ impl Draft {
 
 pub struct RoutingPage {
     routes: Option<Vec<Value>>,
-    models: Vec<RouteModel>,
+    models: Arc<Vec<RouteModel>>,
     error: Option<SharedString>,
     selected: Option<String>,
     draft: Option<Draft>,
@@ -191,7 +236,7 @@ impl RoutingPage {
         });
         let mut page = Self {
             routes: None,
-            models: Vec::new(),
+            models: Arc::default(),
             error: None,
             selected: None,
             draft: None,
@@ -215,11 +260,14 @@ impl RoutingPage {
                 match (routes, models) {
                     (Ok(routes), Ok(models)) => {
                         page.error = None;
-                        page.models = models
+                        let models: Vec<_> = models
                             .models
                             .into_iter()
                             .filter(|model| !model.id.starts_with(VIRTUAL_PREFIX))
                             .collect();
+                        if *page.models != models {
+                            page.models = Arc::new(models);
+                        }
                         page.routes = Some(routes.routes);
                         let clean = page.draft.as_ref().is_none_or(|draft| !draft.dirty);
                         if clean {
@@ -361,50 +409,81 @@ impl RoutingPage {
 }
 
 impl RoutingPage {
-    /// A dropdown listing every routable model.
+    /// A searchable picker for a model in one position of the route.
     fn model_picker(
         &self,
         id: impl Into<ElementId>,
         current: Option<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
         on_pick: impl Fn(&mut Draft, String) + 'static,
     ) -> AnyElement {
-        let label = current
-            .as_deref()
-            .map_or_else(|| tr!("routing.choose_model"), |id| self.model_label(id));
-        let options: Vec<(String, SharedString)> = self
+        let id = id.into();
+        let current_index = self
             .models
             .iter()
-            .map(|model| (model.id.clone(), self.model_label(&model.id)))
-            .collect();
+            .position(|model| Some(&model.id) == current.as_ref())
+            .map(|index| IndexPath::default().row(index));
         let view = cx.entity().downgrade();
-        let on_pick = std::rc::Rc::new(on_pick);
-        Button::new(id)
-            .secondary()
-            .small()
-            .label(label)
-            .dropdown_caret(true)
-            .dropdown_menu(move |menu, _, _| {
-                options.iter().fold(
-                    menu.scrollable(true).max_h(gpui_kit::px(360.0)),
-                    |menu, (model, label)| {
-                        let view = view.clone();
-                        let on_pick = on_pick.clone();
-                        let model = model.clone();
-                        menu.item(
-                            PopupMenuItem::new(label.clone())
-                                .checked(current.as_deref() == Some(model.as_str()))
-                                .on_click(move |_, _, cx| {
-                                    let model = model.clone();
-                                    let on_pick = on_pick.clone();
-                                    Self::update_draft(&view, cx, move |draft| {
-                                        on_pick(draft, model)
-                                    });
-                                }),
-                        )
-                    },
+        let picker = window.use_keyed_state(id.clone(), cx, |window, cx| {
+            let state = cx.new(|cx| {
+                SelectState::new(
+                    SearchableVec::new(self.models.as_ref().clone()),
+                    current_index,
+                    window,
+                    cx,
                 )
-            })
+                .searchable(true)
+            });
+            let subscription = window.subscribe(&state, cx, move |_, event, _, cx| {
+                if let SelectEvent::Confirm(Some(model)) = event {
+                    Self::update_draft(&view, cx, |draft| on_pick(draft, model.clone()));
+                }
+            });
+            (state, self.models.clone(), subscription)
+        });
+        let (state, catalog, _) = picker.read(cx);
+        let state = state.clone();
+        let catalog_changed = !Arc::ptr_eq(catalog, &self.models);
+        let available = current.as_ref().filter(|_| current_index.is_some());
+        if catalog_changed || state.read(cx).selected_value() != available {
+            if catalog_changed {
+                picker.update(cx, |(_, catalog, _), _| *catalog = self.models.clone());
+            }
+            state.update(cx, |state, cx| {
+                if catalog_changed {
+                    state.set_items(SearchableVec::new(self.models.as_ref().clone()), window, cx);
+                }
+                if let Some(model) = &current {
+                    state.set_selected_value(model, window, cx);
+                } else {
+                    state.set_selected_index(None, window, cx);
+                }
+            });
+        }
+        let placeholder = current.map_or_else(|| tr!("routing.choose_model"), SharedString::from);
+        div()
+            .h_7()
+            .w_full()
+            .min_w_0()
+            .max_w_64()
+            .child(
+                Select::new(&state)
+                    .id(id)
+                    .small()
+                    .placeholder(placeholder)
+                    .accessibility_label(t!("routing.choose_model"))
+                    .search_placeholder(t!("routing.search_models"))
+                    .menu_width(px(360.0))
+                    .menu_max_h(px(360.0))
+                    .empty(|_, cx| {
+                        div()
+                            .p_3()
+                            .text_sm()
+                            .text_color(cx.theme().colors.muted_foreground)
+                            .child(t!("models.no_results"))
+                    }),
+            )
             .into_any_element()
     }
 
@@ -682,7 +761,12 @@ impl RoutingPage {
             )
     }
 
-    fn render_failover(&self, draft: &Draft, cx: &mut Context<Self>) -> AnyElement {
+    fn render_failover(
+        &self,
+        draft: &Draft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let colors = cx.theme().colors;
         let simulating = self.simulating;
         let source = draft.text("source");
@@ -715,6 +799,7 @@ impl RoutingPage {
                 let picker = self.model_picker(
                     ElementId::Name(format!("fallback-{index}").into()),
                     Some(model.clone()),
+                    window,
                     cx,
                     move |draft, picked| {
                         let mut list = draft.list("fallbacks");
@@ -799,6 +884,7 @@ impl RoutingPage {
             .child(picker_slot(self.model_picker(
                 "failover-source",
                 source,
+                window,
                 cx,
                 |draft, picked| draft.set("source", json!(picked)),
             )));
@@ -914,7 +1000,12 @@ impl RoutingPage {
             .into_any_element()
     }
 
-    fn render_fusion(&self, draft: &Draft, cx: &mut Context<Self>) -> AnyElement {
+    fn render_fusion(
+        &self,
+        draft: &Draft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let colors = cx.theme().colors;
         let panels = draft.list("panel_models");
         let view = cx.entity().downgrade();
@@ -1023,6 +1114,7 @@ impl RoutingPage {
                     .child(self.model_picker(
                         "fusion-judge",
                         draft.text("judge_model"),
+                        window,
                         cx,
                         |draft, picked| draft.set("judge_model", json!(picked)),
                     )),
@@ -1056,6 +1148,7 @@ impl RoutingPage {
                             .child(self.model_picker(
                                 "fusion-final",
                                 draft.text("final_model"),
+                                window,
                                 cx,
                                 |draft, picked| draft.set("final_model", json!(picked)),
                             )),
@@ -1142,7 +1235,12 @@ impl RoutingPage {
             .into_any_element()
     }
 
-    fn render_schedule(&self, draft: &Draft, cx: &mut Context<Self>) -> AnyElement {
+    fn render_schedule(
+        &self,
+        draft: &Draft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let colors = cx.theme().colors;
         let slots: Vec<Value> = draft
             .payload
@@ -1209,6 +1307,7 @@ impl RoutingPage {
                     .child(self.model_picker(
                         ElementId::Name(format!("slot-model-{index}").into()),
                         model,
+                        window,
                         cx,
                         move |draft, picked| edit("model", json!(picked))(draft),
                     ))
@@ -1264,6 +1363,7 @@ impl RoutingPage {
                     .child(self.model_picker(
                         "schedule-final",
                         draft.text("final_model"),
+                        window,
                         cx,
                         |draft, picked| {
                             draft.set("judge_model", json!(picked.clone()));
@@ -1347,11 +1447,10 @@ impl RoutingPage {
             |model| self.model_label(model),
         );
         let body = match kind {
-            Kind::Failover => self.render_failover(draft, cx),
-            Kind::Fusion => self.render_fusion(draft, cx),
-            Kind::Schedule => self.render_schedule(draft, cx),
+            Kind::Failover => self.render_failover(draft, window, cx),
+            Kind::Fusion => self.render_fusion(draft, window, cx),
+            Kind::Schedule => self.render_schedule(draft, window, cx),
         };
-        let _ = window;
         v_flex()
             .w_full()
             .max_w(gpui_kit::rems(48.0))
@@ -1785,73 +1884,77 @@ fn map_branches(children: usize, can_add: bool, simulating: bool, cx: &App) -> i
     let colors = cx.theme().colors;
     let idle = colors.muted_foreground.opacity(0.35);
     let active = colors.primary;
-    div().absolute().inset_0().with_animation(
-        ElementId::Name(format!("failover-map-{simulating}-{children}").into()),
-        Animation::new(FLOW_CYCLE).repeat(),
-        move |layer, cycle| {
-            let ease = theme::curve(theme::MOVE_CURVE);
-            let breath = 0.5 - 0.5 * (cycle * std::f32::consts::TAU).cos();
-            layer.child(
-                canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, _| {
-                        let at = |x: f32, y: f32| {
-                            point(bounds.origin.x + px(x), bounds.origin.y + px(y))
+    let render_branches = move |layer: gpui_kit::Div, cycle: f32| {
+        let ease = theme::curve(theme::MOVE_CURVE);
+        let breath = 0.5 - 0.5 * (cycle * std::f32::consts::TAU).cos();
+        layer.child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let at =
+                        |x: f32, y: f32| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
+                    let root = at(MAP_PAD + ROOT_WIDTH, root_top(children) + NODE_HEIGHT / 2.0);
+                    let branches: Vec<Curve> = (0..children)
+                        .map(|index| {
+                            Curve::level(root, at(CHILD_LEFT, child_top(index) + NODE_HEIGHT / 2.0))
+                        })
+                        .collect();
+                    // The success leaf is index 0; the first fallback is 1.
+                    let lit = usize::from(simulating && children > 1 + usize::from(can_add));
+                    for (index, branch) in branches.iter().enumerate() {
+                        if index == lit {
+                            continue;
+                        }
+                        let dashed = can_add && index == children - 1;
+                        branch.stroke(1.25, dashed, window, idle);
+                    }
+                    let branch = branches[lit];
+                    branch.stroke(6.0, false, window, active.opacity(0.06 + 0.1 * breath));
+                    branch.stroke(1.5, false, window, active.opacity(0.6 + 0.3 * breath));
+                    for bead in 0..WAKE_BEADS {
+                        let progress = (cycle - bead as f32 * 0.02) / 0.7;
+                        if !(0.0..1.0).contains(&progress) {
+                            continue;
+                        }
+                        let center = branch.at(ease(progress));
+                        let fade = 1.0 - bead as f32 / WAKE_BEADS as f32;
+                        let radius = if bead == 0 { 3.5 } else { 2.5 * fade + 0.5 };
+                        let color = if bead == 0 {
+                            colors.popover_foreground
+                        } else {
+                            active.opacity(0.45 * fade)
                         };
-                        let root = at(MAP_PAD + ROOT_WIDTH, root_top(children) + NODE_HEIGHT / 2.0);
-                        let branches: Vec<Curve> = (0..children)
-                            .map(|index| {
-                                Curve::level(
-                                    root,
-                                    at(CHILD_LEFT, child_top(index) + NODE_HEIGHT / 2.0),
-                                )
-                            })
-                            .collect();
-                        // The success leaf is index 0; the first fallback is 1.
-                        let lit = usize::from(simulating && children > 1 + usize::from(can_add));
-                        for (index, branch) in branches.iter().enumerate() {
-                            if index == lit {
-                                continue;
-                            }
-                            let dashed = can_add && index == children - 1;
-                            branch.stroke(1.25, dashed, window, idle);
-                        }
-                        let branch = branches[lit];
-                        branch.stroke(6.0, false, window, active.opacity(0.06 + 0.1 * breath));
-                        branch.stroke(1.5, false, window, active.opacity(0.6 + 0.3 * breath));
-                        for bead in 0..WAKE_BEADS {
-                            let progress = (cycle - bead as f32 * 0.02) / 0.7;
-                            if !(0.0..1.0).contains(&progress) {
-                                continue;
-                            }
-                            let center = branch.at(ease(progress));
-                            let fade = 1.0 - bead as f32 / WAKE_BEADS as f32;
-                            let radius = if bead == 0 { 3.5 } else { 2.5 * fade + 0.5 };
-                            let color = if bead == 0 {
-                                colors.popover_foreground
-                            } else {
-                                active.opacity(0.45 * fade)
-                            };
-                            window.paint_quad(
-                                fill(
-                                    Bounds::centered_at(
-                                        center,
-                                        size(px(radius * 2.0), px(radius * 2.0)),
-                                    ),
-                                    color,
-                                )
-                                .corner_radii(px(radius)),
-                            );
-                        }
-                        // Root port.
                         window.paint_quad(
-                            fill(Bounds::centered_at(root, size(px(6.0), px(6.0))), active)
-                                .corner_radii(px(3.0)),
+                            fill(
+                                Bounds::centered_at(
+                                    center,
+                                    size(px(radius * 2.0), px(radius * 2.0)),
+                                ),
+                                color,
+                            )
+                            .corner_radii(px(radius)),
                         );
-                    },
-                )
-                .size_full(),
+                    }
+                    // Root port.
+                    window.paint_quad(
+                        fill(Bounds::centered_at(root, size(px(6.0), px(6.0))), active)
+                            .corner_radii(px(3.0)),
+                    );
+                },
             )
-        },
-    )
+            .size_full(),
+        )
+    };
+    let layer = div().absolute().inset_0();
+    if cx.reduce_motion() {
+        render_branches(layer, 1.0).into_any_element()
+    } else {
+        layer
+            .with_animation(
+                ElementId::Name(format!("failover-map-{simulating}-{children}").into()),
+                Animation::new(FLOW_CYCLE).repeat(),
+                render_branches,
+            )
+            .into_any_element()
+    }
 }

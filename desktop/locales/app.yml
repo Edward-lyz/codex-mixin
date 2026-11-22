@@ -191,6 +191,24 @@ models.benchmark_timeout:
 models.benchmark_progress:
   en: "Testing %{done}/%{total}"
   zh-CN: "测速中 %{done}/%{total}"
+models.benchmark_completed:
+  en: "Tested %{count} models"
+  zh-CN: "已测速 %{count} 个模型"
+models.benchmark_interrupted:
+  en: "Benchmark interrupted"
+  zh-CN: "测速已中断"
+models.benchmark_failed:
+  en: "Benchmark failed"
+  zh-CN: "测速失败"
+models.benchmark_errors:
+  en: "%{failed}/%{total} model tests failed"
+  zh-CN: "%{failed}/%{total} 个模型测速失败"
+models.benchmark_status_unavailable:
+  en: "Benchmark status unavailable"
+  zh-CN: "暂时无法获取测速状态"
+models.benchmark_retry_status:
+  en: "Retry Benchmark Status"
+  zh-CN: "重新获取测速状态"
 models.measuring:
   en: "Testing…"
   zh-CN: "测速中…"
@@ -776,6 +794,9 @@ routing.add_slot:
 routing.choose_model:
   en: "Choose a model"
   zh-CN: "选择模型"
+routing.search_models:
+  en: "Search by model name or ID"
+  zh-CN: "按模型名称或 ID 搜索"
 routing.delete:
   en: "Delete Route"
   zh-CN: "删除路由"

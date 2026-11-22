@@ -256,16 +256,19 @@ pub struct BenchmarkStatus {
     pub snapshot: Option<BenchmarkSnapshot>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BenchmarkSnapshot {
+    pub run_id: String,
     pub status: String,
     #[serde(default)]
     pub total_models: usize,
     #[serde(default)]
     pub results: Vec<BenchmarkResult>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct BenchmarkResult {
     pub provider_id: String,
     pub upstream_model: String,

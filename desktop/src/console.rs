@@ -460,6 +460,18 @@ impl Console {
             .rounded_md()
             .bg(colors.sidebar_accent)
             .shadow_xs();
+        let service = &Store::global(cx).read(cx).service;
+        let running = service
+            .value
+            .as_ref()
+            .is_some_and(|status| status.is_running());
+        let running_opacity = transition(
+            "gateway-status",
+            if running { 1.0 } else { 0.0 },
+            theme::move_transition(),
+            window,
+            cx,
+        );
         let items = PAGES.iter().enumerate().map(|(index, page)| {
             let active = index == selected;
             let page = *page;
@@ -493,7 +505,6 @@ impl Console {
         });
         let service = &Store::global(cx).read(cx).service;
         let status = service.value.as_ref();
-        let running = status.as_ref().is_some_and(|status| status.is_running());
         let endpoint = status
             .as_ref()
             .and_then(|status| status.endpoint.clone())
@@ -525,7 +536,7 @@ impl Console {
             .pb_3()
             .child(div().px_1().pt_1().pb_5().child(windmill::mark(
                 px(32.0),
-                Some(("console-windmill", self.logo_spin).into()),
+                (!cx.reduce_motion()).then(|| ("console-windmill", self.logo_spin).into()),
             )))
             .child(
                 v_flex()
@@ -552,39 +563,16 @@ impl Console {
                             .child(
                                 div()
                                     .relative()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
                                     .size_2()
-                                    .when(running, |dot| {
-                                        // A soft ring breathes around the dot
-                                        // while the gateway serves requests.
-                                        dot.child(
-                                            div()
-                                                .absolute()
-                                                .size_2()
-                                                .rounded_full()
-                                                .bg(colors.success)
-                                                .with_animation(
-                                                    "gateway-pulse",
-                                                    Animation::new(
-                                                        std::time::Duration::from_millis(1800),
-                                                    )
-                                                    .repeat()
-                                                    .with_easing(theme::curve(theme::ENTER_CURVE)),
-                                                    |ring, progress| {
-                                                        let grow = px(8.0 + 8.0 * progress);
-                                                        ring.size(grow)
-                                                            .opacity(0.45 * (1.0 - progress))
-                                                    },
-                                                ),
-                                        )
-                                    })
-                                    .child(status_dot(if running {
-                                        colors.success
-                                    } else {
-                                        colors.muted_foreground
-                                    })),
+                                    .flex_none()
+                                    .child(status_dot(colors.muted_foreground))
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .inset_0()
+                                            .opacity(running_opacity)
+                                            .child(status_dot(colors.success)),
+                                    ),
                             )
                             .child(div().truncate().child(status_label)),
                     )
@@ -611,11 +599,19 @@ impl Render for Console {
             .position(|page| *page == self.page)
             .unwrap_or(0);
         let page_id = SharedString::from(format!("console-page-{selected}"));
-        let content = div().size_full().child(self.page_view()).with_animation(
-            page_id,
-            Animation::new(theme::ENTER_DURATION).with_easing(theme::curve(theme::ENTER_CURVE)),
-            |content, progress| content.opacity(progress).mt(px(6.0 * (1.0 - progress))),
-        );
+        let content = div().size_full().child(self.page_view());
+        let content = if cx.reduce_motion() {
+            content.into_any_element()
+        } else {
+            content
+                .with_animation(
+                    page_id,
+                    Animation::new(theme::ENTER_DURATION)
+                        .with_easing(theme::curve(theme::ENTER_CURVE)),
+                    |content, progress| content.opacity(progress).mt(px(6.0 * (1.0 - progress))),
+                )
+                .into_any_element()
+        };
         // The window is the frosted sidebar surface; the page sits on it as an
         // opaque inset sheet with a hairline edge.
         div()

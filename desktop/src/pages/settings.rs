@@ -461,7 +461,7 @@ impl SettingsPage {
         };
         let spin = self
             .logo_clicked_at
-            .filter(|time| time.elapsed() < windmill::SPIN_DURATION)
+            .filter(|time| !cx.reduce_motion() && time.elapsed() < windmill::SPIN_DURATION)
             .map(|_| ("settings-windmill", self.logo_spin).into());
         div()
             .relative()
