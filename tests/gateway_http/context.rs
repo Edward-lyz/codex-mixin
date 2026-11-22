@@ -1440,6 +1440,116 @@ async fn context_checkpoint_replaces_local_compaction() {
 }
 
 #[tokio::test]
+async fn context_checkpoint_reconciles_history_after_a_rewrite() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config.clone(), &database_path).await;
+    let session = "checkpoint-after-history-rewrite";
+    let token = request_context_checkpoint(&gateway_url, session).await;
+    let client = reqwest::Client::new();
+
+    // An earlier replay shortens the archive. The checkpoint still points
+    // past its end, and can only supply the messages sent after it.
+    let mut replay = responses_request();
+    replay.as_object_mut().unwrap().remove("instructions");
+    replay["input"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"distinctive opening request"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"earlier retry"}]}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", session)
+        .json(&replay)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.bytes().await.unwrap();
+
+    let mut gateway = gateway_url;
+    for reopen in [false, true] {
+        if reopen {
+            gateway = spawn_gateway_with_context(config.clone(), &database_path).await;
+        }
+        let response = replay_context_checkpoint(&gateway, session, &token).await;
+        let status = response.status();
+        let stream = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{stream}");
+        assert!(stream.contains("response.completed"), "{stream}");
+    }
+    let history = requests.lock().unwrap().last().unwrap()["messages"].to_string();
+    for text in [
+        "distinctive opening request",
+        "earlier retry",
+        "next question",
+    ] {
+        assert!(history.contains(text), "{history}");
+    }
+    assert_eq!(history.matches("next question").count(), 1, "{history}");
+
+    // Checkpoint the reconciled prefix so the next requests use an anchor
+    // that still matches the archive, even when it grows an extra tail.
+    let compacted: Value = client
+        .post(format!("{gateway}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", session)
+        .json(&json!({
+            "model":"DeepSeek-V4-Flash-custom",
+            "input":[
+                {"type":"compaction","encrypted_content":token},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"next question"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let aligned_token = compacted["output"][0]["encrypted_content"]
+        .as_str()
+        .unwrap();
+    let mut follow_up = responses_request();
+    follow_up["input"] = json!([
+        {"type":"compaction","encrypted_content":aligned_token},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"shared follow-up"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"old branch tail"}]}
+    ]);
+    for trim in [false, true] {
+        if trim {
+            follow_up["input"].as_array_mut().unwrap().pop();
+        }
+        let response = client
+            .post(format!("{gateway}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header("x-session-id", session)
+            .json(&follow_up)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let stream = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{stream}");
+        assert!(stream.contains("response.completed"), "{stream}");
+        let history = requests.lock().unwrap().last().unwrap()["messages"].to_string();
+        assert_eq!(history.matches("next question").count(), 1, "{history}");
+        assert!(history.contains("shared follow-up"), "{history}");
+        assert_eq!(history.contains("old branch tail"), !trim, "{history}");
+    }
+    let connection = rusqlite::Connection::open(database_path).unwrap();
+    let length: usize = connection
+        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(length, 4, "the unmatched tail must leave active history");
+}
+
+#[tokio::test]
 async fn context_rejects_a_checkpoint_from_another_session() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
     let mut config = test_config(upstream_url);

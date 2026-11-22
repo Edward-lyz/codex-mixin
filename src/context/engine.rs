@@ -304,7 +304,7 @@ impl ContextEngine {
         incoming: &[Value],
         window_tokens: u64,
     ) -> Result<TurnView> {
-        let store = self.lock()?;
+        let mut store = self.lock()?;
         if let Some(owner) = store.response_owner(response_id)?
             && owner != session
         {
@@ -335,11 +335,9 @@ impl ContextEngine {
             let expanded = self.expand_chained_input(session, response_id, incoming)?;
             return self.begin_turn(session, &expanded, window_tokens);
         };
-        store.validate_history_anchor(session, prefix_len, tip.as_deref())?;
         output.extend_from_slice(incoming);
+        store.sync_history_from(session, &output, fingerprint, prefix_len, tip.as_deref())?;
         drop(store);
-        self.lock()?
-            .sync_history_from(session, &output, fingerprint, prefix_len)?;
         self.current_view(session, window_tokens)
     }
 
@@ -416,8 +414,13 @@ impl ContextEngine {
                 stored.revision
             );
         }
-        store.validate_history_anchor(session, prefix_len, decoded.history_tip.as_deref())?;
-        store.sync_history_from(session, &items[index + 1..], fingerprint, prefix_len)?;
+        store.sync_history_from(
+            session,
+            &items[index + 1..],
+            fingerprint,
+            prefix_len,
+            decoded.history_tip.as_deref(),
+        )?;
         drop(store);
         self.current_view(session, window_tokens)
     }

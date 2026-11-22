@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS history (
     reference TEXT NOT NULL,
     PRIMARY KEY (session_key, position)
 );
+CREATE TABLE IF NOT EXISTS history_anchor_rebases (
+    session_key TEXT NOT NULL,
+    anchor_tip TEXT NOT NULL,
+    prefix_len INTEGER NOT NULL,
+    prefix_tip TEXT,
+    PRIMARY KEY (session_key, anchor_tip)
+);
 CREATE TABLE IF NOT EXISTS blocks (
     session_key TEXT NOT NULL,
     block_id TEXT NOT NULL,
@@ -1076,30 +1083,60 @@ impl Store {
         Ok(parent)
     }
 
-    /// Continues from a known history prefix without loading expired bodies.
-    /// An already appended prefix is deduplicated; divergent suffixes fork.
+    /// Reconciles a same-session delta with the current archive. If its
+    /// authenticated anchor is no longer reachable, use the available prefix.
     pub(crate) fn sync_history_from(
         &mut self,
         key: &str,
         items: &[Value],
         fingerprint: impl Fn(&Value) -> Result<String>,
         prefix_len: usize,
+        tip: Option<&str>,
     ) -> Result<()> {
         let mut session = self.ensure_session(key)?;
         let history = self.history(key)?;
         let history_len = history.len();
-        if prefix_len > history_len {
-            bail!("context history anchor is ahead of the archive");
-        }
-        if items.is_empty() {
-            return Ok(());
-        }
+        let reference_at = |length: usize| {
+            length
+                .checked_sub(1)
+                .and_then(|position| history.get(position))
+                .map(|entry| entry.reference.as_str())
+        };
+        let unaligned_tip = match (prefix_len, tip) {
+            (0, None) => None,
+            (0, Some(_)) | (_, None) => bail!("invalid context history anchor"),
+            (_, Some(tip)) => (reference_at(prefix_len) != Some(tip)).then_some(tip),
+        };
+        let mut rebase = None;
+        let prefix_len = if let Some(tip) = unaligned_tip {
+            let saved: Option<(usize, Option<String>)> = self
+                .connection
+                .query_row(
+                    "SELECT prefix_len, prefix_tip FROM history_anchor_rebases
+                 WHERE session_key = ?1 AND anchor_tip = ?2",
+                    params![key, tip],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .context("read reconciled context anchor")?;
+            let valid = saved.filter(|(length, reference)| {
+                *length <= history_len && reference_at(*length) == reference.as_deref()
+            });
+            if let Some((length, _)) = valid {
+                length
+            } else {
+                let length = prefix_len.min(history_len);
+                rebase = Some((tip, length, reference_at(length)));
+                length
+            }
+        } else {
+            prefix_len
+        };
         let (_, common) = self.history_prefix(key, items, &fingerprint, prefix_len)?;
-        let fingerprints = items.iter().map(&fingerprint).collect::<Result<Vec<_>>>()?;
-        if common == items.len() {
+        let divergence = prefix_len + common;
+        if common == items.len() && divergence == history_len && rebase.is_none() {
             return Ok(());
         }
-        let divergence = prefix_len + common;
         let kept: Vec<SegmentRow> = self
             .segments(key, session.revision)?
             .into_iter()
@@ -1129,12 +1166,23 @@ impl Store {
                 );
             }
         }
+        let transaction = self
+            .connection
+            .transaction()
+            .context("begin context continuation")?;
+        if let Some((tip, length, reference)) = rebase {
+            // Keep the same offset when the client retries an old token, even
+            // after appending enough items to reach its original length.
+            transaction.execute(
+                "INSERT INTO history_anchor_rebases (session_key, anchor_tip, prefix_len, prefix_tip)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(session_key, anchor_tip) DO UPDATE SET
+                     prefix_len = excluded.prefix_len, prefix_tip = excluded.prefix_tip",
+                params![key, tip, length, reference],
+            ).context("record reconciled context anchor")?;
+        }
         if divergence < history_len || !uncovered.is_empty() {
             let next_revision = session.revision + 1;
-            let transaction = self
-                .connection
-                .transaction()
-                .context("begin context continuation fork")?;
             transaction
                 .execute("DELETE FROM segments WHERE session_key = ?1", [key])
                 .context("clear segments for continuation fork")?;
@@ -1169,16 +1217,9 @@ impl Store {
             transaction
                 .execute("DELETE FROM nudge_state WHERE session_key = ?1", [key])
                 .context("reset context nudge at continuation fork")?;
-            transaction
-                .commit()
-                .context("commit context continuation fork")?;
             session.revision = next_revision;
         }
         let mut next_ref = session.next_ref;
-        let transaction = self
-            .connection
-            .transaction()
-            .context("begin context continuation")?;
         for (offset, item) in items.iter().enumerate().skip(common) {
             let reference = format!("m{next_ref:06}");
             let position = prefix_len + offset;
@@ -1189,7 +1230,7 @@ impl Store {
                 "INSERT INTO messages (session_key, reference, fingerprint, item_json, created_at,
                     body_codec, body_bytes, body_checksum, body_kind, body_tool)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![key, reference, fingerprints[offset], stored.payload, unix_now(), stored.codec,
+                params![key, reference, fingerprint(item)?, stored.payload, unix_now(), stored.codec,
                     stored.bytes, stored.checksum, item.get("role").or_else(|| item.get("type")).and_then(Value::as_str),
                     item.get("name").and_then(Value::as_str)],
             ).context("append context continuation message")?;
@@ -1221,6 +1262,14 @@ impl Store {
         transaction
             .commit()
             .context("commit context continuation")?;
+        if let Some((_, length, _)) = rebase {
+            tracing::info!(
+                session = %super::types::session_display_name(key),
+                prefix_len = length,
+                history_len,
+                "reconciled a displaced context history anchor"
+            );
+        }
         Ok(())
     }
 
