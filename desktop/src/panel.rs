@@ -79,7 +79,7 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
         if let Some(native) = panel.native.clone()
             && !native.isVisible()
             && handle
-                .update(cx, |_, window, cx| {
+                .update(cx, |_, _, cx| {
                     let _ = view.update(cx, |panel, cx| {
                         panel.action_error = None;
                         cx.notify();
@@ -102,11 +102,12 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
                         }
                     });
                     request_missing_quotas(&store, cx);
-                    window.activate_window();
-                    cx.activate(true);
                 })
                 .is_ok()
         {
+            // A nonactivating NSPanel can become key on its own. Activating
+            // NSApplication too lets AppKit hand key focus to the console.
+            native.makeKeyAndOrderFront(None);
             return;
         }
         if handle.update(cx, |_, window, cx| close(window, cx)).is_ok() {
@@ -124,7 +125,8 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
         is_resizable: false,
         is_minimizable: false,
         focus: true,
-        show: true,
+        // On macOS, install the handle and the focus observer before showing.
+        show: !cfg!(target_os = "macos"),
         window_background: if cfg!(target_os = "macos") {
             WindowBackgroundAppearance::Opaque
         } else {
@@ -151,12 +153,20 @@ pub fn toggle(anchor: Option<Point<Pixels>>, cx: &mut App) {
             cx.set_global(PanelWindow {
                 handle,
                 #[cfg(target_os = "macos")]
-                native,
+                native: native.clone(),
                 #[cfg(target_os = "macos")]
                 view: _view.downgrade(),
             });
             #[cfg(target_os = "macos")]
-            let _ = handle.update(cx, |_, window, _| window.refresh());
+            {
+                let _ = handle.update(cx, |_, window, _| window.refresh());
+                if let Some(native) = native {
+                    native.makeKeyAndOrderFront(None);
+                } else {
+                    let _ = handle.update(cx, |_, window, _| window.activate_window());
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             cx.activate(true);
         }
         Err(error) => eprintln!("cannot open the status panel: {error:#}"),
@@ -183,6 +193,7 @@ fn close(window: &mut Window, cx: &mut App) {
 pub struct StatusPanel {
     action_error: Option<SharedString>,
     authorizing_startup: bool,
+    held_focus: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -203,9 +214,16 @@ impl StatusPanel {
         let activation = cx.observe_window_activation(window, |panel, window, cx| {
             // Closing from inside the activation change would free the
             // window while AppKit is still delivering it; wait one turn.
-            if !window.is_window_active() && !panel.authorizing_startup {
-                window.defer(cx, |window, cx| {
-                    if !window.is_window_active() {
+            if window.is_window_active() {
+                panel.held_focus = true;
+            } else if std::mem::take(&mut panel.held_focus) && !panel.authorizing_startup {
+                let view = cx.entity().downgrade();
+                window.defer(cx, move |window, cx| {
+                    let dismiss = view.upgrade().is_some_and(|view| {
+                        let panel = view.read(cx);
+                        !panel.held_focus && !panel.authorizing_startup
+                    });
+                    if dismiss && !window.is_window_active() {
                         close(window, cx);
                     }
                 });
@@ -219,6 +237,7 @@ impl StatusPanel {
         Self {
             action_error: None,
             authorizing_startup: false,
+            held_focus: window.is_window_active(),
             _subscriptions: vec![observe, activation],
         }
     }

@@ -10,6 +10,13 @@
     "enabled": {
       "type": "boolean"
     },
+    "next_cursor": {
+      "description": "Pass this value as JSON to --before to continue a limited query.",
+      "type": ["array", "null"],
+      "prefixItems": [{"type": "integer"}, {"type": "string"}],
+      "minItems": 2,
+      "maxItems": 2
+    },
     "sessions": {
       "type": "array",
       "items": {
@@ -95,7 +102,7 @@
               "type": "integer"
             },
             "hit_percent": {
-              "type": "number"
+              "type": ["null", "number"]
             },
             "input_tokens": {
               "type": "integer"
@@ -131,8 +138,10 @@
   },
   "required": [
     "database_path",
-    "enabled",
-    "sessions",
-    "totals"
+    "enabled"
+  ],
+  "anyOf": [
+    {"required": ["totals"], "description": "--summary omits view and expiration totals."},
+    {"required": ["sessions", "next_cursor"], "description": "--limit returns one page of sessions."}
   ]
 }

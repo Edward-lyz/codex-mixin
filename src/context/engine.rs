@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::checkpoint;
 use super::fingerprint::fingerprint;
 use super::guidance::{GUIDANCE, MIN_RANGE_CHARS, PendingTier};
-use super::store::{SegmentRow, Store, TurnSample};
+use super::store::{SegmentRow, SessionUsage, Store, TurnSample};
 use super::tools;
 use super::types::{
     CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SESSION_SEPARATOR,
@@ -806,7 +806,57 @@ impl ContextEngine {
 
     /// Compression and cache totals per session for the console page.
     pub fn stats(&self, _window_tokens: u64, enabled: bool) -> Result<ContextStats> {
-        let usage = self.lock()?.session_usage()?;
+        let usage = self.lock()?.session_usage(-1, None)?;
+        let mut totals = Self::usage_totals(&usage);
+        let sessions = self.describe_sessions(usage)?;
+        for session in &sessions {
+            totals.view_tokens = totals.view_tokens.saturating_add(session.view_tokens);
+            totals.expired_messages = totals
+                .expired_messages
+                .saturating_add(session.expired_messages);
+        }
+        Ok(ContextStats {
+            enabled,
+            sessions,
+            totals,
+        })
+    }
+
+    // First-party CLI projections. Summary reads aggregates only. The page
+    // resolves titles and decodes view items for the selected sessions.
+    #[doc(hidden)]
+    pub fn stats_summary(&self) -> Result<StatsTotals> {
+        let usage = self.lock()?.session_usage(-1, None)?;
+        Ok(Self::usage_totals(&usage))
+    }
+
+    #[doc(hidden)]
+    pub fn stats_page(
+        &self,
+        limit: u32,
+        before: Option<&(i64, String)>,
+    ) -> Result<(Vec<SessionStats>, bool)> {
+        let mut usage = self.lock()?.session_usage(i64::from(limit) + 1, before)?;
+        let has_more = usage.len() > limit as usize;
+        usage.truncate(limit as usize);
+        Ok((self.describe_sessions(usage)?, has_more))
+    }
+
+    fn usage_totals(usage: &[SessionUsage]) -> StatsTotals {
+        let mut totals = StatsTotals {
+            sessions: usage.len() as u64,
+            ..StatsTotals::default()
+        };
+        for row in usage {
+            totals.messages = totals.messages.saturating_add(row.messages);
+            totals.compressions = totals.compressions.saturating_add(row.compressions);
+            totals.saved_tokens = totals.saved_tokens.saturating_add(row.saved_tokens);
+            totals.cache.merge(&row.cache);
+        }
+        totals
+    }
+
+    fn describe_sessions(&self, usage: Vec<SessionUsage>) -> Result<Vec<SessionStats>> {
         let mut displays = HashMap::new();
         for client in crate::clients::session_titles::TITLE_CLIENTS {
             let rows: Vec<_> = usage
@@ -941,25 +991,7 @@ impl ContextEngine {
                 cache: row.cache,
             });
         }
-        let mut totals = StatsTotals {
-            sessions: sessions.len() as u64,
-            ..StatsTotals::default()
-        };
-        for session in &sessions {
-            totals.messages = totals.messages.saturating_add(session.messages);
-            totals.compressions = totals.compressions.saturating_add(session.compressions);
-            totals.saved_tokens = totals.saved_tokens.saturating_add(session.saved_tokens);
-            totals.view_tokens = totals.view_tokens.saturating_add(session.view_tokens);
-            totals.expired_messages = totals
-                .expired_messages
-                .saturating_add(session.expired_messages);
-            totals.cache.merge(&session.cache);
-        }
-        Ok(ContextStats {
-            enabled,
-            sessions,
-            totals,
-        })
+        Ok(sessions)
     }
 
     pub fn export(&self, session: &str) -> Result<Value> {

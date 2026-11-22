@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at INTEGER NOT NULL,
     last_error TEXT
 );
+CREATE INDEX IF NOT EXISTS sessions_recent ON sessions (updated_at DESC, session_key DESC);
 CREATE TABLE IF NOT EXISTS inherited_checkpoints (
     session_key TEXT PRIMARY KEY,
     token_digest BLOB NOT NULL
@@ -1973,11 +1974,12 @@ impl Store {
 
     /// Per-session compression and cache aggregates for the console page. View
     /// sizes stay out of this query because only the engine can render a view.
-    pub fn session_usage(&self) -> Result<Vec<SessionUsage>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT s.session_key, s.revision, s.updated_at,
+    pub fn session_usage(
+        &self,
+        limit: i64,
+        before: Option<&(i64, String)>,
+    ) -> Result<Vec<SessionUsage>> {
+        const COLUMNS: &str = "SELECT s.session_key, s.revision, s.updated_at,
                         (SELECT COUNT(*) FROM history h WHERE h.session_key = s.session_key),
                         (SELECT COUNT(*) FROM blocks b WHERE b.session_key = s.session_key),
                         (SELECT COALESCE(SUM(b.covered_tokens - b.replacement_tokens), 0)
@@ -1996,11 +1998,22 @@ impl Store {
                          WHERE t.session_key = s.session_key AND t.cache_metrics_available = 1),
                         (SELECT t.codex_thread_id FROM turns t WHERE t.session_key = s.session_key
                          AND t.codex_thread_id IS NOT NULL LIMIT 1)
-                 FROM sessions s ORDER BY s.updated_at DESC",
-            )
-            .context("prepare session usage")?;
+                 FROM sessions s";
+        let order = "ORDER BY s.updated_at DESC, s.session_key DESC LIMIT ?1";
+        let mut statement = if before.is_some() {
+            self.connection.prepare(&format!(
+                "{COLUMNS} WHERE (s.updated_at, s.session_key) < (?2, ?3) {order}"
+            ))
+        } else {
+            self.connection.prepare(&format!("{COLUMNS} {order}"))
+        }
+        .context("prepare session usage")?;
+        let mut bindings: Vec<&dyn rusqlite::ToSql> = vec![&limit];
+        if let Some((updated_at, session)) = before {
+            bindings.extend([updated_at as &dyn rusqlite::ToSql, session]);
+        }
         let rows = statement
-            .query_map([], |row| {
+            .query_map(bindings.as_slice(), |row| {
                 Ok(SessionUsage {
                     session: row.get(0)?,
                     codex_thread_id: row.get(12)?,

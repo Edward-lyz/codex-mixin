@@ -21,6 +21,7 @@ path = "src/main.rs"
 gpui-kit = "0.10.0"
 anyhow = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+image = { version = "0.25", default-features = false }
 resvg = "0.46"
 rust-embed = { version = "8.7", features = ["include-exclude"] }
 rust-i18n = "4.2"

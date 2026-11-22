@@ -716,9 +716,12 @@ context.guidance_only_detail:
 context.load_failed:
   en: "Cannot read context settings"
   zh-CN: "读取上下文设置失败"
-context.loading:
-  en: "Reading context settings…"
-  zh-CN: "正在读取上下文设置…"
+context.load_more:
+  en: "Load 10 more"
+  zh-CN: "再加载 10 条"
+context.loading_sessions:
+  en: "Loading sessions…"
+  zh-CN: "正在加载会话…"
 context.max_tier:
   en: "Highest tier"
   zh-CN: "最高压缩层级"
@@ -743,6 +746,9 @@ context.protected:
 context.protected_detail:
   en: "The newest messages always stay uncompressed."
   zh-CN: "最新的消息始终保持原文。"
+context.retry_sessions:
+  en: "Retry loading sessions"
+  zh-CN: "重试加载会话"
 context.save_label:
   en: "Save context settings"
   zh-CN: "保存上下文设置"
@@ -755,12 +761,12 @@ context.sessions:
 context.subtitle:
   en: "Keeps long agent sessions inside the model's context window."
   zh-CN: "让长时间的 Agent 会话始终处于模型上下文窗口内。"
+context.summary_failed:
+  en: "Cannot read context summary"
+  zh-CN: "读取上下文汇总失败"
 context.tier:
   en: "Tier %{tier}"
   zh-CN: "第 %{tier} 层"
-context.view:
-  en: "Current view %{count}"
-  zh-CN: "当前视图 %{count}"
 routing.add_fallback:
   en: "Add Fallback"
   zh-CN: "添加备用模型"
@@ -1013,6 +1019,9 @@ settings.import_prompt:
 settings.repository:
   en: "Open the project on GitHub"
   zh-CN: "在 GitHub 打开项目"
+settings.spin_logo:
+  en: "Spin the Codex Mixin logo"
+  zh-CN: "旋转 Codex Mixin 标志"
 settings.restart:
   en: "Restart"
   zh-CN: "重启"

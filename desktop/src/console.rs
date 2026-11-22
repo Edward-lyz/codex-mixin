@@ -12,9 +12,13 @@ use gpui_kit::{
     AppContext as _, Bounds, Context, Entity, Global, InteractiveElement as _, IntoElement,
     KeyBinding, Menu, MenuItem, OsAction, ParentElement as _, Pixels, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, SystemMenuType, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions, div, img, prelude::FluentBuilder as _,
-    px, size,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, div, prelude::FluentBuilder as _, px,
+    size,
 };
+#[cfg(target_os = "macos")]
+use objc2::{MainThreadMarker, rc::Retained};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSWindow};
 use rust_i18n::t;
 
 use crate::pages::{
@@ -24,6 +28,7 @@ use crate::pages::{
 use crate::store::{Store, StoreEvent};
 use crate::theme;
 use crate::widgets::status_dot;
+use crate::windmill;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Page {
@@ -81,7 +86,11 @@ impl Page {
     }
 }
 
-struct ConsoleWindow(AnyWindowHandle);
+struct ConsoleWindow {
+    handle: AnyWindowHandle,
+    #[cfg(target_os = "macos")]
+    native: Option<Retained<NSWindow>>,
+}
 
 impl Global for ConsoleWindow {}
 
@@ -122,9 +131,18 @@ pub fn init(cx: &mut App) {
         ]);
     }
     cx.on_action(|_: &CloseWindow, cx| {
-        if let Some(handle) = cx.active_window() {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-        }
+        let active = cx.active_window();
+        // A menu or keyboard action may be dispatching inside the window.
+        cx.defer(move |cx| {
+            let console = cx
+                .try_global::<ConsoleWindow>()
+                .map(|console| console.handle);
+            if let Some(handle) = active.filter(|handle| Some(*handle) != console) {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            } else {
+                close_console(cx);
+            }
+        });
     });
     cx.on_action(|_: &Minimize, cx| {
         if let Some(handle) = cx.active_window() {
@@ -144,7 +162,7 @@ pub fn init(cx: &mut App) {
     cx.on_window_closed(|cx, _| {
         let open = cx
             .try_global::<ConsoleWindow>()
-            .is_some_and(|console| cx.windows().contains(&console.0));
+            .is_some_and(|console| cx.windows().contains(&console.handle));
         if !open && cx.has_global::<ConsoleWindow>() {
             cx.remove_global::<ConsoleWindow>();
             cx.set_activation_policy(ActivationPolicy::Accessory);
@@ -181,8 +199,37 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+fn close_console(cx: &mut App) {
+    let Some(console) = cx.try_global::<ConsoleWindow>() else {
+        return;
+    };
+    let handle = console.handle;
+    #[cfg(target_os = "macos")]
+    if let Some(native) = console.native.clone() {
+        // AppKit's Touch Bar finder can still observe the view on the next
+        // display cycle. Keep the view alive when the main window is closed.
+        native.orderOut(None);
+        cx.set_activation_policy(ActivationPolicy::Accessory);
+        let _ = handle.update(cx, |root, _, cx| {
+            if let Ok(root) = root.downcast::<gpui_kit::base::Root>()
+                && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
+            {
+                if let Some(usage) = console.read(cx).usage.clone() {
+                    usage.update(cx, |page, cx| page.set_active(false, cx));
+                }
+                if let Some(context) = console.read(cx).context.clone() {
+                    context.update(cx, |page, cx| page.set_active(false, cx));
+                }
+            }
+        });
+        return;
+    }
+    let _ = handle.update(cx, |_, window, _| window.remove_window());
+}
+
 pub struct Console {
     page: Page,
+    logo_spin: u64,
     providers: Entity<ProvidersPage>,
     agents: Option<Entity<AgentsPage>>,
     usage: Option<Entity<UsagePage>>,
@@ -198,15 +245,18 @@ impl Console {
         // The console is a regular window: it gets a Dock icon, Command-Tab
         // and the app menu with its shortcuts.
         cx.set_activation_policy(ActivationPolicy::Regular);
-        if let Some(handle) = cx.try_global::<ConsoleWindow>().map(|window| window.0)
+        if let Some(handle) = cx.try_global::<ConsoleWindow>().map(|window| window.handle)
             && cx.windows().contains(&handle)
         {
             let _ = handle.update(cx, |root, window, cx| {
                 window.activate_window();
-                if let (Some(page), Ok(root)) = (page, root.downcast::<gpui_kit::base::Root>())
+                if let Ok(root) = root.downcast::<gpui_kit::base::Root>()
                     && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
                 {
-                    console.update(cx, |console, cx| console.select(page, window, cx));
+                    console.update(cx, |console, cx| {
+                        console.logo_spin += 1;
+                        console.select(page.unwrap_or(console.page), window, cx);
+                    });
                 }
             });
             cx.activate(true);
@@ -229,11 +279,35 @@ impl Console {
         let opened = gpui_kit::open_window(options, cx, |window, cx| {
             theme::follow_system_appearance(window, cx);
             window.set_window_title(&t!("console.window_title"));
+            #[cfg(target_os = "macos")]
+            window.on_window_should_close(cx, |_, cx| {
+                if cx
+                    .try_global::<ConsoleWindow>()
+                    .is_some_and(|console| console.native.is_some())
+                {
+                    cx.defer(close_console);
+                    false
+                } else {
+                    true
+                }
+            });
             cx.new(|cx| Console::new(page.unwrap_or(Page::Providers), window, cx))
         });
         match opened {
             Ok((handle, _)) => {
-                cx.set_global(ConsoleWindow(handle));
+                #[cfg(target_os = "macos")]
+                let native = MainThreadMarker::new().and_then(|marker| {
+                    let prefix = t!("console.window_title");
+                    NSApplication::sharedApplication(marker)
+                        .windows()
+                        .iter()
+                        .find(|window| window.title().to_string().starts_with(prefix.as_ref()))
+                });
+                cx.set_global(ConsoleWindow {
+                    handle,
+                    #[cfg(target_os = "macos")]
+                    native,
+                });
                 cx.activate(true);
             }
             Err(error) => {
@@ -270,6 +344,7 @@ impl Console {
         let providers = cx.new(|cx| ProvidersPage::new(window, cx));
         let mut console = Self {
             page: Page::Providers,
+            logo_spin: 0,
             providers,
             agents: None,
             usage: None,
@@ -295,11 +370,8 @@ impl Console {
                     .get_or_insert_with(|| cx.new(|cx| UsagePage::new(window, cx)));
             }
             Page::Context => {
-                let page = self
-                    .context
+                self.context
                     .get_or_insert_with(|| cx.new(|cx| ContextPage::new(window, cx)));
-                // Context statistics move with every request; reload on show.
-                page.update(cx, |page, cx| page.reload(cx));
             }
             Page::Routing => {
                 self.routing
@@ -313,6 +385,11 @@ impl Console {
         // The Turn view follows the ledger only while it is on screen.
         if let Some(usage) = &self.usage {
             usage.update(cx, |usage, cx| usage.set_active(page == Page::Usage, cx));
+        }
+        if let Some(context) = &self.context {
+            context.update(cx, |context, cx| {
+                context.set_active(page == Page::Context, cx)
+            });
         }
         window.set_window_title(&format!(
             "{} · {}",
@@ -446,7 +523,10 @@ impl Console {
                     .px_1()
                     .pt_1()
                     .pb_5()
-                    .child(img("app/app-icon.png").size_8())
+                    .child(windmill::mark(
+                        px(32.0),
+                        Some(("console-windmill", self.logo_spin).into()),
+                    ))
                     .child(
                         v_flex()
                             .child(

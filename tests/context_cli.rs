@@ -402,6 +402,35 @@ fn context_stats_use_codex_title_without_changing_session_identity() {
         assert_eq!(row["display"], "Continue Codex thread task");
     }
 
+    let summary = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--summary", "--json"],
+    ));
+    let mut expected_totals = stats["totals"].as_object().unwrap().clone();
+    expected_totals.remove("view_tokens");
+    expected_totals.remove("expired_messages");
+    assert_eq!(summary["totals"], Value::Object(expected_totals));
+    assert!(summary.get("sessions").is_none());
+
+    let first = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "stats", "--limit", "4", "--json"],
+    ));
+    let cursor = first["next_cursor"].to_string();
+    let second = successful(cli(
+        directory.path(),
+        &database,
+        &[
+            "context", "stats", "--limit", "4", "--before", &cursor, "--json",
+        ],
+    ));
+    let rows = stats["sessions"].as_array().unwrap();
+    assert_eq!(first["sessions"], json!(rows[..4]));
+    assert_eq!(second["sessions"], json!(rows[4..]));
+    assert_eq!(second["next_cursor"], Value::Null);
+
     titles
         .execute("UPDATE threads SET name = 'Renamed task'", [])
         .unwrap();

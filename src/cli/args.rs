@@ -1151,6 +1151,15 @@ pub(super) enum ContextCommand {
     },
     /// Show compression and cache statistics for the console page.
     Stats {
+        /// Return archive, compression, and cache totals without opening session views.
+        #[arg(long, requires = "json", conflicts_with = "limit")]
+        summary: bool,
+        /// Return at most this many recent session details.
+        #[arg(long, requires = "json", value_parser = clap::value_parser!(u32).range(1..=100))]
+        limit: Option<u32>,
+        /// Continue a paginated query from its JSON next_cursor.
+        #[arg(long, requires = "limit", value_parser = |value: &str| serde_json::from_str::<(i64, String)>(value))]
+        before: Option<(i64, String)>,
         #[arg(long)]
         json: bool,
     },

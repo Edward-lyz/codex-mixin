@@ -14,6 +14,7 @@ mod theme;
 mod tray;
 mod updater;
 mod widgets;
+mod windmill;
 
 use gpui_kit::{ActivationPolicy, QuitMode};
 

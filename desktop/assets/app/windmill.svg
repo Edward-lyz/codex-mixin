@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="288" height="288" viewBox="48 48 288 288">
+  <defs>
+    <radialGradient id="hub" cx=".48" cy=".46" r=".63">
+      <stop stop-color="#2d399e"/>
+      <stop offset=".72" stop-color="#141955"/>
+      <stop offset="1" stop-color="#090d38"/>
+    </radialGradient>
+    <linearGradient id="top" x1=".18" y1=".02" x2=".82" y2=".86">
+      <stop stop-color="#dc69ef"/>
+      <stop offset=".45" stop-color="#7448f4"/>
+      <stop offset="1" stop-color="#177ef4"/>
+    </linearGradient>
+    <linearGradient id="left">
+      <stop stop-color="#11bff1"/>
+      <stop offset=".56" stop-color="#2789fb"/>
+      <stop offset="1" stop-color="#3a45e5"/>
+    </linearGradient>
+    <linearGradient id="lowerLeft" x1=".02" y1=".74" x2=".96" y2=".44">
+      <stop stop-color="#168af3"/>
+      <stop offset=".54" stop-color="#5874fb"/>
+      <stop offset="1" stop-color="#3221b5"/>
+    </linearGradient>
+    <linearGradient id="lower" x1=".9" y1=".2" x2=".36" y2=".75">
+      <stop stop-color="#455cff"/>
+      <stop offset=".55" stop-color="#a657f2"/>
+      <stop offset="1" stop-color="#4926da"/>
+    </linearGradient>
+    <linearGradient id="right" x1="1" y1=".38" x2="0" y2=".68">
+      <stop stop-color="#11bdf3"/>
+      <stop offset=".56" stop-color="#4a8dfb"/>
+      <stop offset="1" stop-color="#7689ff"/>
+    </linearGradient>
+  </defs>
+  <circle cx="192" cy="189" r="112" fill="url(#hub)"/>
+  <path fill="#1736ba" d="M93 116C117 74 148 77 182 93L218 125C173 113 130 109 93 116Z"/>
+  <path fill="#1042c3" d="M289 122C312 140 322 165 315 191C311 220 284 239 269 243C291 206 304 157 289 122Z"/>
+  <path fill="#172eb3" d="M72 224C67 194 99 170 142 148C125 186 119 229 109 262C86 255 75 241 72 224Z"/>
+  <path fill="#292ac2" d="M287 249C285 270 279 289 254 295C222 300 186 277 155 248C193 250 241 260 287 249Z"/>
+  <path fill="url(#lower)" d="M139 229C184 254 217 267 256 271C268 271 279 268 287 262C273 295 244 315 212 316C182 316 154 290 139 229Z"/>
+  <path fill="url(#lowerLeft)" d="M143 144C136 182 134 221 149 259C161 287 184 311 218 315C183 326 137 311 112 278C84 243 90 181 143 144Z"/>
+  <path fill="url(#left)" d="M212 121C164 139 121 150 92 180C78 195 70 213 74 234C65 219 65 190 66 171C66 137 79 119 106 108C129 99 152 93 178 94C191 102 201 112 212 121Z"/>
+  <path fill="url(#top)" d="M110 93C130 76 159 62 179 58C215 50 245 71 270 89C294 107 298 135 291 160C287 180 280 202 273 220C260 182 235 142 211 119C178 86 142 71 110 93Z"/>
+  <path fill="url(#right)" d="M314 157C325 196 314 242 292 260C264 285 219 272 183 253C222 237 270 222 296 201C310 189 316 176 314 157Z"/>
+</svg>

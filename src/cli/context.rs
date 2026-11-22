@@ -76,7 +76,12 @@ pub(super) async fn run(command: ContextCommand) -> Result<()> {
             session,
             json: json_output,
         } => status(session.as_deref(), json_output),
-        ContextCommand::Stats { json: json_output } => stats(json_output),
+        ContextCommand::Stats {
+            summary,
+            limit,
+            before,
+            json: json_output,
+        } => stats(summary, limit, before.as_ref(), json_output),
         ContextCommand::Sessions { command } => match command {
             ContextSessionsCommand::List { json: json_output } => sessions_list(json_output),
             ContextSessionsCommand::Show {
@@ -281,12 +286,61 @@ fn print_status_value(value: Value, json_output: bool) {
     }
 }
 
-fn stats(json_output: bool) -> Result<()> {
+fn stats(
+    summary: bool,
+    limit: Option<u32>,
+    before: Option<&(i64, String)>,
+    json_output: bool,
+) -> Result<()> {
     let settings = stored_settings()?;
     let path = codex_mixin::context::database_path()?;
+    let engine = path.exists().then(|| open_engine(&settings)).transpose()?;
+    if summary {
+        let totals = engine
+            .as_ref()
+            .map(ContextEngine::stats_summary)
+            .transpose()?
+            .unwrap_or_default();
+        println!(
+            "{}",
+            json!({
+                "enabled": settings.enabled,
+                "database_path": path,
+                "totals": {
+                    "sessions": totals.sessions,
+                    "messages": totals.messages,
+                    "compressions": totals.compressions,
+                    "saved_tokens": totals.saved_tokens,
+                    "cache": totals.cache,
+                },
+            })
+        );
+        return Ok(());
+    }
+    if let Some(limit) = limit {
+        let (sessions, has_more) = engine
+            .as_ref()
+            .map(|engine| engine.stats_page(limit, before))
+            .transpose()?
+            .unwrap_or_default();
+        let next_cursor = sessions
+            .last()
+            .filter(|_| has_more)
+            .map(|row| (row.updated_at, &row.session));
+        println!(
+            "{}",
+            json!({
+                "enabled": settings.enabled,
+                "database_path": path,
+                "sessions": sessions,
+                "next_cursor": next_cursor,
+            })
+        );
+        return Ok(());
+    }
     let window_tokens = settings.context_window_tokens.unwrap_or(0);
-    let stats = if path.exists() {
-        open_engine(&settings)?.stats(window_tokens, settings.enabled)?
+    let stats = if let Some(engine) = engine {
+        engine.stats(window_tokens, settings.enabled)?
     } else {
         codex_mixin::context::ContextStats {
             enabled: settings.enabled,

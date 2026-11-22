@@ -1,6 +1,8 @@
 //! Settings page: gateway service, official ECH proxy, configuration
 //! backup, diagnostics, updates and about.
 
+use std::time::Instant;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
@@ -13,7 +15,7 @@ use gpui_kit::component::{
 use gpui_kit::{
     App, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ObjectFit,
     ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledImage as _, Subscription, Window, div, img, prelude::FluentBuilder as _,
+    Styled as _, StyledImage as _, Subscription, Window, div, img, prelude::FluentBuilder as _, px,
 };
 use rust_i18n::t;
 use serde::Deserialize;
@@ -23,6 +25,7 @@ use crate::store::{Change, Store, query};
 use crate::tr;
 use crate::updater::{APP_VERSION, UpdateState, Updater};
 use crate::widgets::{page_header, row_divider, section, setting_row};
+use crate::windmill;
 
 const REPOSITORY_URL: &str = "https://github.com/Edward-lyz/codex-mixin";
 const WALLPAPERS: [&str; 3] = [
@@ -55,6 +58,8 @@ pub struct SettingsPage {
     doctor: Option<Result<Doctor, SharedString>>,
     running_doctor: bool,
     wallpaper: usize,
+    logo_spin: u64,
+    logo_clicked_at: Option<Instant>,
     revision: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -75,6 +80,8 @@ impl SettingsPage {
             doctor: None,
             running_doctor: false,
             wallpaper: chrono::Local::now().timestamp().unsigned_abs() as usize % WALLPAPERS.len(),
+            logo_spin: 0,
+            logo_clicked_at: None,
             revision: store.read(cx).revision,
             _subscriptions: vec![subscription, updater],
         };
@@ -452,6 +459,10 @@ impl SettingsPage {
             UpdateState::Downloading { progress, .. } => *progress,
             _ => None,
         };
+        let spin = self
+            .logo_clicked_at
+            .filter(|time| time.elapsed() < windmill::SPIN_DURATION)
+            .map(|_| ("settings-windmill", self.logo_spin).into());
         div()
             .relative()
             .h_40()
@@ -485,7 +496,19 @@ impl SettingsPage {
                     .child(
                         h_flex()
                             .gap_3()
-                            .child(img("app/app-icon.png").size_10())
+                            .child(
+                                Button::new("spin-app-logo")
+                                    .text()
+                                    .size_10()
+                                    .p_0()
+                                    .accessibility_label(tr!("settings.spin_logo"))
+                                    .child(windmill::mark(px(40.0), spin))
+                                    .on_click(cx.listener(|page, _, _, cx| {
+                                        page.logo_spin += 1;
+                                        page.logo_clicked_at = Some(Instant::now());
+                                        cx.notify();
+                                    })),
+                            )
                             .child(
                                 v_flex()
                                     .flex_1()

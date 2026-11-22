@@ -11,7 +11,7 @@ use gpui_kit::component::{
 use gpui_kit::{
     AnyElement, App, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, div, prelude::FluentBuilder as _,
+    Subscription, Task, Window, div, prelude::FluentBuilder as _,
 };
 use rust_i18n::t;
 use serde::Deserialize;
@@ -22,7 +22,8 @@ use crate::store::{Change, Store, query};
 use crate::tr;
 use crate::widgets::{page_header, row_divider, section, setting_row};
 
-const SESSION_LIMIT: usize = 30;
+const SESSION_LIMIT: &str = "10";
+type SessionCursor = (i64, String);
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct ContextConfig {
@@ -39,10 +40,14 @@ struct ContextSettings {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-struct ContextStats {
+struct ContextSummary {
     totals: StatsTotals,
-    #[serde(default)]
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextSessions {
     sessions: Vec<SessionStats>,
+    next_cursor: Option<SessionCursor>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -51,7 +56,6 @@ struct StatsTotals {
     messages: u64,
     compressions: u64,
     saved_tokens: u64,
-    view_tokens: u64,
     cache: CacheStats,
 }
 
@@ -59,6 +63,13 @@ struct StatsTotals {
 struct CacheStats {
     #[serde(default)]
     hit_percent: Option<f64>,
+}
+
+impl CacheStats {
+    fn display(&self) -> String {
+        self.hit_percent
+            .map_or_else(|| "\u{2014}".to_owned(), |hit| format!("{hit:.1}%"))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -70,14 +81,20 @@ struct SessionStats {
     messages: u64,
     saved_tokens: u64,
     view_tokens: u64,
-    updated_at: i64,
     cache: CacheStats,
 }
 
 pub struct ContextPage {
     config: Option<ContextSettings>,
-    stats: Option<ContextStats>,
-    error: Option<SharedString>,
+    totals: Option<StatsTotals>,
+    sessions: Option<ContextSessions>,
+    settings_error: Option<SharedString>,
+    summary_error: Option<SharedString>,
+    sessions_error: Option<(SharedString, Option<SessionCursor>)>,
+    settings_task: Option<Task<()>>,
+    loading_sessions: bool,
+    active: bool,
+    generation: u64,
     revision: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -89,20 +106,36 @@ impl ContextPage {
             let revision = store.read(cx).revision;
             if revision != page.revision {
                 page.revision = revision;
-                page.reload(cx);
+                if page.active {
+                    page.reload_settings(cx);
+                }
             }
         });
         Self {
             config: None,
-            stats: None,
-            error: None,
+            totals: None,
+            sessions: None,
+            settings_error: None,
+            summary_error: None,
+            sessions_error: None,
+            settings_task: None,
+            loading_sessions: false,
+            active: false,
+            generation: 0,
             revision: store.read(cx).revision,
             _subscriptions: vec![subscription],
         }
     }
 
-    pub fn reload(&mut self, cx: &mut Context<Self>) {
-        // Statistics can take a while on large databases; settings show first.
+    pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.active = active;
+        if active {
+            self.reload(cx);
+        }
+    }
+
+    fn reload_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_error = None;
         let config = query::<ContextConfig>(
             vec![
                 "context".into(),
@@ -112,31 +145,88 @@ impl ContextPage {
             ],
             cx,
         );
-        cx.spawn(async move |page, cx| {
+        self.settings_task = Some(cx.spawn(async move |page, cx| {
             let config = config.await;
             page.update(cx, |page, cx| {
                 match config {
                     Ok(config) => page.config = Some(config.context),
-                    Err(error) => page.error = Some(error.message.into()),
+                    Err(error) => page.settings_error = Some(error.message.into()),
                 }
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
-        let stats =
-            query::<ContextStats>(vec!["context".into(), "stats".into(), "--json".into()], cx);
+        }));
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_settings(cx);
+        self.generation += 1;
+        let generation = self.generation;
+        self.summary_error = None;
+        self.sessions_error = None;
+        self.loading_sessions = true;
+        let summary = query::<ContextSummary>(
+            ["context", "stats", "--summary", "--json"]
+                .map(str::to_owned)
+                .into(),
+            cx,
+        );
         cx.spawn(async move |page, cx| {
-            let stats = stats.await;
+            let summary = summary.await;
             page.update(cx, |page, cx| {
-                if let Ok(stats) = stats {
-                    page.stats = Some(stats);
+                if generation != page.generation {
+                    return;
+                }
+                match summary {
+                    Ok(summary) => page.totals = Some(summary.totals),
+                    Err(error) => page.summary_error = Some(error.message.into()),
+                }
+                if page.active {
+                    page.load_sessions(None, cx);
                 }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn load_sessions(&mut self, cursor: Option<SessionCursor>, cx: &mut Context<Self>) {
+        let mut args = ["context", "stats", "--limit", SESSION_LIMIT, "--json"]
+            .map(str::to_owned)
+            .to_vec();
+        if let Some(cursor) = &cursor {
+            args.extend(["--before".into(), serde_json::json!(cursor).to_string()]);
+        }
+        let generation = self.generation;
+        self.loading_sessions = true;
+        self.sessions_error = None;
+        let task = query::<ContextSessions>(args, cx);
+        cx.spawn(async move |page, cx| {
+            let result = task.await;
+            page.update(cx, |page, cx| {
+                if generation != page.generation {
+                    return;
+                }
+                page.loading_sessions = false;
+                match result {
+                    Ok(mut result) => {
+                        if let Some(current) = page.sessions.as_mut().filter(|_| cursor.is_some()) {
+                            current.sessions.append(&mut result.sessions);
+                            current.next_cursor = result.next_cursor;
+                        } else {
+                            page.sessions = Some(result);
+                        }
+                    }
+                    Err(error) => page.sessions_error = Some((error.message.into(), cursor)),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     fn set(flag: &'static str, value: String, cx: &mut App) {
@@ -315,17 +405,16 @@ impl ContextPage {
             })
     }
 
-    fn render_stats(&self, stats: &ContextStats, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sessions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
-        let totals = &stats.totals;
-        let hit = |cache: &CacheStats| {
-            cache
-                .hit_percent
-                .map_or_else(|| "\u{2014}".to_owned(), |hit| format!("{hit:.1}%"))
-        };
-        let mut sessions = stats.sessions.clone();
-        sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
-        sessions.truncate(SESSION_LIMIT);
+        let sessions = self
+            .sessions
+            .as_ref()
+            .map_or(&[][..], |page| page.sessions.as_slice());
+        let cursor = self
+            .sessions
+            .as_ref()
+            .and_then(|page| page.next_cursor.clone());
         let rows = sessions.iter().enumerate().map(|(index, session)| {
             let title = if session.display.trim().is_empty() {
                 session.session.clone()
@@ -353,7 +442,7 @@ impl ContextPage {
                 .child(cell(session.compressions.to_string()))
                 .child(cell(compact_number(session.saved_tokens as f64)))
                 .child(cell(compact_number(session.view_tokens as f64)))
-                .child(cell(hit(&session.cache)))
+                .child(cell(session.cache.display()))
         });
         let head = |label: SharedString| {
             div()
@@ -365,119 +454,134 @@ impl ContextPage {
                 .child(label)
         };
         v_flex()
-            .gap_4()
+            .rounded_xl()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.group_box)
+            .shadow_xs()
+            .overflow_hidden()
             .child(
-                div()
-                    .grid()
-                    .grid_cols(4)
-                    .gap_3()
-                    .child(Self::tile(
-                        tr!("context.sessions"),
-                        compact_number(totals.sessions as f64),
-                        Some(
-                            t!(
-                                "context.archived",
-                                count = compact_number(totals.messages as f64)
-                            )
-                            .into_owned(),
-                        ),
-                        IconName::MessagesSquare,
-                        cx,
-                    ))
-                    .child(Self::tile(
-                        tr!("context.compressions"),
-                        compact_number(totals.compressions as f64),
-                        None,
-                        IconName::Layers,
-                        cx,
-                    ))
-                    .child(Self::tile(
-                        tr!("context.saved"),
-                        compact_number(totals.saved_tokens as f64),
-                        Some(
-                            t!(
-                                "context.view",
-                                count = compact_number(totals.view_tokens as f64)
-                            )
-                            .into_owned(),
-                        ),
-                        IconName::Leaf,
-                        cx,
-                    ))
-                    .child(Self::tile(
-                        tr!("context.cache_hit"),
-                        hit(&totals.cache),
-                        None,
-                        IconName::Zap,
-                        cx,
-                    )),
-            )
-            .child(
-                v_flex()
-                    .rounded_xl()
-                    .border_1()
+                h_flex()
+                    .px_4()
+                    .h_9()
+                    .bg(colors.muted.opacity(0.5))
+                    .border_b_1()
                     .border_color(colors.border)
-                    .bg(colors.group_box)
-                    .shadow_xs()
-                    .overflow_hidden()
                     .child(
-                        h_flex()
-                            .px_4()
-                            .h_9()
-                            .bg(colors.muted.opacity(0.5))
-                            .border_b_1()
-                            .border_color(colors.border)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_xs()
-                                    .font_medium()
-                                    .text_color(colors.table_head_foreground)
-                                    .child(t!("context.column.session")),
-                            )
-                            .child(head(tr!("context.column.messages")))
-                            .child(head(tr!("context.column.compressions")))
-                            .child(head(tr!("context.column.saved")))
-                            .child(head(tr!("context.column.view")))
-                            .child(head(tr!("context.column.cache"))),
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .font_medium()
+                            .text_color(colors.table_head_foreground)
+                            .child(t!("context.column.session")),
                     )
-                    .when(sessions.is_empty(), |list| {
-                        list.child(
-                            div()
-                                .p_6()
-                                .text_sm()
-                                .text_color(colors.muted_foreground)
-                                .child(t!("context.no_sessions")),
-                        )
-                    })
-                    .children(rows),
+                    .child(head(tr!("context.column.messages")))
+                    .child(head(tr!("context.column.compressions")))
+                    .child(head(tr!("context.column.saved")))
+                    .child(head(tr!("context.column.view")))
+                    .child(head(tr!("context.column.cache"))),
             )
+            .when(
+                sessions.is_empty() && !self.loading_sessions && self.sessions_error.is_none(),
+                |list| {
+                    list.child(
+                        div()
+                            .p_6()
+                            .text_sm()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("context.no_sessions")),
+                    )
+                },
+            )
+            .children(rows)
+            .when_some(self.sessions_error.as_ref(), |list, (error, _)| {
+                list.child(
+                    div()
+                        .px_4()
+                        .pt_3()
+                        .text_sm()
+                        .text_color(colors.muted_foreground)
+                        .child(error.clone()),
+                )
+            })
+            .when(
+                self.loading_sessions || cursor.is_some() || self.sessions_error.is_some(),
+                |list| {
+                    list.child(
+                        h_flex().justify_center().p_3().child(
+                            Button::new("more-context-sessions")
+                                .secondary()
+                                .small()
+                                .label(if self.sessions_error.is_some() {
+                                    tr!("context.retry_sessions")
+                                } else if self.loading_sessions {
+                                    tr!("context.loading_sessions")
+                                } else {
+                                    tr!("context.load_more")
+                                })
+                                .loading(self.loading_sessions)
+                                .disabled(self.loading_sessions)
+                                .on_click(cx.listener(move |page, _, _, cx| {
+                                    if !page.loading_sessions {
+                                        let cursor = page.sessions_error.as_ref().map_or_else(
+                                            || cursor.clone(),
+                                            |(_, cursor)| cursor.clone(),
+                                        );
+                                        page.load_sessions(cursor, cx);
+                                    }
+                                })),
+                        ),
+                    )
+                },
+            )
+    }
+
+    fn render_summary(totals: &StatsTotals, cx: &App) -> impl IntoElement {
+        div()
+            .grid()
+            .grid_cols(4)
+            .gap_3()
+            .child(Self::tile(
+                tr!("context.sessions"),
+                compact_number(totals.sessions as f64),
+                Some(
+                    t!(
+                        "context.archived",
+                        count = compact_number(totals.messages as f64)
+                    )
+                    .into_owned(),
+                ),
+                IconName::MessagesSquare,
+                cx,
+            ))
+            .child(Self::tile(
+                tr!("context.compressions"),
+                compact_number(totals.compressions as f64),
+                None,
+                IconName::Layers,
+                cx,
+            ))
+            .child(Self::tile(
+                tr!("context.saved"),
+                compact_number(totals.saved_tokens as f64),
+                None,
+                IconName::Leaf,
+                cx,
+            ))
+            .child(Self::tile(
+                tr!("context.cache_hit"),
+                totals.cache.display(),
+                None,
+                IconName::Zap,
+                cx,
+            ))
     }
 }
 
 impl Render for ContextPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(config) = self.config.clone() else {
-            return match self.error.clone() {
-                Some(error) => placeholder(
-                    IconName::TriangleAlert,
-                    t!("context.load_failed"),
-                    Some(error),
-                    None,
-                    cx,
-                )
-                .into_any_element(),
-                None => placeholder(
-                    IconName::LoaderCircle,
-                    t!("context.loading"),
-                    None,
-                    None,
-                    cx,
-                )
-                .into_any_element(),
-            };
-        };
-        let stats = self.stats.clone();
+        let config = self.config.clone();
+        let totals = self.totals.clone();
         div()
             .id("context-scroll")
             .size_full()
@@ -502,8 +606,31 @@ impl Render for ContextPage {
                             .on_click(cx.listener(|page, _, _, cx| page.reload(cx))),
                         cx,
                     ))
-                    .child(self.render_settings(&config, cx))
-                    .children(stats.map(|stats| self.render_stats(&stats, cx).into_any_element())),
+                    .when_some(totals, |body, totals| {
+                        body.child(Self::render_summary(&totals, cx))
+                    })
+                    .when_some(self.summary_error.clone(), |body, error| {
+                        body.child(placeholder(
+                            IconName::TriangleAlert,
+                            t!("context.summary_failed"),
+                            Some(error),
+                            None,
+                            cx,
+                        ))
+                    })
+                    .when_some(config, |body, config| {
+                        body.child(self.render_settings(&config, cx))
+                    })
+                    .when_some(self.settings_error.clone(), |body, error| {
+                        body.child(placeholder(
+                            IconName::TriangleAlert,
+                            t!("context.load_failed"),
+                            Some(error),
+                            None,
+                            cx,
+                        ))
+                    })
+                    .child(self.render_sessions(cx)),
             )
             .into_any_element()
     }
