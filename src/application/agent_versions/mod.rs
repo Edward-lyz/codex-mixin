@@ -506,11 +506,9 @@ async fn inspect_entry(id: &'static str) -> AgentVersionEntry {
     }
 }
 
-/// Update one agent's CLI the way it was installed, then read its version
-/// again. Fails only for an unknown `id`; a refusal (no CLI, an install
-/// source that says nothing sure, a folder only an administrator can change,
-/// an update already running) or a failing update is reported in the
-/// returned `error`.
+/// Update one agent's CLI through its installation source and verify the
+/// version selected by discovery afterward. Refusals, command failures, and
+/// upgrades that cannot be verified return an error.
 pub async fn upgrade_agent(id: &str) -> anyhow::Result<AgentCliInfo> {
     let spec = spec_for(id).ok_or_else(|| unknown_agent(id))?;
     let state = tokio::task::spawn_blocking(move || inspect_local(spec))
@@ -528,30 +526,21 @@ pub async fn upgrade_agent(id: &str) -> anyhow::Result<AgentCliInfo> {
         } else {
             refusal(id, before.path.is_some())
         };
-        return Ok(refused(before, message));
+        anyhow::bail!(message);
     };
-    if let Some(reason) = updater.blocked.clone() {
-        return Ok(refused(before, reason));
+    if let Some(reason) = &updater.blocked {
+        anyhow::bail!("{reason}");
     }
-    let Some(_in_process) = InProcessUpgrade::acquire(id) else {
-        return Ok(refused(before, format!("{id} is already being updated")));
-    };
-    let _process_lock = match AgentUpdateLock::try_acquire(id) {
-        Ok(Some(lock)) => lock,
-        Ok(None) => {
-            return Ok(refused(
-                before,
-                format!("another process is already updating {id}"),
-            ));
-        }
-        Err(error) => return Ok(refused(before, format!("{error:#}"))),
-    };
-    let version_before = before.version.clone();
+    let _in_process =
+        InProcessUpgrade::acquire(id).with_context(|| format!("{id} is already being updated"))?;
+    let _process_lock = AgentUpdateLock::try_acquire(id)?
+        .with_context(|| format!("another process is already updating {id}"))?;
     let outcome = run_updater(&updater).await;
     if let Some(path) = before.path.as_deref() {
         cache().forget(&version_cache_key(Path::new(path)));
     }
-    if outcome.is_ok() && updater.via == "brew" {
+    outcome?;
+    if updater.via == "brew" {
         // brew upgrade updates Homebrew itself first, which may know newer.
         cache().forget(&updater.latest_cache_key());
     }
@@ -559,29 +548,33 @@ pub async fn upgrade_agent(id: &str) -> anyhow::Result<AgentCliInfo> {
         .await
         .context("agent inspection worker failed")?
         .info;
-    if let Err(error) = &outcome {
-        push_error(&mut info, format!("{error:#}"));
+    let installed = info.version.as_deref().with_context(|| {
+        let detail = info.error.as_deref().unwrap_or("CLI version not found");
+        format!("could not verify the installed {id} version after upgrade: {detail}")
+    })?;
+    let latest = latest_version(&updater).await;
+    let advanced = before
+        .version
+        .as_deref()
+        .is_some_and(|prior| newer(installed, prior));
+    if !advanced {
+        if let Some(target) = latest.value.as_deref() {
+            anyhow::ensure!(
+                !newer(target, installed),
+                "{id} reports {installed} after upgrade; expected {target} or newer"
+            );
+        } else {
+            anyhow::bail!(
+                "{id} reports {installed} after upgrade but no version change could be verified: {}",
+                latest
+                    .error
+                    .as_deref()
+                    .unwrap_or("latest version unavailable")
+            );
+        }
     }
-    let answer = latest_version(&updater).await;
-    apply_latest(&mut info, &updater, answer);
-    // A clean exit that left the old version is still a failed upgrade.
-    if outcome.is_ok()
-        && info.update
-        && version_before == info.version
-        && let Some(after) = info.version.clone()
-    {
-        let command = updater.display_command();
-        let latest = info.latest.as_deref().unwrap_or("a newer version");
-        let message = format!("{id} is still {after} after {command}; {latest} is out");
-        push_error(&mut info, message);
-    }
+    apply_latest(&mut info, &updater, latest);
     Ok(info)
-}
-
-/// `info` with `message` added to its error.
-fn refused(mut info: AgentCliInfo, message: String) -> AgentCliInfo {
-    push_error(&mut info, message);
-    info
 }
 
 /// Why no update is offered: the CLI is absent, or where it came from says

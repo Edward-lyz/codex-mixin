@@ -58,6 +58,8 @@ struct Agent {
 struct AgentVersion {
     #[serde(default)]
     version: Option<String>,
+    path: Option<String>,
+    command: Option<String>,
     #[serde(default)]
     app_version: Option<String>,
     #[serde(default)]
@@ -206,10 +208,7 @@ impl AgentsPage {
             page.update(cx, |page, cx| {
                 page.loading = false;
                 match result {
-                    Ok(AgentRead::List(list)) => {
-                        page.agents = Some(list.agents);
-                        page.error = None;
-                    }
+                    Ok(AgentRead::List(list)) => page.refresh_list(list.agents),
                     Ok(AgentRead::Versions(versions)) => page.merge_versions(versions.agents),
                     Err(error) => page.error = Some(error.message.into()),
                 }
@@ -223,7 +222,33 @@ impl AgentsPage {
         .detach();
     }
 
-    fn merge_versions(&mut self, versions: Vec<AgentVersionEntry>) {
+    fn refresh_list(&mut self, mut agents: Vec<Agent>) {
+        if let Some(previous) = &self.agents {
+            let previous: HashMap<_, _> = previous
+                .iter()
+                .map(|agent| (agent.id.as_str(), &agent.cli))
+                .collect();
+            for agent in &mut agents {
+                let local = &mut agent.cli;
+                if let Some(checked) = previous.get(agent.id.as_str())
+                    && local.path.is_some()
+                    && local.path == checked.path
+                    && local.command == checked.command
+                    && local.version == checked.version
+                    && local.error.is_none()
+                {
+                    // A local inventory refresh has no release information.
+                    local.latest.clone_from(&checked.latest);
+                    local.update = checked.update;
+                    local.error.clone_from(&checked.error);
+                }
+            }
+        }
+        self.agents = Some(agents);
+        self.error = None;
+    }
+
+    fn merge_versions(&mut self, versions: impl IntoIterator<Item = AgentVersionEntry>) {
         self.error = None;
         let Some(current) = &mut self.agents else {
             return;
@@ -233,6 +258,26 @@ impl AgentsPage {
                 agent.cli = version.cli;
             }
         }
+    }
+
+    fn upgrade(id: &str, cx: &mut Context<Self>) {
+        let change = Change::new(
+            t!("agents.upgrade_label"),
+            ["agent", "upgrade", id, "--json"],
+        );
+        let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
+        cx.spawn(async move |page, cx| {
+            if let Ok(output) = task.await
+                && let Ok(version) = serde_json::from_str::<AgentVersionEntry>(&output)
+            {
+                page.update(cx, |page, cx| {
+                    page.merge_versions([version]);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn toggle(id: String, name: String, connect: bool, window: &mut Window, cx: &mut App) {
@@ -422,16 +467,8 @@ impl AgentsPage {
                             "agents.upgrade_to",
                             version = agent.cli.latest.clone().unwrap_or_default()
                         ))
-                        .disabled(is_busy(cx))
-                        .on_click(move |_, _, cx| {
-                            run_change(
-                                Change::new(
-                                    t!("agents.upgrade_label"),
-                                    ["agent", "upgrade", upgrade_id.as_str(), "--json"],
-                                ),
-                                cx,
-                            );
-                        }),
+                        .disabled(self.loading || is_busy(cx))
+                        .on_click(cx.listener(move |_, _, _, cx| Self::upgrade(&upgrade_id, cx))),
                 )
             })
             .child(
@@ -550,7 +587,7 @@ impl Render for AgentsPage {
                             .small()
                             .icon(IconName::RefreshCw)
                             .label(t!("agents.check_versions"))
-                            .disabled(self.loading)
+                            .disabled(self.loading || is_busy(cx))
                             .loading(self.loading)
                             .on_click(cx.listener(|page, _, _, cx| page.check_versions(cx))),
                         cx,

@@ -10,6 +10,7 @@ integration-b|provider_probe_cache.rs
 integration-b|report_hook.rs
 integration-c|agy_dynamic.rs
 integration-c|agy_model_switch.rs
+integration-c|agent_upgrade.rs
 integration-c|config_read_permissions.rs
 integration-c|context_cli.rs
 integration-c|cors.rs

@@ -224,6 +224,19 @@ impl Cli {
     ) -> CliResult<String> {
         let mut command = Command::new(&self.executable);
         command.arg("--no-tui").arg("--json-errors").args(args);
+        #[cfg(target_os = "macos")]
+        {
+            // Finder launches with a system-only PATH. Package-manager scripts
+            // can be found by absolute path but still need their interpreters.
+            let inherited = std::env::var_os("PATH");
+            let paths = inherited
+                .iter()
+                .flat_map(std::env::split_paths)
+                .chain(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+            let path =
+                std::env::join_paths(paths).map_err(|error| CliError::new(error.to_string()))?;
+            command.env("PATH", path);
+        }
         if let Some(directory) = self.executable.parent() {
             command.current_dir(directory);
         }

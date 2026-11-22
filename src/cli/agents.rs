@@ -179,8 +179,16 @@ async fn upgrade_all(json_output: bool) -> anyhow::Result<()> {
         }
         super::progress_step(&format!("Upgrading {}", entry.id));
         match agent_versions::upgrade_agent(&entry.id).await {
-            Ok(cli) => results.push(json!({"id": entry.id, "error": cli.error, "cli": cli})),
-            Err(error) => results.push(json!({"id": entry.id, "error": format!("{error:#}")})),
+            Ok(cli) => results.push(json!({"id": entry.id, "error": null, "cli": cli})),
+            Err(error) => {
+                let id = entry.id.clone();
+                let cli = tokio::task::spawn_blocking(move || agent_versions::discover_agent(&id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(entry.cli);
+                results.push(json!({"id": entry.id, "cli": cli, "error": format!("{error:#}")}));
+            }
         }
     }
     // A batch has explicit per-agent outcomes, including partial completion.
