@@ -468,13 +468,14 @@ impl SettingsPage {
             .h_40()
             .rounded_xl()
             .overflow_hidden()
-            .border_1()
-            .border_color(colors.border)
             .shadow_sm()
+            // GPUI clips overflow to a rectangle, so round both painted layers.
             .child(
                 img(WALLPAPERS[self.wallpaper])
                     .absolute()
+                    .inset_0()
                     .size_full()
+                    .rounded_xl()
                     .object_fit(ObjectFit::Cover),
             )
             .child(
@@ -487,6 +488,7 @@ impl SettingsPage {
                     .pt_10()
                     .pb_4()
                     .gap_3()
+                    .rounded_b_xl()
                     .bg(gpui_kit::linear_gradient(
                         180.0,
                         gpui_kit::linear_color_stop(gpui_kit::black().opacity(0.0), 0.0),
@@ -548,6 +550,15 @@ impl SettingsPage {
                                     .on_click(|_, _, cx| cx.open_url(REPOSITORY_URL)),
                             ),
                     ),
+            )
+            // Overlay the border so the image, gradient, and frame share an edge.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(colors.border),
             )
     }
 }

@@ -523,33 +523,10 @@ impl Console {
             .pt(TITLE_BAR_HEIGHT)
             .px_3()
             .pb_3()
-            .child(
-                h_flex()
-                    .gap_2p5()
-                    .px_1()
-                    .pt_1()
-                    .pb_5()
-                    .child(windmill::mark(
-                        px(32.0),
-                        Some(("console-windmill", self.logo_spin).into()),
-                    ))
-                    .child(
-                        v_flex()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_semibold()
-                                    .text_color(colors.sidebar_accent_foreground)
-                                    .child("Codex Mixin"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(colors.muted_foreground)
-                                    .child(format!("v{}", crate::updater::APP_VERSION)),
-                            ),
-                    ),
-            )
+            .child(div().px_1().pt_1().pb_5().child(windmill::mark(
+                px(32.0),
+                Some(("console-windmill", self.logo_spin).into()),
+            )))
             .child(
                 v_flex()
                     .relative()
