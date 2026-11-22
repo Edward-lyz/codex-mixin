@@ -161,6 +161,8 @@ pub struct ProviderModel {
     #[serde(default)]
     pub context_window: Option<u64>,
     #[serde(default)]
+    pub source_context_window: Option<u64>,
+    #[serde(default)]
     pub supports_image: Option<bool>,
     #[serde(default)]
     pub supports_function_tools: Option<bool>,

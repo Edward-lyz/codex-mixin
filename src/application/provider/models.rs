@@ -67,7 +67,9 @@ pub fn apply_model_selection(
             .iter_mut()
             .find(|model| model.id == *model_id)
             .ok_or_else(|| anyhow::anyhow!("unknown model context override: {model_id}"))?;
-        if model.source_context_window.is_none() {
+        if model.source_context_window.is_none()
+            && !provider.model_context_overrides.contains_key(model_id)
+        {
             model.source_context_window = model.context_window;
         }
         model.context_window = Some(*context_window);

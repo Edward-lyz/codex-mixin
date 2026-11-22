@@ -19,9 +19,10 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    Anchor, AnimationExt as _, AnyElement, App, AppContext as _, Context, ElementId, Entity,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Task, WeakEntity, Window, div, prelude::FluentBuilder as _, uniform_list,
+    Anchor, AnimationExt as _, AnyElement, App, AppContext as _, ClickEvent, Context, ElementId,
+    Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Task, WeakEntity, Window, div, prelude::FluentBuilder as _,
+    uniform_list,
 };
 use rust_i18n::t;
 
@@ -71,7 +72,7 @@ pub struct ModelsView {
     query: String,
     filter: Filter,
     selected: Vec<String>,
-    contexts: BTreeMap<String, u64>,
+    contexts: BTreeMap<String, Option<u64>>,
     manual: Vec<String>,
     manual_order: bool,
     add_open: bool,
@@ -105,7 +106,7 @@ impl ModelsView {
             );
         let mut view = Self {
             selected: provider.selected_models.clone(),
-            contexts: provider.model_context_overrides.clone(),
+            contexts: BTreeMap::new(),
             manual_order: provider.model_order.as_deref() == Some("manual"),
             provider,
             search,
@@ -136,16 +137,27 @@ impl ModelsView {
                 .iter()
                 .any(|model| &model.id == id)
         });
-        if !dirty {
+        if dirty {
+            self.contexts.retain(|id, tokens| {
+                self.provider.model_context_overrides.get(id).copied() != *tokens
+                    && (tokens.is_none()
+                        || self.manual.contains(id)
+                        || self
+                            .provider
+                            .cached_models
+                            .iter()
+                            .any(|model| &model.id == id))
+            });
+        } else {
             self.discard(cx);
         }
         cx.notify();
     }
 
-    fn is_dirty(&self) -> bool {
+    fn selection_changed(&self) -> bool {
         // Family order lets the CLI sort the selection, so only membership
         // counts; manual order keeps the user's sequence.
-        let selection_changed = if self.manual_order {
+        if self.manual_order {
             self.selected != self.provider.selected_models
         } else {
             let mut draft = self.selected.clone();
@@ -153,15 +165,18 @@ impl ModelsView {
             draft.sort();
             saved.sort();
             draft != saved
-        };
-        selection_changed
-            || self.contexts != self.provider.model_context_overrides
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.selection_changed()
+            || !self.contexts.is_empty()
             || self.manual_order != (self.provider.model_order.as_deref() == Some("manual"))
     }
 
     fn discard(&mut self, cx: &mut Context<Self>) {
         self.selected = self.provider.selected_models.clone();
-        self.contexts = self.provider.model_context_overrides.clone();
+        self.contexts.clear();
         self.manual_order = self.provider.model_order.as_deref() == Some("manual");
         self.manual.clear();
         cx.notify();
@@ -175,14 +190,20 @@ impl ModelsView {
             "family"
         };
         let mut args = vec!["provider".to_owned(), "select".to_owned(), id.clone()];
-        args.extend(["--model-order".to_owned(), order.to_owned()]);
-        args.extend(self.selected.iter().map(|model| format!("--model={model}")));
-        for (model, tokens) in &self.contexts {
-            args.extend(["--model-context".to_owned(), format!("{model}={tokens}")]);
+        let selection_changed = self.selection_changed();
+        if selection_changed
+            || self.manual_order != (self.provider.model_order.as_deref() == Some("manual"))
+        {
+            args.extend(["--model-order".to_owned(), order.to_owned()]);
         }
-        for model in self.provider.model_context_overrides.keys() {
-            if !self.contexts.contains_key(model) {
-                args.extend(["--clear-model-context".to_owned(), model.clone()]);
+        if selection_changed {
+            args.extend(self.selected.iter().map(|model| format!("--model={model}")));
+        }
+        for (model, tokens) in &self.contexts {
+            if let Some(tokens) = tokens {
+                args.push(format!("--model-context={model}={tokens}"));
+            } else {
+                args.push(format!("--clear-model-context={model}"));
             }
         }
         run_change(Change::new(t!("models.apply_label"), args).applied(), cx);
@@ -247,6 +268,9 @@ impl ModelsView {
             self.selected.push(id.to_owned());
         } else if !selected && present {
             self.selected.retain(|model| model != id);
+            if self.manual.iter().any(|model| model == id) {
+                self.contexts.remove(id);
+            }
         }
         cx.notify();
     }
@@ -287,14 +311,133 @@ impl ModelsView {
             .any(|model| model.id == id);
         if !known && !self.manual.contains(&id) {
             self.manual.insert(0, id.clone());
-            self.contexts
-                .entry(id.clone())
-                .or_insert(MANUAL_MODEL_CONTEXT);
         }
         self.set_selected(&id, true, cx);
         self.add_input
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.add_open = false;
+        cx.notify();
+    }
+
+    fn open_context_editor(
+        &self,
+        id: &str,
+        context: Option<u64>,
+        editable: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.entity().downgrade();
+        let id = id.to_owned();
+        let has_override = self.context_override(&id).is_some();
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(context.map(|tokens| tokens.to_string()).unwrap_or_default())
+        });
+        if editable {
+            let input = input.clone();
+            window.on_next_frame(move |window, cx| {
+                input.update(cx, |input, cx| {
+                    input.focus(window, cx);
+                    input.select_all(window, cx);
+                });
+            });
+        }
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let valid_tokens = input
+                .read(cx)
+                .value()
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|tokens| *tokens > 0 && editable);
+            let restore_view = view.clone();
+            let restore_id = id.clone();
+            let apply_view = view.clone();
+            let apply_id = id.clone();
+            let apply = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                let Some(tokens) = valid_tokens else {
+                    return false;
+                };
+                apply_view
+                    .update(cx, |view, cx| {
+                        if Some(tokens) != context {
+                            view.set_context(&apply_id, Some(tokens), cx);
+                        }
+                    })
+                    .is_ok()
+            };
+            dialog
+                .title(tr!("models.context.edit"))
+                .w(gpui_kit::px(440.0))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(div().text_sm().child(id.clone()))
+                        .child(Input::new(&input).disabled(!editable))
+                        .when(editable, |body| {
+                            body.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().colors.muted_foreground)
+                                    .child(t!("models.context.tokens")),
+                            )
+                        }),
+                )
+                .on_ok(apply.clone())
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            Button::new("restore-model-context")
+                                .secondary()
+                                .label(t!("models.context.restore"))
+                                .disabled(!has_override)
+                                .on_click(move |_, window, cx| {
+                                    restore_view
+                                        .update(cx, |view, cx| {
+                                            view.set_context(&restore_id, None, cx);
+                                        })
+                                        .ok();
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            Button::new("cancel-model-context")
+                                .ghost()
+                                .label(t!("common.cancel"))
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("update-model-context")
+                                .primary()
+                                .label(t!("models.context.done"))
+                                .disabled(valid_tokens.is_none())
+                                .on_click(move |event, window, cx| {
+                                    if apply(event, window, cx) {
+                                        window.close_dialog(cx);
+                                    }
+                                }),
+                        ),
+                )
+        });
+    }
+
+    fn context_override(&self, id: &str) -> Option<u64> {
+        self.contexts
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| self.provider.model_context_overrides.get(id).copied())
+    }
+
+    fn set_context(&mut self, id: &str, tokens: Option<u64>, cx: &mut Context<Self>) {
+        if self.provider.model_context_overrides.get(id).copied() == tokens {
+            self.contexts.remove(id);
+        } else {
+            self.contexts.insert(id.to_owned(), tokens);
+        }
         cx.notify();
     }
 
@@ -412,8 +555,10 @@ pub fn format_context(tokens: u64) -> String {
         format!("{}M", tokens / 1_000_000)
     } else if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    } else {
+    } else if tokens.is_multiple_of(1_000) {
         format!("{}K", tokens / 1_000)
+    } else {
+        tokens.to_string()
     }
 }
 
@@ -853,13 +998,46 @@ impl ModelsView {
             .and_then(|model| model.display_name.as_deref())
             .filter(|name| !name.trim().is_empty())
             .unwrap_or(&row.id);
-        let context = self
-            .contexts
-            .get(&row.id)
-            .copied()
-            .or_else(|| model.and_then(|model| model.context_window));
+        let manual = self.manual.contains(&row.id);
+        let context_override = self.context_override(&row.id);
+        let context = context_override
+            .or_else(|| {
+                model.and_then(|model| {
+                    if self.provider.model_context_overrides.contains_key(&row.id) {
+                        model.source_context_window
+                    } else {
+                        model.context_window
+                    }
+                })
+            })
+            .or(manual.then_some(MANUAL_MODEL_CONTEXT));
+        let context_label = context.map_or_else(|| "\u{2014}".to_owned(), format_context);
+        let context_editable = model.is_some() || (manual && selected);
+        let context_id = row.id.clone();
         let result = self.benchmark_result(&row.id);
         let muted = |text: String| div().text_color(colors.muted_foreground).child(text);
+        let context_cell = column(Column::Context);
+        let context_cell = if context_editable || context_override.is_some() {
+            context_cell.child(
+                Button::new("edit-model-context")
+                    .ghost()
+                    .xsmall()
+                    .label(context_label)
+                    .icon(IconName::Pencil)
+                    .tooltip(t!("models.context.edit"))
+                    .on_click(cx.listener(move |view, _, window, cx| {
+                        view.open_context_editor(
+                            &context_id,
+                            context,
+                            context_editable,
+                            window,
+                            cx,
+                        );
+                    })),
+            )
+        } else {
+            context_cell.child(muted(context_label))
+        };
         let latency = match result {
             Some(result) if result.status == "completed" => result.ttft_ms.map(format_latency),
             Some(result) if result.status == "running" => Some(t!("models.measuring").into()),
@@ -968,9 +1146,7 @@ impl ModelsView {
                         )
                     }),
             )
-            .child(column(Column::Context).when_some(context, |cell, tokens| {
-                cell.child(muted(format_context(tokens)))
-            }))
+            .child(context_cell)
             .child(
                 column(Column::Capabilities)
                     .gap_1()
@@ -1072,6 +1248,7 @@ impl ModelsView {
 
     fn render_apply_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
+        let removing_all = self.selected.is_empty() && self.selection_changed();
         h_flex()
             .absolute()
             .bottom_16()
@@ -1089,7 +1266,7 @@ impl ModelsView {
                     .border_1()
                     .border_color(colors.border)
                     .shadow_lg()
-                    .child(div().text_sm().child(if self.selected.is_empty() {
+                    .child(div().text_sm().child(if removing_all {
                         t!("models.keep_one")
                     } else {
                         t!("models.unapplied")
@@ -1107,7 +1284,7 @@ impl ModelsView {
                             .small()
                             .label(t!("common.apply"))
                             .loading(is_busy(cx))
-                            .disabled(is_busy(cx) || self.selected.is_empty())
+                            .disabled(is_busy(cx) || removing_all)
                             .on_click(cx.listener(|view, _, window, cx| view.apply(window, cx))),
                     ),
             )

@@ -177,6 +177,12 @@ pub async fn discover_provider_models(
     match &definition.model_source {
         ProviderModelSource::Static => {
             let mut models = definition.cached_models.clone();
+            // Enrich the underlying catalog values before reapplying overrides.
+            for model in &mut models {
+                if definition.model_context_overrides.contains_key(&model.id) {
+                    model.context_window = model.source_context_window;
+                }
+            }
             enrich_from_models_dev(
                 client,
                 definition,
@@ -770,10 +776,13 @@ pub fn apply_discovered_models(
     );
     normalize_models(&mut models);
     for model in &mut models {
-        if model.source_context_window.is_none() {
+        let context_override = provider.model_context_overrides.get(&model.id);
+        if model.source_context_window.is_none()
+            && (context_override.is_none() || discovered_ids.contains(&model.id))
+        {
             model.source_context_window = model.context_window;
         }
-        if let Some(&context_window) = provider.model_context_overrides.get(&model.id) {
+        if let Some(&context_window) = context_override {
             model.context_window = Some(context_window);
         }
     }

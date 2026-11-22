@@ -215,6 +215,18 @@ models.column.speed:
 models.column.context:
   en: "Context"
   zh-CN: "上下文"
+models.context.edit:
+  en: "Edit context window"
+  zh-CN: "编辑上下文窗口"
+models.context.tokens:
+  en: "Enter a positive whole number of tokens."
+  zh-CN: "请输入正整数 Token 数。"
+models.context.restore:
+  en: "Restore default"
+  zh-CN: "恢复默认值"
+models.context.done:
+  en: "Done"
+  zh-CN: "完成"
 models.column.capabilities:
   en: "Capabilities"
   zh-CN: "能力"
