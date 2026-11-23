@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin model routing: several models answer in parallel, a judge model reviews, a final model replies"></a>
+  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin failover routing with a primary model and ordered fallbacks"></a>
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@
 
 ## Core Capabilities
 
-Codex Mixin runs on your machine, between your agents and your model providers. It converts requests and streaming responses across four protocols: OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning content and tool calls. The CLI, the native macOS and Windows apps, and the Web panel share one core.
+Codex Mixin runs on your machine, between your agents and your model providers. It converts requests and streaming responses across OpenAI Responses, Chat Completions, Anthropic Messages, and Gemini, including reasoning content and tool calls. The macOS, Windows, and Linux desktop apps share the gateway core with the CLI and web panel.
 
 ### Official Codex stays intact
 
@@ -65,7 +65,7 @@ The engine is off by default. Enable it with `codex-mixin context config set --e
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS context engine settings and session statistics"></a><br>
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="Context engine settings and session statistics in the desktop console"></a><br>
       <sub><b>Console</b> · Sessions, compressions, tokens saved</sub>
     </td>
     <td width="50%" align="center">
@@ -129,8 +129,8 @@ See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 
 
 ### Set up in the console
 
-1. In Models & Services, add a provider with an API key or OAuth sign-in.
-2. Refresh the model list, check the models you want, and save.
+1. On the Providers page, add a provider with an API key or OAuth sign-in.
+2. Select the models you want in the model list and save.
 3. On the Agents page, connect an installed client. For Codex, choose Official Account mode.
 4. Restart the client or open a new session, then pick a custom model in the model picker.
 
@@ -161,27 +161,27 @@ See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-
 
 ## Interface
 
-The macOS, Windows, and Linux desktop apps share one GPUI interface. The CLI and web panel can also manage the gateway.
+The macOS, Windows, and Linux desktop apps share a GPUI interface, so the layout and workflows are consistent across all three platforms. Use the console to manage providers and models, connect agents, review usage, and configure the context engine and routing. The CLI and web panel can also manage the gateway.
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS Models and Services page: provider list and model selection"></a><br>
-      <sub><b>Models & Services</b> · Providers, models, and capabilities</sub>
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="Providers page showing selected models and their context windows"></a><br>
+      <sub><b>Providers</b> · Model selection, context windows, and capabilities</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS Agents page: installed versions and connection actions"></a><br>
-      <sub><b>Agents</b> · Installed versions, connection state, and restore</sub>
+      <a href="docs/assets/APP-Console-Agents.png"><img src="docs/assets/APP-Console-Agents.png" alt="Agents page showing installed client versions and connection toggles"></a><br>
+      <sub><b>Agents</b> · Installed versions and connection status</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS Usage page: daily statistics and per-reply data"></a><br>
-      <sub><b>Usage</b> · Tokens, cache, and speed for every reply</sub>
+      <a href="docs/assets/APP-Console-Usage.png"><img src="docs/assets/APP-Console-Usage.png" alt="Usage page showing daily token trends and per-model statistics"></a><br>
+      <sub><b>Usage</b> · Request counts, token trends, and model statistics</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Native Windows Models and Services console"></a><br>
-      <sub><b>Windows console</b> · Models & Services</sub>
+      <a href="docs/assets/APP-Console-Settings.png"><img src="docs/assets/APP-Console-Settings.png" alt="Settings page showing app updates, gateway controls, configuration backups, and diagnostics"></a><br>
+      <sub><b>Settings</b> · Gateway, app updates, and configuration backups</sub>
     </td>
   </tr>
 </table>

@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin 模型路由：多个模型并行作答，裁判模型评审，最终模型回复"></a>
+  <a href="docs/assets/APP-Console-Routing.png"><img src="docs/assets/APP-Console-Routing.png" width="1000" alt="Codex Mixin 路由页的故障转移配置，显示入口模型与备用顺序"></a>
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@
 
 ## 核心能力
 
-Codex Mixin 运行在本机，位于 Agent 与模型供应商之间。它在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 四种协议之间转换请求与流式响应，包括思考内容和工具调用。CLI、macOS / Windows 原生应用和 Web 面板共用同一套核心。
+Codex Mixin 运行在本机，位于 Agent 与模型供应商之间。它在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 四种协议之间转换请求与流式响应，包括思考内容和工具调用。macOS、Windows 和 Linux 桌面应用与 CLI、Web 面板共用同一套网关核心。
 
 ### 官方 Codex 原样保留
 
@@ -64,7 +64,7 @@ Codex 以「官方账号模式」接入后，自定义模型加入官方模型�
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="macOS 上下文引擎设置与会话统计"></a><br>
+      <a href="docs/assets/APP-Console-Context.png"><img src="docs/assets/APP-Console-Context.png" alt="桌面控制台中的上下文引擎设置与会话统计"></a><br>
       <sub><b>控制台</b> · 会话数、压缩次数、节省的 Token</sub>
     </td>
     <td width="50%" align="center">
@@ -128,9 +128,9 @@ docker run -d --name codex-mixin -p 127.0.0.1:8317:8317 -p 127.0.0.1:8318:8318 -
 
 ### 在控制台配置
 
-1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
-2. 刷新模型列表，勾选要使用的模型并保存。
-3. 在「Agent 接入」页接入已安装的客户端；Codex 选择「官方账号模式」。
+1. 在「服务商」页添加供应商，填写 API Key 或完成 OAuth 登录。
+2. 在模型列表中勾选要使用的模型并保存。
+3. 在「Agent」页接入已安装的客户端。接入 Codex 时选择「官方账号模式」。
 4. 重启客户端或打开新会话，在模型选择器中选择自定义模型。
 
 需要恢复客户端原配置时，在同一页面断开接入。
@@ -160,27 +160,27 @@ curl http://127.0.0.1:8317/v1/models                      # 返回模型列表�
 
 ## 界面
 
-macOS、Windows 与 Linux 桌面客户端共用同一套 GPUI 界面。CLI 和 Web 面板同样可以管理网关。
+macOS、Windows 和 Linux 桌面应用采用同一套 GPUI 界面，页面布局和操作方式在三个平台上一致。你可以在控制台管理服务商和模型、接入 Agent、查看用量，也可以配置上下文引擎和路由。CLI 和 Web 面板同样可以管理网关。
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="macOS 模型与服务页：供应商列表与模型勾选"></a><br>
-      <sub><b>模型与服务</b> · 供应商、模型与能力</sub>
+      <a href="docs/assets/APP-Console-Models.png"><img src="docs/assets/APP-Console-Models.png" alt="服务商页的模型列表、勾选状态和上下文窗口"></a><br>
+      <sub><b>服务商</b> · 模型选择、上下文窗口与能力</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS Agent 接入页：已安装版本与接入操作"></a><br>
-      <sub><b>Agent 接入</b> · 安装版本、接入状态与恢复入口</sub>
+      <a href="docs/assets/APP-Console-Agents.png"><img src="docs/assets/APP-Console-Agents.png" alt="Agent 页的客户端版本与接入开关"></a><br>
+      <sub><b>Agent</b> · 安装版本与接入状态</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS 用量明细页：每日统计与逐次回复数据"></a><br>
-      <sub><b>用量明细</b> · 每次回复的 Token、缓存与速度</sub>
+      <a href="docs/assets/APP-Console-Usage.png"><img src="docs/assets/APP-Console-Usage.png" alt="用量页的每日 Token 趋势与按模型统计"></a><br>
+      <sub><b>用量</b> · 请求数、Token 趋势与模型统计</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/Windows-Console-Models.png"><img src="docs/assets/Windows-Console-Models.png" alt="Windows 原生模型与服务控制台"></a><br>
-      <sub><b>Windows 控制台</b> · 模型与服务</sub>
+      <a href="docs/assets/APP-Console-Settings.png"><img src="docs/assets/APP-Console-Settings.png" alt="设置页的应用更新、网关控制、配置备份和诊断"></a><br>
+      <sub><b>设置</b> · 网关、应用更新与配置备份</sub>
     </td>
   </tr>
 </table>
