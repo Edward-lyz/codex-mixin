@@ -52,7 +52,10 @@ fn main() {
 
     let application = gpui_kit::application().with_assets(assets::Assets);
     // Launching the app again from Finder or the Dock shows the console.
-    application.on_reopen(|cx| console::Console::open(None, cx));
+    application.on_reopen(|cx| {
+        store::Store::reopen(cx);
+        console::Console::open(None, cx);
+    });
     application.run(move |cx| {
         gpui_kit::init(cx);
         if let Err(error) = theme::init(cx) {
@@ -71,7 +74,7 @@ fn main() {
                 return;
             }
         };
-        store::Store::init(cli, cx);
+        store::Store::init(cli, background, cx);
         updater::Updater::init(cx);
         tray::install(cx);
         if !background {

@@ -6,6 +6,11 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct Autostart {
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ServiceStatus {
     pub configured: bool,

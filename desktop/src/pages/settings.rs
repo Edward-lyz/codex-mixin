@@ -21,6 +21,7 @@ use rust_i18n::t;
 use serde::Deserialize;
 
 use super::{is_busy, run_change};
+use crate::model::Autostart;
 use crate::store::{Change, Store, query};
 use crate::tr;
 use crate::updater::{APP_VERSION, UpdateState, Updater};
@@ -33,11 +34,6 @@ const WALLPAPERS: [&str; 3] = [
     "nasa-wallpapers/crew-12-to-orbit.png",
     "nasa-wallpapers/waning-crescent-moon.png",
 ];
-
-#[derive(Clone, Debug, Default, Deserialize)]
-struct Autostart {
-    enabled: bool,
-}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Doctor {

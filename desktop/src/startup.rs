@@ -27,7 +27,19 @@ pub fn skip_launch(background: bool) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) use macos::skip_launch;
+pub(crate) use macos::{
+    remember_gateway_login_choice, should_enable_gateway_at_login, skip_launch,
+};
+
+#[cfg(not(target_os = "macos"))]
+pub fn should_enable_gateway_at_login() -> anyhow::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn remember_gateway_login_choice() -> anyhow::Result<()> {
+    Ok(())
+}
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn skip_launch(_: bool) -> bool {
@@ -65,6 +77,61 @@ mod macos {
     use serde_json::Value;
 
     const MENU_LABEL: &str = "local.codex-mixin.menu-launch";
+    const LOGIN_MARKER: &str = "Library/Application Support/Codex Mixin/launch-at-login.applied";
+
+    pub(crate) fn should_enable_gateway_at_login() -> anyhow::Result<bool> {
+        let home = home()?;
+        if installed_executable(&home)?.is_none() {
+            return Ok(false);
+        }
+        // The SwiftUI app wrote this marker after setting its login defaults.
+        // A legacy menu agent also indicates an earlier installation.
+        if home.join(LOGIN_MARKER).try_exists()?
+            || home
+                .join("Library/LaunchAgents")
+                .join(format!("{MENU_LABEL}.plist"))
+                .try_exists()?
+        {
+            return Ok(false);
+        }
+
+        let uid = Command::new("/usr/bin/id").arg("-u").output()?;
+        ensure!(uid.status.success(), "resolve macOS user ID");
+        let uid = std::str::from_utf8(&uid.stdout)?.trim();
+        let output = Command::new("/bin/launchctl")
+            .args(["print-disabled", &format!("gui/{uid}")])
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "inspect macOS startup preferences: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        let disabled = String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            line.split_once("=>").is_some_and(|(label, state)| {
+                let label = label.trim().trim_matches('"');
+                (label == "local.codex-mixin.service" || label == MENU_LABEL)
+                    && matches!(state.trim(), "true" | "disabled")
+            })
+        });
+        Ok(!disabled)
+    }
+
+    pub(crate) fn remember_gateway_login_choice() -> anyhow::Result<()> {
+        let home = home()?;
+        if installed_executable(&home)?.is_some() {
+            let marker = home.join(LOGIN_MARKER);
+            fs::create_dir_all(
+                marker
+                    .parent()
+                    .context("resolve login preferences directory")?,
+            )?;
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(marker)?;
+        }
+        Ok(())
+    }
 
     pub(crate) fn skip_launch(background: bool) -> bool {
         let defaults = NSUserDefaults::standardUserDefaults();
@@ -81,19 +148,27 @@ mod macos {
         NSUserDefaults::standardUserDefaults().setBool_forKey(true, ns_string!("lightweightMode"));
     }
 
-    pub(super) fn handoff_desktop_login() -> anyhow::Result<()> {
-        let home = std::env::var_os("HOME")
+    fn home() -> anyhow::Result<PathBuf> {
+        std::env::var_os("HOME")
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
-            .context("resolve macOS home directory")?;
+            .context("resolve macOS home directory")
+    }
+
+    fn installed_executable(home: &Path) -> anyhow::Result<Option<PathBuf>> {
         let executable = std::env::current_exe()?.canonicalize()?;
         // A DMG, translocated app or development build must not claim login.
-        if !executable.ends_with("Contents/MacOS/codex-mixin-desktop")
-            || !(executable.starts_with("/Applications")
-                || executable.starts_with(home.join("Applications")))
-        {
+        let installed = executable.ends_with("Contents/MacOS/codex-mixin-desktop")
+            && (executable.starts_with("/Applications")
+                || executable.starts_with(home.join("Applications")));
+        Ok(installed.then_some(executable))
+    }
+
+    pub(super) fn handoff_desktop_login() -> anyhow::Result<()> {
+        let home = home()?;
+        let Some(executable) = installed_executable(&home)? else {
             return Ok(());
-        }
+        };
 
         let agents = home.join("Library/LaunchAgents");
         let path = agents.join(format!("{MENU_LABEL}.plist"));

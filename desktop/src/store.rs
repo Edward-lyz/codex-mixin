@@ -9,7 +9,8 @@ use std::time::Duration;
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task};
 
 use crate::cli::{Cli, CliError, CliResult, Progress, Secret};
-use crate::model::{Interface, ProviderList, QuotaEntry, ServiceStatus};
+use crate::model::{Autostart, Interface, ProviderList, QuotaEntry, ServiceStatus};
+use crate::startup;
 
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -111,6 +112,10 @@ pub struct Store {
     next_change: u64,
     /// Bumped after every change so pages reload their own data.
     pub revision: u64,
+    background: bool,
+    /// A gateway already configured at launch may have opted out of login startup.
+    gateway_configured_at_launch: Option<bool>,
+    gateway_launch_pending: bool,
     _poll: Task<()>,
 }
 
@@ -121,7 +126,7 @@ struct GlobalStore(Entity<Store>);
 impl Global for GlobalStore {}
 
 impl Store {
-    pub fn init(cli: Arc<Cli>, cx: &mut App) {
+    pub fn init(cli: Arc<Cli>, background: bool, cx: &mut App) {
         let store = cx.new(|cx| {
             let poll = cx.spawn(async move |this, cx| {
                 loop {
@@ -143,6 +148,9 @@ impl Store {
                 running: Vec::new(),
                 next_change: 0,
                 revision: 0,
+                background,
+                gateway_configured_at_launch: None,
+                gateway_launch_pending: true,
                 _poll: poll,
             };
             store.refresh_all(cx);
@@ -153,6 +161,18 @@ impl Store {
 
     pub fn global(cx: &App) -> Entity<Store> {
         cx.global::<GlobalStore>().0.clone()
+    }
+
+    pub fn reopen(cx: &mut App) {
+        if let Some(store) = cx.try_global::<GlobalStore>().map(|store| store.0.clone()) {
+            store.update(cx, |store, cx| {
+                if store.background {
+                    store.background = false;
+                    store.gateway_launch_pending = true;
+                    store.refresh_status(cx);
+                }
+            });
+        }
     }
 
     pub fn cli(&self) -> Arc<Cli> {
@@ -184,12 +204,77 @@ impl Store {
                 cli_thread(move || cli.query::<ServiceStatus>(&["service", "status", "--json"]))
                     .await;
             this.update(cx, |store, cx| {
+                if let Ok(status) = &result {
+                    store
+                        .gateway_configured_at_launch
+                        .get_or_insert(status.configured);
+                }
                 if store.service.finish(result) {
                     store.refresh_status(cx);
+                } else if store.service.error.is_none()
+                    && store
+                        .service
+                        .value
+                        .as_ref()
+                        .is_some_and(|status| status.configured)
+                    && store.running.is_empty()
+                    && std::mem::take(&mut store.gateway_launch_pending)
+                {
+                    store.start_gateway_at_launch(cx);
                 }
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    fn start_gateway_at_launch(&self, cx: &mut Context<Self>) {
+        let cli = self.cli.clone();
+        let next_change = self.next_change;
+        let background = self.background;
+        let first_setup = self.gateway_configured_at_launch == Some(false);
+        let launch = cli_thread(move || {
+            if background {
+                let status =
+                    cli.query::<Autostart>(&["service", "autostart", "status", "--json"])?;
+                return Ok(status.enabled.then(|| {
+                    Change::new(
+                        rust_i18n::t!("panel.start_label"),
+                        ["service", "ensure", "--json"],
+                    )
+                }));
+            }
+            if first_setup {
+                match startup::should_enable_gateway_at_login() {
+                    Ok(true) => {
+                        return Ok(Some(Change::new(
+                            rust_i18n::t!("settings.autostart"),
+                            ["service", "autostart", "enable", "--json"],
+                        )));
+                    }
+                    Ok(false) => {}
+                    Err(error) => eprintln!("cannot inspect gateway login preferences: {error:#}"),
+                }
+            }
+            Ok(Some(Change::new(
+                rust_i18n::t!("panel.start_label"),
+                ["service", "ensure", "--json"],
+            )))
+        });
+        cx.spawn(async move |this, cx| match launch.await {
+            Ok(Some(change)) => {
+                if let Ok(Some(task)) = this.update(cx, |store, cx| {
+                    // A user action queued while checking preferences takes precedence.
+                    (store.next_change == next_change && store.background == background)
+                        .then(|| store.run(change, cx))
+                }) && let Err(error) = task.await
+                {
+                    eprintln!("cannot start gateway at app launch: {error}");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("cannot read gateway autostart status: {error}"),
         })
         .detach();
     }
@@ -260,6 +345,17 @@ impl Store {
         change: Change,
         cx: &mut Context<Self>,
     ) -> Task<Result<String, CliError>> {
+        if change
+            .args
+            .first()
+            .is_some_and(|command| command == "service")
+            && matches!(
+                change.args.get(1).map(String::as_str),
+                Some("stop" | "restart")
+            )
+        {
+            self.gateway_launch_pending = false;
+        }
         let cli = self.cli.clone();
         let label = change.label.clone();
         let change_id = self.next_change;
@@ -290,13 +386,22 @@ impl Store {
                 })
             };
             let result = cli_thread(move || {
-                cli.change(
+                let result = cli.change(
                     &change.args,
                     &change.secrets,
                     change.apply,
                     change.repair_startup_on_denied,
                     Some(progress),
-                )
+                );
+                if result.is_ok()
+                    && (change.args == ["service", "ensure", "--json"]
+                        || change.args == ["service", "autostart", "enable", "--json"]
+                        || change.args == ["service", "autostart", "disable", "--json"])
+                    && let Err(error) = startup::remember_gateway_login_choice()
+                {
+                    eprintln!("cannot record gateway login preference: {error:#}");
+                }
+                result
             })
             .await;
             drop(progress_task);
