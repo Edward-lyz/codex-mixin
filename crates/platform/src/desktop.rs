@@ -3,7 +3,6 @@
 //!
 //! Functions here block on OS tools; async callers use `spawn_blocking`.
 
-use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// A user-visible desktop notification.
@@ -34,7 +33,11 @@ pub fn show_notification(
     {
         linux_notification(notification)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        windows_notification(notification)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = notification;
         Ok(NotificationDelivery::Unsupported)
@@ -43,35 +46,36 @@ pub fn show_notification(
 
 #[cfg(target_os = "macos")]
 fn macos_notification(notification: &DesktopNotification) -> anyhow::Result<NotificationDelivery> {
+    use std::process::Command;
+
     use anyhow::Context;
 
-    // The menu app registers with the notification center under the app's
-    // identity, so prefer its helper mode when the CLI runs from the bundle.
-    let helper = std::env::current_exe()
-        .ok()
-        .and_then(|executable| app_bundle_notification_helper(&executable))
-        .filter(|path| path.is_file());
-    let output = match helper {
-        Some(helper) => std::process::Command::new(helper)
-            .args([
-                "--deliver-model-notification",
-                &notification.title,
-                &notification.subtitle,
-                &notification.body,
-            ])
-            .output(),
-        None => std::process::Command::new("/usr/bin/osascript")
-            .args([
-                "-e",
-                "on run argv\n display notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)\nend run",
-                "--",
-                &notification.title,
-                &notification.subtitle,
-                &notification.body,
-            ])
-            .output(),
+    let executable = std::env::current_exe().context("locate gateway executable")?;
+    let Some(contents) = executable.parent().and_then(std::path::Path::parent) else {
+        return Ok(NotificationDelivery::Unsupported);
+    };
+    if contents.file_name().and_then(|name| name.to_str()) != Some("Contents")
+        || contents.parent().and_then(|path| path.extension()) != Some("app".as_ref())
+    {
+        return Ok(NotificationDelivery::Unsupported);
     }
-    .context("run macOS notification delivery")?;
+    let macos = contents.join("MacOS");
+    let desktop = macos.join("codex-mixin-desktop");
+    // Legacy gateways ran from Contents/Resources and used this helper name.
+    let helper = if desktop.is_file() {
+        desktop
+    } else {
+        macos.join("CodexMixinMenu")
+    };
+    let output = Command::new(helper)
+        .args([
+            "--deliver-model-notification",
+            &notification.title,
+            &notification.subtitle,
+            &notification.body,
+        ])
+        .output()
+        .context("run the Codex Mixin notification helper")?;
     anyhow::ensure!(
         output.status.success(),
         "macOS notification failed: {}",
@@ -82,44 +86,57 @@ fn macos_notification(notification: &DesktopNotification) -> anyhow::Result<Noti
 
 #[cfg(target_os = "linux")]
 fn linux_notification(notification: &DesktopNotification) -> anyhow::Result<NotificationDelivery> {
-    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+    use anyhow::Context;
+    use notify_rust::{Hint, Notification};
+
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none()
+        && !std::env::var_os("XDG_RUNTIME_DIR")
+            .is_some_and(|path| std::path::Path::new(&path).join("bus").exists())
+    {
         return Ok(NotificationDelivery::Unsupported);
     }
-    let output = match std::process::Command::new("notify-send")
-        .arg("--app-name=Codex Mixin")
-        .arg(format!(
-            "{} · {}",
-            notification.title, notification.subtitle
-        ))
-        .arg(&notification.body)
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(NotificationDelivery::Unsupported);
-        }
-        Err(error) => return Err(error.into()),
-    };
-    anyhow::ensure!(
-        output.status.success(),
-        "notify-send failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
+    const DESKTOP_ENTRY: &str = "com.edward.codex-mixin";
+    let icon = std::env::current_exe()
+        .ok()
+        .map(|executable| executable.with_file_name("codex-mixin.png"))
+        .filter(|icon| icon.is_file())
+        .and_then(|icon| url::Url::from_file_path(icon).ok());
+    Notification::new()
+        .appname(&notification.title)
+        .summary(&notification.subtitle)
+        .body(&notification.body)
+        .icon(icon.as_ref().map_or(DESKTOP_ENTRY, url::Url::as_str))
+        .hint(Hint::DesktopEntry(DESKTOP_ENTRY.to_owned()))
+        .show()
+        .context("deliver notification over the desktop session bus")?;
     Ok(NotificationDelivery::Delivered)
 }
 
-/// Notification helper inside the macOS app bundle that ships this CLI.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn app_bundle_notification_helper(current_executable: &Path) -> Option<PathBuf> {
-    let resources = current_executable.parent()?;
-    if resources.file_name()?.to_str()? != "Resources" {
-        return None;
+#[cfg(windows)]
+fn windows_notification(
+    notification: &DesktopNotification,
+) -> anyhow::Result<NotificationDelivery> {
+    use anyhow::Context;
+    use tauri_winrt_notification::{IconCrop, Toast};
+    use windows_registry::CURRENT_USER;
+
+    const APP_ID: &str = "com.edward.codex-mixin";
+    let icon = std::env::current_exe()
+        .context("locate gateway executable")?
+        .with_file_name("codex-mixin.png");
+    if !icon.is_file() {
+        return Ok(NotificationDelivery::Unsupported);
     }
-    let contents = resources.parent()?;
-    if contents.file_name()?.to_str()? != "Contents" {
-        return None;
-    }
-    Some(contents.join("MacOS/CodexMixinMenu"))
+    let identity = CURRENT_USER.create(format!(r"Software\Classes\AppUserModelId\{APP_ID}"))?;
+    identity.set_string("DisplayName", "Codex Mixin")?;
+    identity.set_hstring("IconUri", &icon.as_path().into())?;
+    Toast::new(APP_ID)
+        .title(&notification.subtitle)
+        .text1(&notification.body)
+        .icon(&icon, IconCrop::Square, "Codex Mixin")
+        .show()
+        .context("deliver Windows toast")?;
+    Ok(NotificationDelivery::Delivered)
 }
 
 /// Codex desktop apps that read the managed Codex configuration.

@@ -21,8 +21,13 @@ if [[ ! -x "$CLI_PATH" ]]; then
   exit 1
 fi
 
-cargo build --release --manifest-path "$ROOT_DIR/desktop/Cargo.toml"
-APP_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+APP_TARGET="${CLI_TARGET%-musl}-gnu"
+HOST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+if [[ "$APP_TARGET" != "$HOST_TARGET" ]]; then
+  echo "the Linux desktop package requires a native $APP_TARGET build (host: $HOST_TARGET)" >&2
+  exit 1
+fi
+cargo build --locked --release --manifest-path "$ROOT_DIR/desktop/Cargo.toml"
 PACKAGE_ROOT="$ROOT_DIR/target/package/codex-mixin-app-$APP_TARGET"
 STAGING="$PACKAGE_ROOT/codex-mixin"
 

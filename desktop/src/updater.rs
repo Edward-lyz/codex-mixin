@@ -281,6 +281,7 @@ fn release_target() -> &'static str {
         ("macos", _) => "x86_64-apple-darwin",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         ("linux", _) => "x86_64-unknown-linux-gnu",
+        ("windows", "aarch64") => "aarch64-pc-windows-msvc",
         _ => "x86_64-pc-windows-msvc",
     }
 }

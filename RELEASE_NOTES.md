@@ -1,4 +1,34 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v1.0.0
+
+Codex Mixin 迎来首个正式版本。macOS、Windows 和 Linux 现在共用一套桌面控制台，可以管理模型、路由、网关和 Agent 接入。
+
+### 特性新增
+
+- **统一桌面控制台**。新版桌面用 GPUI 重写。侧边栏集中显示模型与服务、Agent 接入、用量、上下文和路由。用量页可跟踪请求和工具调用，路由页可查看请求转发路径。
+- **Windows ARM64 和 Linux 桌面版**。Windows ARM64 提供安装包和便携 ZIP，Linux 提供 x86_64 与 ARM64 桌面包，解压后运行 `./install.sh` 即可添加到应用启动器。Linux 命令行版和 Web 面板继续可用。
+- **桌面应用更新**。新版桌面定期检查更新。确认下载和重启后，应用校验 Ed25519 签名并应用更新。
+
+### 体验优化
+
+- 服务商在后台发现新模型或检测到模型下架后，打开的「模型与服务」页面会自动同步，并通过系统通知显示变化。
+- 菜单栏和托盘面板直接显示服务商额度。模型列表可编辑上下文窗口，模型选择和 Agent 升级会显示更明确的状态。
+- 官方账号的流式请求可复用上游 Responses WebSocket 连接。
+
+### BUG 修复
+
+- 修复 macOS 登录和重新打开桌面应用时，已配置的网关可能没有启动的问题。
+- 改进 Windows 从旧版升级时的网关恢复和登录启动迁移。旧的计划任务受权限保护时，可选择在当前会话启动网关。
+- 修复官方账号 WebSocket 续接时丢失协作工具的问题，以及部分 Codex Desktop 分叉会话无法恢复压缩上下文的问题。
+
+### 从 0.8.x 升级
+
+- macOS 可使用旧版应用内更新，也可下载对应架构的 DMG。Windows 请下载对应架构的安装包，或解压新版便携 ZIP 后运行 `Codex Mixin.exe`。新版会继续使用现有服务商和路由配置。
+
+### 致谢
+
+- 感谢 @LianshengLi 修复官方 OAuth WebSocket 续接时丢失协作工具的问题。
+
 ## v0.8.7
 
 ### 体验优化
@@ -412,6 +442,36 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v1.0.0
+
+Codex Mixin 迎來首個正式版本。macOS、Windows 和 Linux 現在共用一套桌面控制台，可以管理模型、路由、閘道和 Agent 接入。
+
+### 新增功能
+
+- **統一的桌面控制台**。新版桌面以 GPUI 重寫。側邊欄集中顯示模型與服務、Agent 接入、用量、上下文和路由。用量頁可追蹤請求和工具呼叫，路由頁可查看請求轉發路徑。
+- **Windows ARM64 和 Linux 桌面版**。Windows ARM64 提供安裝包和可攜式 ZIP，Linux 提供 x86_64 與 ARM64 桌面包，解壓縮後執行 `./install.sh` 即可加入應用程式啟動器。Linux 命令列版和 Web 控制台繼續可用。
+- **桌面應用程式更新**。新版桌面定期檢查更新。確認下載和重新啟動後，應用程式驗證 Ed25519 簽章並套用更新。
+
+### 體驗改善
+
+- 服務供應商在背景發現新模型或偵測到模型下架後，開啟的「模型與服務」頁面會自動同步，並透過系統通知顯示變更。
+- 選單列和系統匣面板直接顯示服務供應商配額。模型清單可編輯上下文視窗，模型選擇和 Agent 升級會顯示更明確的狀態。
+- 官方帳號的串流請求可重複使用上游 Responses WebSocket 連線。
+
+### 問題修正
+
+- 修正 macOS 登入和重新開啟桌面應用程式時，已設定的閘道可能未啟動的問題。
+- 改善 Windows 從舊版升級時的閘道恢復與登入啟動移轉。舊的排程工作受權限保護時，可選擇在目前工作階段啟動閘道。
+- 修正官方帳號 WebSocket 續接時遺失協作工具的問題，以及部分 Codex Desktop 分支工作階段無法恢復壓縮上下文的問題。
+
+### 從 0.8.x 升級
+
+- macOS 可使用舊版應用程式內更新，也可下載相應架構的 DMG。Windows 請下載相應架構的安裝包，或解壓縮新版可攜式 ZIP 後執行 `Codex Mixin.exe`。新版會繼續使用現有的服務供應商和路由設定。
+
+### 致謝
+
+- 感謝 @LianshengLi 修正官方 OAuth WebSocket 續接時遺失協作工具的問題。
+
 ## v0.8.7
 
 ### 體驗最佳化
@@ -825,6 +885,36 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v1.0.0
+
+Codex Mixin reaches its first stable release. The same desktop console now manages models, routing, the gateway, and agent integrations across macOS, Windows, and Linux.
+
+### New features
+
+- **Unified desktop console.** The GPUI redesign puts Models & Services, agent integrations, usage, context, and routing in one sidebar. Follow requests and tool calls on the usage page, or trace forwarding on the routing page.
+- **Windows ARM64 and Linux desktop builds.** Windows ARM64 gets a setup program and a portable ZIP. Linux gets desktop archives for x86_64 and ARM64. Run `./install.sh` after extracting the archive to add Codex Mixin to your app launcher. The Linux CLI and web panel are still available.
+- **Desktop app updates.** The new desktop app checks for updates periodically. When you confirm the download and restart, it verifies the Ed25519 signature and applies the update.
+
+### Improvements
+
+- When a provider's background discovery adds or removes models, the open Models & Services page refreshes automatically and a system notification reports the changes.
+- Provider quotas appear in the menu bar and tray panel. You can edit context windows in the model list, and model selection and agent upgrades show clearer status.
+- Streaming requests from official accounts can reuse upstream Responses WebSocket connections.
+
+### Fixes
+
+- Fixed a macOS startup issue that could leave a configured gateway stopped after signing in or reopening the desktop app.
+- Improved gateway recovery and login startup migration on Windows upgrades. If permissions protect a legacy scheduled task, you can start the gateway for the current session.
+- Fixed missing collaboration tools on official-account WebSocket continuations and missing compacted context in some forked Codex Desktop sessions.
+
+### Upgrading from 0.8.x
+
+- On macOS, use the old app's updater or download the DMG for your architecture. On Windows, download the appropriate setup program or extract the new portable ZIP and run `Codex Mixin.exe`. The new app continues to use your existing provider and routing settings.
+
+### Thanks
+
+- Thanks to @LianshengLi for restoring collaboration tools on official OAuth WebSocket continuations.
+
 ## v0.8.7
 
 ### Improvements

@@ -17,6 +17,7 @@ on:
           - macos-aarch64
           - macos-x86_64
           - windows-x86_64
+          - windows-aarch64
   workflow_call:
     inputs:
       platform:
@@ -44,6 +45,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       unix: ${{ steps.plan.outputs.unix }}
       windows: ${{ steps.plan.outputs.windows }}
+      windows_matrix: ${{ steps.plan.outputs.windows_matrix }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,34 +57,37 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           all='[
-            {"name":"linux-x86_64","os":"linux","runner":"ubuntu-latest","target":"x86_64-unknown-linux-musl","deb_arch":"amd64"},
+            {"name":"linux-x86_64","os":"linux","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl","deb_arch":"amd64"},
             {"name":"linux-aarch64","os":"linux","runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-musl","deb_arch":"arm64"},
             {"name":"macos-x86_64","os":"macos","runner":"macos-26-intel","target":"x86_64-apple-darwin"},
             {"name":"macos-aarch64","os":"macos","runner":"macos-26","target":"aarch64-apple-darwin"}
           ]'
           include="$(jq -c --arg p "$PLATFORM" '[.[] | select($p == "all" or .name == $p)]' <<<"$all")"
-          windows=false
-          if [[ "$PLATFORM" == "all" || "$PLATFORM" == "windows-x86_64" ]]; then
-            windows=true
-          fi
-          if [[ "$include" == "[]" && "$windows" == "false" ]]; then
+          windows='[
+            {"name":"windows-x86_64","runner":"windows-latest","target":"x86_64-pc-windows-msvc"},
+            {"name":"windows-aarch64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc"}
+          ]'
+          windows_include="$(jq -c --arg p "$PLATFORM" '[.[] | select($p == "all" or .name == $p)]' <<<"$windows")"
+          if [[ "$include" == "[]" && "$windows_include" == "[]" ]]; then
             echo "unknown platform: $PLATFORM" >&2
             exit 1
           fi
           # Pin one commit so every platform builds the same source even if
           # main moves while the jobs queue.
           ref="$(git rev-parse HEAD)"
-          version="$VERSION"
-          if [[ -z "$version" ]]; then
-            version="$(cargo metadata --format-version 1 --no-deps \
-              | jq -r '.packages[] | select(.name == "codex-mixin") | .version')"
+          version="$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "codex-mixin") | .version')"
+          if [[ -n "$VERSION" && "$VERSION" != "$version" ]]; then
+            echo "requested version $VERSION does not match workspace version $version" >&2
+            exit 1
           fi
           {
             echo "ref=$ref"
             echo "version=$version"
             echo "matrix={\"include\":$include}"
             echo "unix=$([[ "$include" == "[]" ]] && echo false || echo true)"
-            echo "windows=$windows"
+            echo "windows=$([[ "$windows_include" == "[]" ]] && echo false || echo true)"
+            echo "windows_matrix={\"include\":$windows_include}"
           } >>"$GITHUB_OUTPUT"
           echo "building $ref as $version for $PLATFORM"
 
@@ -216,7 +221,8 @@ jobs:
             echo "::warning::UPDATE_SIGNING_KEY is not set; the update archive is unsigned and the app will reject it"
             exit 0
           fi
-          ./scripts/sign_update.sh dist/release/codex-mixin-app-"$VERSION"-*-linux-gnu.tar.gz
+          target="${{ matrix.target }}"
+          ./scripts/sign_update.sh "dist/release/codex-mixin-app-$VERSION-${target%-musl}-gnu.tar.gz"
       - name: Package macOS installer
         if: matrix.os == 'macos'
         run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "$VERSION" dist/release
@@ -228,12 +234,17 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    name: Build windows-x86_64
+    name: Build ${{ matrix.name }}
     needs: plan
     if: needs.plan.outputs.windows == 'true'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.windows_matrix) }}
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -241,9 +252,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-x86_64-pc-windows-msvc
+          shared-key: release-${{ matrix.target }}
       - name: Refresh bundled models.dev snapshot
         shell: bash
         run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
@@ -252,9 +264,7 @@ jobs:
         run: ./desktop/windows/install-nsis.ps1
       - name: Build and package the desktop app
         shell: pwsh
-        run: |
-          ./desktop/windows/package.ps1 -OutDirectory dist/release -Installer
-          Rename-Item "dist/release/codex-mixin-$env:VERSION-x86_64-pc-windows-msvc.zip" "codex-mixin-$env:VERSION-windows-x86_64.zip"
+        run: ./desktop/windows/package.ps1 -Target $env:TARGET -OutDirectory dist/release -Installer
       - name: Sign the update archive
         shell: bash
         env:
@@ -264,15 +274,15 @@ jobs:
             echo "::warning::UPDATE_SIGNING_KEY is not set; the update archive is unsigned and the app will reject it"
             exit 0
           fi
-          ./scripts/sign_update.sh "dist/release/codex-mixin-app-$VERSION-x86_64-pc-windows-msvc.zip"
+          ./scripts/sign_update.sh "dist/release/codex-mixin-app-$VERSION-$TARGET.zip"
       - name: Package standalone Windows CLI
         shell: pwsh
         run: |
           $version = $env:VERSION
-          $name = "codex-mixin-cli-$version-x86_64-pc-windows-msvc"
+          $name = "codex-mixin-cli-$version-$env:TARGET"
           $stage = Join-Path $env:RUNNER_TEMP $name
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "target/x86_64-pc-windows-msvc/release/codex-mixin.exe" $stage
+          Copy-Item "target/$env:TARGET/release/codex-mixin.exe" $stage
           Copy-Item README.md, LICENSE, NOTICE $stage
           tar -czf "dist/release/$name.tar.gz" -C $env:RUNNER_TEMP $name
           if ($LASTEXITCODE -ne 0) { throw 'Windows CLI packaging failed' }
@@ -281,9 +291,10 @@ jobs:
         run: |
           $version = $env:VERSION
           foreach ($path in @(
-            "dist\release\codex-mixin-$version-windows-x86_64.zip",
-            "dist\release\codex-mixin-$version-windows-x86_64-setup.exe",
-            "dist\release\codex-mixin-app-$version-x86_64-pc-windows-msvc.zip"
+            "dist\release\codex-mixin-$version-$env:PLATFORM.zip",
+            "dist\release\codex-mixin-$version-$env:PLATFORM-setup.exe",
+            "dist\release\codex-mixin-app-$version-$env:TARGET.zip",
+            "dist\release\codex-mixin-cli-$version-$env:TARGET.tar.gz"
           )) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
               throw "Missing Windows release artifact: $path"
@@ -292,7 +303,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: codex-mixin-windows-x86_64
+          name: codex-mixin-${{ matrix.name }}
           path: |
             dist/release/*.exe
             dist/release/*.zip

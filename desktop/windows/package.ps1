@@ -3,6 +3,7 @@
 # the in-app update archive (one top-level "Codex Mixin" folder) and, with
 # -Installer, the per-user NSIS setup.
 param(
+    [ValidateSet("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")]
     [string]$Target = "x86_64-pc-windows-msvc",
     [string]$OutDirectory = "dist/release",
     [switch]$Installer
@@ -14,10 +15,12 @@ Push-Location $root
 try {
     cargo build --release --locked --target $Target --bin codex-mixin
     if ($LASTEXITCODE -ne 0) { throw "CLI build failed" }
-    cargo build --release --target $Target --manifest-path desktop/Cargo.toml
+    cargo build --release --locked --target $Target --manifest-path desktop/Cargo.toml
     if ($LASTEXITCODE -ne 0) { throw "desktop build failed" }
 
     $version = (cargo pkgid --package codex-mixin) -replace '.*[#@]', ''
+    if ($LASTEXITCODE -ne 0) { throw "could not determine the workspace version" }
+    $platform = "windows-" + ($Target -split '-', 2)[0]
     $packageRoot = Join-Path $root "target/package/codex-mixin-$version-$Target"
     $staging = Join-Path $packageRoot "Codex Mixin"
     if (Test-Path $packageRoot) { Remove-Item -Recurse -Force $packageRoot }
@@ -25,10 +28,11 @@ try {
 
     Copy-Item "desktop/target/$Target/release/codex-mixin-desktop.exe" (Join-Path $staging "Codex Mixin.exe")
     Copy-Item "target/$Target/release/codex-mixin.exe" (Join-Path $staging "codex-mixin.exe")
+    Copy-Item "desktop/assets/app/app-icon.png" (Join-Path $staging "codex-mixin.png")
     Copy-Item "desktop/windows/update-user-path.ps1" $staging
     Copy-Item README.md, LICENSE, NOTICE $staging
 
-    $archive = Join-Path $OutDirectory "codex-mixin-$version-$Target.zip"
+    $archive = Join-Path $OutDirectory "codex-mixin-$version-$platform.zip"
     if (Test-Path $archive) { Remove-Item -Force $archive }
     Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $archive
     Write-Host "Built $archive"
@@ -46,7 +50,7 @@ try {
             "${env:ProgramFiles}\NSIS\makensis.exe"
         ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         if (-not $makensis) { throw "makensis.exe was not found; run install-nsis.ps1 first" }
-        $setup = Join-Path (Resolve-Path $OutDirectory) "codex-mixin-$version-windows-x86_64-setup.exe"
+        $setup = Join-Path (Resolve-Path $OutDirectory) "codex-mixin-$version-$platform-setup.exe"
         # NSIS needs a four-part numeric version for the file version resource.
         $numeric = ($version -replace '[^0-9.].*$', '')
         while (($numeric.Split('.')).Count -lt 4) { $numeric = "$numeric.0" }

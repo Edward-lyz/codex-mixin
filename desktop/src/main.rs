@@ -1,11 +1,13 @@
 //! Codex Mixin desktop shell: a tray (menu bar) app with a status panel and
-//! a console window, built on GPUI for macOS and Windows alike.
+//! a console window, built on GPUI for macOS, Windows and Linux.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod assets;
 mod cli;
 mod console;
 mod model;
+#[cfg(target_os = "macos")]
+mod notification;
 mod pages;
 mod panel;
 mod startup;
@@ -29,6 +31,14 @@ macro_rules! tr {
 pub(crate) use tr;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if let Some(result) = notification::run_if_requested() {
+        if let Err(error) = result {
+            eprintln!("cannot deliver desktop notification: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if updater::run_helper_if_requested() {
         return;
     }

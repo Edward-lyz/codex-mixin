@@ -29,6 +29,9 @@
   <string>0.0.0</string>
   <key>CFBundleVersion</key>
   <string>0.0.0</string>
+  <!-- The Sparkle client in 0.x requires this key on the replacement bundle. -->
+  <key>SUPublicEDKey</key>
+  <string>govs3MFvVHshUlHFb2l8en5tKZH7Mz2GnhZLGb//XHQ=</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.1</string>
   <key>LSUIElement</key>

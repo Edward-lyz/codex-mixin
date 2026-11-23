@@ -1,6 +1,8 @@
 //! The console window: a title bar with page navigation and one retained
 //! entity per page, so switching pages keeps drafts and loaded data.
 
+use std::time::Duration;
+
 use gpui_kit::assets::IconName;
 use gpui_kit::base::motion::transition;
 use gpui_kit::component::notification::Notification;
@@ -11,7 +13,7 @@ use gpui_kit::{
     ActivationPolicy, Animation, AnimationExt as _, AnyElement, AnyWindowHandle, App,
     AppContext as _, Bounds, Context, Entity, Global, InteractiveElement as _, IntoElement,
     KeyBinding, Menu, MenuItem, OsAction, ParentElement as _, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, SystemMenuType, Window,
+    StatefulInteractiveElement as _, Styled as _, Subscription, SystemMenuType, Task, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, div, prelude::FluentBuilder as _, px,
     size,
 };
@@ -50,6 +52,7 @@ const PAGES: [Page; 6] = [
 ];
 
 const SIDEBAR_WIDTH: f32 = 212.0;
+const PROVIDER_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Gap between the page sheet and the window edges.
 const SHEET_INSET: f32 = 8.0;
 /// Space above page content inside the sheet: the rest of the drag strip,
@@ -214,6 +217,7 @@ fn close_console(cx: &mut App) {
             if let Ok(root) = root.downcast::<gpui_kit::base::Root>()
                 && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
             {
+                console.update(cx, |console, _| console.provider_poll = None);
                 if let Some(usage) = console.read(cx).usage.clone() {
                     usage.update(cx, |page, cx| page.set_active(false, cx));
                 }
@@ -236,6 +240,7 @@ pub struct Console {
     context: Option<Entity<ContextPage>>,
     routing: Option<Entity<RoutingPage>>,
     settings: Option<Entity<SettingsPage>>,
+    provider_poll: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -354,6 +359,7 @@ impl Console {
             context: None,
             routing: None,
             settings: None,
+            provider_poll: None,
             _subscriptions: vec![subscription, status],
         };
         console.select(page, window, cx);
@@ -366,7 +372,21 @@ impl Console {
         }
         self.page = page;
         match page {
-            Page::Providers => {}
+            Page::Providers => {
+                if self.provider_poll.is_none() {
+                    let store = Store::global(cx);
+                    self.provider_poll = Some(cx.spawn(async move |_, cx| {
+                        loop {
+                            store.update(cx, |store, cx| {
+                                if !store.providers.loading {
+                                    store.refresh_providers(cx);
+                                }
+                            });
+                            cx.background_executor().timer(PROVIDER_POLL_INTERVAL).await;
+                        }
+                    }));
+                }
+            }
             Page::Agents => {
                 self.agents
                     .get_or_insert_with(|| cx.new(|cx| AgentsPage::new(window, cx)));
@@ -387,6 +407,9 @@ impl Console {
                 self.settings
                     .get_or_insert_with(|| cx.new(|cx| SettingsPage::new(window, cx)));
             }
+        }
+        if page != Page::Providers {
+            self.provider_poll = None;
         }
         // The Turn view follows the ledger only while it is on screen.
         if let Some(usage) = &self.usage {

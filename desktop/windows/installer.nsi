@@ -211,5 +211,6 @@ Section "Uninstall"
     DeleteRegValue HKCU "${RUN_KEY}" "${RUN_VALUE}"
   ${EndIf}
   RMDir /r "$INSTDIR"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\com.edward.codex-mixin"
   DeleteRegKey HKCU "${UNINST_KEY}"
 SectionEnd

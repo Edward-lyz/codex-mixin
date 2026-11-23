@@ -13,7 +13,7 @@ CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 
 CLI_ARGS=(--release --locked)
-DESKTOP_ARGS=(--release)
+DESKTOP_ARGS=(--release --locked)
 CLI_TARGET_DIR="$ROOT_DIR/target/release"
 DESKTOP_TARGET_DIR="$DESKTOP_DIR/target/release"
 if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then

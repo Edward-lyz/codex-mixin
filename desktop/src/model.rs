@@ -85,12 +85,12 @@ pub struct EchStatus {
     pub fallback_reason: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct ProviderList {
     pub providers: Vec<Provider>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct Provider {
     pub id: String,
     pub display_name: String,
@@ -158,7 +158,7 @@ pub struct ModelRefresh {
     pub interval_seconds: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct ProviderModel {
     pub id: String,
     #[serde(default)]

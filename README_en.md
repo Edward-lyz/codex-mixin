@@ -112,8 +112,9 @@ Download the package for your platform from [Releases](https://github.com/Edward
 | Platform | Install | Entry point |
 | --- | --- | --- |
 | macOS | Download the Apple Silicon or Intel `.dmg` and drag the app to Applications | Menu bar icon → Open Console |
-| Windows | Extract `windows-x86_64.zip` and run `Codex Mixin.exe` | System tray icon → Open Console |
-| Linux | Extract the x86_64 or ARM64 `unknown-linux-musl.tar.gz` and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal |
+| Windows | Choose x86_64 or ARM64 (`aarch64`). Run `setup.exe` to install for your account, or extract the portable ZIP and run `Codex Mixin.exe` | System tray icon → Open Console |
+| Linux desktop | Extract the x86_64 or ARM64 `codex-mixin-app-*-linux-gnu.tar.gz` and run `./install.sh` | Application launcher → Codex Mixin |
+| Linux CLI | Extract `codex-mixin-cli-*-linux-musl.tar.gz` or install the `.deb`, then run `codex-mixin panel` | Open the address printed in the terminal |
 
 ```bash
 # Homebrew (macOS / Linux): CLI; use --cask for the desktop app
@@ -160,7 +161,7 @@ See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-
 
 ## Interface
 
-The macOS menu bar app and the Windows tray app share one GPUI interface, and Linux uses the CLI and Web panel. All three offer the same features.
+The macOS, Windows, and Linux desktop apps share one GPUI interface. The CLI and web panel can also manage the gateway.
 
 <table>
   <tr>

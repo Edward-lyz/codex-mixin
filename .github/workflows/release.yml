@@ -86,6 +86,66 @@ jobs:
             echo "expected only the $tag section in the release notes, found ${output_count:-0} tag headings and ${version_count:-0} version headings" >&2
             exit 1
           fi
+      - name: Verify desktop update signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist/release
+          version="${{ needs.version.outputs.version }}"
+          for target in aarch64-apple-darwin x86_64-apple-darwin \
+            aarch64-pc-windows-msvc x86_64-pc-windows-msvc \
+            aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
+            extension=zip
+            if [[ "$target" == *-linux-gnu ]]; then
+              extension=tar.gz
+            fi
+            archive="codex-mixin-app-$version-$target.$extension"
+            test -s "$archive" && test -s "$archive.sig" || {
+              echo "missing desktop update archive or signature: $archive" >&2
+              exit 1
+            }
+          done
+      - name: Sign macOS update feeds for Sparkle clients
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          : "${SPARKLE_PRIVATE_KEY:?missing SPARKLE_PRIVATE_KEY for 0.x macOS clients}"
+          sparkle_dir="$(./scripts/fetch_sparkle.sh)"
+          appcasts="$(mktemp -d)"
+          trap 'rm -rf "$appcasts"' EXIT
+          releases="https://github.com/Edward-lyz/codex-mixin/releases"
+          for arch in aarch64 x86_64; do
+            mkdir "$appcasts/$arch"
+            dmg="codex-mixin-$VERSION-$arch-apple-darwin.dmg"
+            cp "dist/release/$dmg" "$appcasts/$arch/"
+            cp .current-release-notes.md "$appcasts/$arch/${dmg%.dmg}.md"
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
+              --ed-key-file - --download-url-prefix "$releases/download/$RELEASE_TAG/" \
+              --embed-release-notes --maximum-deltas 0 --link "$releases/tag/$RELEASE_TAG" \
+              -o "dist/release/appcast-$arch.xml" "$appcasts/$arch"
+            xmllint --noout "dist/release/appcast-$arch.xml"
+            test "$(grep -c '<item>' "dist/release/appcast-$arch.xml")" = 1
+            grep -Fq "$dmg" "dist/release/appcast-$arch.xml"
+            grep -Fq 'sparkle:edSignature=' "dist/release/appcast-$arch.xml"
+          done
+          # Older releases share a feed and rely on the arm64 hardware requirement.
+          awk '/<item>/{copy=1} copy{print} /<\/item>/{exit}' \
+            dist/release/appcast-x86_64.xml > "$appcasts/intel.xml"
+          awk -v item="$appcasts/intel.xml" '
+            /<\/channel>/ { while ((getline line < item) > 0) print line }
+            { print }
+          ' dist/release/appcast-aarch64.xml > dist/release/appcast.xml
+          xmllint --noout dist/release/appcast.xml
+          test "$(grep -c 'sparkle:edSignature=' dist/release/appcast.xml)" = 2
+          first_arch="$(xmllint --xpath 'string(/rss/channel/item[1]/*[local-name()="hardwareRequirements"])' dist/release/appcast.xml)"
+          if [[ "$first_arch" != arm64 ]]; then
+            echo "expected the ARM64 update first in the combined Sparkle feed" >&2
+            exit 1
+          fi
       - name: Write package manager manifests
         shell: bash
         run: |

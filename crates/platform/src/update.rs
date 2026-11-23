@@ -16,6 +16,7 @@ fn target_for(os: &str, arch: &str) -> anyhow::Result<&'static str> {
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
         _ => anyhow::bail!("automatic update is not available for {os}/{arch}"),
     }
 }

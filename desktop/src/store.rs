@@ -289,10 +289,19 @@ impl Store {
                 cli_thread(move || cli.query::<ProviderList>(&["provider", "list", "--json"]))
                     .await;
             this.update(cx, |store, cx| {
+                let changed = match &result {
+                    Ok(providers) => {
+                        store.providers.value.as_ref() != Some(providers)
+                            || store.providers.error.is_some()
+                    }
+                    Err(error) => store.providers.error.as_deref() != Some(error.message.as_str()),
+                };
                 if store.providers.finish(result) {
                     store.refresh_providers(cx);
                 }
-                cx.notify();
+                if changed {
+                    cx.notify();
+                }
             })
             .ok();
         })

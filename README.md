@@ -111,8 +111,9 @@ Codex 以「官方账号模式」接入后，自定义模型加入官方模型�
 | 平台 | 安装 | 入口 |
 | --- | --- | --- |
 | macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」 | 菜单栏图标 →「打开控制台…」 |
-| Windows | 运行 `windows-x86_64-setup.exe`（安装到当前用户，无需管理员），或解压 `windows-x86_64.zip` 后运行 `Codex Mixin.exe` | 系统托盘图标 →「打开控制台」 |
-| Linux | 解压 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz` 后运行 `./codex-mixin panel`，也可安装 `.deb` | 浏览器打开终端打印的地址 |
+| Windows | 选择 x86_64 或 ARM64（`aarch64`），运行 `setup.exe` 安装到当前用户，或解压便携 ZIP 后运行 `Codex Mixin.exe` | 系统托盘图标 →「打开控制台」 |
+| Linux 桌面 | 选择 x86_64 或 ARM64 的 `codex-mixin-app-*-linux-gnu.tar.gz`，解压后运行 `./install.sh` | 应用启动器 → Codex Mixin |
+| Linux 命令行 | 解压 `codex-mixin-cli-*-linux-musl.tar.gz` 或安装 `.deb`，运行 `codex-mixin panel` | 浏览器打开终端打印的地址 |
 
 ```bash
 # Homebrew（macOS / Linux）：命令行版；桌面 App 用 --cask
@@ -159,7 +160,7 @@ curl http://127.0.0.1:8317/v1/models                      # 返回模型列表�
 
 ## 界面
 
-macOS 菜单栏与 Windows 托盘共用同一套 GPUI 界面，Linux 使用 CLI 和 Web 面板。三端功能一致。
+macOS、Windows 与 Linux 桌面客户端共用同一套 GPUI 界面。CLI 和 Web 面板同样可以管理网关。
 
 <table>
   <tr>
