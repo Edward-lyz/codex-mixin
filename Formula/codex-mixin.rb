@@ -1,28 +1,28 @@
 class CodexMixin < Formula
   desc "Local gateway that lets Codex, Claude Code and other agents use any model"
   homepage "https://github.com/Edward-lyz/codex-mixin"
-  version "0.8.7"
+  version "1.0.0"
   license "CC-BY-NC-4.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.7/codex-mixin-cli-0.8.7-aarch64-apple-darwin.tar.gz"
-      sha256 "740d5e621faba445b078d2f51e30488e903a7aeb083994944ff1f5a6250d9f99"
+      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v1.0.0/codex-mixin-cli-1.0.0-aarch64-apple-darwin.tar.gz"
+      sha256 "a9b3095a1989af34b38e44a378f533e859eeabedffd6cacf08f10608fedce31d"
     end
     on_intel do
-      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.7/codex-mixin-cli-0.8.7-x86_64-apple-darwin.tar.gz"
-      sha256 "0d611aa3ee80558fed5c536324f439091cd668585b6c7f10e67361e175a8caf4"
+      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v1.0.0/codex-mixin-cli-1.0.0-x86_64-apple-darwin.tar.gz"
+      sha256 "f11561516ce04073303d518e8e30d6ee9f14e96d23db0ef449cc9d930c6d03bb"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.7/codex-mixin-cli-0.8.7-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "b25db5c31219bf7a750a3fa32ae62202b46dbb6354a179626e236a190c0f9368"
+      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v1.0.0/codex-mixin-cli-1.0.0-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "f9c2a345cb7baa11b2dd550c2b0346cab6433b9308943df17b1967d3e3c5d301"
     end
     on_intel do
-      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v0.8.7/codex-mixin-cli-0.8.7-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "5d8a4604570f145bca187a3f0dea353df4736a01173590feb7e3f9f792d48ada"
+      url "https://github.com/Edward-lyz/codex-mixin/releases/download/v1.0.0/codex-mixin-cli-1.0.0-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "1396e5ab952e449cd3ad840869438d86abc2070fcc41ea39cb4541d509016e3d"
     end
   end
 
