@@ -302,6 +302,69 @@ pub(crate) struct TurnQuery {
     pub(crate) limit: usize,
 }
 
+/// Time window for bucketed traffic series queries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UsageSeriesWindow {
+    TenMinutes,
+    OneHour,
+    Day,
+    Week,
+    Month,
+}
+
+impl UsageSeriesWindow {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "10m" => Some(Self::TenMinutes),
+            "1h" => Some(Self::OneHour),
+            "24h" => Some(Self::Day),
+            "7d" => Some(Self::Week),
+            "30d" => Some(Self::Month),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn bucket_ms(self) -> u64 {
+        match self {
+            Self::TenMinutes => 20_000,
+            Self::OneHour => 120_000,
+            Self::Day => 3_600_000,
+            Self::Week | Self::Month => DAY_MS,
+        }
+    }
+
+    pub(crate) const fn bucket_count(self) -> usize {
+        match self {
+            Self::TenMinutes | Self::OneHour | Self::Month => 30,
+            Self::Day => 24,
+            Self::Week => 7,
+        }
+    }
+
+    pub(crate) const fn days(self) -> Option<u64> {
+        match self {
+            Self::Week => Some(7),
+            Self::Month => Some(30),
+            Self::TenMinutes | Self::OneHour | Self::Day => None,
+        }
+    }
+}
+
+/// One aggregated time bucket returned by `/v1/usage/series` and `usage --series`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub(crate) struct UsageSeriesBucket {
+    pub(crate) bucket_start_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) provider_id: Option<String>,
+    pub(crate) requests: u64,
+    pub(crate) errors: u64,
+    pub(crate) cached_requests: u64,
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) cache_read_tokens: u64,
+    pub(crate) estimated_cost_usd: f64,
+}
+
 /// Turn rows live only in usage.sqlite3; queries read them on demand so the
 /// gateway does not keep thousands of rows resident between dashboard refreshes.
 #[derive(Debug, Default)]
@@ -342,6 +405,156 @@ impl TurnLedger {
             }
         }
     }
+
+    /// Bucketed counts from the turn ledger for short windows (`10m`, `1h`, `24h`).
+    pub(crate) fn series(
+        &self,
+        window: UsageSeriesWindow,
+        provider_id: Option<&str>,
+        by_provider: bool,
+        providers: Option<&HashSet<String>>,
+    ) -> Vec<UsageSeriesBucket> {
+        let now_ms = unix_millis();
+        let bucket_ms = window.bucket_ms();
+        let count = window.bucket_count();
+        let current_bucket = (now_ms / bucket_ms) * bucket_ms;
+        let start_ms =
+            current_bucket.saturating_sub(bucket_ms.saturating_mul(count.saturating_sub(1) as u64));
+        let end_ms = current_bucket.saturating_add(bucket_ms);
+        let mut buckets: Vec<UsageSeriesBucket> = if by_provider {
+            Vec::new()
+        } else {
+            (0..count)
+                .map(|index| UsageSeriesBucket {
+                    bucket_start_ms: start_ms
+                        .saturating_add(bucket_ms.saturating_mul(index as u64)),
+                    ..UsageSeriesBucket::default()
+                })
+                .collect()
+        };
+        let Some(path) = self.persist_path.as_deref().filter(|path| path.exists()) else {
+            return buckets;
+        };
+        match query_series(
+            path,
+            start_ms,
+            end_ms,
+            bucket_ms,
+            provider_id,
+            by_provider,
+            providers,
+        ) {
+            Ok(rows) => {
+                if by_provider {
+                    return rows;
+                }
+                for row in rows {
+                    if row.bucket_start_ms >= start_ms {
+                        let index = ((row.bucket_start_ms - start_ms) / bucket_ms) as usize;
+                        if let Some(slot) = buckets.get_mut(index) {
+                            *slot = row;
+                        }
+                    }
+                }
+                buckets
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to read usage series");
+                buckets
+            }
+        }
+    }
+}
+
+fn query_series(
+    path: &Path,
+    start_ms: u64,
+    end_ms: u64,
+    bucket_ms: u64,
+    provider_id: Option<&str>,
+    by_provider: bool,
+    providers: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<UsageSeriesBucket>> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
+    connection.execute_batch("PRAGMA cache_size = -256;")?;
+    let table_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'token_usage_turns')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(Vec::new());
+    }
+    let columns = turn_columns(&connection)?;
+    let has = |name: &str| columns.iter().any(|column| column == name);
+    let status_expr = if has("status") {
+        "status"
+    } else {
+        "'completed'"
+    };
+    let cost_expr = if has("estimated_cost_usd") {
+        "COALESCE(estimated_cost_usd, 0.0)"
+    } else {
+        "0.0"
+    };
+    let mut statement = connection.prepare(&format!(
+        "SELECT ((at_ms / ?1) * ?1) AS bucket_start_ms,
+                provider_id,
+                SUM(CASE WHEN {status_expr} = 'failed' THEN 0 ELSE 1 END) AS requests,
+                SUM(CASE WHEN {status_expr} = 'failed' THEN 1 ELSE 0 END) AS errors,
+                SUM(CASE WHEN COALESCE(cache_read_tokens, 0) > 0 THEN 1 ELSE 0 END) AS cached_requests,
+                SUM(COALESCE(input_tokens, 0)) AS input_tokens,
+                SUM(COALESCE(output_tokens, 0)) AS output_tokens,
+                SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
+                SUM({cost_expr}) AS estimated_cost_usd
+         FROM token_usage_turns
+         WHERE at_ms >= ?2 AND at_ms < ?3 AND (?4 IS NULL OR provider_id = ?4)
+         GROUP BY bucket_start_ms, provider_id
+         ORDER BY bucket_start_ms ASC, provider_id ASC"
+    ))?;
+    let mut rows = statement.query(params![
+        bucket_ms.min(i64::MAX as u64) as i64,
+        start_ms.min(i64::MAX as u64) as i64,
+        end_ms.min(i64::MAX as u64) as i64,
+        provider_id,
+    ])?;
+    let mut merged = std::collections::BTreeMap::<(u64, Option<String>), UsageSeriesBucket>::new();
+    while let Some(row) = rows.next()? {
+        let bucket_start_ms: u64 = row.get::<_, i64>(0)?.max(0) as u64;
+        let row_provider: String = row.get(1)?;
+        if providers.is_some_and(|allowed| !allowed.contains(&row_provider)) {
+            continue;
+        }
+        let key_provider = by_provider.then_some(row_provider);
+        let entry = merged
+            .entry((bucket_start_ms, key_provider.clone()))
+            .or_insert_with(|| UsageSeriesBucket {
+                bucket_start_ms,
+                provider_id: key_provider,
+                ..UsageSeriesBucket::default()
+            });
+        entry.requests = entry
+            .requests
+            .saturating_add(row.get::<_, i64>(2)?.max(0) as u64);
+        entry.errors = entry
+            .errors
+            .saturating_add(row.get::<_, i64>(3)?.max(0) as u64);
+        entry.cached_requests = entry
+            .cached_requests
+            .saturating_add(row.get::<_, i64>(4)?.max(0) as u64);
+        entry.input_tokens = entry
+            .input_tokens
+            .saturating_add(row.get::<_, i64>(5)?.max(0) as u64);
+        entry.output_tokens = entry
+            .output_tokens
+            .saturating_add(row.get::<_, i64>(6)?.max(0) as u64);
+        entry.cache_read_tokens = entry
+            .cache_read_tokens
+            .saturating_add(row.get::<_, i64>(7)?.max(0) as u64);
+        entry.estimated_cost_usd += row.get::<_, f64>(8)?;
+    }
+    Ok(merged.into_values().collect())
 }
 
 fn query_turns(
@@ -512,4 +725,124 @@ fn turn_columns(connection: &Connection) -> anyhow::Result<Vec<String>> {
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(columns)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_db_path(label: &str) -> PathBuf {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "codex-mixin-usage-series-{label}-{}-{id}.sqlite",
+            std::process::id()
+        ))
+    }
+
+    fn sample_turn(
+        at_ms: i64,
+        provider_id: &str,
+        cache_read_tokens: u64,
+        status: TurnStatus,
+        cost: Option<f64>,
+    ) -> TurnUsage {
+        TurnUsage {
+            at_ms: at_ms as u64,
+            session: "sess-1".to_string(),
+            session_display: None,
+            provider_id: provider_id.to_string(),
+            catalog_slug: "gpt-5".to_string(),
+            upstream_model_id: "gpt-5".to_string(),
+            returned_model: None,
+            model_matches: Some(true),
+            protocol: "openai_responses".to_string(),
+            prefix_state: "hit".to_string(),
+            input_tokens: Some(100),
+            cache_read_tokens: Some(cache_read_tokens),
+            cache_creation_tokens: Some(0),
+            output_tokens: Some(50),
+            reasoning_tokens: Some(0),
+            reasoning_chars: 0,
+            cache_hit_percent: None,
+            ttft_ms: Some(120.0),
+            output_tps: Some(40.0),
+            status,
+            error: (status == TurnStatus::Failed).then(|| "boom".to_string()),
+            estimated_cost_usd: cost,
+            client: Some("codex".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn series_zero_fills_buckets_and_aggregates_requests_cached_errors() {
+        let path = temp_db_path("agg");
+        let ledger = TurnLedger::load(Some(path.clone())).expect("load temp ledger");
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let bucket_ms = UsageSeriesWindow::TenMinutes.bucket_ms() as i64;
+        let current_slot = now_ms - now_ms.rem_euclid(bucket_ms);
+        let prev_slot = current_slot - bucket_ms;
+
+        ledger.record(sample_turn(
+            current_slot + 100,
+            "openai",
+            64,
+            TurnStatus::Completed,
+            Some(0.25),
+        ));
+        ledger.record(sample_turn(
+            current_slot + 200,
+            "anthropic",
+            0,
+            TurnStatus::Failed,
+            Some(0.10),
+        ));
+        ledger.record(sample_turn(
+            prev_slot + 50,
+            "openai",
+            32,
+            TurnStatus::Completed,
+            Some(0.50),
+        ));
+        let mut buckets = Vec::new();
+        for _ in 0..50 {
+            buckets = ledger.series(UsageSeriesWindow::TenMinutes, None, false, None);
+            let total: u64 = buckets
+                .iter()
+                .map(|bucket| bucket.requests + bucket.errors)
+                .sum();
+            if total == 3 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        assert_eq!(buckets.len(), UsageSeriesWindow::TenMinutes.bucket_count());
+        let total_requests: u64 = buckets.iter().map(|bucket| bucket.requests).sum();
+        let total_cached: u64 = buckets.iter().map(|bucket| bucket.cached_requests).sum();
+        let total_errors: u64 = buckets.iter().map(|bucket| bucket.errors).sum();
+        let total_cost: f64 = buckets.iter().map(|bucket| bucket.estimated_cost_usd).sum();
+        assert_eq!(total_requests, 2);
+        assert_eq!(total_cached, 2);
+        assert_eq!(total_errors, 1);
+        assert!((total_cost - 0.85).abs() < 1e-6);
+
+        let by_provider = ledger.series(UsageSeriesWindow::TenMinutes, None, true, None);
+        let openai_requests: u64 = by_provider
+            .iter()
+            .filter(|bucket| bucket.provider_id.as_deref() == Some("openai"))
+            .map(|bucket| bucket.requests)
+            .sum();
+        let anthropic_errors: u64 = by_provider
+            .iter()
+            .filter(|bucket| bucket.provider_id.as_deref() == Some("anthropic"))
+            .map(|bucket| bucket.errors)
+            .sum();
+        assert_eq!(openai_requests, 2);
+        assert_eq!(anthropic_errors, 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

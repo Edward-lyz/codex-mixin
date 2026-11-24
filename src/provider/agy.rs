@@ -306,6 +306,7 @@ pub struct AgyQuotaWindow {
     pub label: String,
     pub remaining_percent: f64,
     pub reset_at: Option<String>,
+    pub window_seconds: Option<u64>,
 }
 
 pub async fn fetch_agy_quota(provider: &ProviderDefinition) -> anyhow::Result<Vec<AgyQuotaWindow>> {
@@ -407,11 +408,25 @@ fn parse_quota(value: &Value) -> anyhow::Result<Vec<AgyQuotaWindow>> {
             let id = bucket
                 .id
                 .unwrap_or_else(|| format!("{}/{}", group.name, bucket.name));
+            let label = compact_quota_label(&group.name, &bucket.name);
+            let lower = bucket.name.to_ascii_lowercase();
+            let window_seconds = if lower.contains("five hour")
+                || lower.contains("5 hour")
+                || lower.contains("5h")
+            {
+                Some(5 * 3_600)
+            } else if lower.contains("weekly") || lower.contains("week") || lower.contains("7 day")
+            {
+                Some(7 * 86_400)
+            } else {
+                None
+            };
             let window = AgyQuotaWindow {
                 id: id.clone(),
-                label: compact_quota_label(&group.name, &bucket.name),
+                label,
                 remaining_percent: fraction * 100.0,
                 reset_at: bucket.reset_time,
+                window_seconds,
             };
             ensure!(
                 windows.insert(id, window).is_none(),

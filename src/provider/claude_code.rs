@@ -216,11 +216,17 @@ pub fn fetch_claude_code_quota(provider_id: &str) -> anyhow::Result<Vec<Value>> 
         } else {
             (window["utilization"].as_f64().unwrap_or_default() * 100.0).clamp(0.0, 100.0)
         };
+        let window_seconds: Option<u64> = match key {
+            "five_hour" => Some(5 * 3_600),
+            "seven_day" => Some(7 * 86_400),
+            _ => None,
+        };
         rows.push(json!({
             "quota_id": key, "label": label, "currency": null, "unit": "percent",
             "source": "claude_code_headers", "value": used, "used": used, "limit": 100.0,
             "remaining": 100.0 - used,
             "reset_at": reset.filter(|_| !expired).map(|reset| reset.to_rfc3339()),
+            "window_seconds": window_seconds,
             "error": null, "stale_at": captured.to_rfc3339(),
         }));
     }

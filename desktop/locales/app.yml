@@ -1328,3 +1328,42 @@ usage.turn.load_failed:
 usage.turn.none_selected:
   en: "Select a turn to see its details."
   zh-CN: "选择一条记录查看详情。"
+panel.quota_all:
+  en: "All"
+  zh-CN: "全部"
+usage.traffic.title:
+  en: "Traffic"
+  zh-CN: "流量"
+usage.traffic.requests:
+  en: "LLM requests"
+  zh-CN: "LLM 请求"
+usage.traffic.cached:
+  en: "Cached"
+  zh-CN: "缓存命中"
+usage.traffic.errors:
+  en: "Errors"
+  zh-CN: "错误"
+usage.traffic.empty:
+  en: "No traffic in this window."
+  zh-CN: "该时间窗口内暂无流量。"
+usage.limits.title:
+  en: "Usage limits"
+  zh-CN: "用量额度"
+usage.limits.empty:
+  en: "No active quota or spend data yet."
+  zh-CN: "暂无活跃的额度或花费数据。"
+usage.limits.filter_all:
+  en: "Show all enabled providers"
+  zh-CN: "显示所有已启用的服务商"
+usage.limits.filter_active:
+  en: "Show only active providers"
+  zh-CN: "仅显示有额度或用量的服务商"
+usage.limits_empty_provider:
+  en: "No quota data"
+  zh-CN: "暂无额度数据"
+usage.spend_via:
+  en: "Spend via Codex Mixin"
+  zh-CN: "经由 Codex Mixin 消耗"
+usage.spend_requests:
+  en: "%{count} req · 30d"
+  zh-CN: "%{count} 次请求 · 30天"

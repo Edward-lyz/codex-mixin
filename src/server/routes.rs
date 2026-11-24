@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/usage", get(token_usage))
         .route("/v1/usage/turns", get(token_usage_turns))
         .route("/v1/usage/daily", get(token_usage_daily))
+        .route("/v1/usage/series", get(token_usage_series))
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
@@ -400,4 +401,36 @@ async fn token_usage_turns(
     .await
     .map_err(|error| GatewayError::Other(error.into()))?;
     Ok(Json(turns))
+}
+
+#[derive(Deserialize)]
+struct SeriesUsageQuery {
+    window: Option<String>,
+    provider: Option<String>,
+    #[serde(default)]
+    by_provider: bool,
+}
+
+async fn token_usage_series(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SeriesUsageQuery>,
+) -> Result<Json<Vec<crate::usage::UsageSeriesBucket>>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    let window_raw = query.window.as_deref().unwrap_or("1h");
+    let window = crate::usage::UsageSeriesWindow::parse(window_raw).ok_or_else(|| {
+        GatewayError::BadRequest(format!(
+            "unsupported usage series window `{window_raw}` (expected 10m, 1h, 24h, 7d, or 30d)"
+        ))
+    })?;
+    let provider = query.provider;
+    let by_provider = query.by_provider;
+    let buckets = tokio::task::spawn_blocking(move || {
+        state
+            .cache_shapes
+            .usage_series(window, provider.as_deref(), by_provider)
+    })
+    .await
+    .map_err(|error| GatewayError::Other(error.into()))??;
+    Ok(Json(buckets))
 }

@@ -128,6 +128,15 @@ impl CacheShapeTracker {
         self.usage.turns(query)
     }
 
+    pub(crate) fn usage_series(
+        &self,
+        window: crate::usage::UsageSeriesWindow,
+        provider_id: Option<&str>,
+        by_provider: bool,
+    ) -> anyhow::Result<Vec<crate::usage::UsageSeriesBucket>> {
+        self.usage.usage_series(window, provider_id, by_provider)
+    }
+
     pub(crate) fn usage_snapshot(&self) -> Vec<ProviderTokenUsage> {
         self.usage.snapshot()
     }

@@ -23,7 +23,7 @@ mod usage;
 
 pub(crate) use config::{export_config, import_config, show_config};
 pub(crate) use quota::quota;
-pub(crate) use usage::{usage, usage_daily, usage_turns};
+pub(crate) use usage::{usage, usage_daily, usage_series, usage_turns};
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
     if load_stored_config()?.is_none_or(|config| config.providers.is_empty())

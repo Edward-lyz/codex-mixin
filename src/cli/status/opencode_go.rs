@@ -68,6 +68,12 @@ pub(crate) async fn fetch_opencode_go_quota_results(
         Ok(windows) => {
             for window in windows {
                 let used = window.used_percent.clamp(0.0, 100.0);
+                let window_seconds: Option<u64> = match window.quota_id {
+                    "five_hour" => Some(5 * 3_600),
+                    "weekly" => Some(7 * 86_400),
+                    "monthly" => Some(30 * 86_400),
+                    _ => None,
+                };
                 results.push(serde_json::json!({
                     "provider_id": provider.id,
                     "provider_display_name": provider.display_name,
@@ -79,10 +85,11 @@ pub(crate) async fn fetch_opencode_go_quota_results(
                     "used": used,
                     "limit": 100.0,
                     "remaining": (100.0 - used).max(0.0),
-                "unit": "percent",
+                    "unit": "percent",
                     "error": null,
                     "stale_at": null,
                     "reset_at": unix_time_plus_seconds(window.reset_in_sec),
+                    "window_seconds": window_seconds,
                 }));
             }
         }
@@ -520,6 +527,7 @@ pub(crate) fn official_quota_rows(
                 .get("resetsAt")
                 .and_then(serde_json::Value::as_u64)
                 .map(unix_seconds_to_rfc3339);
+            let window_seconds = duration_minutes.map(|minutes| minutes.saturating_mul(60));
             rows.push(serde_json::json!({
                 "provider_id": "official",
                 "provider_display_name": "OpenAI",
@@ -533,6 +541,7 @@ pub(crate) fn official_quota_rows(
                 "unit": "percent",
                 "error": null,
                 "reset_at": reset_at,
+                "window_seconds": window_seconds,
                 "stale_at": null,
             }));
         }

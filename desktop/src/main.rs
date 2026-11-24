@@ -10,6 +10,7 @@ mod model;
 mod notification;
 mod pages;
 mod panel;
+mod quota_card;
 mod startup;
 mod store;
 mod theme;

@@ -23,6 +23,7 @@ pub struct Segmented {
     id: ElementId,
     items: Vec<SharedString>,
     selected: usize,
+    item_width: Option<gpui_kit::Pixels>,
     on_change: Option<ChangeHandler>,
 }
 
@@ -32,6 +33,7 @@ impl Segmented {
             id: id.into(),
             items: Vec::new(),
             selected: 0,
+            item_width: None,
             on_change: None,
         }
     }
@@ -43,6 +45,11 @@ impl Segmented {
 
     pub fn selected(mut self, selected: usize) -> Self {
         self.selected = selected;
+        self
+    }
+
+    pub fn item_width(mut self, width: gpui_kit::Pixels) -> Self {
+        self.item_width = Some(width);
         self
     }
 
@@ -73,6 +80,7 @@ impl RenderOnce for Segmented {
             .rounded(radius - gpui_kit::px(1.0))
             .bg(colors.tab_active)
             .shadow_xs();
+        let item_width = self.item_width;
         let segments = self.items.into_iter().enumerate().map(|(index, label)| {
             let selected = index == self.selected;
             let handler = self.on_change.clone();
@@ -85,7 +93,8 @@ impl RenderOnce for Segmented {
                 .flex()
                 .items_center()
                 .justify_center()
-                .w_20()
+                .when_some(item_width, |segment, width| segment.w(width))
+                .when(item_width.is_none(), |segment| segment.w_20())
                 .h_6()
                 .text_xs()
                 .font_medium()

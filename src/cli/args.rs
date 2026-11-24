@@ -184,13 +184,22 @@ pub(super) enum Command {
         #[arg(long)]
         days: Option<u64>,
         /// List individual upstream replies instead of per-model totals.
-        #[arg(long, conflicts_with = "daily")]
+        #[arg(long, conflicts_with_all = ["daily", "series"])]
         turns: bool,
         /// List per-day provider/model totals for charts.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "series")]
         daily: bool,
-        /// Only include turns served by this provider (requires --turns).
-        #[arg(long, requires = "turns")]
+        /// List bucketed traffic counts for a time window (10m, 1h, 24h, 7d, 30d).
+        #[arg(long)]
+        series: bool,
+        /// Time window for `--series` (10m, 1h, 24h, 7d, 30d).
+        #[arg(long, requires = "series")]
+        window: Option<String>,
+        /// Group `--series` buckets by provider id.
+        #[arg(long, requires = "series")]
+        by_provider: bool,
+        /// Only include rows served by this provider (for --turns or --series).
+        #[arg(long)]
         provider: Option<String>,
         /// Maximum turns to return, newest first (requires --turns).
         #[arg(long, requires = "turns")]

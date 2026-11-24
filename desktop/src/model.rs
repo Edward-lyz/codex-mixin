@@ -221,6 +221,8 @@ pub struct ProtocolOption {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct QuotaEntry {
+    #[serde(default)]
+    pub quota_id: Option<String>,
     pub label: String,
     #[serde(default)]
     pub error: Option<String>,
@@ -236,11 +238,13 @@ pub struct QuotaEntry {
     pub currency: Option<String>,
     #[serde(default)]
     pub reset_at: Option<String>,
+    #[serde(default)]
+    pub window_seconds: Option<u64>,
 }
 
 impl QuotaEntry {
-    /// Remaining fraction in 0..=1 when the quota has a known limit.
-    pub fn remaining_fraction(&self) -> Option<f32> {
+    /// Used fraction in `0..=1` when the quota has a known limit.
+    pub fn used_fraction(&self) -> Option<f32> {
         if self.error.is_some() {
             return None;
         }
@@ -248,11 +252,133 @@ impl QuotaEntry {
             .limit
             .or_else(|| (self.unit.as_deref() == Some("percent")).then_some(100.0))
             .filter(|limit| *limit > 0.0)?;
-        let remaining = self
-            .remaining
-            .or_else(|| self.used.map(|used| limit - used))?;
-        Some((remaining / limit).clamp(0.0, 1.0) as f32)
+        let used = self
+            .used
+            .or_else(|| self.remaining.map(|remaining| (limit - remaining).max(0.0)))?;
+        Some((used / limit).clamp(0.0, 1.0) as f32)
     }
+
+    /// Window duration in seconds, preferring the CLI field and falling back to
+    /// well-known window ids/labels for older gateways.
+    pub fn inferred_window_seconds(&self) -> Option<u64> {
+        if let Some(seconds) = self.window_seconds.filter(|seconds| *seconds > 0) {
+            return Some(seconds);
+        }
+        let id = self
+            .quota_id
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let label = self.label.to_ascii_lowercase();
+        if id.contains("five_hour")
+            || id.contains("5h")
+            || label == "5h"
+            || label.ends_with(" 5h")
+            || label.ends_with("· 5h")
+        {
+            Some(5 * 3_600)
+        } else if id.contains("seven_day")
+            || id.contains("weekly")
+            || id.contains("7d")
+            || label.contains("week")
+            || label == "7d"
+            || label.ends_with(" 7d")
+            || label.ends_with("· 7d")
+        {
+            Some(7 * 86_400)
+        } else if id.contains("monthly") || label.contains("month") {
+            Some(30 * 86_400)
+        } else {
+            None
+        }
+    }
+
+    /// Elapsed fraction `0..=1` through the current reset window, used to place
+    /// the pace tick mark on the progress bar.
+    pub fn pace_fraction(&self) -> Option<f32> {
+        if self.error.is_some() {
+            return None;
+        }
+        let window_secs = self.inferred_window_seconds()? as f64;
+        let reset = self
+            .reset_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())?;
+        let remaining_secs =
+            (reset.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds() as f64;
+        if remaining_secs < 0.0 || remaining_secs > window_secs {
+            return None;
+        }
+        let elapsed = (window_secs - remaining_secs) / window_secs;
+        Some(elapsed.clamp(0.0, 1.0) as f32)
+    }
+
+    pub fn is_percent_window(&self) -> bool {
+        self.unit.as_deref() == Some("percent")
+    }
+
+    pub fn is_warning(&self) -> bool {
+        if self.error.is_some() {
+            return true;
+        }
+        let Some(used) = self.used_fraction() else {
+            return false;
+        };
+        if used >= 0.80 {
+            return true;
+        }
+        self.pace_fraction()
+            .is_some_and(|pace| used > pace + 0.15 && used >= 0.25)
+    }
+
+    /// Remaining time until reset formatted compactly (`2h`, `3d 3h`, `45m`, `<1m`).
+    pub fn reset_countdown(&self) -> Option<String> {
+        let reset = self
+            .reset_at
+            .as_deref()
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())?;
+        let seconds = (reset.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_seconds();
+        if seconds < 0 {
+            return None;
+        }
+        if seconds < 60 {
+            return Some("<1m".to_owned());
+        }
+        let minutes = seconds / 60;
+        if minutes < 60 {
+            return Some(format!("{minutes}m"));
+        }
+        let hours = minutes / 60;
+        let rem_minutes = minutes % 60;
+        if hours < 24 {
+            if rem_minutes >= 5 && hours < 12 {
+                return Some(format!("{hours}h {rem_minutes}m"));
+            }
+            return Some(format!("{hours}h"));
+        }
+        let days = hours / 24;
+        let rem_hours = hours % 24;
+        if rem_hours > 0 {
+            Some(format!("{days}d {rem_hours}h"))
+        } else {
+            Some(format!("{days}d"))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct UsageSeriesBucket {
+    pub bucket_start_ms: i64,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub requests: u64,
+    #[serde(default)]
+    pub errors: u64,
+    #[serde(default)]
+    pub cached_requests: u64,
+    #[serde(default)]
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -282,4 +408,67 @@ pub struct BenchmarkResult {
     pub ttft_ms: Option<f64>,
     #[serde(default)]
     pub tps: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn percent_entry(
+        quota_id: Option<&str>,
+        label: &str,
+        used: Option<f64>,
+        remaining: Option<f64>,
+        window_seconds: Option<u64>,
+        reset_in_secs: Option<i64>,
+    ) -> QuotaEntry {
+        QuotaEntry {
+            quota_id: quota_id.map(str::to_owned),
+            label: label.to_owned(),
+            remaining,
+            used,
+            limit: Some(100.0),
+            unit: Some("percent".to_owned()),
+            currency: None,
+            reset_at: reset_in_secs
+                .map(|secs| (chrono::Utc::now() + chrono::Duration::seconds(secs)).to_rfc3339()),
+            window_seconds,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn quota_used_fraction_and_warning_semantics() {
+        let ok = percent_entry(Some("5h"), "5h", Some(37.0), Some(63.0), Some(18_000), None);
+        assert!((ok.used_fraction().unwrap() - 0.37).abs() < 1e-4);
+        assert!(!ok.is_warning());
+
+        let warn = percent_entry(Some("week"), "Week", None, Some(15.0), None, None);
+        assert!((warn.used_fraction().unwrap() - 0.85).abs() < 1e-4);
+        assert!(warn.is_warning());
+    }
+
+    #[test]
+    fn quota_pace_fraction_uses_explicit_or_inferred_window() {
+        // Explicit 5h window with 2.5h remaining => ~50% elapsed.
+        let five_h = percent_entry(
+            Some("5h"),
+            "5h",
+            Some(37.0),
+            Some(63.0),
+            Some(18_000),
+            Some(9_000),
+        );
+        let pace = five_h.pace_fraction().expect("pace should be computed");
+        assert!((pace - 0.5).abs() < 0.02, "unexpected pace: {pace}");
+
+        // Inferred weekly window from label with 3.5d remaining => ~50% elapsed.
+        let weekly = percent_entry(None, "Weekly", Some(45.0), Some(55.0), None, Some(302_400));
+        assert_eq!(weekly.inferred_window_seconds(), Some(604_800));
+        let week_pace = weekly.pace_fraction().expect("weekly pace");
+        assert!(
+            (week_pace - 0.5).abs() < 0.02,
+            "unexpected week pace: {week_pace}"
+        );
+    }
 }

@@ -82,7 +82,7 @@ use providers::{
 use service::{init_tracing, logs, restart, start, stop};
 use status::{
     export_config, import_config, models, probe_web_search, quota, show_config, status, usage,
-    usage_daily, usage_turns,
+    usage_daily, usage_series, usage_turns,
 };
 
 fn progress_is_interactive() -> bool {
@@ -764,6 +764,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             days,
             turns,
             daily,
+            series,
+            window,
+            by_provider,
             provider,
             limit,
             since_ms,
@@ -771,6 +774,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         } => {
             if turns {
                 usage_turns(json, days, provider.as_deref(), limit, since_ms, until_ms).await
+            } else if series {
+                usage_series(json, window.as_deref(), provider.as_deref(), by_provider).await
             } else if daily {
                 usage_daily(json, days).await
             } else {

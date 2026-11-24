@@ -9,7 +9,10 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::usage::{PERSIST_BUSY_TIMEOUT, TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
+use crate::usage::{
+    PERSIST_BUSY_TIMEOUT, TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE, UsageSeriesBucket,
+    UsageSeriesWindow,
+};
 
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
@@ -813,6 +816,70 @@ impl TokenUsageAggregator {
                 usage: self.finalize_entries(vec![usage]).remove(0),
             })
             .collect())
+    }
+
+    /// Bucketed usage series for the Traffic chart and mini activity bars.
+    pub(crate) fn usage_series(
+        &self,
+        window: UsageSeriesWindow,
+        provider_id: Option<&str>,
+        by_provider: bool,
+    ) -> anyhow::Result<Vec<UsageSeriesBucket>> {
+        if let Some(days) = window.days() {
+            let today = current_unix_day()?;
+            let first_day = today.saturating_sub(days - 1);
+            let daily = self.daily_series(days)?;
+            let mut merged =
+                std::collections::BTreeMap::<(u64, Option<String>), UsageSeriesBucket>::new();
+            if !by_provider {
+                for day in first_day..=today {
+                    let bucket_start_ms = day.saturating_mul(86_400_000);
+                    merged.insert(
+                        (bucket_start_ms, None),
+                        UsageSeriesBucket {
+                            bucket_start_ms,
+                            ..UsageSeriesBucket::default()
+                        },
+                    );
+                }
+            }
+            for row in daily {
+                if let Some(filter) = provider_id
+                    && row.usage.provider_id != filter
+                {
+                    continue;
+                }
+                let bucket_start_ms = row.day.saturating_mul(86_400_000);
+                let key_provider = by_provider.then_some(row.usage.provider_id);
+                let entry = merged
+                    .entry((bucket_start_ms, key_provider.clone()))
+                    .or_insert_with(|| UsageSeriesBucket {
+                        bucket_start_ms,
+                        provider_id: key_provider,
+                        ..UsageSeriesBucket::default()
+                    });
+                entry.requests = entry.requests.saturating_add(row.usage.request_count);
+                entry.errors = entry.errors.saturating_add(row.usage.error_count);
+                if row.usage.cache_read_tokens > 0 {
+                    entry.cached_requests = entry
+                        .cached_requests
+                        .saturating_add(row.usage.request_count);
+                }
+                entry.input_tokens = entry.input_tokens.saturating_add(row.usage.input_tokens);
+                entry.output_tokens = entry.output_tokens.saturating_add(row.usage.output_tokens);
+                entry.cache_read_tokens = entry
+                    .cache_read_tokens
+                    .saturating_add(row.usage.cache_read_tokens);
+                entry.estimated_cost_usd += row.usage.estimated_cost_usd.unwrap_or_default();
+            }
+            return Ok(merged.into_values().collect());
+        }
+        Ok(self.turns.series(
+            window,
+            provider_id,
+            by_provider,
+            self.configured_providers.as_ref(),
+        ))
     }
 }
 

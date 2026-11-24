@@ -182,6 +182,61 @@ pub(crate) async fn usage_turns(
     Ok(())
 }
 
+pub(crate) async fn usage_series(
+    json_output: bool,
+    window: Option<&str>,
+    provider: Option<&str>,
+    by_provider: bool,
+) -> anyhow::Result<()> {
+    let mut query = reqwest::Url::parse("http://query.invalid/")?;
+    {
+        let mut pairs = query.query_pairs_mut();
+        if let Some(window) = window {
+            pairs.append_pair("window", window);
+        }
+        if let Some(provider) = provider {
+            pairs.append_pair("provider", provider);
+        }
+        if by_provider {
+            pairs.append_pair("by_provider", "true");
+        }
+    }
+    let body = gateway_get("/v1/usage/series", query.query().unwrap_or("")).await?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&body)?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    if rows.is_empty() {
+        println!("no provider token usage recorded");
+        return Ok(());
+    }
+    for row in rows {
+        let at = row["bucket_start_ms"]
+            .as_i64()
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map_or_else(
+                || "?".to_owned(),
+                |dt| {
+                    dt.with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M:%S")
+                        .to_string()
+                },
+            );
+        let provider_note = row["provider_id"]
+            .as_str()
+            .map(|id| format!(" [{id}]"))
+            .unwrap_or_default();
+        println!(
+            "{at}{provider_note}: {} requests, {} errors, {} cached",
+            row["requests"].as_u64().unwrap_or(0),
+            row["errors"].as_u64().unwrap_or(0),
+            row["cached_requests"].as_u64().unwrap_or(0),
+        );
+    }
+    Ok(())
+}
+
 fn turn_line(row: &serde_json::Value) -> String {
     let text = |key: &str| row[key].as_str().unwrap_or("?").to_owned();
     let count = |key: &str| {

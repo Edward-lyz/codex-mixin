@@ -1,13 +1,15 @@
 //! Usage page: daily totals from `usage --daily`, compared with the period
 //! before, plus a per-model breakdown.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
+use chrono::{Datelike as _, Timelike as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::chart::BarChart;
+use gpui_kit::component::chart::{AreaChart, BarChart};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::{
     Animation, AnimationExt as _, AnyElement, App, AppContext as _, Context, ElementId, Entity,
@@ -19,13 +21,19 @@ use rust_i18n::t;
 use serde::Deserialize;
 
 use super::placeholder;
-use crate::store::query;
+use crate::model::UsageSeriesBucket;
+use crate::quota_card::{
+    MiniActivityBar, ProviderMiniSeries, ProviderSpendSummary, QuotaCardDensity, render_quota_card,
+};
+use crate::store::{Store, query};
 use crate::theme;
 use crate::tr;
 use crate::widgets::{Segmented, page_header, pill, status_dot};
 
 const RANGES: [u64; 3] = [7, 30, 90];
+const TRAFFIC_WINDOWS: [&str; 5] = ["10m", "1h", "24h", "7d", "30d"];
 const SECONDS_PER_DAY: i64 = 86_400;
+const TRAFFIC_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct DailyUsage {
@@ -194,12 +202,30 @@ struct DayBar {
     tokens: f64,
 }
 
+#[derive(Clone)]
+struct TrafficPoint {
+    label: SharedString,
+    requests: f64,
+    cached: f64,
+    errors: f64,
+}
+
 pub struct UsagePage {
     view: UsageView,
     range: usize,
     rows: Option<Vec<DailyUsage>>,
     error: Option<SharedString>,
     loading: bool,
+    traffic_window: usize,
+    traffic_open: bool,
+    traffic_buckets: Option<Vec<UsageSeriesBucket>>,
+    traffic_loading: bool,
+    traffic_error: Option<SharedString>,
+    /// Per-provider hourly buckets for the last 24h (feeds 5h mini bars & 24h spend).
+    hourly_by_provider: Vec<UsageSeriesBucket>,
+    hourly_loading: bool,
+    limits_open: bool,
+    show_all_providers: bool,
     turns: Option<Vec<Turn>>,
     turns_error: Option<SharedString>,
     turns_loading: bool,
@@ -246,6 +272,10 @@ impl UsagePage {
                 cx.notify();
             }
         });
+        let store = Store::global(cx);
+        let store_subscription = cx.observe(&store, |_, _, cx| {
+            cx.notify();
+        });
         // Follow the ledger while the Turn view is on screen; the loop ends
         // with the page.
         cx.spawn(async move |page, cx| {
@@ -262,12 +292,40 @@ impl UsagePage {
             }
         })
         .detach();
+        // Refresh short-window Traffic series while Overview is visible.
+        cx.spawn(async move |page, cx| {
+            loop {
+                cx.background_executor().timer(TRAFFIC_POLL_INTERVAL).await;
+                let polled = page.update(cx, |page, cx| {
+                    if page.active
+                        && page.view == UsageView::Overview
+                        && page.traffic_open
+                        && page.traffic_window <= 1
+                    {
+                        page.reload_traffic(cx);
+                    }
+                });
+                if polled.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         let mut page = Self {
             view: UsageView::Overview,
-            range: 0,
+            range: 1,
             rows: None,
             error: None,
             loading: false,
+            traffic_window: 0,
+            traffic_open: true,
+            traffic_buckets: None,
+            traffic_loading: false,
+            traffic_error: None,
+            hourly_by_provider: Vec::new(),
+            hourly_loading: false,
+            limits_open: true,
+            show_all_providers: false,
             turns: None,
             turns_error: None,
             turns_loading: false,
@@ -277,18 +335,139 @@ impl UsagePage {
             selected_turn: None,
             fresh: HashSet::new(),
             search,
-            _subscriptions: vec![search_subscription],
+            _subscriptions: vec![search_subscription, store_subscription],
         };
         page.reload(cx);
+        page.reload_traffic(cx);
+        page.reload_hourly_by_provider(cx);
+        page.request_missing_quotas(cx);
         page
     }
 
     /// Called by the console when it shows or leaves this page.
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
         self.active = active;
-        if active && self.view == UsageView::Turns {
-            self.reload_turns(cx);
+        if active {
+            if self.view == UsageView::Turns {
+                self.reload_turns(cx);
+            } else {
+                self.reload_traffic(cx);
+                self.request_missing_quotas(cx);
+            }
         }
+    }
+
+    fn request_missing_quotas(&self, cx: &mut Context<Self>) {
+        let store = Store::global(cx);
+        let missing: Vec<String> = store
+            .read(cx)
+            .providers
+            .value
+            .as_ref()
+            .map(|list| {
+                list.providers
+                    .iter()
+                    .filter(|provider| {
+                        provider.enabled && !store.read(cx).quotas.contains_key(&provider.id)
+                    })
+                    .map(|provider| provider.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if missing.is_empty() {
+            return;
+        }
+        store.update(cx, |store, cx| {
+            for id in &missing {
+                store.refresh_quota(id, cx);
+            }
+        });
+    }
+
+    fn refresh_all_quotas(&self, cx: &mut Context<Self>) {
+        let store = Store::global(cx);
+        let ids: Vec<String> = store
+            .read(cx)
+            .providers
+            .value
+            .as_ref()
+            .map(|list| {
+                list.providers
+                    .iter()
+                    .filter(|provider| provider.enabled)
+                    .map(|provider| provider.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        store.update(cx, |store, cx| {
+            for id in &ids {
+                store.refresh_quota(id, cx);
+            }
+        });
+    }
+
+    fn reload_traffic(&mut self, cx: &mut Context<Self>) {
+        if self.traffic_loading {
+            return;
+        }
+        self.traffic_loading = true;
+        let window = TRAFFIC_WINDOWS[self.traffic_window];
+        let task = query::<Vec<UsageSeriesBucket>>(
+            vec![
+                "usage".into(),
+                "--series".into(),
+                "--window".into(),
+                window.into(),
+                "--json".into(),
+            ],
+            cx,
+        );
+        cx.spawn(async move |page, cx| {
+            let result = task.await;
+            page.update(cx, |page, cx| {
+                page.traffic_loading = false;
+                match result {
+                    Ok(buckets) => {
+                        page.traffic_buckets = Some(buckets);
+                        page.traffic_error = None;
+                    }
+                    Err(error) => page.traffic_error = Some(error.message.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn reload_hourly_by_provider(&mut self, cx: &mut Context<Self>) {
+        if self.hourly_loading {
+            return;
+        }
+        self.hourly_loading = true;
+        let task = query::<Vec<UsageSeriesBucket>>(
+            vec![
+                "usage".into(),
+                "--series".into(),
+                "--window".into(),
+                "24h".into(),
+                "--by-provider".into(),
+                "--json".into(),
+            ],
+            cx,
+        );
+        cx.spawn(async move |page, cx| {
+            let result = task.await;
+            page.update(cx, |page, cx| {
+                page.hourly_loading = false;
+                if let Ok(buckets) = result {
+                    page.hourly_by_provider = buckets;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn reload_turns(&mut self, cx: &mut Context<Self>) {
@@ -347,6 +526,8 @@ impl UsagePage {
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.reload_traffic(cx);
+        self.reload_hourly_by_provider(cx);
         if self.loading {
             return;
         }
@@ -454,7 +635,406 @@ impl UsagePage {
 
 const NO_VALUE: &str = "\u{2014}";
 
+fn traffic_x_label(bucket_start_ms: i64, window: &str) -> SharedString {
+    let Some(utc) = chrono::DateTime::from_timestamp_millis(bucket_start_ms) else {
+        return SharedString::default();
+    };
+    let local = utc.with_timezone(&chrono::Local);
+    let formatted = match window {
+        "10m" | "1h" => local.format("%H:%M").to_string(),
+        "24h" => local.format("%H:00").to_string(),
+        _ => local.format("%m-%d").to_string(),
+    };
+    formatted.into()
+}
+
+fn weekday_initial(weekday: chrono::Weekday) -> &'static str {
+    match weekday {
+        chrono::Weekday::Mon => "M",
+        chrono::Weekday::Tue => "T",
+        chrono::Weekday::Wed => "W",
+        chrono::Weekday::Thu => "T",
+        chrono::Weekday::Fri => "F",
+        chrono::Weekday::Sat => "S",
+        chrono::Weekday::Sun => "S",
+    }
+}
+
 impl UsagePage {
+    fn render_traffic_card(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors;
+        let window_key = TRAFFIC_WINDOWS[self.traffic_window];
+        let open = self.traffic_open;
+
+        let header = h_flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                h_flex()
+                    .id("usage-traffic-toggle")
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.traffic_open = !page.traffic_open;
+                        cx.notify();
+                    }))
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .xsmall()
+                        .text_color(colors.muted_foreground),
+                    )
+                    .child(
+                        Icon::new(IconName::Activity)
+                            .small()
+                            .text_color(colors.foreground),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_semibold()
+                            .text_color(colors.foreground)
+                            .child(t!("usage.traffic.title")),
+                    ),
+            )
+            .child(
+                Segmented::new("usage-traffic-window")
+                    .items(TRAFFIC_WINDOWS)
+                    .selected(self.traffic_window)
+                    .item_width(px(44.0))
+                    .on_change(cx.listener(|page, index: &usize, _, cx| {
+                        if page.traffic_window != *index {
+                            page.traffic_window = *index;
+                            page.traffic_loading = false;
+                            page.reload_traffic(cx);
+                            cx.notify();
+                        }
+                    })),
+            );
+
+        let legend_item = |color: Hsla, label: SharedString| {
+            h_flex()
+                .items_center()
+                .gap_1p5()
+                .child(div().w(px(12.0)).h(px(2.5)).rounded_full().bg(color))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(colors.muted_foreground)
+                        .child(label),
+                )
+        };
+
+        let chart_body: AnyElement = match &self.traffic_buckets {
+            Some(buckets) if !buckets.is_empty() => {
+                let points: Vec<TrafficPoint> = buckets
+                    .iter()
+                    .map(|bucket| TrafficPoint {
+                        label: traffic_x_label(bucket.bucket_start_ms, window_key),
+                        requests: bucket.requests as f64,
+                        cached: bucket.cached_requests as f64,
+                        errors: bucket.errors as f64,
+                    })
+                    .collect();
+                let chart = AreaChart::new(points)
+                    .id("usage-traffic-chart")
+                    .x(|point: &TrafficPoint| point.label.clone())
+                    .y(|point: &TrafficPoint| point.requests)
+                    .stroke(colors.chart_1)
+                    .fill(colors.chart_1.opacity(0.08))
+                    .natural()
+                    .name(tr!("usage.traffic.requests"))
+                    .y(|point: &TrafficPoint| point.cached)
+                    .stroke(colors.success)
+                    .fill(colors.success.opacity(0.06))
+                    .natural()
+                    .name(tr!("usage.traffic.cached"))
+                    .y(|point: &TrafficPoint| point.errors)
+                    .stroke(colors.danger)
+                    .fill(colors.danger.opacity(0.06))
+                    .natural()
+                    .name(tr!("usage.traffic.errors"))
+                    .y_axis(true)
+                    .y_tick_count(4)
+                    .x_tick_count(6)
+                    .grid_dashed(true)
+                    .appear_key(window_key)
+                    .y_tick_format(compact_number)
+                    .tooltip_value(|_, _, value| SharedString::from(compact_number(value)));
+                div().h(px(210.0)).w_full().child(chart).into_any_element()
+            }
+            _ => {
+                let message = match &self.traffic_error {
+                    Some(error) => error.clone(),
+                    None if self.traffic_loading => tr!("usage.loading"),
+                    None => tr!("usage.traffic.empty"),
+                };
+                h_flex()
+                    .h(px(120.0))
+                    .items_center()
+                    .justify_center()
+                    .text_xs()
+                    .text_color(colors.muted_foreground)
+                    .child(message)
+                    .into_any_element()
+            }
+        };
+
+        v_flex()
+            .gap_3()
+            .p_5()
+            .rounded_xl()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.group_box)
+            .shadow_xs()
+            .child(header)
+            .when(open, |card| {
+                card.child(
+                    h_flex()
+                        .items_center()
+                        .gap_4()
+                        .child(legend_item(colors.chart_1, tr!("usage.traffic.requests")))
+                        .child(legend_item(colors.success, tr!("usage.traffic.cached")))
+                        .child(legend_item(colors.danger, tr!("usage.traffic.errors"))),
+                )
+                .child(chart_body)
+            })
+            .into_any_element()
+    }
+
+    fn build_provider_spend_and_mini(
+        &self,
+        rows: &[DailyUsage],
+    ) -> (
+        HashMap<String, ProviderSpendSummary>,
+        HashMap<String, ProviderMiniSeries>,
+    ) {
+        let mut spend: HashMap<String, ProviderSpendSummary> = HashMap::new();
+        let mut mini: HashMap<String, ProviderMiniSeries> = HashMap::new();
+
+        // 24h spend & last-5-hours mini bars from hourly buckets.
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let hour_ms: i64 = 3_600_000;
+        let current_hour_ms = now_ms - now_ms.rem_euclid(hour_ms);
+        let start_5h_ms = current_hour_ms - 4 * hour_ms;
+        let mut hourly_map: HashMap<String, BTreeMap<i64, u64>> = HashMap::new();
+        for bucket in &self.hourly_by_provider {
+            let Some(provider_id) = bucket.provider_id.as_ref() else {
+                continue;
+            };
+            let entry = spend.entry(provider_id.clone()).or_default();
+            entry.cost_24h += bucket.estimated_cost_usd;
+            if bucket.bucket_start_ms >= start_5h_ms && bucket.bucket_start_ms <= current_hour_ms {
+                let slot = bucket.bucket_start_ms - bucket.bucket_start_ms.rem_euclid(hour_ms);
+                *hourly_map
+                    .entry(provider_id.clone())
+                    .or_default()
+                    .entry(slot)
+                    .or_default() += bucket.requests;
+            }
+        }
+        for (provider_id, slots) in hourly_map {
+            let bars: Vec<MiniActivityBar> = (0..5)
+                .map(|offset| {
+                    let slot_ms = start_5h_ms + offset * hour_ms;
+                    let label = chrono::DateTime::from_timestamp_millis(slot_ms)
+                        .map(|utc| format!("{:02}", utc.with_timezone(&chrono::Local).hour()))
+                        .unwrap_or_default();
+                    MiniActivityBar {
+                        label: label.into(),
+                        value: *slots.get(&slot_ms).unwrap_or(&0) as f64,
+                        current: slot_ms == current_hour_ms,
+                    }
+                })
+                .collect();
+            mini.entry(provider_id).or_default().hourly_5h = bars;
+        }
+
+        // 7d / 30d spend & last-7-days mini bars from daily rows.
+        let today_day = today();
+        let start_7d = today_day - 6;
+        let start_30d = today_day - 29;
+        let mut daily_map: HashMap<String, BTreeMap<i64, u64>> = HashMap::new();
+        for row in rows {
+            if row.day < start_30d {
+                continue;
+            }
+            let entry = spend.entry(row.provider_id.clone()).or_default();
+            let cost = row.estimated_cost_usd.unwrap_or_default();
+            entry.cost_30d += cost;
+            entry.requests_30d += row.request_count;
+            if row.day >= start_7d {
+                entry.cost_7d += cost;
+                *daily_map
+                    .entry(row.provider_id.clone())
+                    .or_default()
+                    .entry(row.day)
+                    .or_default() += row.request_count;
+            }
+        }
+        for (provider_id, days_map) in daily_map {
+            let bars: Vec<MiniActivityBar> = (start_7d..=today_day)
+                .map(|day| {
+                    let label = chrono::DateTime::from_timestamp(day * SECONDS_PER_DAY, 0)
+                        .map(|utc| weekday_initial(utc.with_timezone(&chrono::Local).weekday()))
+                        .unwrap_or("");
+                    MiniActivityBar {
+                        label: label.into(),
+                        value: *days_map.get(&day).unwrap_or(&0) as f64,
+                        current: day == today_day,
+                    }
+                })
+                .collect();
+            mini.entry(provider_id).or_default().daily_7d = bars;
+        }
+
+        (spend, mini)
+    }
+
+    fn render_usage_limits(&mut self, rows: &[DailyUsage], cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors;
+        let open = self.limits_open;
+        let show_all = self.show_all_providers;
+        let (spend_map, mini_map) = self.build_provider_spend_and_mini(rows);
+
+        let store = Store::global(cx);
+        let store_ref = store.read(cx);
+        let providers = store_ref
+            .providers
+            .value
+            .as_ref()
+            .map(|list| list.providers.clone())
+            .unwrap_or_default();
+        let mut quota_cards: Vec<AnyElement> = Vec::new();
+        let any_quota_loading = store_ref.quotas.values().any(|slot| slot.loading);
+
+        for provider in providers.into_iter().filter(|provider| provider.enabled) {
+            let slot = store_ref.quotas.get(&provider.id);
+            let entries = slot.and_then(|slot| slot.value.as_deref()).unwrap_or(&[]);
+            let loading = slot.is_some_and(|slot| slot.loading);
+            let spend = spend_map.get(&provider.id);
+            let has_spend = spend.is_some_and(|summary| {
+                summary.cost_24h > 0.0 || summary.cost_30d > 0.0 || summary.requests_30d > 0
+            });
+            if !show_all && entries.is_empty() && !has_spend && !loading {
+                continue;
+            }
+            let mini = mini_map.get(&provider.id);
+            quota_cards.push(render_quota_card(
+                &provider,
+                slot,
+                QuotaCardDensity::Full,
+                mini,
+                spend,
+                cx,
+            ));
+        }
+
+        let filter_tooltip = if show_all {
+            tr!("usage.limits.filter_active")
+        } else {
+            tr!("usage.limits.filter_all")
+        };
+
+        let header = h_flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                h_flex()
+                    .id("usage-limits-toggle")
+                    .items_center()
+                    .gap_2()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|page, _, _, cx| {
+                        page.limits_open = !page.limits_open;
+                        cx.notify();
+                    }))
+                    .child(
+                        Icon::new(if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .xsmall()
+                        .text_color(colors.muted_foreground),
+                    )
+                    .child(
+                        Icon::new(IconName::Gauge)
+                            .small()
+                            .text_color(colors.foreground),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_semibold()
+                            .text_color(colors.foreground)
+                            .child(t!("usage.limits.title")),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("usage-limits-filter-wrap")
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(filter_tooltip.clone()).build(window, cx)
+                            })
+                            .child(
+                                Button::new("usage-limits-filter")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Settings2)
+                                    .on_click(cx.listener(|page, _, _, cx| {
+                                        page.show_all_providers = !page.show_all_providers;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        Button::new("usage-limits-refresh")
+                            .ghost()
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .loading(any_quota_loading || self.hourly_loading)
+                            .on_click(cx.listener(|page, _, _, cx| {
+                                page.refresh_all_quotas(cx);
+                                page.reload_hourly_by_provider(cx);
+                            })),
+                    ),
+            );
+
+        v_flex()
+            .gap_3()
+            .child(header)
+            .when(open, |section| {
+                if quota_cards.is_empty() {
+                    section.child(
+                        div()
+                            .p_5()
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(colors.border)
+                            .bg(colors.group_box)
+                            .text_xs()
+                            .text_color(colors.muted_foreground)
+                            .child(t!("usage.limits.empty")),
+                    )
+                } else {
+                    section.child(div().grid().grid_cols(2).gap_4().children(quota_cards))
+                }
+            })
+            .into_any_element()
+    }
+
     fn render_overview(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors;
         let Some(rows) = self.rows.clone() else {
@@ -649,6 +1229,8 @@ impl UsagePage {
                 true,
                 cx,
             ));
+        let traffic_card = self.render_traffic_card(cx);
+        let usage_limits = self.render_usage_limits(&rows, cx);
         div()
             .id("usage-scroll")
             .size_full()
@@ -662,6 +1244,8 @@ impl UsagePage {
                     .pt_4()
                     .pb_6()
                     .gap_4()
+                    .child(traffic_card)
+                    .child(usage_limits)
                     .child(cards)
                     .child(
                         v_flex()

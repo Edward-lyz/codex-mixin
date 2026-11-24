@@ -104,6 +104,7 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
                                 "value": 100.0 - window.remaining_percent,
                                 "used": 100.0 - window.remaining_percent, "limit": 100.0,
                                 "remaining": window.remaining_percent, "reset_at": window.reset_at,
+                                "window_seconds": window.window_seconds,
                                 "error": null, "stale_at": null,
                             }));
                         },

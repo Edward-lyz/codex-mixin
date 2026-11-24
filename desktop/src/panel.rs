@@ -11,11 +11,11 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    Animation, AnimationExt as _, AnyWindowHandle, App, AppContext as _, Bounds, Context,
-    ElementId, Global, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder,
-    Pixels, Point, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
-    canvas, div, img, point, prelude::FluentBuilder as _, px, size, svg,
+    AnyElement, AnyWindowHandle, App, AppContext as _, Bounds, Context, ElementId, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowKind, WindowOptions, div, img, point, prelude::FluentBuilder as _, px,
+    size, svg,
 };
 #[cfg(target_os = "macos")]
 use objc2::{MainThreadMarker, rc::Retained};
@@ -24,10 +24,10 @@ use objc2_app_kit::{NSApplication, NSScreen, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSPoint;
 use rust_i18n::t;
-use std::time::Duration;
 
 use crate::console::{Console, Page};
-use crate::model::{QuotaEntry, ServiceStatus};
+use crate::model::ServiceStatus;
+use crate::quota_card::{QuotaCardDensity, render_quota_card};
 use crate::store::{Change, Store};
 use crate::theme;
 use crate::tr;
@@ -35,11 +35,11 @@ use crate::widgets::{provider_icon_path, status_dot};
 
 pub const PANEL_WIDTH: f32 = 360.0;
 #[cfg(not(target_os = "macos"))]
-pub const PANEL_HEIGHT: f32 = 380.0;
+pub const PANEL_HEIGHT: f32 = 420.0;
 #[cfg(target_os = "macos")]
 const PANEL_HEIGHT: f32 = 224.0;
 #[cfg(target_os = "macos")]
-const MAX_QUOTA_HEIGHT: Pixels = px(265.0);
+const MAX_QUOTA_HEIGHT: Pixels = px(320.0);
 /// Gap between the menu bar and the panel's top edge.
 const PANEL_OFFSET: f32 = 6.0;
 #[cfg(target_os = "macos")]
@@ -55,7 +55,7 @@ struct PanelWindow {
 
 impl Global for PanelWindow {}
 
-/// The provider whose quotas the panel shows; None picks the first one.
+/// Which provider(s) the quota section shows; `None` shows all providers.
 struct SelectedProvider(Option<String>);
 
 impl Global for SelectedProvider {}
@@ -438,128 +438,6 @@ pub(crate) fn gateway_summary(
     (title, detail, running)
 }
 
-/// Warn at or below 20 percent remaining.
-const QUOTA_WARNING: f32 = 0.2;
-/// Outer diameter of the activity rings, their stroke and the gap between them.
-const RING_SIZE: f32 = 104.0;
-const RING_STROKE: f32 = 9.0;
-const RING_GAP: f32 = 2.5;
-/// Ring colours, outermost first, after the Apple Fitness rings.
-const RING_COLORS: [u32; 3] = [0x0a84ff, 0x34c759, 0x5ac8fa];
-
-fn quota_value(entry: &QuotaEntry) -> SharedString {
-    if let Some(error) = &entry.error {
-        return error.clone().into();
-    }
-    if let Some(fraction) = entry.remaining_fraction() {
-        return format!("{:.0}%", fraction * 100.0).into();
-    }
-    entry.remaining.map_or_else(
-        || "—".into(),
-        |remaining| {
-            tr!(
-                "panel.quota_remaining",
-                remaining = format!("{remaining:.2}"),
-                currency = entry.currency.as_deref().unwrap_or_default()
-            )
-        },
-    )
-}
-
-/// One legend line beside the rings: the ring colour, the quota name and
-/// what is left, with the reset time and spent amount underneath.
-fn quota_line(entry: &QuotaEntry, ring: Option<Hsla>, cx: &App) -> impl IntoElement {
-    let colors = cx.theme().colors;
-    let low = entry
-        .remaining_fraction()
-        .is_some_and(|fraction| fraction <= QUOTA_WARNING);
-    // Amounts are shown for metered quotas such as a monthly budget; window
-    // quotas reported only as percentages already say everything in the ring.
-    let usage = entry
-        .used
-        .zip(entry.limit)
-        .filter(|_| entry.unit.as_deref() != Some("percent") && entry.error.is_none())
-        .map(|(used, limit)| {
-            let amount = |value: f64| match entry.currency.as_deref() {
-                Some("CNY") => format!("¥{value:.2}"),
-                Some("USD") => format!("${value:.2}"),
-                Some(code) => format!("{value:.2} {code}"),
-                None => crate::pages::usage::compact_number(value),
-            };
-            tr!(
-                "panel.quota_usage",
-                used = amount(used),
-                limit = amount(limit)
-            )
-        });
-    let reset = entry
-        .reset_at
-        .as_deref()
-        .and_then(|reset| chrono::DateTime::parse_from_rfc3339(reset).ok())
-        .map(|reset| (reset.with_timezone(&chrono::Utc) - chrono::Utc::now()).num_minutes())
-        // A reset already in the past is stale until the next refresh.
-        .filter(|minutes| *minutes >= 0)
-        .map(|minutes| {
-            let label: SharedString = if minutes < 60 {
-                t!("panel.reset_in_minutes", count = minutes.max(1)).into()
-            } else if minutes < 48 * 60 {
-                t!("panel.reset_in_hours", count = minutes / 60).into()
-            } else {
-                t!("panel.reset_in_days", count = minutes / (24 * 60)).into()
-            };
-            label
-        });
-    let detail = [reset, usage]
-        .into_iter()
-        .flatten()
-        .map(|part| part.to_string())
-        .collect::<Vec<_>>()
-        .join(" · ");
-    v_flex()
-        .min_w_0()
-        .gap_0p5()
-        .child(
-            h_flex()
-                .gap_2()
-                .text_size(px(13.0))
-                .when_some(ring, |line, ring| {
-                    line.child(div().flex_none().size_2().rounded_full().bg(ring))
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .font_medium()
-                        .truncate()
-                        .child(entry.label.clone()),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .when(entry.error.is_some(), |value| {
-                            value.max_w(px(150.0)).truncate()
-                        })
-                        .font_semibold()
-                        .text_color(if low || entry.error.is_some() {
-                            colors.danger
-                        } else {
-                            colors.foreground
-                        })
-                        .child(quota_value(entry)),
-                ),
-        )
-        .when(!detail.is_empty(), |line| {
-            line.child(
-                div()
-                    .when(ring.is_some(), |detail| detail.pl_4())
-                    .truncate()
-                    .text_size(px(11.5))
-                    .text_color(colors.muted_foreground)
-                    .child(detail),
-            )
-        })
-}
-
 impl StatusPanel {
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
@@ -648,8 +526,8 @@ impl StatusPanel {
             })
     }
 
-    /// Provider icons to switch between, then the selected provider's quotas
-    /// as concentric activity rings with a legend beside them.
+    /// Provider filter tabs ("All" + per-provider icons) and compact quota
+    /// cards with pace progress bars.
     fn render_quotas(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let store = Store::global(cx).read(cx);
@@ -666,14 +544,7 @@ impl StatusPanel {
                     .then_some((provider, snapshot))
             })
             .collect();
-        let chosen = cx
-            .try_global::<SelectedProvider>()
-            .and_then(|state| state.0.as_deref());
-        let Some(&(selected, snapshot)) = providers
-            .iter()
-            .find(|(provider, _)| Some(provider.id.as_str()) == chosen)
-            .or_else(|| providers.first())
-        else {
+        if providers.is_empty() {
             return v_flex().child(
                 div()
                     .px_2()
@@ -682,23 +553,54 @@ impl StatusPanel {
                     .text_color(colors.muted_foreground)
                     .child(t!("panel.no_quota")),
             );
-        };
-        let tabs = providers.iter().map(|(provider, snapshot)| {
-            let active = provider.id == selected.id;
+        }
+
+        let chosen = cx
+            .try_global::<SelectedProvider>()
+            .and_then(|state| state.0.clone())
+            .filter(|id| providers.iter().any(|(provider, _)| &provider.id == id));
+        let any_loading = providers.iter().any(|(_, snapshot)| snapshot.loading);
+
+        let all_active = chosen.is_none();
+        let all_tab = div()
+            .id("quota-tab-all")
+            .h(px(28.0))
+            .px_2()
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .text_xs()
+            .font_medium()
+            .when(all_active, |tab| {
+                tab.bg(colors.accent)
+                    .text_color(colors.foreground)
+                    .border_1()
+                    .border_color(colors.border.opacity(0.7))
+            })
+            .when(!all_active, |tab| {
+                tab.text_color(colors.muted_foreground)
+                    .hover(|style| style.bg(colors.accent.opacity(0.6)))
+            })
+            .child(t!("panel.quota_all"))
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.set_global(SelectedProvider(None));
+                cx.notify();
+            }));
+
+        let provider_tabs = providers.iter().map(|(provider, snapshot)| {
+            let active = chosen.as_deref() == Some(provider.id.as_str());
             let entries = snapshot.value.as_deref().unwrap_or_default();
-            let low = snapshot.error.is_some()
-                || entries.iter().any(|entry| {
-                    entry.error.is_some()
-                        || entry
-                            .remaining_fraction()
-                            .is_some_and(|fraction| fraction <= QUOTA_WARNING)
-                });
+            let warning =
+                snapshot.error.is_some() || entries.iter().any(|entry| entry.is_warning());
             let id = provider.id.clone();
             let name = provider.display_name.clone();
             div()
                 .id(ElementId::Name(format!("quota-tab-{id}").into()))
                 .relative()
-                .size(px(30.0))
+                .size(px(28.0))
                 .flex_none()
                 .flex()
                 .items_center()
@@ -716,14 +618,14 @@ impl StatusPanel {
                 .child(
                     svg()
                         .path(provider_icon_path(&provider.icon))
-                        .size(px(17.0))
+                        .size(px(16.0))
                         .text_color(if active {
                             colors.foreground
                         } else {
                             colors.muted_foreground
                         }),
                 )
-                .when(low, |tab| {
+                .when(warning, |tab| {
                     tab.child(
                         div()
                             .absolute()
@@ -740,9 +642,11 @@ impl StatusPanel {
                     cx.notify();
                 }))
         });
+
         let tab_row = h_flex()
-            .gap_2()
-            .px_1()
+            .gap_1p5()
+            .px_0p5()
+            .items_center()
             .child(
                 h_flex()
                     .id("quota-tabs")
@@ -750,159 +654,61 @@ impl StatusPanel {
                     .min_w_0()
                     .gap_1()
                     .overflow_x_scroll()
-                    .children(tabs),
+                    .when(providers.len() > 1, |row| row.child(all_tab))
+                    .children(provider_tabs),
             )
-            .when(snapshot.loading, |row| {
-                row.child(gpui_kit::component::spinner::Spinner::new().xsmall())
-            })
             .child(
-                div()
-                    .max_w(px(150.0))
-                    .truncate()
-                    .text_xs()
-                    .text_color(colors.muted_foreground)
-                    .child(selected.display_name.clone()),
+                Button::new("panel-refresh-quotas")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::RefreshCw)
+                    .loading(any_loading)
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        let store = Store::global(cx);
+                        let ids: Vec<String> = store
+                            .read(cx)
+                            .providers
+                            .value
+                            .as_ref()
+                            .map(|list| {
+                                list.providers
+                                    .iter()
+                                    .filter(|provider| provider.enabled)
+                                    .map(|provider| provider.id.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        store.update(cx, |store, cx| {
+                            for id in &ids {
+                                store.refresh_quota(id, cx);
+                            }
+                        });
+                    })),
             );
 
-        let entries = snapshot.value.as_deref().unwrap_or_default();
-        let ring_count = entries
+        let cards: Vec<AnyElement> = providers
             .iter()
-            .filter(|entry| entry.remaining_fraction().is_some())
-            .count()
-            .min(RING_COLORS.len());
-        let mut ring_index = 0;
-        let mut rings = Vec::new();
-        let legend = entries.iter().map(|entry| {
-            let ring = entry
-                .remaining_fraction()
-                .filter(|_| ring_index < ring_count)
-                .map(|fraction| {
-                    let color: Hsla = gpui_kit::rgb(RING_COLORS[ring_index]).into();
-                    rings.push((fraction, color));
-                    ring_index += 1;
-                    color
-                });
-            quota_line(entry, ring, cx).into_any_element()
-        });
-        let legend = v_flex()
-            .flex_1()
-            .min_w_0()
-            .gap_2p5()
-            .children(legend.collect::<Vec<_>>())
-            .when_some(snapshot.error.clone(), |legend, error| {
-                legend.child(div().text_xs().text_color(colors.danger).child(error))
-            });
-        let lowest = rings.iter().map(|(fraction, _)| *fraction).reduce(f32::min);
-        let track_color = colors.muted_foreground.opacity(0.14);
-        let ring_view = lowest.map(|lowest| {
-            div()
-                .relative()
-                .flex_none()
-                .size(px(RING_SIZE))
-                .with_animation(
-                    ElementId::Name(format!("quota-rings-{}", selected.id).into()),
-                    Animation::new(Duration::from_millis(720))
-                        .with_easing(theme::curve(theme::ENTER_CURVE)),
-                    move |view, progress| {
-                        let rings = rings.clone();
-                        view.child(
-                            canvas(
-                                |_, _, _| {},
-                                move |bounds, _, window, _| {
-                                    let center = bounds.center();
-                                    let at = |radius: f32, turn: f32| {
-                                        let angle = (turn - 0.25) * std::f32::consts::TAU;
-                                        point(
-                                            center.x + px(radius * angle.cos()),
-                                            center.y + px(radius * angle.sin()),
-                                        )
-                                    };
-                                    let dot =
-                                        |position: Point<Pixels>, window: &mut Window, color| {
-                                            let radius = px(RING_STROKE / 2.0);
-                                            let mut cap = PathBuilder::fill();
-                                            cap.move_to(point(position.x - radius, position.y));
-                                            cap.arc_to(
-                                                point(radius, radius),
-                                                px(0.0),
-                                                false,
-                                                true,
-                                                point(position.x + radius, position.y),
-                                            );
-                                            cap.arc_to(
-                                                point(radius, radius),
-                                                px(0.0),
-                                                false,
-                                                true,
-                                                point(position.x - radius, position.y),
-                                            );
-                                            if let Ok(cap) = cap.build() {
-                                                window.paint_path(cap, color);
-                                            }
-                                        };
-                                    for (index, (fraction, color)) in rings.iter().enumerate() {
-                                        let radius = RING_SIZE / 2.0
-                                            - RING_STROKE / 2.0
-                                            - index as f32 * (RING_STROKE + RING_GAP);
-                                        let sweep = fraction * progress;
-                                        // Arcs are drawn as fine polylines; 96 steps per turn look round.
-                                        let steps = ((sweep * 96.0).ceil() as usize).max(1);
-                                        let mut track = PathBuilder::stroke(px(RING_STROKE));
-                                        let mut arc = PathBuilder::stroke(px(RING_STROKE));
-                                        track.move_to(at(radius, 0.0));
-                                        arc.move_to(at(radius, 0.0));
-                                        for step in 1..=96 {
-                                            track.line_to(at(radius, step as f32 / 96.0));
-                                        }
-                                        for step in 1..=steps {
-                                            arc.line_to(at(
-                                                radius,
-                                                sweep * step as f32 / steps as f32,
-                                            ));
-                                        }
-                                        if let Ok(track) = track.build() {
-                                            window.paint_path(track, track_color);
-                                        }
-                                        if sweep > 0.0 {
-                                            if let Ok(arc) = arc.build() {
-                                                window.paint_path(arc, *color);
-                                            }
-                                            dot(at(radius, 0.0), window, *color);
-                                            dot(at(radius, sweep), window, *color);
-                                        }
-                                    }
-                                },
-                            )
-                            .absolute()
-                            .inset_0(),
-                        )
-                    },
+            .filter(|(provider, _)| {
+                chosen
+                    .as_deref()
+                    .is_none_or(|selected| selected == provider.id.as_str())
+            })
+            .map(|(provider, snapshot)| {
+                render_quota_card(
+                    provider,
+                    Some(snapshot),
+                    QuotaCardDensity::Compact,
+                    None,
+                    None,
+                    cx,
                 )
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(19.0))
-                        .font_semibold()
-                        .text_color(if lowest <= QUOTA_WARNING {
-                            colors.danger
-                        } else {
-                            colors.foreground
-                        })
-                        .child(format!("{:.0}%", lowest * 100.0)),
-                )
-        });
-        v_flex().gap_3().child(tab_row).child(
-            h_flex()
-                .px_1()
-                .pb_1()
-                .gap_4()
-                .children(ring_view)
-                .child(legend),
-        )
+            })
+            .collect();
+
+        v_flex()
+            .gap_2()
+            .child(tab_row)
+            .child(v_flex().gap_2().children(cards))
     }
 
     fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
