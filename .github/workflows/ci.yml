@@ -135,10 +135,20 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+      # Cached C objects (bundled SQLite, ring, zstd) are linked by this
+      # runner's linker. Objects assembled on another runner image can be
+      # mislinked (v1.0.0 x86_64 crashed on every SQLite open), so the
+      # release cache is keyed by the native toolchain as well.
+      - name: Fingerprint native toolchain
+        id: native-toolchain
+        shell: bash
+        run: |
+          fingerprint="$({ cc --version 2>&1 | sed -n 1p || true; ld -v 2>&1 | sed -n 1p || true; } | cksum | cut -d ' ' -f 1)"
+          echo "key=${ImageOS:-$RUNNER_OS}-$fingerprint" >>"$GITHUB_OUTPUT"
       # Match Build's release cache, never a check-only or debug-test cache.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-${{ matrix.target }}
+          shared-key: release-${{ matrix.target }}-${{ steps.native-toolchain.outputs.key }}
       - name: Install build dependencies
         shell: bash
         run: |
@@ -155,6 +165,7 @@ jobs:
           CC_x86_64_unknown_linux_musl=musl-gcc \
             cargo build --locked --release --target x86_64-unknown-linux-musl
           ./scripts/verify-linux-static.sh target/x86_64-unknown-linux-musl/release/codex-mixin
+          ./scripts/smoke-linux-gateway.sh target/x86_64-unknown-linux-musl/release/codex-mixin
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:
