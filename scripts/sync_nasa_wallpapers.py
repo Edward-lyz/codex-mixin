@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(__file__).resolve().parents[1]
-        / "macos"
+        / "desktop"
         / "assets"
         / "nasa-wallpapers",
     )
@@ -147,6 +147,7 @@ def atomic_write(path: Path, data: bytes) -> None:
     try:
         with os.fdopen(descriptor, "wb") as file:
             file.write(data)
+        os.chmod(temporary_name, 0o644)
         os.replace(temporary_name, path)
     except BaseException:
         try:

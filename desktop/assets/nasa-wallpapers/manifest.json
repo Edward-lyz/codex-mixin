@@ -1,34 +1,34 @@
 {
   "schemaVersion": 1,
-  "issue": "2026-07",
+  "issue": "2026-10",
   "sourcePage": "https://www.nasa.gov/international-space-station/desktop-and-mobile-wallpapers/",
   "images": [
     {
-      "fileName": "over-the-horizon.png",
-      "title": "Over the Horizon",
+      "fileName": "the-great-pumpkin.png",
+      "title": "The Great Pumpkin",
       "credit": "NASA",
-      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/over-the-horizon-–-desktop-–-image-only.png",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/the-great-pumpkin-–-desktop-–-image-only.png",
       "width": 1920,
       "height": 1080,
-      "sha256": "70eb9ab23187484a5cd03e3825b9fad8edd3377724d82caadfff27805ad5c22f"
+      "sha256": "48090d470a3c87459af5ce375db8592e788774783ea19dee9a6766fca0901907"
     },
     {
-      "fileName": "waning-crescent-moon.png",
-      "title": "Waning Crescent Moon",
+      "fileName": "light-the-way.png",
+      "title": "Light the Way",
       "credit": "NASA",
-      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/waning-crescent-moon-–-desktop-–-image-only.png",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/light-the-way-–-desktop-–-image-only.png",
       "width": 1920,
       "height": 1080,
-      "sha256": "8811a9d30fe4d65b72a3856d74fb06882d300b63d4e126b4966b3d6054d2ba2d"
+      "sha256": "c35f91ce35e4cc9425876d3642fecc15ee0484acc3bb9b371e8fbbb785b95df2"
     },
     {
-      "fileName": "crew-12-to-orbit.png",
-      "title": "Crew-12 to Orbit",
+      "fileName": "on-approach.png",
+      "title": "On Approach",
       "credit": "NASA",
-      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/crew-12-to-orbit-–-desktop-–-image-only.png",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/on-approach-–-desktop-–-image-only.png",
       "width": 1920,
       "height": 1080,
-      "sha256": "2546942ee4be6b95c16523e879a11a4b98463cbb5c608ccc5a519af4f226e1a0"
+      "sha256": "fb56fa34d469f2c2c3978e7ceb94cd3c48219577580cc54da39ad44338ad66a6"
     }
   ]
 }

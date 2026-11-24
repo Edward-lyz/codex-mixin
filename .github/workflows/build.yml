@@ -131,6 +131,14 @@ jobs:
       - name: Refresh bundled models.dev snapshot
         shell: bash
         run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
+      - name: Refresh bundled NASA wallpapers
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 ./scripts/sync_nasa_wallpapers.py || echo "::warning::NASA wallpapers unreachable; bundling the committed wallpapers"
+          else
+            python ./scripts/sync_nasa_wallpapers.py || echo "::warning::NASA wallpapers unreachable; bundling the committed wallpapers"
+          fi
       - name: Build CLI
         run: |
           if [[ "${{ matrix.os }}" == "linux" ]]; then
@@ -272,6 +280,14 @@ jobs:
       - name: Refresh bundled models.dev snapshot
         shell: bash
         run: ./scripts/update_models_dev_snapshot.sh || echo "::warning::models.dev unreachable; bundling the committed snapshot"
+      - name: Refresh bundled NASA wallpapers
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null 2>&1; then
+            python3 ./scripts/sync_nasa_wallpapers.py || echo "::warning::NASA wallpapers unreachable; bundling the committed wallpapers"
+          else
+            python ./scripts/sync_nasa_wallpapers.py || echo "::warning::NASA wallpapers unreachable; bundling the committed wallpapers"
+          fi
       - name: Install NSIS
         shell: pwsh
         run: ./desktop/windows/install-nsis.ps1
