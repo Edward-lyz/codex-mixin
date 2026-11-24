@@ -1,0 +1,35 @@
+======================================================================
+codex-mixin [12443]: 64-bit    Footprint: 14 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+7184 KB        0 B       234 MB        187    Malloc Small
+3264 KB        0 B          0 B         13    Malloc Metadata
+1936 KB        0 B          0 B         27    Stack
+ 705 KB        0 B          0 B          1    page table
+ 335 KB        0 B          0 B        337    __DATA_DIRTY
+ 160 KB        0 B          0 B          1    Malloc Tiny
+ 144 KB        0 B          0 B        301    __DATA
+  80 KB        0 B          0 B         31    Untagged
+  48 KB        0 B          0 B          4    __TPRO_CONST
+  43 KB        0 B          0 B       1129    unused dyld shared cache area
+  36 KB        0 B          0 B          1    __OBJC_RW
+  32 KB        0 B          0 B          1    Dispatch Continuations
+  16 KB        0 B          0 B          1    OS Alloc Once
+  16 KB        0 B          0 B          1    Activity Tracing
+ 2088 B        0 B          0 B        138    __AUTH
+    0 B      11 MB          0 B        395    __TEXT
+    0 B     432 KB          0 B        329    __DATA_CONST
+    0 B     144 KB          0 B          4    mapped file
+    0 B      16 KB          0 B          2    __LINKEDIT
+    0 B        0 B          0 B          1    __CTF
+    0 B        0 B          0 B        331    __AUTH_CONST
+    0 B        0 B          0 B          1    __FONT_DATA
+    0 B        0 B          0 B          1    __OBJC_RO
+    ---        ---          ---        ---    ---
+  14 MB      12 MB       234 MB       3239    TOTAL
+
+Auxiliary data:
+    phys_footprint: 14 MB
+    phys_footprint_peak: 575 MB

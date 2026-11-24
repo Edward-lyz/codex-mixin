@@ -1,0 +1,546 @@
+2026-11-24T04:35:40Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 180 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+  96 MB        0 B          0 B         43    Malloc Large
+  72 MB        0 B        78 MB         51    Malloc Small
+2448 KB        0 B       144 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:42Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1456 KB        0 B          0 B         35    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:44Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1456 KB        0 B          0 B         35    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:46Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1456 KB        0 B          0 B         35    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:48Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1456 KB        0 B          0 B         35    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:50Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1456 KB        0 B          0 B         35    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:53Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:55Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:57Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:35:59Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  76 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:01Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  77 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1504 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:03Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 211 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  77 MB        0 B        78 MB         51    Malloc Small
+2416 KB        0 B       272 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1504 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:05Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 229 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  77 MB        0 B        78 MB         51    Malloc Small
+2352 KB        0 B       336 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1568 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:07Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1632 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:09Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1632 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:11Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1632 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:13Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1632 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:15Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1632 KB        0 B          0 B         47    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:18Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:20Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 290 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 192 MB        0 B          0 B         87    Malloc Large
+  86 MB        0 B        78 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:22Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 222 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  71 MB        0 B        93 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:24Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 222 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  71 MB        0 B        93 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:26Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 222 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  71 MB        0 B        93 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:28Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 222 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  71 MB        0 B        93 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1600 KB        0 B          0 B         59    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:30Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 222 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 140 MB        0 B          0 B         63    Malloc Large
+  71 MB        0 B        93 MB         51    Malloc Small
+2224 KB        0 B       592 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1600 KB        0 B          0 B         59    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:32Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 163 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 109 MB        0 B          0 B         50    Malloc Large
+  42 MB        0 B       121 MB         51    Malloc Small
+2128 KB        0 B       688 KB         16    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1712 KB        0 B          0 B         59    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:34Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 343 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 254 MB        0 B          0 B        118    Malloc Large
+  77 MB        0 B       121 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1824 KB        0 B          0 B         59    Stack
+1776 KB        0 B      1088 KB         16    Malloc Metadata
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:36Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 359 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  81 MB        0 B       116 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1824 KB        0 B          0 B         59    Stack
+1776 KB        0 B      1056 KB         16    Malloc Metadata
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:38Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1824 KB        0 B          0 B         59    Stack
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:41Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1824 KB        0 B          0 B         59    Stack
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:43Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1824 KB        0 B          0 B         59    Stack
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:45Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:47Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:49Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:51Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:53Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:55Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:57Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:36:59Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 363 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:37:01Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1424 KB        0 B          0 B         37    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:37:04Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1424 KB        0 B          0 B         37    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+2026-11-24T04:37:06Z
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 364 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 266 MB        0 B          0 B        118    Malloc Large
+  86 MB        0 B       111 MB         59    Malloc Small
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1776 KB        0 B      1024 KB         16    Malloc Metadata
+1424 KB        0 B          0 B         37    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc

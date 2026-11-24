@@ -1,0 +1,51 @@
+======================================================================
+cc-switch-real [12444]: 64-bit    Footprint: 225 MB (16384 bytes per page)
+======================================================================
+
+  Dirty      Clean  Reclaimable    Regions    Category
+    ---        ---          ---        ---    ---
+ 122 MB        0 B          0 B         55    Malloc Large
+  91 MB        0 B        61 MB         51    Malloc Small
+2448 KB        0 B       144 KB         15    Malloc Metadata
+1872 KB        0 B          0 B       1016    __DATA_DIRTY
+1360 KB        0 B          0 B         29    Stack
+1328 KB        0 B          0 B          7    WebKit Malloc
+1093 KB        0 B          0 B       1035    __DATA
+1074 KB        0 B          0 B          1    page table
+ 624 KB        0 B          0 B          2    CoreServices
+ 430 KB        0 B          0 B        543    __AUTH
+ 368 KB        0 B          0 B          3    CoreUI Image Data
+ 336 KB        0 B          0 B          1    Malloc Tiny
+ 336 KB        0 B          0 B         42    Untagged
+ 256 KB        0 B          0 B          1    Dispatch Continuations
+ 234 KB        0 B          0 B       2757    unused dyld shared cache area
+ 128 KB        0 B          0 B          1    Accelerate Framework
+ 112 KB        0 B          0 B          6    CoreAnimation
+ 112 KB        0 B          0 B          4    __TPRO_CONST
+  64 KB        0 B          0 B          2    IOAccelerator
+  48 KB        0 B          0 B          1    Activity Tracing
+  48 KB        0 B          0 B          3    CoreGraphics
+  48 KB        0 B          0 B          3    IOKit
+  36 KB        0 B          0 B          1    __OBJC_RW
+  32 KB        0 B          0 B          2    ColorSync
+  16 KB     784 KB          0 B       1080    __DATA_CONST
+  16 KB        0 B          0 B          1    Deferred Reclaim
+  16 KB        0 B          0 B          1    OS Alloc Once
+  16 KB        0 B          0 B          1    IOAccelerator (graphics)
+  16 KB        0 B          0 B          1    Foundation
+    0 B      18 MB          0 B       1167    __TEXT
+    0 B      13 MB          0 B         35    mapped file
+    0 B      64 KB          0 B          4    __LINKEDIT
+    0 B        0 B          0 B          1    __GLSLBUILTINS
+    0 B        0 B          0 B         32    WebAssembly Memory
+    0 B        0 B          0 B          1    __OBJC_RO
+    0 B        0 B          0 B          1    SQLite Page Cache
+    0 B        0 B          0 B          1    __FONT_DATA
+    0 B        0 B          0 B          1    __CTF
+    0 B        0 B          0 B       1071    __AUTH_CONST
+    ---        ---          ---        ---    ---
+ 225 MB      33 MB        61 MB       8981    TOTAL
+
+Auxiliary data:
+    phys_footprint: 225 MB
+    phys_footprint_peak: 389 MB

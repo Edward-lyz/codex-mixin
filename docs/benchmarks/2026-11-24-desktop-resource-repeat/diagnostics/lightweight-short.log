@@ -1,0 +1,6 @@
+warming up for 2s
+measuring 0 active requests per product
+measuring 10 active requests per product
+measuring 20 active requests per product
+measuring 40 active requests per product
+completed 210 validated requests; results: /tmp/desktop-repeat-20261124/lightweight-diagnostic/results.json

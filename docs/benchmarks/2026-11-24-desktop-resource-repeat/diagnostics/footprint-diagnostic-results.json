@@ -1,0 +1,4061 @@
+{
+  "metadata": {
+    "date": "2026-11-24T04:37:06.425Z",
+    "timing": {
+      "warmup": 2000,
+      "settle": 5000,
+      "window": 10000,
+      "gap": 5000,
+      "interval": 250,
+      "windows": 1
+    },
+    "levels": [
+      0,
+      2,
+      4,
+      8
+    ],
+    "inputBytes": 4560313,
+    "corpusMessages": 558,
+    "corpusRoleTextSha256": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+    "imageHashes": [
+      "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+      "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+    ],
+    "productConfig": {
+      "mixin": {
+        "port": 8149,
+        "model": "benchmark-model-bench",
+        "uiPid": 12443,
+        "gatewayPid": 12443,
+        "allowedExtraMessages": 1
+      },
+      "magpie": {
+        "port": 45673,
+        "model": "bench/benchmark-model",
+        "uiPid": 12445,
+        "gatewayPid": 12445
+      },
+      "ccswitch": {
+        "port": 45674,
+        "model": "benchmark-model",
+        "uiPid": 12444,
+        "gatewayPid": 12444
+      }
+    },
+    "upstreamPort": 45671,
+    "samplerTimebase": [
+      125,
+      3
+    ]
+  },
+  "summary": [
+    {
+      "product": "mixin",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "footprintMiB": {
+        "median": 13.672036823473478,
+        "min": 13.672036823473478,
+        "max": 13.672036823473478
+      },
+      "rssMiB": {
+        "median": 258.93667763157896,
+        "min": 258.93667763157896,
+        "max": 258.93667763157896
+      },
+      "gatewayCpuPercent": {
+        "median": 0.007658108082095142,
+        "min": 0.007658108082095142,
+        "max": 0.007658108082095142
+      }
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "footprintMiB": {
+        "median": 222.97930165341026,
+        "min": 222.97930165341026,
+        "max": 222.97930165341026
+      },
+      "rssMiB": {
+        "median": 290.81825657894734,
+        "min": 290.81825657894734,
+        "max": 290.81825657894734
+      },
+      "gatewayCpuPercent": {
+        "median": 1.22909010059962,
+        "min": 1.22909010059962,
+        "max": 1.22909010059962
+      }
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "footprintMiB": {
+        "median": 204.18600443789833,
+        "min": 204.18600443789833,
+        "max": 204.18600443789833
+      },
+      "rssMiB": {
+        "median": 328.46792763157896,
+        "min": 328.46792763157896,
+        "max": 328.46792763157896
+      },
+      "gatewayCpuPercent": {
+        "median": 0.21580396725780393,
+        "min": 0.21580396725780393,
+        "max": 0.21580396725780393
+      }
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "footprintMiB": {
+        "median": 14.081599185341283,
+        "min": 14.081599185341283,
+        "max": 14.081599185341283
+      },
+      "rssMiB": {
+        "median": 330.0180921052632,
+        "min": 330.0180921052632,
+        "max": 330.0180921052632
+      },
+      "gatewayCpuPercent": {
+        "median": 0.7701971841819103,
+        "min": 0.7701971841819103,
+        "max": 0.7701971841819103
+      }
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "footprintMiB": {
+        "median": 386.91066581324526,
+        "min": 386.91066581324526,
+        "max": 386.91066581324526
+      },
+      "rssMiB": {
+        "median": 454.95394736842104,
+        "min": 454.95394736842104,
+        "max": 454.95394736842104
+      },
+      "gatewayCpuPercent": {
+        "median": 2.381343976008518,
+        "min": 2.381343976008518,
+        "max": 2.381343976008518
+      }
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "footprintMiB": {
+        "median": 219.71187832480982,
+        "min": 219.71187832480982,
+        "max": 219.71187832480982
+      },
+      "rssMiB": {
+        "median": 360.03782894736844,
+        "min": 360.03782894736844,
+        "max": 360.03782894736844
+      },
+      "gatewayCpuPercent": {
+        "median": 0.8695449170463639,
+        "min": 0.8695449170463639,
+        "max": 0.8695449170463639
+      }
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "footprintMiB": {
+        "median": 14.83161062943308,
+        "min": 14.83161062943308,
+        "max": 14.83161062943308
+      },
+      "rssMiB": {
+        "median": 366.4995888157895,
+        "min": 366.4995888157895,
+        "max": 366.4995888157895
+      },
+      "gatewayCpuPercent": {
+        "median": 1.3233235874983909,
+        "min": 1.3233235874983909,
+        "max": 1.3233235874983909
+      }
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "footprintMiB": {
+        "median": 439.2095967342979,
+        "min": 439.2095967342979,
+        "max": 439.2095967342979
+      },
+      "rssMiB": {
+        "median": 536.2216282894736,
+        "min": 536.2216282894736,
+        "max": 536.2216282894736
+      },
+      "gatewayCpuPercent": {
+        "median": 4.397816489998243,
+        "min": 4.397816489998243,
+        "max": 4.397816489998243
+      }
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "footprintMiB": {
+        "median": 261.42283871299344,
+        "min": 261.42283871299344,
+        "max": 261.42283871299344
+      },
+      "rssMiB": {
+        "median": 415.04810855263156,
+        "min": 415.04810855263156,
+        "max": 415.04810855263156
+      },
+      "gatewayCpuPercent": {
+        "median": 1.2799294714561,
+        "min": 1.2799294714561,
+        "max": 1.2799294714561
+      }
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "footprintMiB": {
+        "median": 22.473810440454727,
+        "min": 22.473810440454727,
+        "max": 22.473810440454727
+      },
+      "rssMiB": {
+        "median": 377.63341346153845,
+        "min": 377.63341346153845,
+        "max": 377.63341346153845
+      },
+      "gatewayCpuPercent": {
+        "median": 2.4829466606008714,
+        "min": 2.4829466606008714,
+        "max": 2.4829466606008714
+      }
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "footprintMiB": {
+        "median": 533.7792573586488,
+        "min": 533.7792573586488,
+        "max": 533.7792573586488
+      },
+      "rssMiB": {
+        "median": 560.1346153846154,
+        "min": 560.1346153846154,
+        "max": 560.1346153846154
+      },
+      "gatewayCpuPercent": {
+        "median": 6.456366423791382,
+        "min": 6.456366423791382,
+        "max": 6.456366423791382
+      }
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "footprintMiB": {
+        "median": 372.43981170654297,
+        "min": 372.43981170654297,
+        "max": 372.43981170654297
+      },
+      "rssMiB": {
+        "median": 446.1875,
+        "min": 446.1875,
+        "max": 446.1875
+      },
+      "gatewayCpuPercent": {
+        "median": 1.9462729549687208,
+        "min": 1.9462729549687208,
+        "max": 1.9462729549687208
+      }
+    }
+  ],
+  "windows": [
+    {
+      "product": "mixin",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.713560999996844,
+      "requestedDurationSeconds": 10.001714166,
+      "footprintMiB": 13.672036823473478,
+      "rssMiB": 258.93667763157896,
+      "gatewayCpuPercent": 0.007658108082095142
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.713560999996844,
+      "requestedDurationSeconds": 10.001821333,
+      "footprintMiB": 222.97930165341026,
+      "rssMiB": 290.81825657894734,
+      "gatewayCpuPercent": 1.22909010059962
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 0,
+      "activeRequests": 0,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.713560999996844,
+      "requestedDurationSeconds": 10.001934499999999,
+      "footprintMiB": 204.18600443789833,
+      "rssMiB": 328.46792763157896,
+      "gatewayCpuPercent": 0.21580396725780393
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.662860999989789,
+      "requestedDurationSeconds": 10.000438999999998,
+      "footprintMiB": 14.081599185341283,
+      "rssMiB": 330.0180921052632,
+      "gatewayCpuPercent": 0.7701971841819103
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.662860999989789,
+      "requestedDurationSeconds": 10.000460334,
+      "footprintMiB": 386.91066581324526,
+      "rssMiB": 454.95394736842104,
+      "gatewayCpuPercent": 2.381343976008518
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 2,
+      "activeRequests": 10,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.662860999989789,
+      "requestedDurationSeconds": 10.000503834,
+      "footprintMiB": 219.71187832480982,
+      "rssMiB": 360.03782894736844,
+      "gatewayCpuPercent": 0.8695449170463639
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.72107600000163,
+      "requestedDurationSeconds": 10.001566082999998,
+      "footprintMiB": 14.83161062943308,
+      "rssMiB": 366.4995888157895,
+      "gatewayCpuPercent": 1.3233235874983909
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.72107600000163,
+      "requestedDurationSeconds": 10.001609791999996,
+      "footprintMiB": 439.2095967342979,
+      "rssMiB": 536.2216282894736,
+      "gatewayCpuPercent": 4.397816489998243
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 4,
+      "activeRequests": 20,
+      "window": 0,
+      "samples": 38,
+      "durationSeconds": 9.72107600000163,
+      "requestedDurationSeconds": 10.001648957999999,
+      "footprintMiB": 261.42283871299344,
+      "rssMiB": 415.04810855263156,
+      "gatewayCpuPercent": 1.2799294714561
+    },
+    {
+      "product": "mixin",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "window": 0,
+      "samples": 39,
+      "durationSeconds": 9.92049100001168,
+      "requestedDurationSeconds": 10.002625832999998,
+      "footprintMiB": 22.473810440454727,
+      "rssMiB": 377.63341346153845,
+      "gatewayCpuPercent": 2.4829466606008714
+    },
+    {
+      "product": "magpie",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "window": 0,
+      "samples": 39,
+      "durationSeconds": 9.92049100001168,
+      "requestedDurationSeconds": 10.002661500000002,
+      "footprintMiB": 533.7792573586488,
+      "rssMiB": 560.1346153846154,
+      "gatewayCpuPercent": 6.456366423791382
+    },
+    {
+      "product": "ccswitch",
+      "mainSessions": 8,
+      "activeRequests": 40,
+      "window": 0,
+      "samples": 39,
+      "durationSeconds": 9.92049100001168,
+      "requestedDurationSeconds": 10.002693167000006,
+      "footprintMiB": 372.43981170654297,
+      "rssMiB": 446.1875,
+      "gatewayCpuPercent": 1.9462729549687208
+    }
+  ],
+  "validation": {
+    "audits": [
+      {
+        "mainSessions": 0,
+        "active": {
+          "mixin": 0,
+          "magpie": 0,
+          "ccswitch": 0
+        },
+        "received": []
+      },
+      {
+        "mainSessions": 2,
+        "active": {
+          "mixin": 10,
+          "magpie": 10,
+          "ccswitch": 10
+        },
+        "received": [
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-0-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-1-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-1-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-0-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-1-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-0-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-0-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-2-parent-1-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-1-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-0-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-0-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-1-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-0-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-1-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-0-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-2-parent-1-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-0-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-1-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-0-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-1-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-0-child-2",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-0-child-3",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-1-child-1",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-2-parent-1-child-0",
+            "phase": "main-2-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          }
+        ]
+      },
+      {
+        "mainSessions": 4,
+        "active": {
+          "mixin": 20,
+          "magpie": 20,
+          "ccswitch": 20
+        },
+        "received": [
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-0-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-1-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-0-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-1-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-1-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-2-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-2-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-2-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-1-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-3-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-3-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-3-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-0-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-2-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-1-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-3-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-4-parent-0-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-2-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-1-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-1-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-2-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-3-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-2-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-0-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-3-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-3-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-3-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-1-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-0-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-0-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-2-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-4-parent-0-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-1-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-3-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-0-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-0-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-2-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-3-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-1-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-0-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-3-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-2-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-3-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-1-child-0",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-0-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-2-child-3",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-1-child-1",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-4-parent-2-child-2",
+            "phase": "main-4-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          }
+        ]
+      },
+      {
+        "mainSessions": 8,
+        "active": {
+          "mixin": 40,
+          "magpie": 40,
+          "ccswitch": 40
+        },
+        "received": [
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-6",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-5",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-7",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-4",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-5",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-6",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-7",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-4",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-7",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-4",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-5",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-6",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-0-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-1-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-5-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-4-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-2-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-1-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-1-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-2-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-0-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-4-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-0-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-3-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-2-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-1-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-2-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-6-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-5-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-7-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-5-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-6-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-3-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-7-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-7-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-0-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-3-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-4-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-6-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-7-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-3-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-6-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-5-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "ccswitch",
+            "session": "main-8-parent-4-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-7-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-6-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-2-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-0-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-4-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-6-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-2-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-3-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-3-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-4-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-7-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-4-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-6-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-0-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-2-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-3-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-5-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-1-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-1-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-0-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-5-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-7-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-7-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-2-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-5-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-0-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-5-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-4-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-6-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-1-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-3-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "magpie",
+            "session": "main-8-parent-1-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 0,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-6-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-5-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-5-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-2-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-3-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-1-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-4-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-4-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-0-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-6-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-0-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-6-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-7-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-4-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-0-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-7-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-6-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-2-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-3-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-7-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-7-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-5-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-3-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-0-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-2-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-1-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-2-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-1-child-1",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-5-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-4-child-0",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-1-child-3",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          },
+          {
+            "product": "mixin",
+            "session": "main-8-parent-3-child-2",
+            "phase": "main-8-loading",
+            "injectedMessages": 1,
+            "textHash": "41d7d28faa45c5d0351121bc3568a3446aaa59f58a552990b964d55b3ea44c80",
+            "imageHashes": [
+              "cbf3fe709b370ec59768eb82b7c3f024d937586a886e251164771db0355097e8",
+              "e5ea5660bd8b5417ab153748490db7076411329cb73ba249e35ea9345aa30425"
+            ]
+          }
+        ]
+      }
+    ],
+    "completed": [
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-0",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-1",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-0-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-0-child-2",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-1-child-0",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-1-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-2-parent-0-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-1-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-1-child-0",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-0",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-0-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-0-child-2",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-1",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-0",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "magpie",
+        "session": "main-2-parent-0-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-1-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-0-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-0-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-1-child-0",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-1",
+        "characters": 9216,
+        "textHash": "f20de94ea1ff8d86d6df12d001544a847b188535554b770c72bbae364c49a04a"
+      },
+      {
+        "product": "mixin",
+        "session": "main-2-parent-0-child-2",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-2-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-0",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-1",
+        "characters": 10624,
+        "textHash": "73960fcbe1dcec22ff4ff797a7dcfcb7bb54ede51daa00bdc451b4cff2a6957a"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-3",
+        "characters": 10880,
+        "textHash": "7784157c11f63b74ef35d03e830f9519a7b76975eccb5d746668447fcc3df44f"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-1-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-2-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-3-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-2",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-0-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-0-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-2-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-3-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-3-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-4-parent-3-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-2",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-0",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-3-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-3-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-3-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-1",
+        "characters": 10624,
+        "textHash": "73960fcbe1dcec22ff4ff797a7dcfcb7bb54ede51daa00bdc451b4cff2a6957a"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-1-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-3",
+        "characters": 10880,
+        "textHash": "7784157c11f63b74ef35d03e830f9519a7b76975eccb5d746668447fcc3df44f"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-0-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-0-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-3-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-2-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-2-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-4-parent-2-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-0",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-3-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-2-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-1",
+        "characters": 10624,
+        "textHash": "73960fcbe1dcec22ff4ff797a7dcfcb7bb54ede51daa00bdc451b4cff2a6957a"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-3-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-3-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-0-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-1-child-1",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-1-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-0-child-3",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-2-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-1-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-3",
+        "characters": 10880,
+        "textHash": "7784157c11f63b74ef35d03e830f9519a7b76975eccb5d746668447fcc3df44f"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-3-child-2",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-2",
+        "characters": 10752,
+        "textHash": "227bb3c0cc276e25163a31de72f1880aaf64ac3bd1028fd6a9251f12d210a5de"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-2-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-4-parent-0-child-1",
+        "characters": 8320,
+        "textHash": "67f248798de836bb8996aa05bcfb1e32ca91b5ef47baabc461307b8134ee71b8"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-0",
+        "characters": 13952,
+        "textHash": "a2a06cee685d9869775f132731480b32655e2bc089e870b9baa50d24e782fc8c"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-1",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-4",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-5",
+        "characters": 13568,
+        "textHash": "d8aea479337d71fc197799f50252b00fd44d48bbb9b7741129a4e738f0452037"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-6",
+        "characters": 13440,
+        "textHash": "1dec4365fd502ef65f5f85210a76640ef38aec8b5db2f8bd9f15399e06a67403"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-7",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-1-child-1",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-1-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-2-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-2-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-2-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-3-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-3-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-4-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-4-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-5-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-6-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-6-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-7-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-2",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-3",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-0-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-0-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-0-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-1-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-3-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-3-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-4-child-0",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-4-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-5-child-0",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-5-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-5-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-6-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-6-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-7-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-7-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "ccswitch",
+        "session": "main-8-parent-7-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-5-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-0",
+        "characters": 13952,
+        "textHash": "a2a06cee685d9869775f132731480b32655e2bc089e870b9baa50d24e782fc8c"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-7-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-6-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-3-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-4-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-1",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-5-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-3-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-6-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-4-child-0",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-3-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-0-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-2",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-3-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-4-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-5-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-2-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-1-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-6",
+        "characters": 13440,
+        "textHash": "1dec4365fd502ef65f5f85210a76640ef38aec8b5db2f8bd9f15399e06a67403"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-7-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-4",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-5-child-0",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-7",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-3",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-2-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-1",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-4-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-0-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-2-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-5",
+        "characters": 13568,
+        "textHash": "d8aea479337d71fc197799f50252b00fd44d48bbb9b7741129a4e738f0452037"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-3-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-3-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-6-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-6-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-0",
+        "characters": 13952,
+        "textHash": "a2a06cee685d9869775f132731480b32655e2bc089e870b9baa50d24e782fc8c"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-1-child-1",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-7-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-5-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-7-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-0-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-6-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-6-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-7-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-4-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-4-child-0",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-7-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-1-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "magpie",
+        "session": "main-8-parent-5-child-1",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-3-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-2",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-4-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-2-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-7-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-6-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-1-child-2",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-3-child-2",
+        "characters": 7680,
+        "textHash": "fd7b1463ee8a59e652c71d81008242f6117918ee8615fdccc658a89955c9c241"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-0-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-7",
+        "characters": 13824,
+        "textHash": "952f7a82dbbfce9e2471491075b99a21af45944e6072be8babe37367e292b66c"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-4-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-1-child-3",
+        "characters": 7808,
+        "textHash": "e8707753fd9a2127998adf101594dbf86f57fc0771204433b96d58651dd58a27"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-7-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-5-child-3",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-0-child-3",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-6-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-5-child-0",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-0-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-3",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-2-child-0",
+        "characters": 8192,
+        "textHash": "9d654fee69fa183f30535ea13ee8a30f12ede0aa0e794092a3d7fcf96a2cc749"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-6",
+        "characters": 13440,
+        "textHash": "1dec4365fd502ef65f5f85210a76640ef38aec8b5db2f8bd9f15399e06a67403"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-2-child-1",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-1-child-0",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-1-child-1",
+        "characters": 7936,
+        "textHash": "4cd65b1de9f3eaec65e9a9b3a82477cdf67f64f6f9c649602b2a9ac955f731eb"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-0-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-2-child-2",
+        "characters": 8064,
+        "textHash": "3448af6cbd6ea8b7ac89df1fe79a8cbfb3a6d0ceda69c56698a880440773a110"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-5",
+        "characters": 13568,
+        "textHash": "d8aea479337d71fc197799f50252b00fd44d48bbb9b7741129a4e738f0452037"
+      },
+      {
+        "product": "mixin",
+        "session": "main-8-parent-4",
+        "characters": 13696,
+        "textHash": "835a12ec1bcc099cbcd46c36509c05101793748a503caf964bc5dd7166e06f91"
+      }
+    ],
+    "finalActive": {
+      "mixin": 0,
+      "magpie": 0,
+      "ccswitch": 0
+    },
+    "errors": []
+  }
+}

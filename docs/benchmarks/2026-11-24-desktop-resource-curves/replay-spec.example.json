@@ -1,0 +1,13 @@
+{
+  "corpus": "ABSOLUTE_PATH_TO_CORPUS_JSON_GZ",
+  "images": ["ABSOLUTE_PATH_TO_FIXTURE_1_PNG", "ABSOLUTE_PATH_TO_FIXTURE_2_PNG"],
+  "sampler": "ABSOLUTE_PATH_TO_COMPILED_SAMPLER",
+  "output": "ABSOLUTE_PATH_TO_NEW_OUTPUT_DIRECTORY",
+  "upstreamPort": 45671,
+  "products": {
+    "mixin": {"port": 8149, "model": "benchmark-model-bench", "uiPid": 1, "gatewayPid": 1, "allowedExtraMessages": 1},
+    "magpie": {"port": 45673, "model": "bench/benchmark-model", "uiPid": 1, "gatewayPid": 1},
+    "ccswitch": {"port": 45674, "model": "benchmark-model", "uiPid": 1, "gatewayPid": 1}
+  },
+  "protectedPids": []
+}

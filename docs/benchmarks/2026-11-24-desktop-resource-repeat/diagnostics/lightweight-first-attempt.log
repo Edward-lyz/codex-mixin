@@ -1,0 +1,30 @@
+warming up for 20s
+measuring 0 active requests per product
+measuring 10 active requests per product
+Error: all active streams: magpie/main-4-parent-2-child-3: HTTP 400 {"error":{"code":null,"message":"invalid request: unexpected end of JSON input","param":null,"type":"invalid_request_error"}}
+
+    at waitFor (file:///Users/liyanzhen/baidu/PUBLIC_REPO/codex-mixin/scripts/measure_desktop_resources.mjs:56:30)
+    at async file:///Users/liyanzhen/baidu/PUBLIC_REPO/codex-mixin/scripts/measure_desktop_resources.mjs:286:7
+node:events:505
+    throw er; // Unhandled 'error' event
+    ^
+
+Error [ERR_STREAM_WRITE_AFTER_END]: write after end
+    at _write (node:internal/streams/writable:491:11)
+    at Writable.write (node:internal/streams/writable:512:10)
+    at Interface.<anonymous> (file:///Users/liyanzhen/baidu/PUBLIC_REPO/codex-mixin/scripts/measure_desktop_resources.mjs:240:12)
+    at Interface.emit (node:events:514:20)
+    at [_onLine] [as _onLine] (node:internal/readline/interface:477:12)
+    at [_normalWrite] [as _normalWrite] (node:internal/readline/interface:675:18)
+    at Socket.ondata (node:internal/readline/interface:271:23)
+    at Socket.emit (node:events:514:20)
+    at addChunk (node:internal/streams/readable:605:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:556:3)
+Emitted 'error' event on Gzip instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'ERR_STREAM_WRITE_AFTER_END'
+}
+
+Node.js v26.13.1
