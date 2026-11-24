@@ -243,8 +243,8 @@ pub struct QuotaEntry {
 }
 
 impl QuotaEntry {
-    /// Used fraction in `0..=1` when the quota has a known limit.
-    pub fn used_fraction(&self) -> Option<f32> {
+    /// Remaining fraction in `0..=1` when the quota has a known limit.
+    pub fn remaining_fraction(&self) -> Option<f32> {
         if self.error.is_some() {
             return None;
         }
@@ -252,10 +252,10 @@ impl QuotaEntry {
             .limit
             .or_else(|| (self.unit.as_deref() == Some("percent")).then_some(100.0))
             .filter(|limit| *limit > 0.0)?;
-        let used = self
-            .used
-            .or_else(|| self.remaining.map(|remaining| (limit - remaining).max(0.0)))?;
-        Some((used / limit).clamp(0.0, 1.0) as f32)
+        let remaining = self
+            .remaining
+            .or_else(|| self.used.map(|used| (limit - used).max(0.0)))?;
+        Some((remaining / limit).clamp(0.0, 1.0) as f32)
     }
 
     /// Window duration in seconds, preferring the CLI field and falling back to
@@ -293,9 +293,9 @@ impl QuotaEntry {
         }
     }
 
-    /// Elapsed fraction `0..=1` through the current reset window, used to place
-    /// the pace tick mark on the progress bar.
-    pub fn pace_fraction(&self) -> Option<f32> {
+    /// Remaining fraction `0..=1` of the current reset window, used to place
+    /// the pace tick mark on the remaining-quota progress bar.
+    pub fn remaining_pace_fraction(&self) -> Option<f32> {
         if self.error.is_some() {
             return None;
         }
@@ -309,8 +309,7 @@ impl QuotaEntry {
         if remaining_secs < 0.0 || remaining_secs > window_secs {
             return None;
         }
-        let elapsed = (window_secs - remaining_secs) / window_secs;
-        Some(elapsed.clamp(0.0, 1.0) as f32)
+        Some((remaining_secs / window_secs).clamp(0.0, 1.0) as f32)
     }
 
     pub fn is_percent_window(&self) -> bool {
@@ -321,14 +320,14 @@ impl QuotaEntry {
         if self.error.is_some() {
             return true;
         }
-        let Some(used) = self.used_fraction() else {
+        let Some(remaining) = self.remaining_fraction() else {
             return false;
         };
-        if used >= 0.80 {
+        if remaining <= 0.20 {
             return true;
         }
-        self.pace_fraction()
-            .is_some_and(|pace| used > pace + 0.15 && used >= 0.25)
+        self.remaining_pace_fraction()
+            .is_some_and(|pace| remaining + 0.15 < pace && remaining <= 0.75)
     }
 
     /// Remaining time until reset formatted compactly (`2h`, `3d 3h`, `45m`, `<1m`).
@@ -438,19 +437,24 @@ mod tests {
     }
 
     #[test]
-    fn quota_used_fraction_and_warning_semantics() {
+    fn quota_remaining_fraction_and_warning_semantics() {
         let ok = percent_entry(Some("5h"), "5h", Some(37.0), Some(63.0), Some(18_000), None);
-        assert!((ok.used_fraction().unwrap() - 0.37).abs() < 1e-4);
+        assert!((ok.remaining_fraction().unwrap() - 0.63).abs() < 1e-4);
         assert!(!ok.is_warning());
 
         let warn = percent_entry(Some("week"), "Week", None, Some(15.0), None, None);
-        assert!((warn.used_fraction().unwrap() - 0.85).abs() < 1e-4);
+        assert!((warn.remaining_fraction().unwrap() - 0.15).abs() < 1e-4);
         assert!(warn.is_warning());
+
+        // Derived from `used` when `remaining` is omitted.
+        let from_used = percent_entry(Some("5h"), "5h", Some(85.0), None, Some(18_000), None);
+        assert!((from_used.remaining_fraction().unwrap() - 0.15).abs() < 1e-4);
+        assert!(from_used.is_warning());
     }
 
     #[test]
     fn quota_pace_fraction_uses_explicit_or_inferred_window() {
-        // Explicit 5h window with 2.5h remaining => ~50% elapsed.
+        // Explicit 5h window with 2.5h remaining => ~50% time remaining.
         let five_h = percent_entry(
             Some("5h"),
             "5h",
@@ -459,13 +463,15 @@ mod tests {
             Some(18_000),
             Some(9_000),
         );
-        let pace = five_h.pace_fraction().expect("pace should be computed");
+        let pace = five_h
+            .remaining_pace_fraction()
+            .expect("pace should be computed");
         assert!((pace - 0.5).abs() < 0.02, "unexpected pace: {pace}");
 
-        // Inferred weekly window from label with 3.5d remaining => ~50% elapsed.
+        // Inferred weekly window from label with 3.5d remaining => ~50% time remaining.
         let weekly = percent_entry(None, "Weekly", Some(45.0), Some(55.0), None, Some(302_400));
         assert_eq!(weekly.inferred_window_seconds(), Some(604_800));
-        let week_pace = weekly.pace_fraction().expect("weekly pace");
+        let week_pace = weekly.remaining_pace_fraction().expect("weekly pace");
         assert!(
             (week_pace - 0.5).abs() < 0.02,
             "unexpected week pace: {week_pace}"

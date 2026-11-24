@@ -73,21 +73,22 @@ fn provider_glyph(icon: &str, size_px: f32, cx: &App) -> AnyElement {
     }
 }
 
-/// Picks semantic status colour for a used fraction relative to time pace.
-fn status_color(used: f32, pace: Option<f32>, cx: &App) -> Hsla {
+/// Picks semantic status colour for a remaining fraction relative to remaining
+/// window time.
+fn status_color(remaining: f32, pace: Option<f32>, cx: &App) -> Hsla {
     let colors = cx.theme().colors;
-    if used >= 0.85 {
+    if remaining <= 0.15 {
         return colors.danger;
     }
     if let Some(pace) = pace {
-        if used > pace + 0.15 && used >= 0.25 {
+        if remaining + 0.15 < pace && remaining <= 0.75 {
             colors.danger
-        } else if used > pace + 0.04 && used >= 0.20 {
+        } else if remaining + 0.04 < pace && remaining <= 0.80 {
             colors.warning
         } else {
             colors.success
         }
-    } else if used >= 0.70 {
+    } else if remaining <= 0.30 {
         colors.warning
     } else {
         colors.success
@@ -95,10 +96,10 @@ fn status_color(used: f32, pace: Option<f32>, cx: &App) -> Hsla {
 }
 
 /// Picks the text colour of the percentage figure: normal foreground when on
-/// pace, semantic warning/danger when running ahead of pace.
-fn percent_text_color(used: f32, pace: Option<f32>, cx: &App) -> Hsla {
+/// pace, semantic warning/danger when burning faster than pace.
+fn percent_text_color(remaining: f32, pace: Option<f32>, cx: &App) -> Hsla {
     let colors = cx.theme().colors;
-    let bar = status_color(used, pace, cx);
+    let bar = status_color(remaining, pace, cx);
     if bar == colors.danger {
         colors.danger
     } else if bar == colors.warning {
@@ -108,10 +109,16 @@ fn percent_text_color(used: f32, pace: Option<f32>, cx: &App) -> Hsla {
     }
 }
 
-/// Horizontal progress bar with an optional vertical pace tick mark.
-fn pace_progress_bar(used: f32, pace: Option<f32>, bar_color: Hsla, cx: &App) -> impl IntoElement {
+/// Horizontal remaining-quota bar with an optional vertical pace tick mark
+/// showing the remaining fraction of the reset window.
+fn pace_progress_bar(
+    remaining: f32,
+    pace: Option<f32>,
+    bar_color: Hsla,
+    cx: &App,
+) -> impl IntoElement {
     let colors = cx.theme().colors;
-    let clamped_used = used.clamp(0.0, 1.0);
+    let clamped_remaining = remaining.clamp(0.0, 1.0);
     let track_bg = bar_color.opacity(0.18);
     let tick = pace.filter(|value| *value > 0.02 && *value < 0.98);
     div()
@@ -120,14 +127,14 @@ fn pace_progress_bar(used: f32, pace: Option<f32>, bar_color: Hsla, cx: &App) ->
         .h(px(6.0))
         .rounded_full()
         .bg(track_bg)
-        .when(clamped_used > 0.0, |track| {
+        .when(clamped_remaining > 0.0, |track| {
             track.child(
                 div()
                     .absolute()
                     .top_0()
                     .bottom_0()
                     .left_0()
-                    .w(relative(clamped_used))
+                    .w(relative(clamped_remaining))
                     .min_w(px(6.0))
                     .rounded_full()
                     .bg(bar_color),
@@ -329,15 +336,15 @@ fn render_quota_row(
             .into_any_element();
     }
 
-    let used_fraction = entry.used_fraction();
-    let pace = entry.pace_fraction();
+    let remaining_fraction = entry.remaining_fraction();
+    let pace = entry.remaining_pace_fraction();
     let countdown = entry.reset_countdown();
 
     if entry.is_percent_window()
-        && let Some(used) = used_fraction
+        && let Some(remaining) = remaining_fraction
     {
-        let bar_color = status_color(used, pace, cx);
-        let pct_color = percent_text_color(used, pace, cx);
+        let bar_color = status_color(remaining, pace, cx);
+        let pct_color = percent_text_color(remaining, pace, cx);
         let mini = (!compact).then(|| pick_mini_bars(entry, series)).flatten();
         return h_flex()
             .items_end()
@@ -366,11 +373,11 @@ fn render_quota_row(
                                     .text_size(px(if compact { 12.5 } else { 13.0 }))
                                     .font_semibold()
                                     .text_color(pct_color)
-                                    .child(format!("{:.0}%", used * 100.0)),
+                                    .child(format!("{:.0}%", remaining * 100.0)),
                             )
                             .children(reset_badge(countdown, cx)),
                     )
-                    .child(pace_progress_bar(used, pace, bar_color, cx)),
+                    .child(pace_progress_bar(remaining, pace, bar_color, cx)),
             )
             .when_some(mini, |row, bars| row.child(mini_activity_bars(bars, cx)))
             .into_any_element();
