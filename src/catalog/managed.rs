@@ -67,10 +67,15 @@ pub fn refresh_managed_oauth_catalog(
             .to_owned();
         let advertised_support = model.get(SUPPORTS_THINKING_MARKER).and_then(Value::as_bool);
         apply_model_reasoning_capabilities(&mut model, &reasoning_model_id, advertised_support);
-        let supports_search_tool = model
-            .get("supports_search_tool")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
+        let supports_search_tool = if crate::protocol::gemini::is_gemini_model(&reasoning_model_id)
+        {
+            true
+        } else {
+            model
+                .get("supports_search_tool")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        };
         model["supports_search_tool"] = json!(supports_search_tool);
         clamp_managed_gpt_context(&mut model, &official_context_windows);
         enable_fast_service_tier(&mut model);
@@ -127,8 +132,25 @@ pub fn migrate_managed_model_metadata(catalog: &mut Value) -> anyhow::Result<boo
         .filter(|model| is_managed_custom_model(model))
     {
         changed |= remove_official_lifecycle_metadata(model);
+        changed |= enable_gemini_tool_search(model);
     }
     Ok(changed)
+}
+
+fn enable_gemini_tool_search(model: &mut Value) -> bool {
+    let model_id = model
+        .get(UPSTREAM_MODEL_MARKER)
+        .and_then(Value::as_str)
+        .or_else(|| model.get("slug").and_then(Value::as_str))
+        .unwrap_or_default();
+    if !crate::protocol::gemini::is_gemini_model(model_id) {
+        return false;
+    }
+    if model.get("supports_search_tool").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+    model["supports_search_tool"] = json!(true);
+    true
 }
 
 pub(super) fn remove_official_lifecycle_metadata(model: &mut Value) -> bool {
@@ -253,4 +275,38 @@ pub(super) fn is_managed_custom_model(model: &Value) -> bool {
 
 fn is_gpt_model(model: &str) -> bool {
     model.to_ascii_lowercase().starts_with("gpt-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_managed_model_metadata_enables_tool_search_for_gemini_only() {
+        let mut catalog = json!({
+            "models": [
+                {
+                    "slug": "Gemini 4 Hydrogen-baidu-oneapi",
+                    CUSTOM_MODEL_MARKER: true,
+                    UPSTREAM_MODEL_MARKER: "Gemini 4 Hydrogen",
+                    "supports_search_tool": false
+                },
+                {
+                    "slug": "Claude Sonnet 4.5-baidu-oneapi",
+                    CUSTOM_MODEL_MARKER: true,
+                    UPSTREAM_MODEL_MARKER: "claude-sonnet-4-5",
+                    "supports_search_tool": false
+                }
+            ]
+        });
+
+        let changed = migrate_managed_model_metadata(&mut catalog).expect("migrate metadata");
+        assert!(changed);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], json!(true));
+        assert_eq!(catalog["models"][1]["supports_search_tool"], json!(false));
+
+        let changed_again =
+            migrate_managed_model_metadata(&mut catalog).expect("idempotent migrate");
+        assert!(!changed_again);
+    }
 }
