@@ -30,10 +30,24 @@ use crate::theme;
 use crate::tr;
 use crate::widgets::{Segmented, page_header, pill, status_dot};
 
-const RANGES: [u64; 3] = [7, 30, 90];
-const TRAFFIC_WINDOWS: [&str; 5] = ["10m", "1h", "24h", "7d", "30d"];
+const RANGES: [u64; 4] = [1, 7, 30, 90];
 const SECONDS_PER_DAY: i64 = 86_400;
 const TRAFFIC_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+fn range_series_window(days: u64) -> &'static str {
+    match days {
+        1 => "24h",
+        7 => "7d",
+        30 => "30d",
+        _ => "90d",
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsageChartMode {
+    Traffic,
+    Tokens,
+}
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct DailyUsage {
@@ -214,12 +228,14 @@ pub struct UsagePage {
     view: UsageView,
     range: usize,
     rows: Option<Vec<DailyUsage>>,
+    rows_generation: u64,
     error: Option<SharedString>,
     loading: bool,
-    traffic_window: usize,
+    chart_mode: UsageChartMode,
     traffic_open: bool,
     traffic_buckets: Option<Vec<UsageSeriesBucket>>,
     traffic_loading: bool,
+    traffic_generation: u64,
     traffic_error: Option<SharedString>,
     /// Per-provider hourly buckets for the last 24h (feeds 5h mini bars & 24h spend).
     hourly_by_provider: Vec<UsageSeriesBucket>,
@@ -292,7 +308,7 @@ impl UsagePage {
             }
         })
         .detach();
-        // Refresh short-window Traffic series while Overview is visible.
+        // Refresh the 24h traffic series while Overview is visible.
         cx.spawn(async move |page, cx| {
             loop {
                 cx.background_executor().timer(TRAFFIC_POLL_INTERVAL).await;
@@ -300,7 +316,7 @@ impl UsagePage {
                     if page.active
                         && page.view == UsageView::Overview
                         && page.traffic_open
-                        && page.traffic_window <= 1
+                        && RANGES[page.range] == 1
                     {
                         page.reload_traffic(cx);
                     }
@@ -313,14 +329,16 @@ impl UsagePage {
         .detach();
         let mut page = Self {
             view: UsageView::Overview,
-            range: 1,
+            range: 2,
             rows: None,
+            rows_generation: 0,
             error: None,
             loading: false,
-            traffic_window: 0,
+            chart_mode: UsageChartMode::Traffic,
             traffic_open: true,
             traffic_buckets: None,
             traffic_loading: false,
+            traffic_generation: 0,
             traffic_error: None,
             hourly_by_provider: Vec::new(),
             hourly_loading: false,
@@ -407,11 +425,10 @@ impl UsagePage {
     }
 
     fn reload_traffic(&mut self, cx: &mut Context<Self>) {
-        if self.traffic_loading {
-            return;
-        }
+        self.traffic_generation = self.traffic_generation.wrapping_add(1);
+        let generation = self.traffic_generation;
         self.traffic_loading = true;
-        let window = TRAFFIC_WINDOWS[self.traffic_window];
+        let window = range_series_window(RANGES[self.range]);
         let task = query::<Vec<UsageSeriesBucket>>(
             vec![
                 "usage".into(),
@@ -425,6 +442,9 @@ impl UsagePage {
         cx.spawn(async move |page, cx| {
             let result = task.await;
             page.update(cx, |page, cx| {
+                if page.traffic_generation != generation {
+                    return;
+                }
                 page.traffic_loading = false;
                 match result {
                     Ok(buckets) => {
@@ -528,13 +548,13 @@ impl UsagePage {
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.reload_traffic(cx);
         self.reload_hourly_by_provider(cx);
-        if self.loading {
-            return;
-        }
+        self.rows_generation = self.rows_generation.wrapping_add(1);
+        let generation = self.rows_generation;
         self.loading = true;
         cx.notify();
-        // Twice the range, so the cards can compare with the period before.
-        let days = RANGES[self.range] * 2;
+        // Twice the range so the summary cards can compare with the prior period,
+        // and at least 30 days so the Usage limits spend footer always has 7d/30d totals.
+        let days = (RANGES[self.range] * 2).max(30);
         let task = query::<Vec<DailyUsage>>(
             vec![
                 "usage".into(),
@@ -548,6 +568,9 @@ impl UsagePage {
         cx.spawn(async move |page, cx| {
             let result = task.await;
             page.update(cx, |page, cx| {
+                if page.rows_generation != generation {
+                    return;
+                }
                 page.loading = false;
                 match result {
                     Ok(rows) => {
@@ -661,10 +684,16 @@ fn weekday_initial(weekday: chrono::Weekday) -> &'static str {
 }
 
 impl UsagePage {
-    fn render_traffic_card(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_chart_card(
+        &mut self,
+        days: i64,
+        daily_bars: Vec<DayBar>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let colors = cx.theme().colors;
-        let window_key = TRAFFIC_WINDOWS[self.traffic_window];
+        let window_key = range_series_window(RANGES[self.range]);
         let open = self.traffic_open;
+        let mode = self.chart_mode;
 
         let header = h_flex()
             .items_center()
@@ -690,28 +719,38 @@ impl UsagePage {
                         .text_color(colors.muted_foreground),
                     )
                     .child(
-                        Icon::new(IconName::Activity)
-                            .small()
-                            .text_color(colors.foreground),
+                        Icon::new(if mode == UsageChartMode::Traffic {
+                            IconName::Activity
+                        } else {
+                            IconName::ChartColumn
+                        })
+                        .small()
+                        .text_color(colors.foreground),
                     )
                     .child(
                         div()
                             .text_sm()
                             .font_semibold()
                             .text_color(colors.foreground)
-                            .child(t!("usage.traffic.title")),
+                            .child(if mode == UsageChartMode::Traffic {
+                                tr!("usage.traffic.title")
+                            } else {
+                                tr!("usage.daily_tokens")
+                            }),
                     ),
             )
             .child(
-                Segmented::new("usage-traffic-window")
-                    .items(TRAFFIC_WINDOWS)
-                    .selected(self.traffic_window)
-                    .item_width(px(44.0))
+                Segmented::new("usage-chart-mode")
+                    .items([tr!("usage.traffic.title"), tr!("usage.traffic.tokens_tab")])
+                    .selected(usize::from(mode == UsageChartMode::Tokens))
                     .on_change(cx.listener(|page, index: &usize, _, cx| {
-                        if page.traffic_window != *index {
-                            page.traffic_window = *index;
-                            page.traffic_loading = false;
-                            page.reload_traffic(cx);
+                        let next = if *index == 1 {
+                            UsageChartMode::Tokens
+                        } else {
+                            UsageChartMode::Traffic
+                        };
+                        if page.chart_mode != next {
+                            page.chart_mode = next;
                             cx.notify();
                         }
                     })),
@@ -730,58 +769,124 @@ impl UsagePage {
                 )
         };
 
-        let chart_body: AnyElement = match &self.traffic_buckets {
-            Some(buckets) if !buckets.is_empty() => {
-                let points: Vec<TrafficPoint> = buckets
-                    .iter()
-                    .map(|bucket| TrafficPoint {
-                        label: traffic_x_label(bucket.bucket_start_ms, window_key),
-                        requests: bucket.requests as f64,
-                        cached: bucket.cached_requests as f64,
-                        errors: bucket.errors as f64,
-                    })
-                    .collect();
-                let chart = AreaChart::new(points)
-                    .id("usage-traffic-chart")
-                    .x(|point: &TrafficPoint| point.label.clone())
-                    .y(|point: &TrafficPoint| point.requests)
-                    .stroke(colors.chart_1)
-                    .fill(colors.chart_1.opacity(0.08))
-                    .natural()
-                    .name(tr!("usage.traffic.requests"))
-                    .y(|point: &TrafficPoint| point.cached)
-                    .stroke(colors.success)
-                    .fill(colors.success.opacity(0.06))
-                    .natural()
-                    .name(tr!("usage.traffic.cached"))
-                    .y(|point: &TrafficPoint| point.errors)
-                    .stroke(colors.danger)
-                    .fill(colors.danger.opacity(0.06))
-                    .natural()
-                    .name(tr!("usage.traffic.errors"))
-                    .y_axis(true)
-                    .y_tick_count(4)
-                    .x_tick_count(6)
-                    .grid_dashed(true)
-                    .appear_key(window_key)
-                    .y_tick_format(compact_number)
-                    .tooltip_value(|_, _, value| SharedString::from(compact_number(value)));
-                div().h(px(210.0)).w_full().child(chart).into_any_element()
-            }
-            _ => {
-                let message = match &self.traffic_error {
-                    Some(error) => error.clone(),
-                    None if self.traffic_loading => tr!("usage.loading"),
-                    None => tr!("usage.traffic.empty"),
+        let chart_body: AnyElement = match mode {
+            UsageChartMode::Traffic => match &self.traffic_buckets {
+                Some(buckets) if !buckets.is_empty() => {
+                    let points: Vec<TrafficPoint> = buckets
+                        .iter()
+                        .map(|bucket| TrafficPoint {
+                            label: traffic_x_label(bucket.bucket_start_ms, window_key),
+                            requests: bucket.requests as f64,
+                            cached: bucket.cached_requests as f64,
+                            errors: bucket.errors as f64,
+                        })
+                        .collect();
+                    let chart = AreaChart::new(points)
+                        .id("usage-traffic-chart")
+                        .x(|point: &TrafficPoint| point.label.clone())
+                        .y(|point: &TrafficPoint| point.requests)
+                        .stroke(colors.chart_1)
+                        .fill(colors.chart_1.opacity(0.08))
+                        .natural()
+                        .name(tr!("usage.traffic.requests"))
+                        .y(|point: &TrafficPoint| point.cached)
+                        .stroke(colors.success)
+                        .fill(colors.success.opacity(0.06))
+                        .natural()
+                        .name(tr!("usage.traffic.cached"))
+                        .y(|point: &TrafficPoint| point.errors)
+                        .stroke(colors.danger)
+                        .fill(colors.danger.opacity(0.06))
+                        .natural()
+                        .name(tr!("usage.traffic.errors"))
+                        .y_axis(true)
+                        .y_tick_count(4)
+                        .x_tick_count(6)
+                        .grid_dashed(true)
+                        .appear_key(window_key)
+                        .y_tick_format(compact_number)
+                        .tooltip_value(|_, _, value| SharedString::from(compact_number(value)));
+                    div().h(px(210.0)).w_full().child(chart).into_any_element()
+                }
+                _ => {
+                    let message = match &self.traffic_error {
+                        Some(error) => error.clone(),
+                        None if self.traffic_loading => tr!("usage.loading"),
+                        None => tr!("usage.traffic.empty"),
+                    };
+                    h_flex()
+                        .h(px(120.0))
+                        .items_center()
+                        .justify_center()
+                        .text_xs()
+                        .text_color(colors.muted_foreground)
+                        .child(message)
+                        .into_any_element()
+                }
+            },
+            UsageChartMode::Tokens => {
+                let bars: Vec<DayBar> = if days == 1 {
+                    self.traffic_buckets
+                        .as_ref()
+                        .map(|buckets| {
+                            buckets
+                                .iter()
+                                .map(|bucket| DayBar {
+                                    label: traffic_x_label(bucket.bucket_start_ms, window_key),
+                                    tokens: (bucket.input_tokens + bucket.output_tokens) as f64,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    daily_bars
                 };
-                h_flex()
-                    .h(px(120.0))
-                    .items_center()
-                    .justify_center()
-                    .text_xs()
-                    .text_color(colors.muted_foreground)
-                    .child(message)
-                    .into_any_element()
+                if bars.is_empty() {
+                    let message = match &self.traffic_error {
+                        Some(error) => error.clone(),
+                        None if self.traffic_loading => tr!("usage.loading"),
+                        None => tr!("usage.empty"),
+                    };
+                    h_flex()
+                        .h(px(120.0))
+                        .items_center()
+                        .justify_center()
+                        .text_xs()
+                        .text_color(colors.muted_foreground)
+                        .child(message)
+                        .into_any_element()
+                } else {
+                    let primary = colors.chart_1;
+                    let tick_count = if days == 1 {
+                        6
+                    } else if days > 30 {
+                        8
+                    } else {
+                        days as usize
+                    };
+                    let chart = BarChart::new(bars)
+                        .id("usage-daily")
+                        .band(|bar: &DayBar| bar.label.clone())
+                        .value(|bar: &DayBar| bar.tokens)
+                        .fill_gradient(move |_, _, _| {
+                            [
+                                gpui_kit::linear_color_stop(primary.opacity(0.35), 0.0),
+                                gpui_kit::linear_color_stop(primary, 1.0),
+                            ]
+                        })
+                        .corner_radii(px(5.0))
+                        .padding_inner(0.5)
+                        .max_band_width(px(36.0))
+                        .min_length(2.0)
+                        .grid_dashed(true)
+                        .value_tick_count(4)
+                        .appear_key(window_key)
+                        .value_axis(true)
+                        .value_tick_format(compact_number)
+                        .tooltip_value(|_, value| SharedString::from(compact_number(value)))
+                        .band_tick_count(tick_count);
+                    div().h(px(210.0)).w_full().child(chart).into_any_element()
+                }
             }
         };
 
@@ -795,14 +900,16 @@ impl UsagePage {
             .shadow_xs()
             .child(header)
             .when(open, |card| {
-                card.child(
-                    h_flex()
-                        .items_center()
-                        .gap_4()
-                        .child(legend_item(colors.chart_1, tr!("usage.traffic.requests")))
-                        .child(legend_item(colors.success, tr!("usage.traffic.cached")))
-                        .child(legend_item(colors.danger, tr!("usage.traffic.errors"))),
-                )
+                card.when(mode == UsageChartMode::Traffic, |card| {
+                    card.child(
+                        h_flex()
+                            .items_center()
+                            .gap_4()
+                            .child(legend_item(colors.chart_1, tr!("usage.traffic.requests")))
+                            .child(legend_item(colors.success, tr!("usage.traffic.cached")))
+                            .child(legend_item(colors.danger, tr!("usage.traffic.errors"))),
+                    )
+                })
                 .child(chart_body)
             })
             .into_any_element()
@@ -1054,13 +1161,16 @@ impl UsagePage {
         let days = RANGES[self.range] as i64;
         let today = today();
         let start = today - days + 1;
+        let previous_start = start - days;
         let mut current = Totals::default();
         let mut previous = Totals::default();
         let mut per_day: BTreeMap<i64, f64> = (start..=today).map(|day| (day, 0.0)).collect();
         let mut per_model: BTreeMap<(String, String), (Totals, Option<f64>)> = BTreeMap::new();
         for row in &rows {
             if row.day < start {
-                previous.add(row);
+                if row.day >= previous_start {
+                    previous.add(row);
+                }
                 continue;
             }
             current.add(row);
@@ -1082,28 +1192,6 @@ impl UsagePage {
             .collect();
         let mut models: Vec<_> = per_model.into_iter().collect();
         models.sort_by_key(|(_, (totals, _))| std::cmp::Reverse(totals.requests));
-        let primary = colors.chart_1;
-        let chart = BarChart::new(bars)
-            .id("usage-daily")
-            .band(|bar: &DayBar| bar.label.clone())
-            .value(|bar: &DayBar| bar.tokens)
-            .fill_gradient(move |_, _, _| {
-                [
-                    gpui_kit::linear_color_stop(primary.opacity(0.35), 0.0),
-                    gpui_kit::linear_color_stop(primary, 1.0),
-                ]
-            })
-            .corner_radii(px(5.0))
-            .padding_inner(0.5)
-            .max_band_width(px(36.0))
-            .min_length(2.0)
-            .grid_dashed(true)
-            .value_tick_count(4)
-            .appear_key(days)
-            .value_axis(true)
-            .value_tick_format(compact_number)
-            .tooltip_value(|_, value| SharedString::from(compact_number(value)))
-            .band_tick_count(if days > 30 { 8 } else { days as usize });
         let head = |label: SharedString| {
             div()
                 .w_24()
@@ -1229,7 +1317,7 @@ impl UsagePage {
                 true,
                 cx,
             ));
-        let traffic_card = self.render_traffic_card(cx);
+        let chart_card = self.render_chart_card(days, bars, cx);
         let usage_limits = self.render_usage_limits(&rows, cx);
         div()
             .id("usage-scroll")
@@ -1244,27 +1332,9 @@ impl UsagePage {
                     .pt_4()
                     .pb_6()
                     .gap_4()
-                    .child(traffic_card)
-                    .child(usage_limits)
                     .child(cards)
-                    .child(
-                        v_flex()
-                            .gap_3()
-                            .p_5()
-                            .rounded_xl()
-                            .border_1()
-                            .border_color(colors.border)
-                            .bg(colors.group_box)
-                            .shadow_xs()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_medium()
-                                    .text_color(colors.muted_foreground)
-                                    .child(t!("usage.daily_tokens")),
-                            )
-                            .child(div().h_56().child(chart)),
-                    )
+                    .child(chart_card)
+                    .child(usage_limits)
                     .child(
                         v_flex()
                             .rounded_xl()
@@ -1775,13 +1845,19 @@ impl Render for UsagePage {
                         header
                             .child(
                                 Segmented::new("usage-range")
-                                    .items(
-                                        RANGES.iter().map(|days| tr!("usage.range", days = days)),
-                                    )
+                                    .items(RANGES.iter().map(|days| {
+                                        if *days == 1 {
+                                            tr!("usage.range_day")
+                                        } else {
+                                            tr!("usage.range", days = days)
+                                        }
+                                    }))
                                     .selected(self.range)
                                     .on_change(cx.listener(|page, index: &usize, _, cx| {
-                                        page.range = *index;
-                                        page.reload(cx);
+                                        if page.range != *index {
+                                            page.range = *index;
+                                            page.reload(cx);
+                                        }
                                     })),
                             )
                             .child(

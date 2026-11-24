@@ -189,10 +189,10 @@ pub(super) enum Command {
         /// List per-day provider/model totals for charts.
         #[arg(long, conflicts_with = "series")]
         daily: bool,
-        /// List bucketed traffic counts for a time window (10m, 1h, 24h, 7d, 30d).
+        /// List bucketed traffic counts for a time window (10m, 1h, 24h, 7d, 30d, 90d).
         #[arg(long)]
         series: bool,
-        /// Time window for `--series` (10m, 1h, 24h, 7d, 30d).
+        /// Time window for `--series` (10m, 1h, 24h, 7d, 30d, 90d).
         #[arg(long, requires = "series")]
         window: Option<String>,
         /// Group `--series` buckets by provider id.

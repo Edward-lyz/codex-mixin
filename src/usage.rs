@@ -310,6 +310,7 @@ pub(crate) enum UsageSeriesWindow {
     Day,
     Week,
     Month,
+    NinetyDays,
 }
 
 impl UsageSeriesWindow {
@@ -320,6 +321,7 @@ impl UsageSeriesWindow {
             "24h" => Some(Self::Day),
             "7d" => Some(Self::Week),
             "30d" => Some(Self::Month),
+            "90d" => Some(Self::NinetyDays),
             _ => None,
         }
     }
@@ -329,7 +331,7 @@ impl UsageSeriesWindow {
             Self::TenMinutes => 20_000,
             Self::OneHour => 120_000,
             Self::Day => 3_600_000,
-            Self::Week | Self::Month => DAY_MS,
+            Self::Week | Self::Month | Self::NinetyDays => DAY_MS,
         }
     }
 
@@ -338,6 +340,7 @@ impl UsageSeriesWindow {
             Self::TenMinutes | Self::OneHour | Self::Month => 30,
             Self::Day => 24,
             Self::Week => 7,
+            Self::NinetyDays => 90,
         }
     }
 
@@ -345,6 +348,7 @@ impl UsageSeriesWindow {
         match self {
             Self::Week => Some(7),
             Self::Month => Some(30),
+            Self::NinetyDays => Some(90),
             Self::TenMinutes | Self::OneHour | Self::Day => None,
         }
     }
@@ -844,5 +848,14 @@ mod tests {
         assert_eq!(anthropic_errors, 1);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn series_window_parses_ninety_days() {
+        let window = UsageSeriesWindow::parse("90d").expect("parse 90d");
+        assert_eq!(window, UsageSeriesWindow::NinetyDays);
+        assert_eq!(window.days(), Some(90));
+        assert_eq!(window.bucket_count(), 90);
+        assert_eq!(window.bucket_ms(), DAY_MS);
     }
 }

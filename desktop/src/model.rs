@@ -377,6 +377,10 @@ pub struct UsageSeriesBucket {
     #[serde(default)]
     pub cached_requests: u64,
     #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
     pub estimated_cost_usd: f64,
 }
 

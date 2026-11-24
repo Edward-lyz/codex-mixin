@@ -420,7 +420,7 @@ async fn token_usage_series(
     let window_raw = query.window.as_deref().unwrap_or("1h");
     let window = crate::usage::UsageSeriesWindow::parse(window_raw).ok_or_else(|| {
         GatewayError::BadRequest(format!(
-            "unsupported usage series window `{window_raw}` (expected 10m, 1h, 24h, 7d, or 30d)"
+            "unsupported usage series window `{window_raw}` (expected 10m, 1h, 24h, 7d, 30d, or 90d)"
         ))
     })?;
     let provider = query.provider;

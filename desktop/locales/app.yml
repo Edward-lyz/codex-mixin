@@ -1115,6 +1115,9 @@ usage.no_previous:
 usage.range:
   en: "%{days} days"
   zh-CN: "%{days} 天"
+usage.range_day:
+  en: "1 day"
+  zh-CN: "1 天"
 usage.requests:
   en: "Requests"
   zh-CN: "请求数"
@@ -1334,6 +1337,9 @@ panel.quota_all:
 usage.traffic.title:
   en: "Traffic"
   zh-CN: "流量"
+usage.traffic.tokens_tab:
+  en: "Tokens"
+  zh-CN: "Token"
 usage.traffic.requests:
   en: "LLM requests"
   zh-CN: "LLM 请求"
