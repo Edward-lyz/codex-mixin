@@ -217,7 +217,23 @@ pub(crate) fn responses_to_anthropic(
     merge_consecutive_messages(&mut messages);
 
     let active_tools = collect_active_tools(body)?;
-    let (tools, tool_names) = convert_tools(Some(&active_tools), web_search, use_mcp_bridge_names)?;
+    let (mut tools, tool_names) =
+        convert_tools(Some(&active_tools), web_search, use_mcp_bridge_names)?;
+    if crate::protocol::gemini::is_gemini_model(&model) {
+        let function_declaration_count = tools
+            .iter()
+            .filter(|tool| tool.get("input_schema").is_some())
+            .count();
+        crate::protocol::gemini::validate_gemini_function_declaration_limit(
+            &model,
+            function_declaration_count,
+        )?;
+        for tool in &mut tools {
+            if let Some(schema) = tool.get_mut("input_schema") {
+                crate::protocol::gemini::normalize_gemini_nullable_schema(schema);
+            }
+        }
+    }
     let thinking = convert_thinking(max_tokens, reasoning, thinking_mode, auto_thinking_kind)?;
     let output_config = merge_anthropic_output_format(
         thinking.output_config,
@@ -282,5 +298,158 @@ pub(super) fn merge_anthropic_output_format(
         Some(other) => Err(GatewayError::BadRequest(format!(
             "unsupported text format for Anthropic upstream: {other}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_secret() -> Result<String, GatewayError> {
+        Ok("test-secret".to_owned())
+    }
+
+    #[test]
+    fn normalizes_nullable_union_schema_for_gemini_only() {
+        let body = json!({
+            "model": "Gemini 4 Neon",
+            "input": "generate an image",
+            "tools": [{
+                "type": "function",
+                "name": "imagegen",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "n": {"type": ["integer", "null"], "minimum": 1},
+                        "size": {"type": ["string", "integer", "null"]},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": ["string", "null"]}
+                        }
+                    }
+                }
+            }]
+        });
+
+        let gemini_req = responses_to_anthropic(
+            &body,
+            Some("Gemini 4 Neon"),
+            None,
+            ThinkingMode::Off,
+            4096,
+            None,
+            false,
+            Some(AnthropicThinkingKind::Adaptive),
+            &test_secret,
+        )
+        .unwrap();
+        let schema = &gemini_req.request.tools[0]["input_schema"];
+        assert_eq!(schema["properties"]["n"]["type"], "integer");
+        assert_eq!(schema["properties"]["n"]["nullable"], true);
+        assert_eq!(schema["properties"]["n"]["minimum"], 1);
+        assert!(schema["properties"]["size"].get("type").is_none());
+        assert_eq!(schema["properties"]["size"]["nullable"], true);
+        assert_eq!(
+            schema["properties"]["size"]["anyOf"],
+            json!([{"type": "string"}, {"type": "integer"}])
+        );
+        assert_eq!(schema["properties"]["tags"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["tags"]["items"]["nullable"], true);
+
+        let claude_req = responses_to_anthropic(
+            &body,
+            Some("claude-sonnet-4-6"),
+            None,
+            ThinkingMode::Off,
+            4096,
+            None,
+            false,
+            Some(AnthropicThinkingKind::Adaptive),
+            &test_secret,
+        )
+        .unwrap();
+        let claude_schema = &claude_req.request.tools[0]["input_schema"];
+        assert_eq!(
+            claude_schema["properties"]["n"]["type"],
+            json!(["integer", "null"])
+        );
+        assert!(claude_schema["properties"]["n"].get("nullable").is_none());
+    }
+
+    #[test]
+    fn enforces_gemini_128_function_limit_excluding_hosted_web_search() {
+        let make_tools = |count: usize, with_web_search: bool| -> Vec<Value> {
+            let mut tools: Vec<Value> = (0..count)
+                .map(|i| {
+                    json!({
+                        "type": "function",
+                        "name": format!("tool_{i}"),
+                        "parameters": {"type": "object"}
+                    })
+                })
+                .collect();
+            if with_web_search {
+                tools.push(json!({"type": "web_search"}));
+            }
+            tools
+        };
+
+        let ok_body = json!({
+            "model": "Gemini 4 Neon",
+            "input": "hello",
+            "tools": make_tools(128, true),
+        });
+        assert!(
+            responses_to_anthropic(
+                &ok_body,
+                Some("Gemini 4 Neon"),
+                None,
+                ThinkingMode::Off,
+                4096,
+                Some(WebSearchTool {
+                    tool_type: "web_search_20250305",
+                    max_uses: None,
+                }),
+                false,
+                Some(AnthropicThinkingKind::Adaptive),
+                &test_secret,
+            )
+            .is_ok()
+        );
+
+        let over_body = json!({
+            "model": "Gemini 4 Neon",
+            "input": "hello",
+            "tools": make_tools(129, false),
+        });
+        let err = responses_to_anthropic(
+            &over_body,
+            Some("Gemini 4 Neon"),
+            None,
+            ThinkingMode::Off,
+            4096,
+            None,
+            false,
+            Some(AnthropicThinkingKind::Adaptive),
+            &test_secret,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("128"), "{err}");
+
+        assert!(
+            responses_to_anthropic(
+                &over_body,
+                Some("claude-sonnet-4-6"),
+                None,
+                ThinkingMode::Off,
+                4096,
+                None,
+                false,
+                Some(AnthropicThinkingKind::Adaptive),
+                &test_secret,
+            )
+            .is_ok()
+        );
     }
 }

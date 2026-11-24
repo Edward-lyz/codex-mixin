@@ -52,7 +52,25 @@ pub(crate) fn responses_to_openai_chat(
     }
     relocate_tool_message_images(&mut messages);
     let active_tools = collect_active_tools(body)?;
-    let (tools, tool_names) = convert_tools(Some(&active_tools))?;
+    let (mut tools, tool_names) = convert_tools(Some(&active_tools))?;
+    if crate::protocol::gemini::is_gemini_model(&model) {
+        let function_declaration_count = tools
+            .iter()
+            .filter(|tool| tool.get("function").is_some())
+            .count();
+        crate::protocol::gemini::validate_gemini_function_declaration_limit(
+            &model,
+            function_declaration_count,
+        )?;
+        for tool in &mut tools {
+            if let Some(schema) = tool
+                .get_mut("function")
+                .and_then(|func| func.get_mut("parameters"))
+            {
+                crate::protocol::gemini::normalize_gemini_nullable_schema(schema);
+            }
+        }
+    }
     let mut request = json!({
         "model": model,
         "messages": messages,
@@ -136,4 +154,57 @@ pub(crate) fn responses_to_openai_chat(
         request,
         tool_names,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_secret() -> Result<String, GatewayError> {
+        Ok("test-secret".to_owned())
+    }
+
+    #[test]
+    fn normalizes_nullable_union_schema_and_limits_tools_for_gemini() {
+        let body = json!({
+            "model": "google/gemini-2.5-pro",
+            "input": "hello",
+            "tools": [{
+                "type": "function",
+                "name": "imagegen",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "n": {"type": ["integer", "null"]}
+                    }
+                }
+            }]
+        });
+        let converted = responses_to_openai_chat(&body, None, &test_secret).unwrap();
+        let schema = &converted.request["tools"][0]["function"]["parameters"];
+        assert_eq!(schema["properties"]["n"]["type"], "integer");
+        assert_eq!(schema["properties"]["n"]["nullable"], true);
+
+        let over_tools: Vec<Value> = (0..129)
+            .map(|i| {
+                json!({
+                    "type": "function",
+                    "name": format!("tool_{i}"),
+                    "parameters": {"type": "object"}
+                })
+            })
+            .collect();
+        let err = responses_to_openai_chat(
+            &json!({
+                "model": "Gemini 4 Neon",
+                "input": "hello",
+                "tools": over_tools,
+            }),
+            None,
+            &test_secret,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("128"), "{err}");
+    }
 }

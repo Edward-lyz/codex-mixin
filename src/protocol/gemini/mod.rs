@@ -7,6 +7,113 @@ use crate::protocol::convert::{ToolNameMap, collect_active_tools, sanitize_tool_
 use crate::protocol::openai_chat::convert_tools;
 
 pub const SKIP_THOUGHT_SIGNATURE_VALIDATOR: &str = "skip_thought_signature_validator";
+pub const MAX_GEMINI_FUNCTION_DECLARATIONS: usize = 128;
+
+/// Returns true when the target upstream model belongs to the Gemini family
+/// (e.g. `gemini-2.5-pro`, `Gemini 4 Neon`, `google/gemini-2.5-flash`).
+pub fn is_gemini_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gemini")
+}
+
+pub(crate) fn validate_gemini_function_declaration_limit(
+    model: &str,
+    declaration_count: usize,
+) -> Result<(), GatewayError> {
+    if is_gemini_model(model) && declaration_count > MAX_GEMINI_FUNCTION_DECLARATIONS {
+        return Err(GatewayError::BadRequest(format!(
+            "Gemini model '{model}' supports at most {MAX_GEMINI_FUNCTION_DECLARATIONS} function declarations, but request expanded to {declaration_count}; enable tool_search or reduce active tools"
+        )));
+    }
+    Ok(())
+}
+
+/// Minimal recursive schema normalization for Gemini models routed over
+/// non-native protocols (such as `/v1/messages` or `/v1/chat/completions`).
+/// Converts JSON Schema type arrays (e.g. `type: ["integer", "null"]`) into
+/// Gemini-compatible `type` + `nullable: true` (or `anyOf` for multi-type unions)
+/// without stripping other standard JSON Schema keywords.
+pub(crate) fn normalize_gemini_nullable_schema(schema: &mut Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+
+    if let Some(types) = obj.get("type").and_then(Value::as_array) {
+        let mut has_null = false;
+        let mut non_null = Vec::new();
+        for item in types {
+            if let Some(ty) = item.as_str() {
+                if ty == "null" {
+                    has_null = true;
+                } else if !non_null.iter().any(|existing| existing == ty) {
+                    non_null.push(ty.to_owned());
+                }
+            }
+        }
+        match non_null.len() {
+            0 => {
+                obj.remove("type");
+                if has_null {
+                    obj.insert("nullable".to_owned(), json!(true));
+                }
+            }
+            1 => {
+                obj.insert("type".to_owned(), Value::String(non_null.remove(0)));
+                if has_null {
+                    obj.insert("nullable".to_owned(), json!(true));
+                }
+            }
+            _ => {
+                obj.remove("type");
+                let variants: Vec<Value> = non_null
+                    .into_iter()
+                    .map(|ty| json!({ "type": ty }))
+                    .collect();
+                match obj.get_mut("anyOf").and_then(Value::as_array_mut) {
+                    Some(existing) => existing.extend(variants),
+                    None => {
+                        obj.insert("anyOf".to_owned(), Value::Array(variants));
+                    }
+                }
+                if has_null {
+                    obj.insert("nullable".to_owned(), json!(true));
+                }
+            }
+        }
+    }
+
+    for map_key in ["properties", "patternProperties", "$defs", "definitions"] {
+        if let Some(map) = obj.get_mut(map_key).and_then(Value::as_object_mut) {
+            for child in map.values_mut() {
+                normalize_gemini_nullable_schema(child);
+            }
+        }
+    }
+    if let Some(items) = obj.get_mut("items") {
+        match items {
+            Value::Object(_) => normalize_gemini_nullable_schema(items),
+            Value::Array(list) => {
+                for child in list {
+                    normalize_gemini_nullable_schema(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    for array_key in ["prefixItems", "anyOf", "oneOf", "allOf"] {
+        if let Some(list) = obj.get_mut(array_key).and_then(Value::as_array_mut) {
+            for child in list {
+                normalize_gemini_nullable_schema(child);
+            }
+        }
+    }
+    for single_key in ["additionalProperties", "not"] {
+        if let Some(child) = obj.get_mut(single_key)
+            && child.is_object()
+        {
+            normalize_gemini_nullable_schema(child);
+        }
+    }
+}
 
 pub(crate) fn encode_signature_in_call_id(base_id: &str, sig: &str, model: &str) -> String {
     if sig.is_empty() {
@@ -18,7 +125,7 @@ pub(crate) fn encode_signature_in_call_id(base_id: &str, sig: &str, model: &str)
     if sig == SKIP_THOUGHT_SIGNATURE_VALIDATOR {
         return format!("{clean_base}_ts_{SKIP_THOUGHT_SIGNATURE_VALIDATOR}");
     }
-    let family = if model.contains("gemini") {
+    let family = if is_gemini_model(model) {
         "gemini"
     } else {
         "claude"
@@ -146,7 +253,7 @@ pub fn responses_to_gemini(
             .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
             .to_owned(),
     };
-    let is_gemini = model.starts_with("gemini");
+    let is_gemini = is_gemini_model(&model);
 
     let mut system_parts = Vec::new();
     if let Some(instructions) = body
@@ -177,6 +284,15 @@ pub fn responses_to_gemini(
                     .map_or(call_id, |(clean, _)| clean);
                 call_to_tool_name.insert(clean_call_id.to_owned(), sanitized.clone());
                 call_to_tool_name.insert(call_id.to_owned(), sanitized);
+            } else if item_type == Some("tool_search_call")
+                && item.get("execution").and_then(Value::as_str) == Some("client")
+                && let Some(call_id) = item.get("call_id").and_then(Value::as_str)
+            {
+                let clean_call_id = call_id
+                    .split_once("_ts_")
+                    .map_or(call_id, |(clean, _)| clean);
+                call_to_tool_name.insert(clean_call_id.to_owned(), "tool_search".to_owned());
+                call_to_tool_name.insert(call_id.to_owned(), "tool_search".to_owned());
             }
         }
     }
@@ -233,6 +349,7 @@ pub fn responses_to_gemini(
             }));
         }
     }
+    validate_gemini_function_declaration_limit(&model, function_declarations.len())?;
 
     let generation_config = build_generation_config(body, &model)?;
 
@@ -353,7 +470,7 @@ fn build_generation_config(body: &Value, model: &str) -> Result<Option<Value>, G
         });
 
     if let Some(effort) = effort {
-        let is_gemini = model.starts_with("gemini");
+        let is_gemini = is_gemini_model(model);
         let budget = if is_gemini {
             match effort {
                 "none" | "off" => 0,
@@ -660,6 +777,87 @@ fn append_gemini_input_item(
                 part["thoughtSignature"] = json!(sig);
             }
             push_part(contents, "model", part);
+        }
+        "tool_search_call" => {
+            let execution = item
+                .get("execution")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("tool_search_call missing execution".to_owned())
+                })?;
+            if execution == "server" {
+                return Ok(());
+            }
+            if execution != "client" {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported tool_search_call execution: {execution}"
+                )));
+            }
+            let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_call missing call_id".to_owned())
+            })?;
+            let clean_call_id = call_id
+                .split_once("_ts_")
+                .map_or(call_id, |(clean, _)| clean);
+            let arguments = item
+                .get("arguments")
+                .filter(|arguments| arguments.is_object())
+                .ok_or_else(|| {
+                    GatewayError::BadRequest(
+                        "tool_search_call arguments must be an object".to_owned(),
+                    )
+                })?;
+            let mut part = json!({
+                "functionCall": {
+                    "id": clean_call_id,
+                    "name": "tool_search",
+                    "args": arguments
+                }
+            });
+            let sig = extract_thought_signature(item, is_gemini);
+            if is_gemini || sig != SKIP_THOUGHT_SIGNATURE_VALIDATOR {
+                part["thoughtSignature"] = json!(sig);
+            }
+            push_part(contents, "model", part);
+        }
+        "tool_search_output" => {
+            let execution = item
+                .get("execution")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("tool_search_output missing execution".to_owned())
+                })?;
+            if execution == "server" {
+                return Ok(());
+            }
+            if execution != "client" {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported tool_search_output execution: {execution}"
+                )));
+            }
+            let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_output missing call_id".to_owned())
+            })?;
+            let clean_call_id = call_id
+                .split_once("_ts_")
+                .map_or(call_id, |(clean, _)| clean);
+            let tools = item.get("tools").and_then(Value::as_array).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_output missing tools".to_owned())
+            })?;
+            let output_str = serde_json::to_string(tools)?;
+            push_part(
+                contents,
+                "user",
+                json!({
+                    "functionResponse": {
+                        "id": clean_call_id,
+                        "name": "tool_search",
+                        "response": {
+                            "output": output_str
+                        }
+                    }
+                }),
+            );
         }
         "agent_message" => {
             let text = crate::protocol::convert::agent_message_text(item)?;

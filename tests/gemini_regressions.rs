@@ -282,3 +282,149 @@ async fn preserves_search_citations() {
     assert_eq!(text["content"][0]["annotations"][0]["end_index"], 2);
     assert!(items.iter().any(|item| item["type"] == "web_search_call"));
 }
+
+#[test]
+fn gemini_enforces_128_function_declaration_limit() {
+    let make_tools = |count: usize, with_web_search: bool| -> Vec<Value> {
+        let mut tools: Vec<Value> = (0..count)
+            .map(|i| {
+                json!({
+                    "type": "function",
+                    "name": format!("tool_{i}"),
+                    "parameters": {"type": "object"}
+                })
+            })
+            .collect();
+        if with_web_search {
+            tools.push(json!({"type": "web_search"}));
+        }
+        tools
+    };
+
+    // 128 function tools + hosted web_search must pass.
+    let ok_body = json!({
+        "model": "Gemini 4 Neon",
+        "input": "hello",
+        "tools": make_tools(128, true),
+    });
+    assert!(responses_to_gemini(&ok_body, None).is_ok());
+
+    // 129 function tools must fail fast with a clear BadRequest.
+    let over_body = json!({
+        "model": "Gemini 4 Neon",
+        "input": "hello",
+        "tools": make_tools(129, false),
+    });
+    let gemini_err = responses_to_gemini(&over_body, None)
+        .unwrap_err()
+        .to_string();
+    assert!(gemini_err.contains("128"), "{gemini_err}");
+    assert!(gemini_err.contains("129"), "{gemini_err}");
+}
+
+#[test]
+fn gemini_supports_client_tool_search_items() {
+    let converted = responses_to_gemini(
+        &json!({
+            "model": "Gemini 4 Neon",
+            "input": [
+                {"type": "message", "role": "user", "content": "find tools"},
+                {
+                    "type": "tool_search_call",
+                    "execution": "client",
+                    "call_id": "call_search_1",
+                    "arguments": {"query": "calendar"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "execution": "client",
+                    "call_id": "call_search_1",
+                    "tools": [{
+                        "type": "function",
+                        "name": "list_events",
+                        "parameters": {"type": "object"}
+                    }]
+                }
+            ],
+            "tools": [
+                {"type": "tool_search", "execution": "client"}
+            ]
+        }),
+        None,
+    )
+    .unwrap();
+
+    let contents = converted.request["contents"].as_array().unwrap();
+    let model_turn = contents.iter().find(|c| c["role"] == "model").unwrap();
+    assert_eq!(
+        model_turn["parts"][0]["functionCall"]["name"],
+        "tool_search"
+    );
+    assert_eq!(
+        model_turn["parts"][0]["functionCall"]["id"],
+        "call_search_1"
+    );
+    assert_eq!(
+        model_turn["parts"][0]["functionCall"]["args"],
+        json!({"query": "calendar"})
+    );
+
+    let tool_response_turn = contents
+        .iter()
+        .find(|c| {
+            c["role"] == "user"
+                && c["parts"]
+                    .as_array()
+                    .is_some_and(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()))
+        })
+        .unwrap();
+    assert_eq!(
+        tool_response_turn["parts"][0]["functionResponse"]["name"],
+        "tool_search"
+    );
+    assert_eq!(
+        tool_response_turn["parts"][0]["functionResponse"]["id"],
+        "call_search_1"
+    );
+    assert_eq!(
+        converted.tool_names.tool_search_execution("tool_search"),
+        Some("client")
+    );
+}
+
+#[test]
+fn catalog_enables_search_tool_for_gemini_models() {
+    use codex_mixin::anthropic::ModelInfo;
+    use codex_mixin::catalog::codex_catalog_from_models_with_metadata;
+    use codex_mixin::provider::MetadataResolver;
+
+    let models = vec![
+        ModelInfo {
+            id: "Gemini 4 Neon-baidu-oneapi".to_owned(),
+            supports_tool_search: Some(false),
+            ..ModelInfo::default()
+        },
+        ModelInfo {
+            id: "claude-sonnet-4-6-baidu-oneapi".to_owned(),
+            supports_tool_search: None,
+            ..ModelInfo::default()
+        },
+    ];
+    let catalog = codex_catalog_from_models_with_metadata(
+        &models,
+        200_000,
+        None,
+        &MetadataResolver::default(),
+    );
+    let entries = catalog["models"].as_array().unwrap();
+    let gemini = entries
+        .iter()
+        .find(|m| m["slug"] == "Gemini 4 Neon-baidu-oneapi")
+        .unwrap();
+    let claude = entries
+        .iter()
+        .find(|m| m["slug"] == "claude-sonnet-4-6-baidu-oneapi")
+        .unwrap();
+    assert_eq!(gemini["supports_search_tool"], true);
+    assert_eq!(claude["supports_search_tool"], false);
+}

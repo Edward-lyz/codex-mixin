@@ -163,7 +163,15 @@ fn build_codex_catalog(
             item["priority"] = json!(100 + index as u64);
             item["visibility"] = json!("list");
             item["supported_in_api"] = json!(true);
-            item["supports_search_tool"] = json!(model.supports_tool_search.unwrap_or(false));
+            let supports_search_tool =
+                if crate::protocol::gemini::is_gemini_model(&upstream_model_id)
+                    && model.supports_function_tools != Some(false)
+                {
+                    true
+                } else {
+                    model.supports_tool_search.unwrap_or(false)
+                };
+            item["supports_search_tool"] = json!(supports_search_tool);
             item["use_responses_lite"] = json!(false);
             super::managed::enable_fast_service_tier(&mut item);
             apply_model_reasoning_capabilities(
