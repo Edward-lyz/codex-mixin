@@ -31,6 +31,16 @@ node scripts/measure_desktop_resources.mjs /tmp/desktop-replay-spec.json
 
 默认 `levels` 为 `[0,2,4,8]`，每个模拟主会话在首个输出后启动四条子会话请求，即每产品 0/10/20/40 条并发 HTTP 流。驱动使用 `timing` 中可选的毫秒字段 `warmup`、`settle`、`window`、`gap`、`interval` 和窗口数 `windows`；默认分别为 20000、10000、20000、5000、250 和 3。上游固定每 250 毫秒发送一次增量，与采样间隔独立；采样器每轮扫描后等待指定间隔，实际周期还包括扫描耗时。每个测量窗口检查每条客户端流是否持续收到数据。正式对比应保留相同工作负载与采样口径。会话名称只用于组织请求，并不启动实际的 agent 子进程。
 
-2026-11-24 已保存的数据由加入上述逐窗口流进度检查、PID/端口核对和逐进程 CPU 时间戳前的版本采集；这些后续改进不改变历史数据。历史运行已校验每条请求首个增量、完整响应和每档加载后的上游活跃数；窗口内提前断流会使运行失败。
+2026-11-24 较早保存的标准和轻量模式数据由加入上述逐窗口流进度检查、PID/端口核对和逐进程 CPU 时间戳前的版本采集；这些后续改进不改变历史数据。历史运行已校验每条请求首个增量、完整响应和每档加载后的上游活跃数；窗口内提前断流会使运行失败。`lightweight-verified/` 使用包含上述改进的版本采集。
 
 完成后检查 `results.json` 中各档活跃数、请求完成数、`validation.errors` 与 `finalActive`；检查 `samples.jsonl.gz` 中 UI、gateway、helper 和 coalition 的归属。每档结果是三个连续 20 秒窗口的中位数，单次升压过程中历史和缓存会累积。按 PID 停止本次创建的实例，删除本次临时配置与安装包，保留结果、采样数据与脚本。
+
+轻量模式回放后，可用下列命令检查 Magpie 在所有采样快照中均无 WebContent 和 GPU 进程。将路径和 PID 替换为本次输出目录与 Magpie 网关 PID；预期输出 `true` 且退出码为 0，`false` 或非零退出码表示校验未通过：
+
+```sh
+gzip -cd /absolute/path/to/samples.jsonl.gz | jq -se --argjson pid MAGPIE_PID '
+  length > 0 and all(.[];
+    ([.products[] | select(.gateway == $pid)] | length) == 1 and
+    ([.products[] | select(.gateway == $pid) | .members[] |
+      select(.name == "com.apple.WebKit.WebContent" or .name == "com.apple.WebKit.GPU")] | length) == 0)'
+```

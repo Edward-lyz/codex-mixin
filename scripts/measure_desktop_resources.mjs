@@ -1,6 +1,7 @@
 // Replay the shared long-context corpus through isolated desktop gateways.
 // The JSON spec supplies loopback ports, model names, process IDs, paths and
-// optional timing overrides. See the benchmark README for the launch contract.
+// optional timing overrides. For the launch contract see:
+// docs/benchmarks/2026-11-24-desktop-resource-curves/REPLAY.md
 import fs from "node:fs";
 import http from "node:http";
 import { spawn, spawnSync } from "node:child_process";

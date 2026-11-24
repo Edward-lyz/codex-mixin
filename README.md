@@ -82,23 +82,37 @@ Codex 以「官方账号模式」接入后，自定义模型加入官方模型�
 
 ## 资源占用
 
-带完整界面运行，空闲时占用 **76.8 MiB**，40 路并发请求时 **113.5 MiB**。开启「轻量模式」后只保留后台网关，空闲时网关进程约 5 MiB。
+2026-11-24 在 Apple M2、16 GiB 内存、macOS 27.2 上，使用 Codex Mixin 1.0.0、Magpie 0.1.4734 和 CC Switch 4.0.40 连接本机受控上游。每个请求包含 1,000,000 文本 token 和两张 1024 × 768 PNG，分别测量 0、10、20、40 路并发。
 
-下表是 Mixin 0.7.7、CC Switch 4.0.26、Magpie 0.1.3051 在同一台 Apple M2 上同时连接本机受控上游的实测结果。每个请求携带 1,000,000 文本 token 和 2 张 1024 × 768 PNG。
+**标准模式**下加载完整桌面界面并隐藏窗口：
 
-| 测量项 | Codex Mixin | CC Switch | Magpie |
+| 测量项 | Codex Mixin | Magpie | CC Switch |
 | --- | ---: | ---: | ---: |
-| 空闲内存 | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| 10 路活动请求 | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| 20 路活动请求 | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| 40 路活动请求 | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| CPU · 40 路活动请求 | **1.047%** | 1.777% | 6.743% |
+| 空闲内存 | **160.9 MiB** | 182.5 MiB | 182.5 MiB |
+| 10 路活动请求 | **164.9 MiB** | 390.3 MiB | 317.3 MiB |
+| 20 路活动请求 | **167.7 MiB** | 397.3 MiB | 346.0 MiB |
+| 40 路活动请求 | **175.6 MiB** | 637.6 MiB | 602.7 MiB |
+| CPU · 40 路活动请求 | **1.492%** | 5.822% | 1.721% |
 
 <p align="center">
-  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves-zh.png" width="1000" alt="0、10、20、40 路活动请求下的桌面物理内存与网关宿主 CPU 实测曲线"></a>
+  <a href="docs/benchmarks/2026-11-24-desktop-resource-repeat/normal.png"><img src="docs/benchmarks/2026-11-24-desktop-resource-repeat/normal.png" width="1000" alt="标准模式下 0、10、20、40 路活动请求的物理内存与网关 CPU 实测曲线"></a>
 </p>
 
-测量方法、原始采样和校验数据见 [基准报告](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md)。
+**轻量模式**下关闭主窗口并保留后台服务；Magpie 在 WebContent 和 GPU 进程均退出后开始采样：
+
+| 测量项 | Codex Mixin | Magpie | CC Switch |
+| --- | ---: | ---: | ---: |
+| 空闲内存 | **6.6 MiB** | 100.3 MiB | 30.2 MiB |
+| 10 路活动请求 | **10.2 MiB** | 273.7 MiB | 140.2 MiB |
+| 20 路活动请求 | **15.3 MiB** | 312.1 MiB | 299.0 MiB |
+| 40 路活动请求 | **24.8 MiB** | 549.7 MiB | 382.4 MiB |
+| CPU · 40 路活动请求 | 1.884% | 6.371% | **1.778%** |
+
+<p align="center">
+  <a href="docs/benchmarks/2026-11-24-desktop-resource-repeat/lightweight.png"><img src="docs/benchmarks/2026-11-24-desktop-resource-repeat/lightweight.png" width="1000" alt="轻量模式下 0、10、20、40 路活动请求的物理内存与网关 CPU 实测曲线"></a>
+</p>
+
+内存为应用进程组的 macOS 物理占用，CPU 为网关进程及其已等待子进程的单核占比；各值取三个连续 20 秒窗口均值的中位数。每种模式各进行一次逐档升压，历史和缓存会累积；每轮 210 条请求均通过校验。测量方法、各窗口范围、原始采样和校验数据见 [基准报告](docs/benchmarks/2026-11-24-desktop-resource-repeat/README.md)。
 
 ---
 

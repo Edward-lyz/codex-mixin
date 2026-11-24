@@ -83,23 +83,37 @@ The latest 100,000 replies are kept locally with tokens, cache hits, reasoning c
 
 ## Resource Usage
 
-With the full UI running, Codex Mixin uses **76.8 MiB** at idle and **113.5 MiB** with 40 concurrent requests. In Lightweight mode only the background gateway stays, and the gateway process idles at about 5 MiB.
+On November 24, 2026, Codex Mixin 1.0.0, Magpie 0.1.4734, and CC Switch 4.0.40 were measured against a controlled local upstream on an Apple M2 with 16 GiB RAM and macOS 27.2. Each request contained 1,000,000 text tokens and two 1024 × 768 PNGs, at 0, 10, 20, and 40 concurrent requests.
 
-The table below compares Mixin 0.7.7, CC Switch 4.0.26, and Magpie 0.1.3051 on the same Apple M2, all connected to a controlled local upstream at the same time. Every request carries 1,000,000 text tokens and two 1024 × 768 PNGs.
+In **standard mode**, the full desktop UI was loaded and its window hidden:
 
-| Measurement | Codex Mixin | CC Switch | Magpie |
+| Measurement | Codex Mixin | Magpie | CC Switch |
 | --- | ---: | ---: | ---: |
-| Idle memory | **76.8 MiB** | 157.6 MiB | 243.2 MiB |
-| 10 active requests | **91.1 MiB** | 165.1 MiB | 374.9 MiB |
-| 20 active requests | **98.0 MiB** | 171.9 MiB | 664.3 MiB |
-| 40 active requests | **113.5 MiB** | 185.8 MiB | 1,284.9 MiB |
-| CPU · 40 active requests | **1.047%** | 1.777% | 6.743% |
+| Idle memory | **160.9 MiB** | 182.5 MiB | 182.5 MiB |
+| 10 active requests | **164.9 MiB** | 390.3 MiB | 317.3 MiB |
+| 20 active requests | **167.7 MiB** | 397.3 MiB | 346.0 MiB |
+| 40 active requests | **175.6 MiB** | 637.6 MiB | 602.7 MiB |
+| CPU · 40 active requests | **1.492%** | 5.822% | 1.721% |
 
 <p align="center">
-  <a href="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png"><img src="docs/benchmarks/2026-11-06-desktop-resource-curves/desktop-resource-curves.png" width="1000" alt="Desktop physical memory and gateway-host CPU at 0, 10, 20, and 40 active requests"></a>
+  <a href="docs/benchmarks/2026-11-24-desktop-resource-repeat/normal-en.svg"><img src="docs/benchmarks/2026-11-24-desktop-resource-repeat/normal-en.svg" width="1000" alt="Standard mode physical memory and gateway CPU at 0, 10, 20, and 40 active requests"></a>
 </p>
 
-Method, raw samples, and validation data are in the [benchmark report](docs/benchmarks/2026-11-06-desktop-resource-curves/README.md).
+In **lightweight mode**, the main window was closed and the background service kept running. Magpie sampling began after its WebContent and GPU processes had both exited:
+
+| Measurement | Codex Mixin | Magpie | CC Switch |
+| --- | ---: | ---: | ---: |
+| Idle memory | **6.6 MiB** | 100.3 MiB | 30.2 MiB |
+| 10 active requests | **10.2 MiB** | 273.7 MiB | 140.2 MiB |
+| 20 active requests | **15.3 MiB** | 312.1 MiB | 299.0 MiB |
+| 40 active requests | **24.8 MiB** | 549.7 MiB | 382.4 MiB |
+| CPU · 40 active requests | 1.884% | 6.371% | **1.778%** |
+
+<p align="center">
+  <a href="docs/benchmarks/2026-11-24-desktop-resource-repeat/lightweight-en.svg"><img src="docs/benchmarks/2026-11-24-desktop-resource-repeat/lightweight-en.svg" width="1000" alt="Lightweight mode physical memory and gateway CPU at 0, 10, 20, and 40 active requests"></a>
+</p>
+
+Memory is the macOS physical footprint of the application process group; CPU is the single-core percentage for the gateway process and its waited-for children. Each value is the median of three consecutive 20-second window means. Each mode was measured in one ascending load run, so history and caches accumulated; all 210 requests in each run passed validation. The [benchmark report](docs/benchmarks/2026-11-24-desktop-resource-repeat/README.md) contains the method, window ranges, raw samples, and validation data.
 
 ---
 
