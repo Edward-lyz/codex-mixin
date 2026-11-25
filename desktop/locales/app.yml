@@ -263,6 +263,27 @@ providers.tab.models:
 providers.tab.connection:
   en: "Connection"
   zh-CN: "连接设置"
+providers.tab.plugin:
+  en: "Plugin"
+  zh-CN: "插件"
+providers.plugin_managed:
+  en: "Plugin"
+  zh-CN: "插件提供"
+providers.plugin_section:
+  en: "Plugin"
+  zh-CN: "插件"
+providers.plugin_source:
+  en: "Source Package"
+  zh-CN: "来源插件"
+providers.open_plugin_detail:
+  en: "Open Plugin"
+  zh-CN: "查看插件"
+providers.plugin_auth:
+  en: "Sign-in"
+  zh-CN: "登录授权"
+providers.plugin_commands_section:
+  en: "Plugin Commands"
+  zh-CN: "插件命令"
 providers.loading:
   en: "Reading providers…"
   zh-CN: "正在读取服务商…"
