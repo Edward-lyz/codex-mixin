@@ -171,3 +171,184 @@ async fn agy_failed_disconnect_keeps_startup_entries() {
         String::from_utf8_lossy(&disconnected.stderr)
     );
 }
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn agy_disconnect_recovers_after_installer_strips_alias_line() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.as_path();
+    prepare(root);
+
+    let zshrc = root.join("home/.zshrc");
+    let bashrc = root.join("home/.bashrc");
+    let profile = root.join("home/.profile");
+    let fish = root.join("xdg-config/fish/conf.d/codex-mixin-agy.fish");
+    fs::write(&zshrc, "export FOO=1\n").unwrap();
+    fs::write(&bashrc, "").unwrap();
+    fs::write(&profile, "export BAR=1\n").unwrap();
+
+    let connected = run_cli(root, &["--no-tui", "agent", "connect", "agy"]).await;
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    assert_eq!(agy_state(root).await, "managed");
+    assert!(fish.exists());
+
+    // Simulate the Antigravity CLI installer: strips `alias agy=...` lines
+    // (leaving an empty managed fence) and appends its PATH export.
+    let installer_tail =
+        "\n\n# Added by Antigravity CLI installer\nexport PATH=\"$HOME/.local/bin:$PATH\"\n";
+    for path in [&zshrc, &bashrc, &profile] {
+        let text = fs::read_to_string(path).unwrap();
+        let mut stripped: String = text
+            .lines()
+            .filter(|line| !line.starts_with("alias agy="))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        stripped.push_str(installer_tail);
+        fs::write(path, stripped).unwrap();
+    }
+
+    assert_eq!(agy_state(root).await, "drift");
+
+    let disconnected = run_cli(root, &["--no-tui", "agent", "disconnect", "agy"]).await;
+    assert!(
+        disconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disconnected.stderr)
+    );
+    assert_eq!(agy_state(root).await, "unmanaged");
+    assert_eq!(
+        fs::read_to_string(&zshrc).unwrap(),
+        format!("export FOO=1\n{installer_tail}")
+    );
+    assert_eq!(fs::read_to_string(&bashrc).unwrap(), installer_tail);
+    assert_eq!(
+        fs::read_to_string(&profile).unwrap(),
+        format!("export BAR=1\n{installer_tail}")
+    );
+    assert!(!fish.exists());
+    assert_eq!(
+        read_settings(root),
+        json!({"model":ORIGINAL_MODEL,"trustedWorkspaces":["/workspace"]})
+    );
+
+    // Reconnecting after disconnect must succeed cleanly.
+    let reconnected = run_cli(root, &["--no-tui", "agent", "connect", "agy"]).await;
+    stop_gateway(root).await;
+    assert!(
+        reconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reconnected.stderr)
+    );
+    assert_eq!(agy_state(root).await, "managed");
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn agy_disconnect_removes_created_profile_when_empty_fence_leaves_it_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.as_path();
+    prepare(root);
+
+    let zshrc = root.join("home/.zshrc");
+    assert!(!zshrc.exists());
+
+    let connected = run_cli(root, &["--no-tui", "agent", "connect", "agy"]).await;
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    assert!(zshrc.exists());
+
+    let text = fs::read_to_string(&zshrc).unwrap();
+    let stripped: String = text
+        .lines()
+        .filter(|line| !line.starts_with("alias agy="))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(&zshrc, stripped).unwrap();
+
+    let disconnected = run_cli(root, &["--no-tui", "agent", "disconnect", "agy"]).await;
+    stop_gateway(root).await;
+    assert!(
+        disconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disconnected.stderr)
+    );
+    assert!(!zshrc.exists());
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn agy_disconnect_refuses_edited_or_ambiguous_startup_fences_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.as_path();
+    prepare(root);
+
+    let zshrc = root.join("home/.zshrc");
+    let bashrc = root.join("home/.bashrc");
+    fs::write(&zshrc, "export FOO=1\n").unwrap();
+    fs::write(&bashrc, "export BAR=1\n").unwrap();
+
+    let connected = run_cli(root, &["--no-tui", "agent", "connect", "agy"]).await;
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+
+    let empty_fence_zshrc = concat!(
+        "export FOO=1\n\n",
+        "# >>> codex-mixin managed agy >>>\n",
+        "# <<< codex-mixin managed agy <<<\n",
+    );
+    fs::write(&zshrc, empty_fence_zshrc).unwrap();
+
+    // 1. Non-empty edit in .bashrc must fail without touching .zshrc's empty fence.
+    let edited_bashrc = concat!(
+        "export BAR=1\n\n",
+        "# >>> codex-mixin managed agy >>>\n",
+        "alias agy='custom-user-wrapper'\n",
+        "# <<< codex-mixin managed agy <<<\n",
+    );
+    fs::write(&bashrc, edited_bashrc).unwrap();
+    let refused = run_cli(root, &["--no-tui", "agent", "disconnect", "agy"]).await;
+    assert!(!refused.status.success());
+    assert_eq!(fs::read_to_string(&zshrc).unwrap(), empty_fence_zshrc);
+    assert_eq!(fs::read_to_string(&bashrc).unwrap(), edited_bashrc);
+    assert_eq!(agy_state(root).await, "drift");
+
+    // 2. Inline trailing text on the end marker must be rejected.
+    let inline_bashrc = concat!(
+        "export BAR=1\n\n",
+        "# >>> codex-mixin managed agy >>>\n",
+        "# <<< codex-mixin managed agy <<< foo\n",
+    );
+    fs::write(&bashrc, inline_bashrc).unwrap();
+    let refused = run_cli(root, &["--no-tui", "agent", "disconnect", "agy"]).await;
+    assert!(!refused.status.success());
+    assert_eq!(fs::read_to_string(&zshrc).unwrap(), empty_fence_zshrc);
+    assert_eq!(fs::read_to_string(&bashrc).unwrap(), inline_bashrc);
+
+    // 3. Duplicate empty fences must be rejected.
+    let duplicate_bashrc = concat!(
+        "export BAR=1\n\n",
+        "# >>> codex-mixin managed agy >>>\n",
+        "# <<< codex-mixin managed agy <<<\n\n",
+        "# >>> codex-mixin managed agy >>>\n",
+        "# <<< codex-mixin managed agy <<<\n",
+    );
+    fs::write(&bashrc, duplicate_bashrc).unwrap();
+    let refused = run_cli(root, &["--no-tui", "agent", "disconnect", "agy"]).await;
+    stop_gateway(root).await;
+    assert!(!refused.status.success());
+    assert_eq!(fs::read_to_string(&zshrc).unwrap(), empty_fence_zshrc);
+    assert_eq!(fs::read_to_string(&bashrc).unwrap(), duplicate_bashrc);
+}

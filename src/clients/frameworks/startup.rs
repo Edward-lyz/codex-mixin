@@ -101,6 +101,10 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
     let Some(record) = engine::read_record(&record_path)? else {
         return Ok(());
     };
+    let id = record["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .context("invalid startup journal agent id")?;
     let mut changes = Vec::new();
     for entry in entries(&record)? {
         let (path, block) = entry_fields(entry)?;
@@ -110,10 +114,7 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
         }
         let current = current
             .context("managed startup profile disappeared; reconcile it before disconnecting")?;
-        anyhow::ensure!(
-            current.matches(block).count() == 1,
-            "managed startup entry was edited; refusing to overwrite it"
-        );
+        let range = removable_block_range(&current, block, id)?;
         let restored = if current
             == entry["after"]
                 .as_str()
@@ -121,15 +122,22 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
         {
             entry["before"].as_str().map(str::to_owned)
         } else {
-            let (prefix, suffix) = current
-                .split_once(block)
-                .context("startup entry disappeared")?;
+            let prefix = &current[..range.start];
+            let suffix = &current[range.end..];
             let separator = if !prefix.is_empty() && !prefix.ends_with('\n') && !suffix.is_empty() {
                 "\n"
             } else {
                 ""
             };
-            Some(current.replacen(block, separator, 1))
+            let mut next = String::with_capacity(prefix.len() + separator.len() + suffix.len());
+            next.push_str(prefix);
+            next.push_str(separator);
+            next.push_str(suffix);
+            if next.is_empty() && entry["before"].is_null() {
+                None
+            } else {
+                Some(next)
+            }
         };
         changes.push((path, restored));
     }
@@ -138,6 +146,59 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
         save_profile(&path, restored.as_deref())?;
     }
     engine::remove_record(&record_path)
+}
+
+fn removable_block_range(
+    current: &str,
+    block: &str,
+    id: &str,
+) -> anyhow::Result<std::ops::Range<usize>> {
+    if current.matches(block).count() == 1 {
+        let start = current.find(block).context("startup entry disappeared")?;
+        return Ok(start..start + block.len());
+    }
+    if let Some(range) = empty_fence_range(current, id) {
+        return Ok(range);
+    }
+    anyhow::bail!("managed startup entry was edited; refusing to overwrite it");
+}
+
+/// External installers (for example the agy CLI installer stripping `alias agy=...`
+/// lines) can leave an empty managed fence behind. Match only a single exact pair of
+/// adjacent marker lines, refusing any inline text or non-empty edits.
+fn empty_fence_range(current: &str, id: &str) -> Option<std::ops::Range<usize>> {
+    let start = format!("# >>> codex-mixin managed {id} >>>");
+    let end = format!("# <<< codex-mixin managed {id} <<<");
+    if current.matches(&start).count() != 1 || current.matches(&end).count() != 1 {
+        return None;
+    }
+    let mut offset = 0;
+    let mut lines = Vec::new();
+    for raw in current.split_inclusive('\n') {
+        let text = raw.strip_suffix('\n').unwrap_or(raw);
+        let text = text.strip_suffix('\r').unwrap_or(text);
+        lines.push((offset, offset + raw.len(), text));
+        offset += raw.len();
+    }
+    let index = lines.iter().position(|(_, _, text)| *text == start)?;
+    let (_, end_offset, next_text) = lines.get(index + 1)?;
+    if *next_text != end {
+        return None;
+    }
+    let mut start_offset = lines[index].0;
+    // Include the separator newline `install_at` prepended before the fence:
+    // a blank line when the prior content ended with a newline, or the single
+    // separating newline immediately before the fence otherwise.
+    if index > 0 && lines[index - 1].2.is_empty() {
+        start_offset = lines[index - 1].0;
+    } else if start_offset > 0 && current.as_bytes()[start_offset - 1] == b'\n' {
+        start_offset = if start_offset >= 2 && current.as_bytes()[start_offset - 2] == b'\r' {
+            start_offset - 2
+        } else {
+            start_offset - 1
+        };
+    }
+    Some(start_offset..*end_offset)
 }
 
 fn entries(record: &Value) -> anyhow::Result<&Vec<Value>> {
