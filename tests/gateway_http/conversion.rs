@@ -593,6 +593,170 @@ async fn forked_baidu_subagent_keeps_parent_affinity_and_replays_undecryptable_h
     assert!(output["output"].is_string());
 }
 
+/// Mimics Baidu OneAPI: thinking is signed for the model that produced it,
+/// and a request replaying another model's signature is rejected.
+async fn spawn_baidu_model_signing_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/v1/messages",
+            post(|State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+                requests.lock().unwrap().push(body.clone());
+                let model = body["model"].as_str().unwrap_or_default().to_owned();
+                let signature = format!("sig:{model}");
+                let foreign_signature = body["messages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|message| message["content"].as_array().into_iter().flatten())
+                    .any(|block| {
+                        block["type"] == "thinking"
+                            && block["signature"].as_str().is_some_and(|sig| sig != signature)
+                    });
+                if foreign_signature {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"message":"THINKING_SIGNATURE_INVALID: signed history is no longer valid for this conversation; start a new conversation. The request was not replayed.","type":"<nil>","param":"","code":null}})),
+                    )
+                        .into_response();
+                }
+                let events: String = [
+                    json!({"type":"message_start","message":{"id":"msg_signed","type":"message","role":"assistant","content":[],"model":model,"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+                    json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checked constraints"}}),
+                    json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":signature}}),
+                    json!({"type":"content_block_stop","index":0}),
+                    json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}),
+                    json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}),
+                    json!({"type":"content_block_stop","index":1}),
+                    json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}),
+                    json!({"type":"message_stop"}),
+                ]
+                .into_iter()
+                .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+                .collect();
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(events))
+                    .unwrap()
+            }),
+        )
+        .with_state(requests.clone());
+    (spawn_router(app).await, requests)
+}
+
+fn replayed_thinking(request: &Value) -> Vec<Value> {
+    request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| message["content"].as_array().unwrap().iter())
+        .filter(|block| block["type"] == "thinking")
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn baidu_signed_thinking_replays_only_to_the_model_that_signed_it() {
+    let (upstream_url, requests) = spawn_baidu_model_signing_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let turn = |model: &str, input: Value| {
+        let request = client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header("thread-id", "switching-thread")
+            .json(&json!({"model":model,"stream":true,"input":input}));
+        async move {
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let mut encoded = response.bytes().await.unwrap().to_vec();
+            let events = drain_events(&mut encoded);
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event.event.as_deref() == Some("response.completed")),
+                "turn did not complete"
+            );
+            events
+        }
+    };
+
+    let events = turn("DeepSeek-V4-Flash-custom", json!("first turn")).await;
+    let reasoning: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| {
+                event.event.as_deref() == Some("response.output_item.done")
+                    && event.data.contains("\"type\":\"reasoning\"")
+            })
+            .expect("first turn should return a reasoning item")
+            .data,
+    )
+    .unwrap();
+    let reasoning = reasoning["item"].clone();
+    assert!(
+        reasoning["encrypted_content"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin:baidu-signed-thinking:v1:")
+    );
+    let history = |reasoning: Value, next: &str| {
+        json!([
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"first turn"}]},
+            reasoning,
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":next}]}
+        ])
+    };
+
+    // Switching models drops the other model's signed thinking up front.
+    turn(
+        "Claude Sonnet 5-custom",
+        history(reasoning.clone(), "switched"),
+    )
+    .await;
+    // Switching back replays it to the model that signed it.
+    turn(
+        "DeepSeek-V4-Flash-custom",
+        history(reasoning.clone(), "switched back"),
+    )
+    .await;
+    // A token from before the signing model was recorded is replayed as is;
+    // the upstream rejection is retried once without signed thinking.
+    let legacy = json!({
+        "type":"reasoning",
+        "summary":[],
+        "encrypted_content":format!(
+            "codex-mixin:anthropic-thinking:v1:{}",
+            json!({"type":"thinking","thinking":"older thought","signature":"sig:DeepSeek-V4-Flash"})
+        )
+    });
+    turn("Claude Sonnet 5-custom", history(legacy, "legacy history")).await;
+
+    let requests = requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 5);
+    assert_eq!(requests[1]["model"], "Claude Sonnet 5");
+    assert!(replayed_thinking(&requests[1]).is_empty());
+    assert_eq!(
+        replayed_thinking(&requests[2]),
+        vec![json!({
+            "type":"thinking",
+            "thinking":"checked constraints",
+            "signature":"sig:DeepSeek-V4-Flash"
+        })]
+    );
+    assert_eq!(
+        replayed_thinking(&requests[3])[0]["signature"],
+        "sig:DeepSeek-V4-Flash"
+    );
+    assert!(replayed_thinking(&requests[4]).is_empty());
+    assert_eq!(requests[4]["messages"].as_array().unwrap().len(), 3);
+}
+
 #[tokio::test]
 async fn rewrites_named_unpaired_function_output_for_responses_provider() {
     let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;

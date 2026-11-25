@@ -73,6 +73,7 @@ pub(crate) fn native_messages_body(
             &mut converted,
             false,
             body.get("model").and_then(Value::as_str),
+            Some(request.model.as_str()),
             compaction_secret,
         )?;
         for message in converted {
@@ -198,6 +199,7 @@ pub(crate) fn responses_to_anthropic(
                     &mut messages,
                     use_mcp_bridge_names,
                     replay_model,
+                    Some(model.as_str()),
                     compaction_secret,
                 )?;
             }

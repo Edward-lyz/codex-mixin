@@ -779,8 +779,7 @@ fn handle_output_item(
             let native = item
                 .get("encrypted_content")
                 .and_then(Value::as_str)
-                .and_then(|value| value.strip_prefix("codex-mixin:anthropic-thinking:v1:"))
-                .and_then(|value| serde_json::from_str::<Value>(value).ok());
+                .and_then(crate::protocol::convert::gateway_anthropic_thinking_block);
             match native
                 .as_ref()
                 .and_then(|block| block.get("type"))
@@ -932,8 +931,7 @@ pub(crate) fn collected_to_anthropic_message(
                 if let Some(block) = item
                     .get("encrypted_content")
                     .and_then(Value::as_str)
-                    .and_then(|value| value.strip_prefix("codex-mixin:anthropic-thinking:v1:"))
-                    .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                    .and_then(crate::protocol::convert::gateway_anthropic_thinking_block)
                 {
                     content.push(block);
                 } else if let Some(text) = item.pointer("/summary/0/text").and_then(Value::as_str) {

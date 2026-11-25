@@ -5,11 +5,16 @@ use crate::protocol::compaction::{self, SecretSource};
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const ANTHROPIC_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:anthropic-unsigned-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
+/// OneAPI signs thinking for the upstream model that produced it and rejects
+/// that signature when the conversation continues on another model, so the
+/// token records the signing model next to the Anthropic block.
+const BAIDU_SIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-signed-thinking:v1:";
 
 pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
     encrypted_content.starts_with(ANTHROPIC_THINKING_PREFIX)
         || encrypted_content.starts_with(ANTHROPIC_UNSIGNED_THINKING_PREFIX)
         || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
+        || encrypted_content.starts_with(BAIDU_SIGNED_THINKING_PREFIX)
 }
 
 /// Recover the plaintext carried by a Mixin-owned thinking token.
@@ -31,7 +36,9 @@ pub(crate) fn gateway_thinking_text(encrypted_content: &str) -> Option<String> {
             .as_str()?
             .to_owned()
     } else {
-        let payload = encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX)?;
+        let payload = encrypted_content
+            .strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX)
+            .or_else(|| encrypted_content.strip_prefix(BAIDU_SIGNED_THINKING_PREFIX))?;
         serde_json::from_str::<Value>(payload)
             .ok()?
             .get("thinking")?
@@ -41,12 +48,40 @@ pub(crate) fn gateway_thinking_text(encrypted_content: &str) -> Option<String> {
     (!payload.is_empty()).then_some(payload)
 }
 
+/// The Anthropic `thinking` / `redacted_thinking` block carried by a
+/// Mixin-owned signed thinking token, without Mixin's own fields.
+pub(crate) fn gateway_anthropic_thinking_block(encrypted_content: &str) -> Option<Value> {
+    if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_THINKING_PREFIX) {
+        return serde_json::from_str(payload).ok();
+    }
+    let state =
+        baidu_signed_thinking(encrypted_content.strip_prefix(BAIDU_SIGNED_THINKING_PREFIX)?)?;
+    Some(json!({"type":"thinking","thinking":state.thinking,"signature":state.signature}))
+}
+
+struct BaiduSignedThinking {
+    model: String,
+    thinking: String,
+    signature: String,
+}
+
+fn baidu_signed_thinking(payload: &str) -> Option<BaiduSignedThinking> {
+    let state: Value = serde_json::from_str(payload).ok()?;
+    let field = |name: &str| state.get(name).and_then(Value::as_str).map(str::to_owned);
+    Some(BaiduSignedThinking {
+        model: field("model")?,
+        thinking: field("thinking")?,
+        signature: field("signature").filter(|signature| !signature.is_empty())?,
+    })
+}
+
 pub(super) fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,
     messages: &mut Vec<Message>,
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
+    upstream_model: Option<&str>,
     compaction_secret: SecretSource<'_>,
 ) -> Result<(), GatewayError> {
     // OpenCode and DSH send message items without the Responses envelope type.
@@ -250,7 +285,7 @@ pub(super) fn append_input_item(
                 }],
             });
         }
-        "reasoning" => append_anthropic_reasoning(item, messages, replay_model)?,
+        "reasoning" => append_anthropic_reasoning(item, messages, replay_model, upstream_model)?,
         "configuration_update"
         | "compaction_trigger"
         | "web_search_call"
@@ -275,11 +310,27 @@ fn append_anthropic_reasoning(
     item: &Value,
     messages: &mut Vec<Message>,
     replay_model: Option<&str>,
+    upstream_model: Option<&str>,
 ) -> Result<(), GatewayError> {
     let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) else {
         return Ok(());
     };
-    if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_THINKING_PREFIX) {
+    if let Some(payload) = encrypted_content.strip_prefix(BAIDU_SIGNED_THINKING_PREFIX) {
+        let state = baidu_signed_thinking(payload).ok_or_else(|| {
+            GatewayError::BadRequest("invalid Baidu signed thinking payload".to_owned())
+        })?;
+        // Another model's signature fails the whole request upstream; its
+        // reasoning is not replayable there, like unsigned Baidu thinking.
+        if upstream_model == Some(state.model.as_str()) {
+            messages.push(Message {
+                role: "assistant".to_owned(),
+                content: vec![ContentBlock::Thinking {
+                    thinking: state.thinking,
+                    signature: Some(state.signature),
+                }],
+            });
+        }
+    } else if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_THINKING_PREFIX) {
         let block: ContentBlock = serde_json::from_str(payload).map_err(|_| {
             GatewayError::BadRequest("invalid Anthropic thinking payload".to_owned())
         })?;
@@ -361,6 +412,40 @@ pub(crate) fn encode_anthropic_unsigned_thinking(thinking: &str) -> String {
 pub(crate) fn encode_baidu_unsigned_thinking(model: &str, thinking: &str) -> String {
     let payload = json!({"model": model, "thinking": thinking});
     format!("{BAIDU_UNSIGNED_THINKING_PREFIX}{payload}")
+}
+
+/// `model` is the upstream model id that produced (and OneAPI signed) the block.
+pub(crate) fn encode_baidu_signed_thinking(model: &str, thinking: &str, signature: &str) -> String {
+    let payload = json!({"model": model, "thinking": thinking, "signature": signature});
+    format!("{BAIDU_SIGNED_THINKING_PREFIX}{payload}")
+}
+
+/// Removes signed and redacted thinking from assistant messages, for a
+/// replay whose signatures the upstream rejected. Returns how many blocks
+/// were removed.
+pub(crate) fn drop_signed_thinking(messages: &mut Vec<Message>) -> usize {
+    let mut dropped = 0;
+    for message in messages
+        .iter_mut()
+        .filter(|message| message.role == "assistant")
+    {
+        let before = message.content.len();
+        message.content.retain(|block| {
+            !matches!(
+                block,
+                ContentBlock::Thinking {
+                    signature: Some(_),
+                    ..
+                } | ContentBlock::RedactedThinking { .. }
+            )
+        });
+        dropped += before - message.content.len();
+    }
+    if dropped > 0 {
+        messages.retain(|message| !message.content.is_empty());
+        merge_consecutive_messages(messages);
+    }
+    dropped
 }
 
 pub(crate) fn encode_anthropic_redacted_thinking(data: &str) -> String {
