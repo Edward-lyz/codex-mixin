@@ -145,8 +145,14 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
                 input.push(item);
                 pending.push((id, name.to_owned()));
             } else if let Some(response) = part.get("functionResponse") {
-                if role != "user" || part.get("thoughtSignature").is_some() {
-                    return Err(bad("functionResponse requires unsigned user role"));
+                // Antigravity CLI echoes the call's thoughtSignature onto the response part and
+                // may place the response in a model-role content. function_call_output carries
+                // neither a role nor a signature, so both are dropped; the call id still pairs it.
+                if part
+                    .get("thoughtSignature")
+                    .is_some_and(|signature| !signature.is_string())
+                {
+                    return Err(bad("thoughtSignature must be a string"));
                 }
                 fields(response, &["name", "response", "id"], "functionResponse")?;
                 let name = string(response, "name")?;

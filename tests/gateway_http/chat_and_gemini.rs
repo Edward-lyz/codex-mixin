@@ -115,6 +115,37 @@ async fn flat_model_aliases_preserve_upstream_ids_across_http_apis() {
 }
 
 #[tokio::test]
+async fn gemini_inbound_accepts_signed_function_response_replay() {
+    // Antigravity CLI echoes the call's thoughtSignature onto the functionResponse part and
+    // can send the response under either role.
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway = spawn_gateway(upstream).await;
+    for (index, response_role) in ["user", "model"].into_iter().enumerate() {
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{gateway}/v1beta/models/DeepSeek-V4-Flash-custom:generateContent"
+            ))
+            .header("x-goog-api-key", "gateway-key")
+            .json(&json!({"contents":[
+                {"role":"user","parts":[{"text":"run pwd"}]},
+                {"role":"model","parts":[{"functionCall":{"id":"call_1","name":"exec_command","args":{"cmd":"pwd"}},"thoughtSignature":"sig-1"}]},
+                {"role":response_role,"parts":[{"functionResponse":{"id":"call_1","name":"exec_command","response":{"output":"/tmp"}},"thoughtSignature":"sig-1"}]}
+            ]}))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{response_role}: {text}");
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), index + 1);
+        let upstream_body = sent[index].to_string();
+        assert!(upstream_body.contains("tool_result"), "{upstream_body}");
+        assert!(upstream_body.contains("/tmp"), "{upstream_body}");
+    }
+}
+
+#[tokio::test]
 async fn chat_endpoint_returns_json_or_sse_and_real_usage() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway = spawn_gateway(upstream).await;
