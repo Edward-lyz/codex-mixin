@@ -27,9 +27,6 @@ if [[ -n "${CARGO_BUILD_FEATURES:-}" ]]; then
 fi
 
 cd "$ROOT_DIR"
-if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
-  python3 "$ROOT_DIR/scripts/sync_nasa_wallpapers.py"
-fi
 cargo build "${CLI_ARGS[@]}" --bin codex-mixin
 cargo build "${DESKTOP_ARGS[@]}" --manifest-path "$DESKTOP_DIR/Cargo.toml"
 "$ROOT_DIR/scripts/check_localizations.sh"

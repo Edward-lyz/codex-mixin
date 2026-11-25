@@ -1,7 +1,6 @@
 //! Settings page: gateway service, official ECH proxy, configuration
 //! backup, diagnostics, updates and about.
 
-use std::sync::OnceLock;
 use std::time::Instant;
 
 use gpui_kit::assets::IconName;
@@ -30,36 +29,7 @@ use crate::widgets::{page_header, row_divider, section, setting_row};
 use crate::windmill;
 
 const REPOSITORY_URL: &str = "https://github.com/Edward-lyz/codex-mixin";
-
-#[derive(Deserialize)]
-struct WallpaperManifest {
-    #[serde(default)]
-    images: Vec<WallpaperManifestImage>,
-}
-
-#[derive(Deserialize)]
-struct WallpaperManifestImage {
-    #[serde(rename = "fileName")]
-    file_name: String,
-}
-
-fn wallpapers() -> &'static [SharedString] {
-    static WALLPAPERS: OnceLock<Vec<SharedString>> = OnceLock::new();
-    WALLPAPERS.get_or_init(|| {
-        serde_json::from_str::<WallpaperManifest>(include_str!(
-            "../../assets/nasa-wallpapers/manifest.json"
-        ))
-        .map(|manifest| {
-            manifest
-                .images
-                .into_iter()
-                .filter(|image| !image.file_name.trim().is_empty())
-                .map(|image| SharedString::from(format!("nasa-wallpapers/{}", image.file_name)))
-                .collect()
-        })
-        .unwrap_or_default()
-    })
-}
+const SETTINGS_BANNER: &str = "nasa-wallpapers/artemis-ii-earthset.jpg";
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct Doctor {
@@ -79,7 +49,6 @@ pub struct SettingsPage {
     autostart: Option<bool>,
     doctor: Option<Result<Doctor, SharedString>>,
     running_doctor: bool,
-    wallpaper: usize,
     logo_spin: u64,
     logo_clicked_at: Option<Instant>,
     revision: u64,
@@ -97,17 +66,10 @@ impl SettingsPage {
                 page.reload(cx);
             }
         });
-        let wallpapers = wallpapers();
-        let wallpaper = if wallpapers.is_empty() {
-            0
-        } else {
-            chrono::Local::now().timestamp().unsigned_abs() as usize % wallpapers.len()
-        };
         let mut page = Self {
             autostart: None,
             doctor: None,
             running_doctor: false,
-            wallpaper,
             logo_spin: 0,
             logo_clicked_at: None,
             revision: store.read(cx).revision,
@@ -491,7 +453,6 @@ impl SettingsPage {
             .logo_clicked_at
             .filter(|time| !cx.reduce_motion() && time.elapsed() < windmill::SPIN_DURATION)
             .map(|_| ("settings-windmill", self.logo_spin).into());
-        let wallpaper = wallpapers().get(self.wallpaper).cloned();
         div()
             .relative()
             .h_40()
@@ -500,16 +461,14 @@ impl SettingsPage {
             .shadow_sm()
             .bg(cx.theme().colors.secondary)
             // GPUI clips overflow to a rectangle, so round both painted layers.
-            .when_some(wallpaper, |card, path| {
-                card.child(
-                    img(path)
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .rounded_xl()
-                        .object_fit(ObjectFit::Cover),
-                )
-            })
+            .child(
+                img(SETTINGS_BANNER)
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .rounded_xl()
+                    .object_fit(ObjectFit::Cover),
+            )
             .child(
                 v_flex()
                     .absolute()
@@ -627,21 +586,11 @@ impl Render for SettingsPage {
 
 #[cfg(test)]
 mod tests {
-    use super::wallpapers;
+    use super::SETTINGS_BANNER;
     use crate::assets::product_bytes;
 
     #[test]
-    fn bundled_nasa_wallpapers_match_manifest() {
-        let paths = wallpapers();
-        assert!(
-            !paths.is_empty(),
-            "expected at least one NASA wallpaper in manifest.json"
-        );
-        for path in paths {
-            assert!(
-                product_bytes(path.as_ref()).is_some(),
-                "manifest wallpaper missing from embedded assets: {path}"
-            );
-        }
+    fn settings_banner_is_bundled() {
+        assert!(product_bytes(SETTINGS_BANNER).is_some());
     }
 }

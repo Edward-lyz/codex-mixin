@@ -647,13 +647,15 @@ impl TokenUsageAggregator {
     ) -> Option<f64> {
         // Priced when recorded: the request's own prompt size selects the tier.
         let cost = if completed {
-            self.prices.current().lookup(model_id).map(|price| {
-                price.cost_usd(
-                    usage.input_tokens.unwrap_or(0),
-                    usage.cache_read_tokens.unwrap_or(0),
-                    usage.cache_creation_tokens.unwrap_or(0),
-                    usage.output_tokens.unwrap_or(0),
-                )
+            usage.pi_cost_usd.or_else(|| {
+                self.prices.current().lookup(model_id).map(|price| {
+                    price.cost_usd(
+                        usage.input_tokens.unwrap_or(0),
+                        usage.cache_read_tokens.unwrap_or(0),
+                        usage.cache_creation_tokens.unwrap_or(0),
+                        usage.output_tokens.unwrap_or(0),
+                    )
+                })
             })
         } else {
             Some(0.0)
@@ -1006,12 +1008,13 @@ fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsag
 
 /// Provider cache counters observed on a streamed response. Each protocol names
 /// them differently, so they are normalised to uncached input plus cache reads.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct UpstreamCacheUsage {
     pub(crate) input_tokens: Option<u64>,
     pub(crate) cache_read_tokens: Option<u64>,
     pub(crate) cache_creation_tokens: Option<u64>,
     pub(crate) output_tokens: Option<u64>,
+    pub(crate) pi_cost_usd: Option<f64>,
     pub(crate) ttft_micros: Option<u64>,
     pub(crate) generation_micros: Option<u64>,
 }
@@ -1077,11 +1080,16 @@ impl UpstreamCacheUsage {
         }
     }
 
-    /// True once the prompt accounting is actually populated. Anthropic sends a
-    /// zeroed `usage` on `message_start` and the real counts on `message_delta`,
-    /// so reporting on the first `usage` seen would score every turn as a miss.
+    /// True when the provider supplied counters or a Pi bridge cost. All-zero
+    /// placeholder usage on intermediate frames does not count by itself.
     pub(crate) fn observed(&self) -> bool {
-        [self.input_tokens, self.cache_read_tokens]
+        self.pi_cost_usd.is_some()
+            || [
+                self.input_tokens,
+                self.cache_read_tokens,
+                self.cache_creation_tokens,
+                self.output_tokens,
+            ]
             .into_iter()
             .flatten()
             .any(|value| value > 0)

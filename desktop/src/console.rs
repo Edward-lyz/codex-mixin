@@ -271,7 +271,7 @@ impl Console {
         }
     }
 
-    /// Focuses an installed plugin's detail page on the Plugins page.
+    /// Opens an installed plugin's details in the console.
     pub fn open_plugin(package: String, cx: &mut App) {
         Self::open(Some(Page::Plugins), cx);
         if let Some(handle) = cx.try_global::<ConsoleWindow>().map(|window| window.handle)
@@ -285,7 +285,7 @@ impl Console {
                         console.select(Page::Plugins, window, cx);
                         if let Some(plugins) = &console.plugins {
                             plugins.update(cx, |plugins, cx| {
-                                plugins.open_package_detail(package.clone(), cx);
+                                plugins.open_package_detail(&package, window, cx);
                             });
                         }
                     });

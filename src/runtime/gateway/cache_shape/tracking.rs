@@ -249,6 +249,7 @@ pub(crate) fn record_provider_prefix(
             reused_turns: 0,
             total_turns: shape.turns.len(),
             usage: tracker.usage(),
+            accept_pi_cost: false,
             started_at: Instant::now(),
         });
     };
@@ -327,6 +328,7 @@ pub(crate) fn record_provider_prefix(
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
         usage: tracker.usage(),
+        accept_pi_cost: false,
         started_at: Instant::now(),
     })
 }
@@ -357,6 +359,7 @@ pub(crate) struct PrefixObservation {
     pub(super) reused_turns: usize,
     pub(super) total_turns: usize,
     pub(super) usage: Arc<TokenUsageAggregator>,
+    pub(crate) accept_pi_cost: bool,
     pub(super) started_at: Instant,
 }
 
@@ -565,6 +568,13 @@ impl UpstreamCacheObserver {
             }
             if let Some(usage) = path.get("usage") {
                 self.usage.absorb(usage);
+                if self.observation.accept_pi_cost
+                    && let Some(cost) = usage.get("mixin_pi_cost_usd").and_then(Value::as_f64)
+                    && cost.is_finite()
+                    && cost >= 0.0
+                {
+                    self.usage.pi_cost_usd = Some(cost);
+                }
                 if let Some(reasoning) = ["output_tokens_details", "completion_tokens_details"]
                     .into_iter()
                     .find_map(|details| {

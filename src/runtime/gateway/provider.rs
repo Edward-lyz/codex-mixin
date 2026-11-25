@@ -502,7 +502,7 @@ async fn stream_openai_chat(
     let converted = responses_to_openai_chat(body, Some(upstream_model_id), &compaction_secret);
     restore_reasoning(body, saved_reasoning);
     let converted = converted?;
-    let observation = record_provider_prefix(
+    let mut observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
         catalog_slug,
@@ -511,6 +511,9 @@ async fn stream_openai_chat(
         &executor.client_identity(headers),
         CacheShape::from_openai_chat(&converted.request),
     );
+    if let Some(observation) = observation.as_mut() {
+        observation.accept_pi_cost = crate::pi_plugins::is_managed_provider(provider.definition());
+    }
     let upstream = executor
         .upstream
         .send_provider_json(

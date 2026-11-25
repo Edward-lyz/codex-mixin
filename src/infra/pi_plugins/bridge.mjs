@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { getOpenCodeSessionHeaders, normalizeContext } from '@earendil-works/pi-ai';
+import { calculateCost } from '@earendil-works/pi-ai/models';
 import { isModelType } from '@earendil-works/pi-ai/utils/model-operations';
 import {
   CredentialSynchronizationError, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, VERSION,
@@ -264,13 +265,21 @@ function contextFor(body, model) {
   return { messages: body.messages.map(message => decodeMessage(message, model, toolNames)), tools };
 }
 
-function usageOf(usage) {
+function usageOf(model, usage) {
+  const reportedCost = usage.cost?.totalFromProvider ? usage.cost.total : undefined;
+  const hasTokens = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite].some(count => count > 0);
+  const cost = Number.isFinite(reportedCost) && reportedCost >= 0
+    ? reportedCost
+    : hasTokens && model.cost && calculateCost(model, { ...usage, cost: {} }).total;
   return {
     prompt_tokens: usage.input + usage.cacheRead + usage.cacheWrite,
     completion_tokens: usage.output,
     total_tokens: usage.totalTokens,
+    prompt_cache_miss_tokens: usage.input,
+    cache_creation_input_tokens: usage.cacheWrite,
     prompt_tokens_details: { cached_tokens: usage.cacheRead },
     completion_tokens_details: { reasoning_tokens: usage.reasoning },
+    mixin_pi_cost_usd: Number.isFinite(cost) && cost >= 0 ? cost : undefined,
   };
 }
 
@@ -364,7 +373,7 @@ async function complete(request, response) {
       if (event.type === 'error') throw httpError(502, event.error?.errorMessage || 'Pi provider request failed');
       if (event.type === 'done') {
         if (event.reason === 'deferred') throw httpError(502, 'Pi provider returned a deferred response');
-        const usage = usageOf(event.message.usage);
+        const usage = usageOf(model, event.message.usage);
         const finish_reason = reasonOf(event.message);
         if (body.stream) {
           await chunk([{ index: 0, delta: {}, finish_reason }]);

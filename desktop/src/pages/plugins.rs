@@ -7,12 +7,13 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, div, prelude::FluentBuilder as _,
+    Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
 use rust_i18n::t;
 
@@ -127,11 +128,57 @@ impl PluginsPage {
         page
     }
 
-    pub fn open_package_detail(&mut self, package: String, cx: &mut Context<Self>) {
+    pub fn open_package_detail(
+        &mut self,
+        package: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let package = normalize_pkg_source(package);
+        if self.selected_package.as_ref() == Some(&package) {
+            return;
+        }
         self.show_installed = true;
-        self.selected_package = Some(normalize_pkg_source(&package));
+        self.selected_package = Some(package.clone());
         self.load_overview(cx);
-        self.reload_status(cx);
+        let view = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let body = view
+                .update(cx, |page, cx| {
+                    match (&page.status.value, page.selected_package.as_deref()) {
+                        (Some(data), Some(selected)) if selected == package => {
+                            page.package_detail(&package, data, cx).into_any_element()
+                        }
+                        _ => div()
+                            .text_sm()
+                            .text_color(cx.theme().colors.muted_foreground)
+                            .child(page.status.error.clone().unwrap_or_else(|| {
+                                if page.status.loading {
+                                    tr!("plugins.loading")
+                                } else {
+                                    tr!("plugins.none_installed")
+                                }
+                            }))
+                            .into_any_element(),
+                    }
+                })
+                .ok();
+            let view = view.clone();
+            let selection = package.clone();
+            dialog
+                .title(strip_npm_prefix(&package).to_owned())
+                .w(px(720.0))
+                .children(body)
+                .on_close(move |_, _, cx| {
+                    let _ = view.update(cx, |page, cx| {
+                        if page.selected_package.as_ref() == Some(&selection) {
+                            page.selected_package = None;
+                            page.overview_task = None;
+                            cx.notify();
+                        }
+                    });
+                })
+        });
         cx.notify();
     }
 
@@ -439,10 +486,8 @@ impl PluginsPage {
                                     .secondary()
                                     .small()
                                     .label(t!("plugins.manage"))
-                                    .on_click(cx.listener(move |page, _, _, cx| {
-                                        page.selected_package = Some(open_spec.clone());
-                                        page.load_overview(cx);
-                                        cx.notify();
+                                    .on_click(cx.listener(move |page, _, window, cx| {
+                                        page.open_package_detail(&open_spec, window, cx);
                                     })),
                             )
                             .child(
@@ -528,9 +573,15 @@ impl PluginsPage {
                                     .secondary()
                                     .small()
                                     .label(t!("plugins.open_provider"))
-                                    .on_click(move |_, _, cx| {
-                                        Console::open_provider(mixin_id.clone(), cx);
-                                    }),
+                                    .on_click(cx.listener(move |page, _, window, cx| {
+                                        if page.selected_package.take().is_some() {
+                                            page.overview_task = None;
+                                            window.close_dialog(cx);
+                                            cx.notify();
+                                        }
+                                        let provider = mixin_id.clone();
+                                        cx.defer(move |cx| Console::open_provider(provider, cx));
+                                    })),
                             )
                         })
                         .when(auth_status != PluginAuthStatus::Configured, |actions| {
@@ -737,7 +788,6 @@ impl PluginsPage {
         data: &PluginData,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let colors = cx.theme().colors;
         let busy = is_busy(cx) || !data.status.node_available;
         let update_arg = format!("--spec={package}");
         let remove_arg = update_arg.clone();
@@ -754,91 +804,63 @@ impl PluginsPage {
             .filter(|c| c.package.as_deref() == Some(package))
             .cloned()
             .collect();
-        let header = h_flex()
-            .gap_3()
-            .items_center()
+        let actions = h_flex()
+            .justify_end()
+            .gap_2()
             .child(
-                Button::new("plugin-detail-back")
-                    .ghost()
+                Button::new("plugin-detail-sync")
+                    .secondary()
                     .small()
-                    .icon(IconName::ArrowLeft)
-                    .label(t!("plugins.back"))
+                    .label(t!("plugins.sync"))
+                    .disabled(busy)
                     .on_click(cx.listener(|page, _, _, cx| {
-                        page.selected_package = None;
-                        page.overview_task = None;
-                        cx.notify();
+                        page.apply(
+                            Change::new(t!("plugins.sync"), ["plugin", "sync", "--json"]),
+                            cx,
+                        );
                     })),
             )
             .child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_base()
-                            .font_semibold()
-                            .truncate()
-                            .child(strip_npm_prefix(package).to_owned()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.muted_foreground)
-                            .child(package.to_owned()),
-                    ),
+                Button::new("plugin-detail-update")
+                    .ghost()
+                    .small()
+                    .label(t!("plugins.update"))
+                    .disabled(busy)
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        page.apply(
+                            Change::new(
+                                t!("plugins.update"),
+                                ["plugin", "update", &update_arg, "--json"],
+                            ),
+                            cx,
+                        );
+                    })),
             )
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("plugin-detail-sync")
-                            .secondary()
-                            .small()
-                            .label(t!("plugins.sync"))
-                            .disabled(busy)
-                            .on_click(cx.listener(|page, _, _, cx| {
-                                page.apply(
-                                    Change::new(t!("plugins.sync"), ["plugin", "sync", "--json"]),
-                                    cx,
-                                );
-                            })),
-                    )
-                    .child(
-                        Button::new("plugin-detail-update")
-                            .ghost()
-                            .small()
-                            .label(t!("plugins.update"))
-                            .disabled(busy)
-                            .on_click(cx.listener(move |page, _, _, cx| {
-                                page.apply(
-                                    Change::new(
-                                        t!("plugins.update"),
-                                        ["plugin", "update", &update_arg, "--json"],
-                                    ),
-                                    cx,
-                                );
-                            })),
-                    )
-                    .child(
-                        Button::new("plugin-detail-remove")
-                            .ghost()
-                            .small()
-                            .label(t!("plugins.remove"))
-                            .disabled(busy)
-                            .on_click(cx.listener(move |page, _, _, cx| {
-                                page.apply(
-                                    Change::new(
-                                        t!("plugins.remove"),
-                                        ["plugin", "remove", &remove_arg, "--json"],
-                                    ),
-                                    cx,
-                                );
-                            })),
-                    ),
+                Button::new("plugin-detail-remove")
+                    .ghost()
+                    .small()
+                    .label(t!("plugins.remove"))
+                    .disabled(busy)
+                    .on_click(cx.listener(move |page, _, window, cx| {
+                        if is_busy(cx) {
+                            return;
+                        }
+                        page.selected_package = None;
+                        page.overview_task = None;
+                        window.close_dialog(cx);
+                        page.apply(
+                            Change::new(
+                                t!("plugins.remove"),
+                                ["plugin", "remove", &remove_arg, "--json"],
+                            ),
+                            cx,
+                        );
+                    })),
             );
         v_flex()
             .gap_4()
-            .child(header)
+            .child(actions)
             .child(self.render_overview(package, cx))
             .child(self.render_provider_rows(
                 t!("plugins.provider_section").into(),
@@ -904,13 +926,7 @@ impl PluginsPage {
                             })),
                     ),
                 )
-            })
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(colors.muted_foreground)
-                    .child(t!("plugins.package_permissions")),
-            );
+            });
         let packages = self.market.value.as_deref().unwrap_or_default();
         let rows = packages.iter().enumerate().map(|(index, package)| {
             let name = package.name.clone();
@@ -1021,7 +1037,7 @@ impl Render for PluginsPage {
                 .child(page_header(
                     IconName::Puzzle,
                     t!("console.page.plugins"),
-                    Some(tr!("plugins.subtitle")),
+                    None,
                     refresh,
                     cx,
                 ))
@@ -1055,49 +1071,41 @@ impl Render for PluginsPage {
             .selected(usize::from(self.show_installed))
             .on_change(cx.listener(|page, selected, _, cx| {
                 page.show_installed = *selected == 1;
-                if !page.show_installed {
-                    page.selected_package = None;
-                    page.overview_task = None;
-                }
                 cx.notify();
             }));
         let content = if self.show_installed {
-            if let Some(package) = self.selected_package.clone() {
-                self.package_detail(&package, data, cx).into_any_element()
-            } else {
-                let orphan_providers: Vec<PluginProvider> = data
-                    .status
-                    .provider_details
-                    .iter()
-                    .filter(|p| p.package.is_none())
-                    .cloned()
-                    .collect();
-                let orphan_commands: Vec<PluginCommand> = data
-                    .commands
-                    .iter()
-                    .filter(|c| c.package.is_none())
-                    .cloned()
-                    .collect();
-                v_flex()
-                    .gap_4()
-                    .child(self.installed(data, cx))
-                    .when(!orphan_providers.is_empty(), |body| {
-                        body.child(self.render_provider_rows(
-                            t!("plugins.unattributed_providers").into(),
-                            &orphan_providers,
-                            cx,
-                        ))
-                    })
-                    .when(!orphan_commands.is_empty(), |body| {
-                        body.child(self.render_command_rows(
-                            t!("plugins.unattributed_commands").into(),
-                            &orphan_commands,
-                            data.commands_error.as_deref(),
-                            cx,
-                        ))
-                    })
-                    .into_any_element()
-            }
+            let orphan_providers: Vec<PluginProvider> = data
+                .status
+                .provider_details
+                .iter()
+                .filter(|p| p.package.is_none())
+                .cloned()
+                .collect();
+            let orphan_commands: Vec<PluginCommand> = data
+                .commands
+                .iter()
+                .filter(|c| c.package.is_none())
+                .cloned()
+                .collect();
+            v_flex()
+                .gap_4()
+                .child(self.installed(data, cx))
+                .when(!orphan_providers.is_empty(), |body| {
+                    body.child(self.render_provider_rows(
+                        t!("plugins.unattributed_providers").into(),
+                        &orphan_providers,
+                        cx,
+                    ))
+                })
+                .when(!orphan_commands.is_empty(), |body| {
+                    body.child(self.render_command_rows(
+                        t!("plugins.unattributed_commands").into(),
+                        &orphan_commands,
+                        data.commands_error.as_deref(),
+                        cx,
+                    ))
+                })
+                .into_any_element()
         } else {
             self.marketplace(cx).into_any_element()
         };
