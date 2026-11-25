@@ -5,15 +5,13 @@ use std::collections::HashMap;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, WindowExt as _, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
 };
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, ElementId, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, prelude::FluentBuilder as _,
+    AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, div, prelude::FluentBuilder as _,
 };
 use rust_i18n::t;
 
@@ -21,9 +19,12 @@ use super::connection::{ConnectionView, confirm_remove_provider, open_add_provid
 use super::is_busy;
 use super::models::ModelsView;
 use super::placeholder;
-use super::plugins::{open_plugin_command_dialog, render_command_output};
+use super::plugins::{
+    PluginCommandRun, open_plugin_command_dialog, open_plugin_login_dialog, plugin_auth_badge,
+    render_command_output,
+};
 use crate::console::Console;
-use crate::model::{PluginCommand, PluginCommandOutput, PluginData, Provider};
+use crate::model::{PluginAuthStatus, PluginCommand, PluginData, Provider};
 use crate::store::{Change, Snapshot, Store, plugin_data};
 use crate::tr;
 use crate::widgets::{
@@ -41,7 +42,7 @@ pub struct ProvidersPage {
     models: HashMap<String, Entity<ModelsView>>,
     connections: HashMap<String, Entity<ConnectionView>>,
     plugin_data: Snapshot<PluginData>,
-    plugin_command_output: Option<(String, Result<PluginCommandOutput, SharedString>)>,
+    plugin_command_output: Option<Entity<PluginCommandRun>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -99,38 +100,41 @@ impl ProvidersPage {
         cx.notify();
     }
 
-    fn run_plugin_action(
-        &mut self,
-        change: Change,
-        command_name: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
+    fn run_plugin_action(&mut self, change: Change, cx: &mut Context<Self>) {
         if is_busy(cx) {
             return;
         }
         let task = Store::global(cx).update(cx, |store, cx| store.run(change, cx));
         cx.spawn(async move |view, cx| {
-            let result = task.await;
-            let _ = view.update(cx, |page, cx| {
-                if let Some(name) = command_name {
-                    let output = result
-                        .map_err(|error| error.message.into())
-                        .and_then(|output| {
-                            serde_json::from_str::<PluginCommandOutput>(&output).map_err(|error| {
-                                tr!(
-                                    "cli.invalid_json",
-                                    command = "plugin run-command",
-                                    error = error.to_string()
-                                )
-                            })
-                        });
-                    page.plugin_command_output = Some((name, output));
-                }
-                page.reload_plugin_data(cx);
-                cx.notify();
-            });
+            let _ = task.await;
+            let _ = view.update(cx, |page, cx| page.reload_plugin_data(cx));
         })
         .detach();
+    }
+
+    fn open_plugin_command(
+        &self,
+        command: &PluginCommand,
+        quick_args: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.weak_entity();
+        open_plugin_command_dialog(
+            command,
+            quick_args,
+            move |output, finished, cx| {
+                let _ = view.update(cx, |page, cx| {
+                    page.plugin_command_output = output;
+                    if finished {
+                        page.reload_plugin_data(cx);
+                    }
+                    cx.notify();
+                });
+            },
+            window,
+            cx,
+        );
     }
 
     fn providers<'a>(&self, cx: &'a gpui_kit::App) -> &'a [Provider] {
@@ -428,18 +432,23 @@ impl ProvidersPage {
     fn render_plugin_panel(&self, provider: &Provider, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors;
         let busy = is_busy(cx);
-        let cli = Store::global(cx).read(cx).cli();
         let package = provider.pi_plugin_package.clone();
         let pi_provider = provider
             .pi_provider_id
             .clone()
             .unwrap_or_else(|| provider.id.clone());
-        let copy_notice = if cfg!(windows) {
-            tr!("plugins.login_copied_powershell")
-        } else {
-            tr!("plugins.login_copied")
-        };
-        let login_cmd = cli.plugin_login_command(&pi_provider);
+        let auth_status = self
+            .plugin_data
+            .value
+            .as_ref()
+            .and_then(|data| {
+                data.status
+                    .provider_details
+                    .iter()
+                    .find(|detail| detail.id == pi_provider)
+            })
+            .map_or(PluginAuthStatus::Unknown, |detail| detail.auth_status);
+        let login_provider = pi_provider.clone();
         let logout_arg = format!("--provider={pi_provider}");
 
         let overview = section(
@@ -480,7 +489,6 @@ impl ProvidersPage {
                                             t!("plugins.sync"),
                                             ["plugin", "sync", "--json"],
                                         ),
-                                        None,
                                         cx,
                                     );
                                 })),
@@ -493,39 +501,47 @@ impl ProvidersPage {
                     Some(pi_provider.clone().into()),
                     h_flex()
                         .gap_2()
-                        .child(
-                            Button::new("provider-plugin-login")
-                                .ghost()
-                                .small()
-                                .icon(IconName::Copy)
-                                .label(t!("plugins.copy_login"))
-                                .on_click(move |_, window, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        login_cmd.clone(),
-                                    ));
-                                    window.push_notification(
-                                        Notification::success(copy_notice.clone()),
-                                        cx,
-                                    );
-                                }),
-                        )
-                        .child(
-                            Button::new("provider-plugin-logout")
-                                .ghost()
-                                .small()
-                                .label(t!("plugins.logout"))
-                                .disabled(busy)
-                                .on_click(cx.listener(move |page, _, _, cx| {
-                                    page.run_plugin_action(
-                                        Change::new(
-                                            t!("plugins.logout"),
-                                            ["plugin", "auth", "logout", &logout_arg, "--json"],
-                                        ),
-                                        None,
-                                        cx,
-                                    );
-                                })),
-                        ),
+                        .child(plugin_auth_badge(auth_status, cx))
+                        .when(auth_status != PluginAuthStatus::Configured, |actions| {
+                            actions.child(
+                                Button::new("provider-plugin-login")
+                                    .secondary()
+                                    .small()
+                                    .label(t!("plugins.login"))
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                        let view = cx.weak_entity();
+                                        open_plugin_login_dialog(
+                                            login_provider.clone(),
+                                            move |cx| {
+                                                let _ = view.update(cx, |page, cx| {
+                                                    page.reload_plugin_data(cx)
+                                                });
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        })
+                        .when(auth_status == PluginAuthStatus::Configured, |actions| {
+                            actions.child(
+                                Button::new("provider-plugin-logout")
+                                    .ghost()
+                                    .small()
+                                    .label(t!("plugins.logout"))
+                                    .disabled(busy)
+                                    .on_click(cx.listener(move |page, _, _, cx| {
+                                        page.run_plugin_action(
+                                            Change::new(
+                                                t!("plugins.logout"),
+                                                ["plugin", "auth", "logout", &logout_arg, "--json"],
+                                            ),
+                                            cx,
+                                        );
+                                    })),
+                            )
+                        }),
                     cx,
                 )),
             cx,
@@ -550,35 +566,21 @@ impl ProvidersPage {
 
         let command_rows = commands.iter().enumerate().map(|(idx, command)| {
             let cmd_for_dialog = command.clone();
-            let view = cx.weak_entity();
             let quick_args = command
                 .arguments
                 .iter()
                 .take(4)
                 .enumerate()
                 .map(|(aidx, arg)| {
-                    let cmd_name = command.name.clone();
+                    let command = command.clone();
                     let arg_val = arg.value.clone();
                     Button::new(("provider-cmd-quick", idx * 32 + aidx))
                         .ghost()
                         .xsmall()
                         .label(arg.value.clone())
                         .disabled(busy)
-                        .on_click(cx.listener(move |page, _, _, cx| {
-                            page.run_plugin_action(
-                                Change::new(
-                                    t!("plugins.run"),
-                                    [
-                                        "plugin",
-                                        "run-command",
-                                        &format!("--name={cmd_name}"),
-                                        &format!("--args={arg_val}"),
-                                        "--json",
-                                    ],
-                                ),
-                                Some(cmd_name.clone()),
-                                cx,
-                            );
+                        .on_click(cx.listener(move |page, _, window, cx| {
+                            page.open_plugin_command(&command, Some(arg_val.clone()), window, cx);
                         }))
                 });
             let desc = if command.description.is_empty() {
@@ -597,32 +599,9 @@ impl ProvidersPage {
                             .small()
                             .label(t!("plugins.run"))
                             .disabled(busy)
-                            .on_click(move |_, window, cx| {
-                                let run_view = view.clone();
-                                open_plugin_command_dialog(
-                                    &cmd_for_dialog,
-                                    move |run_name, args, cx| {
-                                        let _ = run_view.update(cx, |page, cx| {
-                                            page.run_plugin_action(
-                                                Change::new(
-                                                    t!("plugins.run"),
-                                                    [
-                                                        "plugin",
-                                                        "run-command",
-                                                        &format!("--name={run_name}"),
-                                                        &format!("--args={args}"),
-                                                        "--json",
-                                                    ],
-                                                ),
-                                                Some(run_name),
-                                                cx,
-                                            );
-                                        });
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            }),
+                            .on_click(cx.listener(move |page, _, window, cx| {
+                                page.open_plugin_command(&cmd_for_dialog, None, window, cx);
+                            })),
                     ),
                     cx,
                 ))
@@ -650,13 +629,10 @@ impl ProvidersPage {
                         .child(t!("plugins.loading")),
                 )
             })
-            .when_some(
-                self.plugin_command_output.as_ref(),
-                |body, (name, output)| {
-                    body.when(!commands.is_empty(), |body| body.child(row_divider(cx)))
-                        .child(render_command_output(name, output, cx))
-                },
-            );
+            .when_some(self.plugin_command_output.as_ref(), |body, output| {
+                body.when(!commands.is_empty(), |body| body.child(row_divider(cx)))
+                    .child(render_command_output(output.read(cx), cx))
+            });
 
         v_flex()
             .id("provider-plugin-scroll")

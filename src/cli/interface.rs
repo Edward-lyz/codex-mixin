@@ -23,6 +23,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "login_stdio": true,
             "agent_management": true,
             "pi_plugins": true,
+            "pi_plugin_events": true,
             "provider_oauth_login": true,
             "model_ordering": true,
             "agent_versions": true,

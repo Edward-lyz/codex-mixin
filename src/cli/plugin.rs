@@ -1,7 +1,11 @@
+use std::io::{self, BufRead, Read, Write};
+
+use anyhow::{Context, ensure};
 use clap::{Args, Subcommand};
 use codex_mixin::application::pi_plugins;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 #[derive(Debug, Subcommand)]
 pub(super) enum PluginCommand {
@@ -23,6 +27,8 @@ pub(super) enum PluginCommand {
     },
     /// Install an npm package and synchronize its models.
     Install(RequiredPackage),
+    /// Read an installed npm package's metadata and README.
+    Info(RequiredPackage),
     /// Remove an npm package and synchronize the remaining models.
     Remove(RequiredPackage),
     /// Update one package or all installed packages.
@@ -59,10 +65,13 @@ pub(super) enum PluginCommand {
         name_positional: Option<String>,
         #[arg(long)]
         name: Option<String>,
-        #[arg(long, default_value = "")]
+        #[arg(long, default_value = "", allow_hyphen_values = true)]
         args: String,
         #[arg(long)]
         json: bool,
+        /// Stream JSON lines to stdout and read prompt replies as JSON lines from stdin.
+        #[arg(long, conflicts_with = "json")]
+        events: bool,
     },
 }
 
@@ -82,12 +91,15 @@ pub(super) struct RequiredPackage {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum PluginAuthCommand {
-    /// Sign in to a provider from this terminal.
+    /// Sign in to a provider.
     Login {
         #[command(flatten)]
         account: ProviderAccount,
         #[arg(long)]
         no_browser: bool,
+        /// Stream JSON lines to stdout and read prompt replies as JSON lines from stdin.
+        #[arg(long, conflicts_with_all = ["json", "no_browser"])]
+        events: bool,
     },
     /// Remove a provider's stored sign-in credentials.
     Logout(ProviderAccount),
@@ -148,6 +160,25 @@ pub(super) async fn run(command: PluginCommand) -> anyhow::Result<()> {
             let count = pi_plugins::install(&spec).await?;
             package_output(Some(&spec), count, package.json)
         }
+        PluginCommand::Info(package) => {
+            let spec = package.spec.or(package.spec_positional).unwrap_or_default();
+            let info = pi_plugins::info(&spec).await?;
+            if package.json {
+                return print_json(&info);
+            }
+            println!(
+                "{} {}",
+                info.name,
+                info.version.as_deref().unwrap_or("unknown version")
+            );
+            for text in [info.description, info.homepage, info.readme]
+                .into_iter()
+                .flatten()
+            {
+                println!("{text}");
+            }
+            Ok(())
+        }
         PluginCommand::Remove(package) => {
             let spec = package.spec.or(package.spec_positional).unwrap_or_default();
             let count = pi_plugins::remove(&spec).await?;
@@ -182,8 +213,16 @@ pub(super) async fn run(command: PluginCommand) -> anyhow::Result<()> {
             name,
             args,
             json,
+            events,
         } => {
             let name = name.or(name_positional).unwrap_or_default();
+            if events {
+                let mut emit = print_event;
+                let result =
+                    pi_plugins::run_command_interactive(&name, &args, interaction(&mut emit)?)
+                        .await?;
+                return emit(result);
+            }
             let result = pi_plugins::run_command(&name, &args).await?;
             if json {
                 print_json(&result)
@@ -196,17 +235,23 @@ pub(super) async fn run(command: PluginCommand) -> anyhow::Result<()> {
 }
 
 async fn run_auth(command: PluginAuthCommand) -> anyhow::Result<()> {
-    let (account, login) = match command {
+    let (account, login, events) = match command {
         PluginAuthCommand::Login {
             account,
             no_browser,
-        } => (account, Some(no_browser)),
-        PluginAuthCommand::Logout(account) => (account, None),
+            events,
+        } => (account, Some(no_browser), events),
+        PluginAuthCommand::Logout(account) => (account, None, false),
     };
     let provider = account
         .provider
         .or(account.provider_positional)
         .unwrap_or_default();
+    if events {
+        let mut emit = print_event;
+        let count = pi_plugins::auth_login_interactive(&provider, interaction(&mut emit)?).await?;
+        return emit(json!({ "type": "result", "provider": provider, "synced_models": count }));
+    }
     let count = match login {
         Some(no_browser) => pi_plugins::auth_login(&provider, no_browser).await?,
         None => pi_plugins::auth_logout(&provider).await?,
@@ -216,6 +261,62 @@ async fn run_auth(command: PluginAuthCommand) -> anyhow::Result<()> {
         count,
         account.json,
     )
+}
+
+fn interaction(
+    on_event: &mut dyn FnMut(Value) -> anyhow::Result<()>,
+) -> anyhow::Result<pi_plugins::Interaction<'_>> {
+    const MAX_REPLY: u64 = 64 * 1024;
+    let (send, replies) = mpsc::channel(32);
+    // A blocking read may still be waiting when the session ends. Keep it off
+    // Tokio's blocking pool so the runtime can shut down with stdin still open.
+    std::thread::Builder::new()
+        .name("pi-prompt-input".into())
+        .spawn(move || {
+            let mut stdin = io::stdin().lock();
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                let reply = (|| {
+                    let count = (&mut stdin)
+                        .take(MAX_REPLY + 1)
+                        .read_until(b'\n', &mut line)?;
+                    if count == 0 {
+                        return Ok(None);
+                    }
+                    ensure!(
+                        count as u64 <= MAX_REPLY,
+                        "Pi prompt reply exceeds size limit"
+                    );
+                    Ok(Some(
+                        serde_json::from_slice::<Value>(&line)
+                            .context("invalid Pi prompt reply")?,
+                    ))
+                })();
+                match reply {
+                    Ok(Some(value)) => {
+                        if send.blocking_send(Ok(value)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = send.blocking_send(Err(error));
+                        break;
+                    }
+                    Ok(None) => break,
+                }
+            }
+        })
+        .context("read Pi prompt replies from stdin")?;
+    Ok(pi_plugins::Interaction { replies, on_event })
+}
+
+fn print_event(event: Value) -> anyhow::Result<()> {
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &event)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn print_status(status: pi_plugins::Status) {

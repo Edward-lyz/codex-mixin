@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
-use crate::pi_plugins::{Bridge, is_managed_provider};
+use crate::pi_plugins::{SHARED_BRIDGE, is_managed_provider};
 use crate::provider::auth::ducx::DucxRuntime;
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
@@ -65,7 +65,6 @@ pub(crate) struct UpstreamAccess {
     responses_websockets: Arc<tokio::sync::Mutex<responses_websocket::ResponsesWebSockets>>,
     proxy_selection: crate::platform::proxy::ProxySelection,
     claude_code: Arc<claude_code::ClaudeCodeSessions>,
-    pi_bridge: Arc<Bridge>,
     pi_bridge_client: Arc<tokio::sync::OnceCell<Client>>,
 }
 
@@ -87,7 +86,6 @@ impl UpstreamAccess {
             responses_websockets: Arc::default(),
             proxy_selection,
             claude_code: Arc::default(),
-            pi_bridge: Arc::default(),
             pi_bridge_client: Arc::default(),
         }
     }
@@ -232,7 +230,7 @@ impl UpstreamAccess {
                 "the managed Pi provider uses Chat Completions".to_owned(),
             ));
         }
-        let endpoint = self.pi_bridge.endpoint().await.map_err(|error| {
+        let endpoint = SHARED_BRIDGE.endpoint().await.map_err(|error| {
             tracing::warn!(
                 error = %crate::error::format_error_chain(error.as_ref()),
                 "could not start the isolated Pi bridge"

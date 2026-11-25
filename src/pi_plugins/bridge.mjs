@@ -2,8 +2,10 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { getOpenCodeSessionHeaders, normalizeContext } from '@earendil-works/pi-ai';
+import { isModelType } from '@earendil-works/pi-ai/utils/model-operations';
 import {
-  DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, VERSION,
+  CredentialSynchronizationError, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, VERSION,
   createAgentSessionFromServices,
 } from '@earendil-works/pi-coding-agent';
 
@@ -85,12 +87,23 @@ function providerDisplayName(providerId) {
   return providerId;
 }
 
+function pluginStreamConfig(model) {
+  const config = modelRuntime.getRegisteredProviderConfig(model.provider);
+  return config?.api === model.api && typeof config?.streamSimple === 'function' ? config : undefined;
+}
+
+function authStatus(provider, model) {
+  if (modelRuntime.getProviderAuthStatus(provider).configured) return 'configured';
+  const managed = model ? pluginStreamConfig(model) : modelRuntime.getModels(provider).some(pluginStreamConfig);
+  return managed ? 'plugin_managed' : 'not_configured';
+}
+
 function providerDetails() {
   return providerIds().map(provider => ({
     id: provider,
     display_name: providerDisplayName(provider),
     package: providerMeta.get(provider)?.package ?? null,
-    auth_status: modelRuntime.getProviderAuthStatus(provider).configured ? 'configured' : 'not_configured',
+    auth_status: authStatus(provider),
     using_oauth: modelRuntime.isUsingOAuth(provider),
     model_count: modelRuntime.getModels(provider).length,
   }));
@@ -318,6 +331,21 @@ function streamEvent(event, calls) {
   }
 }
 
+async function streamModel(model, context, options) {
+  if (isModelType(model, 'chat') && authStatus(model.provider, model) === 'plugin_managed' &&
+      !await modelRuntime.getAuth(model, { signal: options.signal })) {
+    // A matching extension stream may resolve its own credentials. The composed
+    // provider dispatches this API to that stream without inventing a Pi key.
+    const { transformHeaders, ...providerOptions } = options;
+    const { headers } = modelRuntime.getCompatibilityRequestConfig(model);
+    providerOptions.headers = await transformHeaders({
+      ...getOpenCodeSessionHeaders(model, options.sessionId), ...headers,
+    });
+    return modelRuntime.getProvider(model.provider).streamSimple(model, normalizeContext(context), providerOptions);
+  }
+  return modelRuntime.streamSimple(model, context, options);
+}
+
 async function complete(request, response) {
   const body = await readJson(request, 32 * 1024 * 1024);
   const model = findModel(body.model);
@@ -325,7 +353,7 @@ async function complete(request, response) {
   const abort = () => signal.abort();
   response.on('close', abort);
   try {
-    const stream = modelRuntime.streamSimple(model, contextFor(body, model), requestOptions(body, signal.signal, request));
+    const stream = await streamModel(model, contextFor(body, model), requestOptions(body, signal.signal, request));
     const reply = { id: `chatcmpl-pi-${randomUUID()}`, created: Math.floor(Date.now() / 1000), model: body.model };
     const calls = new Map();
     const write = async data => {
@@ -363,31 +391,158 @@ async function complete(request, response) {
   }
 }
 
+const sessions = new Map();
 let pendingCommand = false;
-async function runCommand(request, response) {
-  const { name, args = '' } = await readJson(request, 16_384);
-  const command = typeof name === 'string' && runner.getCommand(name);
-  if (!command) throw httpError(404, 'Pi command was not found');
-  if (typeof args !== 'string') throw httpError(400, 'Pi command arguments must be a string');
+
+async function interactiveSession(response, id, action, failureMessage) {
+  if (typeof id !== 'string' || !/^[\da-f-]{36}$/.test(id)) throw httpError(400, 'Invalid Pi session ID');
+  if (sessions.size > 0) throw httpError(409, 'Another Pi interaction is in progress');
+  const controller = new AbortController();
+  const pending = new Map();
+  sessions.set(id, pending);
+  response.once('close', () => controller.abort());
+  response.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' });
+  response.flushHeaders();
+
+  const send = event => {
+    if (controller.signal.aborted) return;
+    const line = JSON.stringify(event);
+    if (Buffer.byteLength(line) >= 1024 * 1024 || response.writableLength > 1024 * 1024) {
+      controller.abort();
+      response.destroy();
+      return;
+    }
+    response.write(`${line}\n`);
+  };
+  const ask = (prompt, signals = []) => {
+    const signal = AbortSignal.any([controller.signal, ...signals]);
+    if (signal.aborted) return Promise.resolve(undefined);
+    if (pending.size >= 32) throw httpError(422, 'Too many pending Pi prompts');
+    const promptId = randomUUID();
+    return new Promise(resolve => {
+      const finish = value => {
+        pending.delete(promptId);
+        signal.removeEventListener('abort', cancel);
+        resolve(value);
+      };
+      const cancel = () => {
+        finish(undefined);
+        send({ type: 'prompt_cancelled', id: promptId });
+      };
+      pending.set(promptId, { finish, options: prompt.options });
+      signal.addEventListener('abort', cancel, { once: true });
+      send({ type: 'prompt', id: promptId, prompt });
+    });
+  };
+
+  try {
+    const result = await action({ signal: controller.signal, ask, send });
+    send({ type: 'result', ...result });
+  } catch (error) {
+    send({ type: 'error', message: error.status ? error.message : failureMessage,
+      committed: error instanceof CredentialSynchronizationError });
+  } finally {
+    controller.abort();
+    sessions.delete(id);
+    response.end();
+  }
+}
+
+async function answerPrompt(request, response) {
+  const { session, id, value, cancel } = await readJson(request, 64 * 1024);
+  const prompt = sessions.get(session)?.get(id);
+  // The plugin can close a prompt while the user's response is in flight.
+  if (!prompt) {
+    respond(response, 200, { accepted: false });
+    return;
+  }
+  if (cancel !== true && (typeof value !== 'string' ||
+      (prompt.options && !prompt.options.some(option => option.id === value)))) {
+    throw httpError(400, 'Invalid Pi prompt answer');
+  }
+  prompt.finish(cancel === true ? undefined : value);
+  respond(response, 200, { accepted: true });
+}
+
+async function login(request, response) {
+  const { provider, session: id } = await readJson(request, 16_384);
+  if (!providerIds().includes(provider)) throw httpError(404, 'Pi plugin provider was not found');
+  const auth = modelRuntime.getProvider(provider)?.auth;
+  const type = auth?.oauth ? 'oauth' : auth?.apiKey?.login ? 'api_key' : undefined;
+  if (!type) throw httpError(422, 'This Pi provider does not support interactive login');
+  await interactiveSession(response, id, async ({ signal, ask, send }) => {
+    await modelRuntime.login(provider, type, {
+      signal,
+      prompt: async ({ signal: promptSignal, ...prompt }) => {
+        const value = await ask(prompt, promptSignal ? [promptSignal] : []);
+        if (value === undefined) throw httpError(422, 'Pi sign-in was cancelled');
+        return value;
+      },
+      notify: event => {
+        if (event.type === 'device_code') {
+          send({ type: event.type, user_code: event.userCode, verification_uri: event.verificationUri });
+        } else {
+          send(event);
+        }
+      },
+    }, { getDeviceId: () => settingsManager.getOrCreateDeviceId() });
+    await modelRuntime.settleCredentialWrites();
+    return { provider };
+  }, 'Pi provider sign-in failed');
+}
+
+async function executeCommand(name, args, command, interaction) {
   if (pendingCommand) throw httpError(409, 'Another Pi command is in progress');
   pendingCommand = true;
   const notifications = [];
   try {
     const context = runner.createCommandContext();
     const commandUI = Object.create(context.ui);
-    for (const method of ['select', 'confirm', 'input', 'custom', 'editor']) {
-      commandUI[method] = async () => {
-        throw httpError(422, 'Pi command requires interactive UI');
-      };
-    }
+    const ask = (prompt, options) => {
+      if (!interaction) throw httpError(422, 'Pi command requires interactive UI; rerun with --events');
+      const signals = [];
+      if (options?.signal) signals.push(options.signal);
+      if (Number.isSafeInteger(options?.timeout) && options.timeout >= 0 && options.timeout <= 0xffffffff) {
+        signals.push(AbortSignal.timeout(options.timeout));
+      }
+      return interaction.ask(prompt, signals);
+    };
+    commandUI.select = async (message, options, dialog) => ask({
+      type: 'select', message, options: options.map(value => ({ id: value, label: value })),
+    }, dialog);
+    commandUI.confirm = async (title, message, dialog) => (await ask({
+      type: 'confirm', message: [title, message].filter(Boolean).join('\n'),
+      options: [{ id: 'true', label: 'Yes' }, { id: 'false', label: 'No' }],
+    }, dialog)) === 'true';
+    commandUI.input = async (message, placeholder, dialog) => ask({ type: 'text', message, placeholder }, dialog);
+    commandUI.editor = async (message, prefill) => ask({ type: 'editor', message, prefill });
+    commandUI.custom = async () => { throw httpError(422, 'Pi command requires a custom terminal UI'); };
     commandUI.notify = (message, type = 'info') => {
-      if (notifications.length < 32) notifications.push({ type, message: String(message).slice(0, 4096) });
+      if (notifications.length >= 32) return;
+      const text = String(message).slice(0, 4096);
+      notifications.push({ type, message: text });
+      interaction?.send({ type: 'notify', level: type, message: text });
     };
     Object.defineProperty(context, 'ui', { value: commandUI });
+    if (interaction) Object.defineProperty(context, 'hasUI', { value: true });
     await command.handler(args, context);
-    respond(response, 200, { name, notifications });
+    await modelRuntime.settleCredentialWrites();
+    return { name, notifications };
   } finally {
     pendingCommand = false;
+  }
+}
+
+async function runCommand(request, response) {
+  const { name, args = '', session: id } = await readJson(request, 16_384);
+  const command = typeof name === 'string' && runner.getCommand(name);
+  if (!command) throw httpError(404, 'Pi command was not found');
+  if (typeof args !== 'string') throw httpError(400, 'Pi command arguments must be a string');
+  if (id === undefined) {
+    respond(response, 200, await executeCommand(name, args, command));
+  } else {
+    await interactiveSession(response, id, interaction => executeCommand(name, args, command, interaction),
+      'Pi command failed');
   }
 }
 
@@ -419,7 +574,7 @@ const server = createServer(async (request, response) => {
           name: model.name,
           context_window: model.contextWindow, max_tokens: model.maxTokens, reasoning: model.reasoning,
           supports_image: model.input.includes('image'),
-          auth_status: modelRuntime.getProviderAuthStatus(model.provider).configured ? 'configured' : 'not_configured',
+          auth_status: authStatus(model.provider, model),
           using_oauth: modelRuntime.isUsingOAuth(model.provider),
         })) });
         break;
@@ -434,6 +589,12 @@ const server = createServer(async (request, response) => {
         break;
       case 'POST /admin/commands/run':
         await runCommand(request, response);
+        break;
+      case 'POST /admin/auth/login':
+        await login(request, response);
+        break;
+      case 'POST /admin/interaction/answer':
+        await answerPrompt(request, response);
         break;
       default:
         respond(response, 404, { error: { message: 'Pi bridge route was not found' } });

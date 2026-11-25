@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
@@ -72,6 +72,9 @@ pub(crate) struct BridgeEndpoint {
 pub(crate) struct Bridge {
     running: Mutex<Option<RunningBridge>>,
 }
+
+/// One bridge per process: gateway reloads reuse it, plugin changes restart it via `invalidate`.
+pub(crate) static SHARED_BRIDGE: LazyLock<Bridge> = LazyLock::new(Bridge::default);
 
 struct RunningBridge {
     generation: Option<String>,

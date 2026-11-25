@@ -134,15 +134,18 @@ plugins.remove:
 plugins.provider_section:
   en: "Provider Accounts"
   zh-CN: "服务商账号"
-plugins.copy_login:
-  en: "Copy Login Command"
-  zh-CN: "复制登录命令"
-plugins.login_copied:
-  en: "Login command copied. Run it in your terminal."
-  zh-CN: "已复制登录命令，请在终端中运行。"
-plugins.login_copied_powershell:
-  en: "Login command copied. Run it in PowerShell."
-  zh-CN: "已复制登录命令，请在 PowerShell 中运行。"
+plugins.login:
+  en: "Sign In"
+  zh-CN: "登录"
+plugins.login_title:
+  en: "Sign in to %{provider}"
+  zh-CN: "登录 %{provider}"
+plugins.login_done:
+  en: "Signed in to %{provider}. Synced models: %{count}."
+  zh-CN: "已登录 %{provider}，同步了 %{count} 个模型。"
+plugins.copy_code:
+  en: "Copy Code"
+  zh-CN: "复制验证码"
 plugins.logout:
   en: "Log Out"
   zh-CN: "退出登录"
@@ -164,6 +167,33 @@ plugins.command_output:
 plugins.command_no_output:
   en: "The command completed without output."
   zh-CN: "命令已完成，没有输出。"
+plugins.command_completed:
+  en: "Command completed."
+  zh-CN: "命令已完成。"
+plugins.operation_running:
+  en: "Waiting for the plugin…"
+  zh-CN: "正在等待插件响应…"
+plugins.operation_cancelled:
+  en: "Operation cancelled."
+  zh-CN: "操作已取消。"
+plugins.stop_operation:
+  en: "Stop Operation"
+  zh-CN: "停止操作"
+plugins.missing_result:
+  en: "The CLI did not return the expected result."
+  zh-CN: "CLI 未返回预期的结果。"
+plugins.reply_failed:
+  en: "Could not send the answer to the plugin."
+  zh-CN: "无法将回答发送给插件。"
+plugins.confirm:
+  en: "Confirm"
+  zh-CN: "确认"
+plugins.submit:
+  en: "Submit"
+  zh-CN: "提交"
+plugins.close:
+  en: "Close"
+  zh-CN: "关闭"
 plugins.market_section:
   en: "Pi Package Marketplace"
   zh-CN: "Pi 插件市场"
@@ -182,6 +212,12 @@ plugins.manage:
 plugins.back:
   en: "Back"
   zh-CN: "返回"
+plugins.overview:
+  en: "Overview"
+  zh-CN: "概览"
+plugins.overview_version:
+  en: "Version %{version}"
+  zh-CN: "版本 %{version}"
 plugins.package_summary:
   en: "%{providers} providers · %{models} models · %{commands} commands"
   zh-CN: "%{providers} 个服务商 · %{models} 个模型 · %{commands} 个命令"
@@ -191,6 +227,15 @@ plugins.open_provider:
 plugins.not_signed_in:
   en: "Not signed in"
   zh-CN: "未登录"
+plugins.signed_in:
+  en: "Signed in"
+  zh-CN: "已登录"
+plugins.auth_managed:
+  en: "Managed by plugin"
+  zh-CN: "由插件管理"
+plugins.auth_unknown:
+  en: "Unknown"
+  zh-CN: "登录状态未知"
 plugins.model_count:
   en: "%{count} models"
   zh-CN: "%{count} 个模型"

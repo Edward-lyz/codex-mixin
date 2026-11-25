@@ -7,9 +7,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task};
+use serde_json::Value;
+use smol::channel::{Receiver, Sender};
 
 use crate::cli::{Cli, CliError, CliResult, Progress, Secret};
-use crate::model::{Autostart, Interface, PluginData, ProviderList, QuotaEntry, ServiceStatus};
+use crate::model::{
+    Autostart, Interface, PluginData, PluginEvent, PluginEventResult, ProviderList, QuotaEntry,
+    ServiceStatus,
+};
 use crate::startup;
 
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(20);
@@ -415,10 +420,7 @@ impl Store {
             .await;
             drop(progress_task);
             this.update(cx, |store, cx| {
-                store.running.retain(|(id, _, _)| *id != change_id);
-                store.revision += 1;
-                store.refresh_status(cx);
-                store.refresh_providers(cx);
+                store.finish_change(change_id, cx);
                 cx.emit(StoreEvent::ChangeFinished {
                     label,
                     result: result.clone(),
@@ -428,6 +430,52 @@ impl Store {
             .ok();
             result
         })
+    }
+
+    pub(crate) fn run_plugin_events(
+        &mut self,
+        label: SharedString,
+        args: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> (
+        Sender<Value>,
+        Receiver<PluginEvent>,
+        Task<CliResult<PluginEventResult>>,
+    ) {
+        let change_id = self.next_change;
+        self.next_change += 1;
+        self.running.push((change_id, label, None));
+        cx.notify();
+
+        let cli = self.cli.clone();
+        let (reply_sender, replies) = smol::channel::bounded(8);
+        let (event_sender, events) = smol::channel::bounded(256);
+        let task = cx.spawn(async move |this, cx| {
+            let result = cli_thread(move || {
+                let stream = event_sender.clone();
+                let result = cli.plugin_events(&args, replies, move |event| {
+                    stream
+                        .send_blocking(event)
+                        .map_err(|_| CliError::new(rust_i18n::t!("plugins.operation_cancelled")))
+                });
+                event_sender.close();
+                result
+            })
+            .await;
+            let _ = this.update(cx, |store, cx| {
+                store.finish_change(change_id, cx);
+                cx.notify();
+            });
+            result
+        });
+        (reply_sender, events, task)
+    }
+
+    fn finish_change(&mut self, change_id: u64, cx: &mut Context<Self>) {
+        self.running.retain(|(id, _, _)| *id != change_id);
+        self.revision += 1;
+        self.refresh_status(cx);
+        self.refresh_providers(cx);
     }
 }
 

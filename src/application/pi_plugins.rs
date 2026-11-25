@@ -9,12 +9,15 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow, ensure};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 
 use crate::application::error::OperationError;
 use crate::pi_plugins::{
-    self, Bridge, NPM_REGISTRY, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID, PI_PACKAGE,
-    PI_VERSION, is_managed_provider,
+    self, NPM_REGISTRY, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID, PI_PACKAGE, PI_VERSION,
+    SHARED_BRIDGE, is_managed_provider,
 };
 use crate::platform::{self, agent_cli};
 use crate::provider::{
@@ -25,7 +28,24 @@ use crate::provider::{
 mod market;
 pub use market::{MarketPackage, search};
 
-static SHARED_BRIDGE: LazyLock<Bridge> = LazyLock::new(Bridge::default);
+const INTERACTION_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const MAX_INTERACTION_LINE: usize = 1024 * 1024;
+
+/// Structured input and progress for a single CLI-driven Pi interaction.
+pub struct Interaction<'a> {
+    pub replies: mpsc::Receiver<anyhow::Result<Value>>,
+    pub on_event: &'a mut dyn FnMut(Value) -> anyhow::Result<()>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub homepage: Option<String>,
+    #[serde(skip_deserializing)]
+    pub readme: Option<String>,
+}
 
 #[derive(Serialize)]
 pub struct Status {
@@ -340,7 +360,7 @@ pub async fn auth_login(provider: &str, no_browser: bool) -> Result<usize, Opera
         .context("route isolated Pi sign-in prompts to stderr")
         .map_err(before_commit)?;
     command.kill_on_drop(true);
-    let status = tokio::time::timeout(Duration::from_secs(15 * 60), command.status())
+    let status = tokio::time::timeout(INTERACTION_TIMEOUT, command.status())
         .await
         .context("isolated Pi sign-in timed out")
         .map_err(before_commit)?
@@ -352,6 +372,25 @@ pub async fn auth_login(provider: &str, no_browser: bool) -> Result<usize, Opera
         )));
     }
     after_change(&root).await
+}
+
+pub async fn auth_login_interactive(
+    provider: &str,
+    interaction: Interaction<'_>,
+) -> Result<usize, OperationError> {
+    let root = pi_plugins::root().map_err(before_commit)?;
+    let _lock = operation_lock(&root).await.map_err(before_commit)?;
+    require_registered_provider(provider)
+        .await
+        .map_err(before_commit)?;
+    let result = bridge_interaction(
+        "/admin/auth/login",
+        json!({ "provider": provider }),
+        interaction,
+    )
+    .await
+    .map_err(before_commit)?;
+    finish_interaction(&root, &result).await
 }
 
 pub async fn auth_logout(provider: &str) -> Result<usize, OperationError> {
@@ -403,6 +442,67 @@ pub async fn list_commands() -> anyhow::Result<Vec<PluginCommand>> {
         .await?)
 }
 
+pub async fn info(spec: &str) -> anyhow::Result<PluginInfo> {
+    const README_LIMIT: u64 = 64 * 1024;
+    let source = npm_source(spec)?;
+    let name = npm_name(&source);
+    let root = pi_plugins::root()?;
+    ensure!(
+        installed_sources(&root)
+            .await?
+            .iter()
+            .any(|source| npm_name(source) == name),
+        "Pi package {name} is not installed"
+    );
+    let directory = root.join("agent/npm/node_modules").join(name);
+    let mut manifest = Vec::new();
+    tokio::fs::File::open(directory.join("package.json"))
+        .await
+        .with_context(|| format!("open installed Pi package {name}"))?
+        .take(MAX_INTERACTION_LINE as u64 + 1)
+        .read_to_end(&mut manifest)
+        .await?;
+    ensure!(
+        manifest.len() <= MAX_INTERACTION_LINE,
+        "Pi package manifest exceeds size limit"
+    );
+    let mut info: PluginInfo =
+        serde_json::from_slice(&manifest).context("read Pi package manifest")?;
+    ensure!(
+        info.name == name,
+        "Pi package manifest does not match {name}"
+    );
+
+    let mut entries = tokio::fs::read_dir(&directory).await?;
+    let mut readme = None;
+    while let Some(entry) = entries.next_entry().await? {
+        let filename = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        let rank = match filename.as_str() {
+            "readme.md" => 0,
+            "readme.markdown" => 1,
+            "readme" => 2,
+            "readme.txt" => 3,
+            _ => continue,
+        };
+        let candidate = (rank, entry.path());
+        if readme.as_ref().is_none_or(|current| &candidate < current)
+            && entry.file_type().await?.is_file()
+        {
+            readme = Some(candidate);
+        }
+    }
+    if let Some((_, path)) = readme {
+        let mut text = Vec::new();
+        tokio::fs::File::open(path)
+            .await?
+            .take(README_LIMIT)
+            .read_to_end(&mut text)
+            .await?;
+        info.readme = Some(String::from_utf8_lossy(&text).into_owned());
+    }
+    Ok(info)
+}
+
 pub async fn run_command(name: &str, args: &str) -> anyhow::Result<serde_json::Value> {
     let root = pi_plugins::root()?;
     let _lock = operation_lock(&root).await?;
@@ -413,14 +513,136 @@ pub async fn run_command(name: &str, args: &str) -> anyhow::Result<serde_json::V
         .json(&serde_json::json!({"name": name, "args": args}))
         .send()
         .await?;
-    ensure!(
-        response.status() != reqwest::StatusCode::UNPROCESSABLE_ENTITY,
-        "Pi command requires interactive UI"
-    );
-    let result = response.error_for_status()?.json().await?;
+    let result = checked_bridge_response(response).await?.json().await?;
     pi_plugins::invalidate(&root).await?;
     let _ = sync_models(&root).await;
     Ok(result)
+}
+
+pub async fn run_command_interactive(
+    name: &str,
+    args: &str,
+    interaction: Interaction<'_>,
+) -> Result<Value, OperationError> {
+    let root = pi_plugins::root().map_err(before_commit)?;
+    let _lock = operation_lock(&root).await.map_err(before_commit)?;
+    let result = bridge_interaction(
+        "/admin/commands/run",
+        json!({ "name": name, "args": args }),
+        interaction,
+    )
+    .await
+    .map_err(before_commit)?;
+    finish_interaction(&root, &result).await?;
+    Ok(result)
+}
+
+async fn finish_interaction(root: &Path, result: &Value) -> Result<usize, OperationError> {
+    if result["committed"].as_bool() != Some(true) {
+        return after_change(root).await;
+    }
+    pi_plugins::invalidate(root)
+        .await
+        .map_err(|source| OperationError::AfterCommit {
+            stage: "Pi runtime invalidation",
+            source,
+        })?;
+    Err(OperationError::AfterCommit {
+        stage: "Pi credential synchronization",
+        source: anyhow!("Pi stored the credentials but could not refresh the provider"),
+    })
+}
+
+async fn checked_bridge_response(response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+    if let Err(error) = response.error_for_status_ref() {
+        let body = response.json::<Value>().await.unwrap_or(Value::Null);
+        if let Some(message) = body["error"]["message"].as_str() {
+            return Err(anyhow!("{message}"));
+        }
+        return Err(error.into());
+    }
+    Ok(response)
+}
+
+async fn bridge_interaction(
+    path: &str,
+    mut request: Value,
+    mut interaction: Interaction<'_>,
+) -> anyhow::Result<Value> {
+    let endpoint = SHARED_BRIDGE.endpoint().await?;
+    let http = bridge_http()?;
+    let session = uuid::Uuid::new_v4().to_string();
+    request["session"] = json!(session);
+    let mut response = checked_bridge_response(
+        http.post(format!("{}{path}", endpoint.base_url))
+            .bearer_auth(&endpoint.token)
+            .timeout(INTERACTION_TIMEOUT)
+            .json(&request)
+            .send()
+            .await?,
+    )
+    .await?;
+    let mut line = Vec::new();
+    let mut prompts = HashSet::new();
+    let mut input_open = true;
+    loop {
+        tokio::select! {
+            reply = interaction.replies.recv(), if input_open => {
+                input_open = reply.is_some();
+                if let Some(reply) = reply {
+                    let mut reply = reply?;
+                    let id = reply["id"].as_str().context("Pi reply requires a prompt ID")?;
+                    if !prompts.remove(id) {
+                        continue;
+                    }
+                    ensure!(
+                        reply["cancel"].as_bool() == Some(true) || reply["value"].is_string(),
+                        "Pi reply requires a value or cancellation",
+                    );
+                    reply["session"] = json!(session);
+                    checked_bridge_response(
+                        http.post(format!("{}/admin/interaction/answer", endpoint.base_url))
+                            .bearer_auth(&endpoint.token)
+                            .json(&reply)
+                            .send()
+                            .await?,
+                    )
+                    .await?;
+                } else {
+                    ensure!(prompts.is_empty(), "Pi interaction input closed during a prompt");
+                }
+            }
+            chunk = response.chunk() => {
+                let chunk = chunk?.context("Pi bridge closed the interaction before reporting a result")?;
+                for part in chunk.split_inclusive(|byte| *byte == b'\n') {
+                    ensure!(line.len() + part.len() <= MAX_INTERACTION_LINE, "Pi interaction event exceeds size limit");
+                    line.extend_from_slice(part);
+                    if !part.ends_with(b"\n") {
+                        continue;
+                    }
+                    let event = serde_json::from_slice::<Value>(&line).context("decode Pi interaction event")?;
+                    line.clear();
+                    match event["type"].as_str() {
+                        Some("result") => return Ok(event),
+                        Some("error") if event["committed"].as_bool() == Some(true) => return Ok(event),
+                        Some("error") => return Err(anyhow!("{}", event["message"].as_str().unwrap_or("Pi interaction failed"))),
+                        Some("prompt") => {
+                            ensure!(input_open, "Pi interaction input closed during a prompt");
+                            let id = event["id"].as_str().context("Pi bridge prompt did not include an ID")?;
+                            prompts.insert(id.to_owned());
+                        }
+                        Some("prompt_cancelled") => {
+                            if let Some(id) = event["id"].as_str() {
+                                prompts.remove(id);
+                            }
+                        }
+                        _ => {}
+                    }
+                    (interaction.on_event)(event)?;
+                }
+            }
+        }
+    }
 }
 
 pub async fn sync() -> anyhow::Result<usize> {
@@ -430,9 +652,7 @@ pub async fn sync() -> anyhow::Result<usize> {
 pub(crate) async fn sync_with_changes() -> anyhow::Result<(usize, ModelDiscoveryChanges)> {
     let root = pi_plugins::root()?;
     let _lock = operation_lock(&root).await?;
-    let result = sync_models(&root).await?;
-    pi_plugins::invalidate(&root).await?;
-    Ok(result)
+    sync_models(&root).await
 }
 
 async fn after_change(root: &Path) -> Result<usize, OperationError> {

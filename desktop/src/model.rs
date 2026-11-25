@@ -38,7 +38,26 @@ pub struct PluginProvider {
     #[serde(default)]
     pub model_count: usize,
     #[serde(default)]
-    pub auth_status: String,
+    pub auth_status: PluginAuthStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginAuthStatus {
+    Configured,
+    NotConfigured,
+    PluginManaged,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+pub struct PluginInfo {
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub homepage: Option<String>,
+    pub readme: Option<gpui_kit::SharedString>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -75,15 +94,84 @@ pub struct PluginData {
 }
 
 #[derive(Deserialize)]
-pub struct PluginCommandOutput {
-    pub notifications: Vec<PluginCommandNotification>,
-}
-
-#[derive(Deserialize)]
 pub struct PluginCommandNotification {
     #[serde(rename = "type")]
     pub kind: String,
+    pub message: gpui_kit::SharedString,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PluginEvent {
+    AuthUrl {
+        url: String,
+        instructions: Option<String>,
+    },
+    DeviceCode {
+        user_code: String,
+        verification_uri: String,
+    },
+    #[serde(alias = "info")]
+    Progress {
+        message: String,
+    },
+    Notify {
+        level: String,
+        message: String,
+    },
+    Prompt {
+        id: String,
+        prompt: PluginPrompt,
+    },
+    PromptCancelled {
+        id: String,
+    },
+    Result {
+        #[serde(flatten)]
+        output: PluginEventResult,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum PluginEventResult {
+    Login {
+        provider: String,
+        synced_models: usize,
+    },
+    Command {
+        name: String,
+        notifications: Vec<PluginCommandNotification>,
+    },
+}
+
+#[derive(Deserialize)]
+pub struct PluginPrompt {
+    #[serde(rename = "type")]
+    pub kind: PluginPromptKind,
     pub message: String,
+    pub placeholder: Option<String>,
+    pub prefill: Option<String>,
+    #[serde(default)]
+    pub options: Vec<PluginPromptOption>,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPromptKind {
+    Text,
+    Secret,
+    Select,
+    ManualCode,
+    Confirm,
+    Editor,
+}
+
+#[derive(Deserialize)]
+pub struct PluginPromptOption {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

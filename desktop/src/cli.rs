@@ -2,7 +2,7 @@
 //! CLI state itself: every query and change goes through `--no-tui` commands
 //! whose JSON output and structured errors form the contract.
 
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::model::{PluginData, PluginStatus};
+use crate::model::{PluginData, PluginEvent, PluginEventResult, PluginStatus};
 
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(90);
 const CHANGE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const PLUGIN_LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Daemons such as `service start` inherit the pipes; once the CLI exits its
 /// own output is complete after this drain window.
@@ -137,23 +138,79 @@ impl Cli {
         })
     }
 
-    /// An interactive command for the bundled CLI, including on app-only installs.
-    pub fn plugin_login_command(&self, provider: &str) -> String {
-        let argument = format!("--provider={provider}");
-        let path = self.executable.to_string_lossy();
-        if cfg!(windows) {
-            format!(
-                "& '{}' plugin auth login '{}'",
-                path.replace('\'', "''"),
-                argument.replace('\'', "''")
-            )
-        } else {
-            format!(
-                "'{}' plugin auth login '{}'",
-                path.replace('\'', "'\\''"),
-                argument.replace('\'', "'\\''")
-            )
+    pub(crate) fn plugin_events(
+        &self,
+        args: &[String],
+        replies: smol::channel::Receiver<Value>,
+        on_event: impl FnMut(PluginEvent) -> CliResult<()> + Send + 'static,
+    ) -> CliResult<PluginEventResult> {
+        let _gate = self
+            .change_gate
+            .lock()
+            .map_err(|_| CliError::new(rust_i18n::t!("cli.gate_poisoned")))?;
+        if replies.is_closed() {
+            return Err(CliError::new(rust_i18n::t!("plugins.operation_cancelled")));
         }
+        let timeout = if args
+            .iter()
+            .map(String::as_str)
+            .take(3)
+            .eq(["plugin", "auth", "login"])
+        {
+            PLUGIN_LOGIN_TIMEOUT
+        } else {
+            CHANGE_TIMEOUT
+        };
+        let mut command = self.command(args)?;
+        command
+            .arg("--events")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        hide_console_window(&mut command);
+        let mut child = command.spawn().map_err(|error| {
+            CliError::new(rust_i18n::t!("cli.spawn_failed", error = error.to_string()))
+        })?;
+        let stderr = PipeReader::spawn(child.stderr.take(), None, Vec::new());
+        let stdout = child.stdout.take();
+        let stdin = child.stdin.take();
+        let writer_replies = replies.clone();
+        thread::spawn(move || {
+            let Some(mut stdin) = stdin else { return };
+            while let Ok(reply) = writer_replies.recv_blocking() {
+                if writer_replies.is_closed()
+                    || serde_json::to_writer(&mut stdin, &reply).is_err()
+                    || stdin.write_all(b"\n").is_err()
+                    || stdin.flush().is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let (send_result, result) = mpsc::sync_channel(1);
+        let reader_replies = replies.clone();
+        thread::spawn(move || {
+            let result = read_plugin_events(stdout, on_event);
+            if result.is_err() {
+                reader_replies.close();
+            }
+            let _ = send_result.send(result);
+        });
+        let status = wait_with_deadline(&mut child, timeout, false, || replies.is_closed());
+        replies.close();
+        let output = result.recv_timeout(PIPE_DRAIN);
+        if let Ok(Err(error)) = output {
+            return Err(error);
+        }
+        let status = status?;
+        if !status.success() {
+            return Err(decode_error(&stderr.collect()?, "", status.code()));
+        }
+        output
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+            .ok_or_else(|| CliError::new(rust_i18n::t!("plugins.missing_result")))
     }
 
     /// Runs a configuration change. With `apply`, a successful change is
@@ -254,6 +311,17 @@ impl Cli {
         read_only: bool,
         progress: Option<Progress>,
     ) -> CliResult<String> {
+        let mut command = self.command(args)?;
+        if read_only && std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
+            command.env("TOKIO_WORKER_THREADS", QUERY_WORKER_THREADS);
+        }
+        for secret in secrets {
+            command.env(secret.variable, &secret.value);
+        }
+        capture(&mut command, secrets, timeout, read_only, progress)
+    }
+
+    fn command(&self, args: &[String]) -> CliResult<Command> {
         let mut command = Command::new(&self.executable);
         command.arg("--no-tui").arg("--json-errors").args(args);
         #[cfg(target_os = "macos")]
@@ -272,13 +340,7 @@ impl Cli {
         if let Some(directory) = self.executable.parent() {
             command.current_dir(directory);
         }
-        if read_only && std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
-            command.env("TOKIO_WORKER_THREADS", QUERY_WORKER_THREADS);
-        }
-        for secret in secrets {
-            command.env(secret.variable, &secret.value);
-        }
-        capture(&mut command, secrets, timeout, read_only, progress)
+        Ok(command)
     }
 }
 
@@ -308,7 +370,7 @@ fn capture(
     })?;
     let stdout = PipeReader::spawn(child.stdout.take(), None, Vec::new());
     let stderr = PipeReader::spawn(child.stderr.take(), progress, secrets.to_vec());
-    let status = wait_with_deadline(&mut child, timeout, read_only)?;
+    let status = wait_with_deadline(&mut child, timeout, read_only, || false)?;
     let output = redact(&stdout.collect()?, secrets);
     let errors = redact(&stderr.collect()?, secrets);
     if status.success() {
@@ -321,23 +383,74 @@ fn wait_with_deadline(
     child: &mut Child,
     timeout: Duration,
     read_only: bool,
+    cancelled: impl Fn() -> bool,
 ) -> CliResult<ExitStatus> {
-    let started = Instant::now();
+    let deadline = Instant::now() + timeout;
+    let mut cancel_deadline = None;
     loop {
+        if cancelled() {
+            cancel_deadline.get_or_insert_with(|| Instant::now() + PIPE_DRAIN);
+        }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
-            Ok(None) if started.elapsed() < timeout => thread::sleep(POLL_INTERVAL),
+            Ok(None)
+                if Instant::now() < cancel_deadline.map_or(deadline, |end| end.min(deadline)) =>
+            {
+                thread::sleep(POLL_INTERVAL);
+            }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                let key = if read_only {
+                let key = if cancel_deadline.is_some() {
+                    "plugins.operation_cancelled"
+                } else if read_only {
                     "cli.query_timeout"
                 } else {
                     "cli.change_timeout"
                 };
                 return Err(CliError::new(rust_i18n::t!(key)));
             }
-            Err(error) => return Err(CliError::new(error.to_string())),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CliError::new(error.to_string()));
+            }
+        }
+    }
+}
+
+fn read_plugin_events(
+    stdout: Option<impl Read>,
+    mut on_event: impl FnMut(PluginEvent) -> CliResult<()>,
+) -> CliResult<Option<PluginEventResult>> {
+    let Some(stdout) = stdout else {
+        return Ok(None);
+    };
+    let mut reader = BufReader::new(stdout.take((OUTPUT_LIMIT + 1) as u64));
+    let mut line = String::new();
+    let mut bytes = 0;
+    loop {
+        line.clear();
+        let count = reader
+            .read_line(&mut line)
+            .map_err(|error| CliError::new(error.to_string()))?;
+        if count == 0 {
+            return Ok(None);
+        }
+        bytes += count;
+        if bytes > OUTPUT_LIMIT {
+            return Err(CliError::new(rust_i18n::t!("cli.output_limit")));
+        }
+        let event = serde_json::from_str::<PluginEvent>(&line).map_err(|error| {
+            CliError::new(rust_i18n::t!(
+                "cli.invalid_json",
+                command = "plugin --events",
+                error = error.to_string()
+            ))
+        })?;
+        match event {
+            PluginEvent::Result { output } => return Ok(Some(output)),
+            event => on_event(event)?,
         }
     }
 }
