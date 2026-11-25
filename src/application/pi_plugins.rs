@@ -270,6 +270,35 @@ pub async fn remove(spec: &str) -> Result<usize, OperationError> {
     )
     .await
     .map_err(before_commit)?;
+    // Drop the package's providers right away so a failing model sync cannot
+    // leave them behind in the gateway configuration.
+    if crate::config::stored_config_path().is_file() {
+        let package = npm_name(&spec);
+        crate::config::mutate_stored_config(|config| {
+            let owned_by_package = |provider: &crate::provider::ProviderDefinition| {
+                is_managed_provider(provider)
+                    && provider
+                        .pi_plugin_package
+                        .as_deref()
+                        .is_some_and(|source| npm_name(source) == package)
+            };
+            if config
+                .providers
+                .iter()
+                .any(|provider| !owned_by_package(provider))
+            {
+                config
+                    .providers
+                    .retain(|provider| !owned_by_package(provider));
+                super::routing::disable_unavailable_routes(config)?;
+            }
+            Ok(())
+        })
+        .map_err(|source| OperationError::AfterCommit {
+            stage: "Pi provider cleanup",
+            source,
+        })?;
+    }
     after_change(&root).await
 }
 

@@ -1043,12 +1043,28 @@ pub(super) async fn start(
     let mut serve_config = config;
     let mut serve_listener = listener;
     let result = loop {
-        match serve_on_listener(serve_config, serve_listener, reload_receiver.clone()).await {
+        match serve_on_listener(
+            serve_config.clone(),
+            serve_listener,
+            reload_receiver.clone(),
+        )
+        .await
+        {
             Ok(ServeExit::Shutdown) => break Ok(()),
             Ok(ServeExit::Reload) => {
                 reload_receiver.borrow_and_update();
-                serve_config = GatewayConfig::from_stored_config()?;
-                serve_config.bind = actual_bind;
+                // An invalid saved config keeps the previous runtime state
+                // instead of stopping the gateway.
+                match GatewayConfig::from_stored_config() {
+                    Ok(mut reloaded) => {
+                        reloaded.bind = actual_bind;
+                        serve_config = reloaded;
+                    }
+                    Err(error) => tracing::error!(
+                        error = %format!("{error:#}"),
+                        "failed to reload stored configuration; keeping previous state"
+                    ),
+                }
                 serve_listener = bind_gateway_listener(actual_bind, false).await?;
                 save_runtime_metadata(&RuntimeMetadata {
                     pid,

@@ -13,7 +13,9 @@ pub(crate) const PI_BRIDGE_PLACEHOLDER_URL: &str = "http://127.0.0.1:0";
 
 pub fn is_managed_pi_provider(provider: &ProviderDefinition) -> bool {
     provider.base_url == PI_BRIDGE_PLACEHOLDER_URL
-        && (provider.id == PI_BRIDGE_PROVIDER_ID || provider.pi_provider_id.is_some())
+        && (provider.id == PI_BRIDGE_PROVIDER_ID
+            || provider.pi_provider_id.is_some()
+            || provider.pi_plugin_package.is_some())
 }
 
 pub fn is_auto_review_model_id(model_id: &str) -> bool {
