@@ -6,6 +6,7 @@ use crate::provider::ProviderModelSource;
 use crate::provider::ProviderPreset;
 use crate::provider::ProviderProtocol;
 use crate::provider::ProviderQuotaParser;
+use crate::provider::ProviderRegistry;
 use anyhow::{Context, anyhow};
 use serde::Deserialize;
 
@@ -55,6 +56,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_aws_bedrock_sigv4_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
+        drop_invalid_pi_plugin_providers(&mut parsed);
         parsed.apply_model_order();
         super::validate_cors_origins(&parsed.cors_allowed_origins)?;
         return Ok(parsed);
@@ -183,6 +185,43 @@ fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
                 let install = executable.parent()?.parent()?;
                 Some(install.join(crate::provider::auth::ducx::data_report_relative_path()))
             });
+    }
+}
+/// A broken plugin-provided provider must not take the gateway down. Drop it
+/// while loading so every reader and the next save see only valid providers;
+/// the next Pi plugin sync recreates providers that are still installed.
+fn drop_invalid_pi_plugin_providers(config: &mut StoredGatewayConfig) {
+    let is_plugin_provider = |provider: &crate::provider::ProviderDefinition| {
+        provider.pi_plugin_package.is_some() || provider.pi_provider_id.is_some()
+    };
+    config.providers.retain(|provider| {
+        if !is_plugin_provider(provider) {
+            return true;
+        }
+        match ProviderRegistry::new(vec![provider.clone()]) {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::warn!(
+                    provider = %provider.id,
+                    error = %format!("{error:#}"),
+                    "skipping invalid Pi plugin provider"
+                );
+                false
+            }
+        }
+    });
+    // Plugin providers can also conflict with other providers (duplicate
+    // routes, a second thread-title model). Keep the user's own providers.
+    if let Err(error) = ProviderRegistry::new(config.providers.clone())
+        && config.providers.iter().any(is_plugin_provider)
+    {
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            "skipping Pi plugin providers that conflict with configured providers"
+        );
+        config
+            .providers
+            .retain(|provider| !is_plugin_provider(provider));
     }
 }
 fn upgrade_deepseek_quota_defaults(config: &mut StoredGatewayConfig) {

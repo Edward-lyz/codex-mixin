@@ -97,7 +97,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     .iter()
                     .filter(|model| !available_models.contains(model.as_str()))
                     .collect::<Vec<_>>();
-                Ok(json!({
+                let mut item = json!({
                     "id": provider.id,
                     "kind": "configured",
                     "source": if provider.discovered_credential.is_some() {
@@ -155,7 +155,19 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "readiness": readiness.status,
                     "readiness_issues": readiness.issues,
                     "routable_model_count": readiness.routable_model_count,
-                }))
+                });
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert(
+                        "plugin_managed".to_owned(),
+                        json!(codex_mixin::provider::is_managed_pi_provider(provider)),
+                    );
+                    obj.insert(
+                        "pi_plugin_package".to_owned(),
+                        json!(provider.pi_plugin_package),
+                    );
+                    obj.insert("pi_provider_id".to_owned(), json!(provider.pi_provider_id));
+                }
+                Ok(item)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         if official_available {

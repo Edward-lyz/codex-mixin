@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use codex_mixin::application::lifecycle::{
-    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action, managed_pi_provider,
+    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action, managed_pi_providers,
 };
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::gateway_access::GatewayClientKeys;
@@ -354,7 +354,7 @@ type ClientCredentials = (
 #[derive(PartialEq)]
 struct WatchedRuntimeConfig {
     credentials: ClientCredentials,
-    pi_provider: Option<ProviderDefinition>,
+    pi_providers: Vec<ProviderDefinition>,
 }
 
 fn stored_watched_runtime_config() -> anyhow::Result<WatchedRuntimeConfig> {
@@ -365,7 +365,7 @@ fn stored_watched_runtime_config() -> anyhow::Result<WatchedRuntimeConfig> {
             stored.gateway_api_keys,
             stored.gateway_client_keys,
         ),
-        pi_provider: managed_pi_provider(&stored.providers).cloned(),
+        pi_providers: managed_pi_providers(&stored.providers),
     })
 }
 
@@ -864,7 +864,7 @@ pub(super) async fn start(
             config.gateway_api_keys.clone(),
             config.gateway_client_keys.clone(),
         ),
-        pi_provider: managed_pi_provider(&config.providers).cloned(),
+        pi_providers: managed_pi_providers(&config.providers),
     };
     let stop_runtime_config_watch = Arc::new(AtomicBool::new(false));
     spawn_runtime_config_watch(
@@ -1043,12 +1043,28 @@ pub(super) async fn start(
     let mut serve_config = config;
     let mut serve_listener = listener;
     let result = loop {
-        match serve_on_listener(serve_config, serve_listener, reload_receiver.clone()).await {
+        match serve_on_listener(
+            serve_config.clone(),
+            serve_listener,
+            reload_receiver.clone(),
+        )
+        .await
+        {
             Ok(ServeExit::Shutdown) => break Ok(()),
             Ok(ServeExit::Reload) => {
                 reload_receiver.borrow_and_update();
-                serve_config = GatewayConfig::from_stored_config()?;
-                serve_config.bind = actual_bind;
+                // An invalid saved config keeps the previous runtime state
+                // instead of stopping the gateway.
+                match GatewayConfig::from_stored_config() {
+                    Ok(mut reloaded) => {
+                        reloaded.bind = actual_bind;
+                        serve_config = reloaded;
+                    }
+                    Err(error) => tracing::error!(
+                        error = %format!("{error:#}"),
+                        "failed to reload stored configuration; keeping previous state"
+                    ),
+                }
                 serve_listener = bind_gateway_listener(actual_bind, false).await?;
                 save_runtime_metadata(&RuntimeMetadata {
                     pid,

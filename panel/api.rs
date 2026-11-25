@@ -483,15 +483,11 @@ async fn agent_versions() -> Result<Json<Value>, ApiError> {
 
 async fn plugins() -> Result<Json<Value>, ApiError> {
     let status = run_json(&["plugin", "status", "--json"]).await?;
-    let commands = if status["runtime_initialized"] == true
-        && status["installed_packages"]
-            .as_array()
-            .is_some_and(|packages| !packages.is_empty())
-    {
-        run_json(&["plugin", "commands", "--json"]).await?
-    } else {
-        json!([])
-    };
+    let commands = status
+        .get("commands")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
     Ok(Json(json!({ "status": status, "commands": commands })))
 }
 

@@ -171,11 +171,53 @@ plugins.search:
   en: "Search"
   zh-CN: "搜索"
 plugins.search_hint:
-  en: "Search packages by name or keyword"
-  zh-CN: "按包名或关键词搜索"
-plugins.package_hint:
-  en: "Install by npm package name"
-  zh-CN: "输入 npm 包名安装"
+  en: "Search packages or enter an npm package name to install"
+  zh-CN: "搜索插件，或直接输入 npm 包名安装"
+plugins.direct_install:
+  en: "Install \"%{spec}\""
+  zh-CN: "直接安装 \"%{spec}\""
+plugins.manage:
+  en: "Manage"
+  zh-CN: "管理"
+plugins.back:
+  en: "Back"
+  zh-CN: "返回"
+plugins.package_summary:
+  en: "%{providers} providers · %{models} models · %{commands} commands"
+  zh-CN: "%{providers} 个服务商 · %{models} 个模型 · %{commands} 个命令"
+plugins.open_provider:
+  en: "Open in Providers"
+  zh-CN: "在服务商中查看"
+plugins.open_plugin:
+  en: "Open Plugin Page"
+  zh-CN: "打开插件详情"
+plugins.arguments_hint:
+  en: "Available arguments (click to fill)"
+  zh-CN: "可用参数（点击填入）"
+plugins.no_providers:
+  en: "This plugin has not registered any providers."
+  zh-CN: "此插件暂未注册服务商。"
+plugins.no_commands:
+  en: "This plugin has not registered any commands."
+  zh-CN: "此插件暂未注册命令。"
+plugins.unattributed_providers:
+  en: "Other Provider Accounts"
+  zh-CN: "其他服务商账号"
+plugins.unattributed_commands:
+  en: "Other Plugin Commands"
+  zh-CN: "其他插件命令"
+plugins.managed_badge:
+  en: "Plugin"
+  zh-CN: "插件"
+plugins.provider_tab:
+  en: "Plugin & Quota"
+  zh-CN: "插件与额度"
+plugins.provider_managed_by:
+  en: "Managed by plugin %{package}"
+  zh-CN: "由插件 %{package} 控制"
+plugins.provider_section_detail:
+  en: "Check quota, sign in, or run commands exposed by this plugin."
+  zh-CN: "可在此查看额度、管理账号或运行该插件提供的命令。"
 plugins.package_permissions:
   en: "Install packages you trust. Plugin code runs with your local user permissions."
   zh-CN: "请安装信任的插件。插件代码以当前用户权限运行。"
@@ -221,6 +263,27 @@ providers.tab.models:
 providers.tab.connection:
   en: "Connection"
   zh-CN: "连接设置"
+providers.tab.plugin:
+  en: "Plugin"
+  zh-CN: "插件"
+providers.plugin_managed:
+  en: "Plugin"
+  zh-CN: "插件提供"
+providers.plugin_section:
+  en: "Plugin"
+  zh-CN: "插件"
+providers.plugin_source:
+  en: "Source Package"
+  zh-CN: "来源插件"
+providers.open_plugin_detail:
+  en: "Open Plugin"
+  zh-CN: "查看插件"
+providers.plugin_auth:
+  en: "Sign-in"
+  zh-CN: "登录授权"
+providers.plugin_commands_section:
+  en: "Plugin Commands"
+  zh-CN: "插件命令"
 providers.loading:
   en: "Reading providers…"
   zh-CN: "正在读取服务商…"

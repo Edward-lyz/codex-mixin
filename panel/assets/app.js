@@ -506,6 +506,7 @@ async function runAction(button, action, params, messages = {}) {
     // Agent state comes from a separate CLI query; re-read it after changes.
     if (state.page === "apps") void loadAgents();
     if (state.page === "plugins") reloadPlugins();
+    if (state.page === "providers" && svc.tab === "plugin") void ensurePluginProfile();
   }
   // Result sheets and follow-up navigation wait until this result is acknowledged.
   await closed;
@@ -1636,7 +1637,11 @@ function providerName(provider) {
 function providerIcon(provider, size = 28) {
   const icon = h("img", { class: "svc-icon", src: `/provider-icons/${encodeURIComponent(provider.icon || "custom")}`, alt: "", width: String(size), height: String(size) });
   icon.addEventListener("error", () => icon.replaceWith(h("span", { class: "svc-icon svc-icon-fallback", "aria-hidden": "true", text: providerName(provider).slice(0, 1) })), { once: true });
-  return icon;
+  if (!provider.plugin_managed) return icon;
+  const puzzle = svgNode("svg", { viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" });
+  puzzle.append(svgNode("path", { d: "M13.5 9V5.5a1.5 1.5 0 0 0-1.5-1.5H9.8a1.5 1.5 0 1 1-3 0H4.5A1.5 1.5 0 0 0 3 5.5v2.2a1.5 1.5 0 1 1 0 3v1.8A1.5 1.5 0 0 0 4.5 14h2.3a1.5 1.5 0 1 1 3 0H12a1.5 1.5 0 0 0 1.5-1.5V10.7a1.5 1.5 0 1 1 0-1.7z" }));
+  const badge = h("span", { class: "svc-plugin-badge", title: t("由插件管理"), "aria-label": t("由插件管理") }, puzzle);
+  return h("span", { class: "svc-icon-wrap" }, icon, badge);
 }
 
 function providerHealth(provider) {
@@ -1816,8 +1821,15 @@ function serviceHeader(provider) {
   const badge = official ? h("span", { class: "badge badge-ok", text: t("官方") }) : provider.enabled ? h("span", { class: `badge ${health.tone === "is-bad" ? "badge-bad" : "badge-ok"}`, text: health.tone === "is-bad" ? t("需要处理") : t("配置就绪") }) : h("span", { class: "badge", text: t("停用") });
   const refreshed = provider.models_refreshed_at_ms ? t("上次刷新 {0}", new Date(provider.models_refreshed_at_ms).toLocaleString("zh-CN", { hour12: false })) : t("尚未刷新");
   const sub = [official ? t("官方服务商 · 只读") : provider.id, t("已加入 {0} / 可选 {1}", (provider.selected_models || []).length, (provider.cached_models || []).length), refreshed].join(" · ");
-  const tabs = segmented([["models", t("模型")], ["connection", t("连接设置")]], svc.tab, (value) => {
+  const tabList = provider.plugin_managed
+    ? [["models", t("模型")], ["plugin", t("插件与额度")], ["connection", t("连接设置")]]
+    : [["models", t("模型")], ["connection", t("连接设置")]];
+  const activeTab = provider.plugin_managed || svc.tab !== "plugin" ? svc.tab : "models";
+  const tabs = segmented(tabList, activeTab, (value) => {
     svc.tab = value;
+    if (value === "plugin" && !pluginView.profile.data && !pluginView.profile.loading) {
+      void ensurePluginProfile();
+    }
     render({ animate: false });
   }, t("详情页面"));
   const items = official
@@ -2370,7 +2382,13 @@ RENDERERS.providers = () => {
   if (!providers.length) return card(null, null, emptyState(t("还没有服务商"), t("通过新增服务商选择 OAuth 登录或兼容 API 预设。"), h("button", { class: "btn btn-primary", type: "button", text: t("新增服务商"), onclick: openAddProvider })));
   const selected = providers.find((provider) => provider.id === svc.selected) || providers[0];
   svc.selected = selected.id;
+  if (!selected.plugin_managed && svc.tab === "plugin") svc.tab = "models";
   const issue = (selected.readiness_issues || []).map((id) => ISSUE_LABELS[id] || id);
+  const body = svc.tab === "connection"
+    ? connectionTab(selected)
+    : svc.tab === "plugin" && selected.plugin_managed
+      ? pluginProviderTab(selected)
+      : modelsTab(selected);
   return h(
     "div",
     { class: "svc card card-flush" },
@@ -2382,7 +2400,7 @@ RENDERERS.providers = () => {
       issue.length || selected.last_model_refresh_error
         ? h("div", { class: "svc-issues" }, ...issue.map((text) => h("span", { class: "badge badge-bad", text })), selected.last_model_refresh_error ? h("span", { class: "issue issue-clamp", title: selected.last_model_refresh_error, text: selected.last_model_refresh_error }) : null)
         : null,
-      h("div", { class: "svc-body" }, svc.tab === "connection" ? connectionTab(selected) : modelsTab(selected)),
+      h("div", { class: "svc-body" }, body),
     ),
   );
 };
@@ -3096,10 +3114,60 @@ RENDERERS.apps = () => {
 
 // ---------- Pi plugins ----------
 
-const pluginView = { profile: {}, market: {}, query: "", spec: "" };
+const pluginView = { profile: {}, market: {}, query: "", selectedPackage: null };
+
+function normalizePackageSpec(spec) {
+  const trimmed = String(spec || "").trim();
+  return trimmed.startsWith("npm:") ? trimmed.slice(4) : trimmed;
+}
+
+function samePackageSpec(a, b) {
+  return Boolean(a && b) && normalizePackageSpec(a) === normalizePackageSpec(b);
+}
+
+function looksLikeNpmSpec(input) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  if (trimmed.startsWith("npm:") || trimmed.startsWith("@")) return trimmed.length > 4;
+  return /^[a-z0-9][a-z0-9._-]{1,213}(?:@[a-z0-9._-]+)?$/i.test(trimmed) && (trimmed.includes("-") || trimmed.includes("/") || trimmed.includes("@"));
+}
+
+function openProviderFromPlugin(mixinProviderId) {
+  if (!mixinProviderId) return;
+  svc.selected = mixinProviderId;
+  svc.tab = "models";
+  navigate("providers");
+}
+
+function openPluginDetail(pkgSpec) {
+  pluginView.selectedPackage = pkgSpec || null;
+  navigate("plugins");
+}
+
+async function ensurePluginProfile() {
+  if (pluginView.profile.loading) return;
+  const request = pluginView.profile.request = (pluginView.profile.request || 0) + 1;
+  pluginView.profile.error = null;
+  pluginView.profile.loading = true;
+  try {
+    const data = await api("/api/plugins", { signal: AbortSignal.timeout(90000) });
+    if (request === pluginView.profile.request) pluginView.profile.data = data;
+  } catch (error) {
+    if (request === pluginView.profile.request && error.status !== 401) pluginView.profile.error = error;
+  } finally {
+    if (request === pluginView.profile.request) {
+      pluginView.profile.loading = false;
+      if (state.page === "providers" && svc.tab === "plugin") render({ animate: false });
+      const root = $("#plugin-profile");
+      if (root) {
+        root.setAttribute("aria-busy", "false");
+        root.replaceChildren(...pluginProfile());
+      }
+    }
+  }
+}
 
 function reloadPlugins() {
-  // Status and command discovery may each initialize a separate Pi child.
   void loadPlugins(pluginView.profile, "#plugin-profile", "/api/plugins", pluginProfile, { signal: AbortSignal.timeout(90000) });
   void searchPlugins();
 }
@@ -3152,7 +3220,26 @@ function pluginCommand(command) {
   const form = h("form", { class: "form" });
   const args = textInput("args", "", { maxlength: 4096 });
   const run = h("button", { class: "btn btn-primary", type: "submit", text: t("运行") });
+  const items = [];
+  if (command.description) items.push(h("p", { class: "card-note", text: command.description }));
+  const argList = Array.isArray(command.arguments) ? command.arguments : [];
+  if (argList.length) {
+    const chips = argList.map((arg) => h("button", {
+      class: "plugin-arg-chip",
+      type: "button",
+      title: arg.description || arg.label || arg.value,
+      text: arg.label && arg.label !== arg.value ? `${arg.value} · ${arg.label}` : arg.value,
+      onclick: () => {
+        args.value = arg.value;
+        args.focus();
+      },
+    }));
+    items.push(h("div", null,
+      h("div", { class: "card-note", text: `${t("可用参数")} · ${t("点击参数自动填入输入框")}` }),
+      h("div", { class: "plugin-arg-chips" }, chips)));
+  }
   append(form, [
+    ...items,
     field(t("命令参数（可选）"), args),
     h("div", { class: "form-actions" }, run),
   ]);
@@ -3160,48 +3247,173 @@ function pluginCommand(command) {
     event.preventDefault();
     void runAction(run, "plugin_run_command", { name: command.name, args: args.value }, { showOutput: true });
   });
-  openSheet(command.name, form);
+  openSheet(`/${command.name}`, form);
+}
+
+function pluginCommandRow(command) {
+  const run = h("button", {
+    class: "btn btn-sm", type: "button", text: t("运行"), "data-action": "",
+    disabled: state.busy, onclick: () => pluginCommand(command),
+  });
+  const argList = Array.isArray(command.arguments) ? command.arguments : [];
+  const descNodes = [];
+  if (command.description) descNodes.push(h("p", { class: "card-note", text: command.description }));
+  if (argList.length) {
+    descNodes.push(h("div", { class: "plugin-arg-chips" }, argList.slice(0, 8).map((arg) => h("button", {
+      class: "plugin-arg-chip",
+      type: "button",
+      title: arg.description || arg.label || arg.value,
+      text: arg.value,
+      "data-action": "",
+      disabled: state.busy,
+      onclick: (event) => void runAction(event.currentTarget, "plugin_run_command", { name: command.name, args: arg.value }, { showOutput: true }),
+    }))));
+  }
+  return pluginRow(`/${command.name}`, descNodes.length ? h("div", null, descNodes) : null, run);
+}
+
+function pluginProviderRow(detail) {
+  const id = detail.id;
+  const actions = [];
+  if (detail.mixin_provider_id) {
+    actions.push(h("button", {
+      class: "btn btn-sm btn-tinted",
+      type: "button",
+      text: t("打开服务商"),
+      onclick: () => openProviderFromPlugin(detail.mixin_provider_id),
+    }));
+  }
+  if (/^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}$/.test(id)) {
+    const login = "codex-mixin plugin auth login " + id;
+    actions.push(h("button", { class: "btn btn-sm", type: "button", text: t("复制登录命令"), onclick: () => copyText(login) }));
+    actions.push(actionButton(t("退出登录"), "plugin_auth_logout", { provider: id }, {
+      ok: t("已退出登录"),
+      confirm: [t("退出 {0} 的登录？", id), t("Pi 会清除该 Provider 已保存的登录凭据。"), t("退出登录")],
+    }, "btn-sm btn-ghost"));
+  }
+  const sub = [detail.id, detail.model_count ? t("{0} 个模型", detail.model_count) : null].filter(Boolean).join(" · ");
+  return pluginRow(detail.display_name || detail.id, h("p", { class: "card-note", text: sub }), actions);
+}
+
+function pluginProviderTab(provider) {
+  if (!pluginView.profile.data && !pluginView.profile.loading && !pluginView.profile.error) {
+    void ensurePluginProfile();
+  }
+  const pkg = provider.pi_plugin_package || "";
+  const piProviderId = provider.pi_provider_id || "";
+  const { data, error, loading } = pluginView.profile;
+  const commands = (data?.commands || data?.status?.commands || []).filter((cmd) => !pkg || samePackageSpec(cmd.package, pkg));
+  const actions = [
+    actionButton(t("同步模型"), "plugin_sync", null, { ok: t("插件模型已同步") }, "btn-sm"),
+  ];
+  if (pkg) {
+    actions.push(h("button", { class: "btn btn-sm", type: "button", text: t("打开插件详情"), onclick: () => openPluginDetail(pkg) }));
+  }
+  if (piProviderId && /^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}$/.test(piProviderId)) {
+    const login = "codex-mixin plugin auth login " + piProviderId;
+    actions.push(h("button", { class: "btn btn-sm", type: "button", text: t("复制登录命令"), onclick: () => copyText(login) }));
+    actions.push(actionButton(t("退出登录"), "plugin_auth_logout", { provider: piProviderId }, {
+      ok: t("已退出登录"),
+      confirm: [t("退出 {0} 的登录？", piProviderId), t("Pi 会清除该 Provider 已保存的登录凭据。"), t("退出登录")],
+    }, "btn-sm btn-ghost"));
+  }
+  const items = [
+    card(t("插件与额度"), pkg ? t("由插件 {0} 提供，可通过下方命令管理账号、签到或查询额度。", pkg) : t("由插件管理"),
+      h("div", { class: "card-body" }, h("div", { class: "card-actions" }, actions)), null, "card-flush"),
+  ];
+  if (error) {
+    items.push(pluginError(t("无法读取 Pi 运行状态"), error));
+  } else if (loading && !data) {
+    items.push(card(t("插件命令"), null, h("div", { class: "plugin-market-loading", role: "status", text: t("正在加载插件信息…") }), null, "card-flush"));
+  } else {
+    items.push(card(t("插件命令"), null, commands.length
+      ? h("ul", { class: "plugin-list" }, commands.map(pluginCommandRow))
+      : emptyState(t("暂无可用命令")), null, "card-flush"));
+  }
+  return h("div", { class: "plugin-provider-panel" }, items);
 }
 
 function pluginProfile() {
   const { data, error, loading } = pluginView.profile;
   if (error) return [pluginError(t("无法读取 Pi 运行状态"), error)];
   if (!data) return [h("div", { class: "skeleton", "aria-hidden": "true" })];
-  const { status, commands } = data;
-  const installed = status.installed_packages;
-  const providers = status.discovered_providers;
-  const models = status.discovered_models;
+  const status = data.status || {};
+  const commands = data.commands || status.commands || [];
+  const installed = status.installed_packages || [];
+  const providers = status.discovered_providers || [];
+  const providerDetails = Array.isArray(status.provider_details) && status.provider_details.length
+    ? status.provider_details
+    : providers.map((id) => ({ id, display_name: id, package: null, mixin_provider_id: "", model_count: 0 }));
+  const models = status.discovered_models || [];
+
+  if (pluginView.selectedPackage && !installed.some((spec) => samePackageSpec(spec, pluginView.selectedPackage))) {
+    pluginView.selectedPackage = null;
+  }
+
+  if (pluginView.selectedPackage) {
+    const selectedSpec = installed.find((spec) => samePackageSpec(spec, pluginView.selectedPackage)) || pluginView.selectedPackage;
+    const pkgProviders = providerDetails.filter((detail) => samePackageSpec(detail.package, selectedSpec));
+    const pkgCommands = commands.filter((cmd) => samePackageSpec(cmd.package, selectedSpec));
+    const back = h("button", {
+      class: "btn btn-sm btn-ghost",
+      type: "button",
+      text: `← ${t("返回已安装插件")}`,
+      onclick: () => {
+        pluginView.selectedPackage = null;
+        const root = $("#plugin-profile");
+        if (root) root.replaceChildren(...pluginProfile());
+      },
+    });
+    const actions = [
+      actionButton(t("同步模型"), "plugin_sync", null, { ok: t("插件模型已同步") }, "btn-sm"),
+      actionButton(t("更新"), "plugin_update", { spec: selectedSpec }, { ok: t("插件已更新") }, "btn-sm"),
+      actionButton(t("卸载"), "plugin_remove", { spec: selectedSpec }, {
+        ok: t("插件已卸载"),
+        confirm: [t("卸载 {0}？", selectedSpec), t("这会移除插件并同步模型目录。"), t("卸载")],
+      }, "btn-sm btn-ghost"),
+    ];
+    return [
+      card(selectedSpec, t("查看并管理该插件提供的 Provider 与命令。"),
+        h("div", { class: "card-body plugin-detail-bar" }, back, h("span", { class: "card-note", text: t("{0} 个 Provider · {1} 个命令", pkgProviders.length, pkgCommands.length) })),
+        actions, "card-flush"),
+      pkgProviders.length
+        ? card(t("Pi Provider 账号"), t("复制登录命令，在运行 Mixin 的电脑上执行。"), h("ul", { class: "plugin-list" }, pkgProviders.map(pluginProviderRow)), null, "card-flush")
+        : null,
+      card(t("插件命令"), null, pkgCommands.length
+        ? h("ul", { class: "plugin-list" }, pkgCommands.map(pluginCommandRow))
+        : emptyState(t("暂无可用命令")), null, "card-flush"),
+    ].filter(Boolean);
+  }
+
   const sync = actionButton(t("同步模型"), "plugin_sync", null, { ok: t("插件模型已同步") });
   const update = actionButton(t("更新全部"), "plugin_update", {}, { ok: t("插件已更新") });
   sync.disabled ||= !installed.length;
   update.disabled ||= !installed.length;
 
-  const packageRows = installed.map((spec) => pluginRow(spec, null, [
-    actionButton(t("更新"), "plugin_update", { spec }, { ok: t("插件已更新") }, "btn-sm"),
-    actionButton(t("卸载"), "plugin_remove", { spec }, {
-      ok: t("插件已卸载"),
-      confirm: [t("卸载 {0}？", spec), t("这会移除插件并同步模型目录。"), t("卸载")],
-    }, "btn-sm btn-ghost"),
-  ]));
-  const accountRows = providers.map((provider) => {
-    // A package can register arbitrary provider IDs. Offer shell copy only for
-    // IDs that the CLI accepts and that have no shell syntax.
-    if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}$/.test(provider)) return pluginRow(provider);
-    const login = "codex-mixin plugin auth login " + provider;
-    const copy = h("button", { class: "btn btn-sm", type: "button", text: t("复制登录命令"), onclick: () => copyText(login) });
-    const logout = actionButton(t("退出登录"), "plugin_auth_logout", { provider }, {
-      ok: t("已退出登录"),
-      confirm: [t("退出 {0} 的登录？", provider), t("Pi 会清除该 Provider 已保存的登录凭据。"), t("退出登录")],
-    }, "btn-sm btn-ghost");
-    return pluginRow(provider, h("code", { class: "card-note plugin-login", text: login }), [copy, logout]);
-  });
-  const commandRows = commands.map((command) => {
-    const run = h("button", {
-      class: "btn btn-sm", type: "button", text: t("运行"), "data-action": "",
-      disabled: state.busy, onclick: () => pluginCommand(command),
+  const packageRows = installed.map((spec) => {
+    const pCount = providerDetails.filter((detail) => samePackageSpec(detail.package, spec)).length;
+    const cCount = commands.filter((cmd) => samePackageSpec(cmd.package, spec)).length;
+    const open = h("button", {
+      class: "btn btn-sm btn-tinted",
+      type: "button",
+      text: t("详情"),
+      onclick: () => {
+        pluginView.selectedPackage = spec;
+        const root = $("#plugin-profile");
+        if (root) root.replaceChildren(...pluginProfile());
+      },
     });
-    return pluginRow(command.name, h("p", { class: "card-note", text: command.description }), run);
+    return pluginRow(spec, h("p", { class: "card-note", text: t("{0} 个 Provider · {1} 个命令", pCount, cCount) }), [
+      open,
+      actionButton(t("更新"), "plugin_update", { spec }, { ok: t("插件已更新") }, "btn-sm"),
+      actionButton(t("卸载"), "plugin_remove", { spec }, {
+        ok: t("插件已卸载"),
+        confirm: [t("卸载 {0}？", spec), t("这会移除插件并同步模型目录。"), t("卸载")],
+      }, "btn-sm btn-ghost"),
+    ]);
   });
+  const unattributedProviders = providerDetails.filter((detail) => !detail.package || !installed.some((spec) => samePackageSpec(spec, detail.package)));
+  const unattributedCommands = commands.filter((cmd) => !cmd.package || !installed.some((spec) => samePackageSpec(spec, cmd.package)));
   const diagnostics = [];
   if (status.bridge_error) {
     diagnostics.push(h("div", { class: "notice", role: "alert" },
@@ -3225,9 +3437,9 @@ function pluginProfile() {
     card(t("已安装插件"), null, packageRows.length
       ? h("ul", { class: "plugin-list" }, packageRows)
       : emptyState(loading ? t("正在读取插件…") : t("尚未安装插件")), null, "card-flush"),
-    accountRows.length ? card(t("Pi Provider 账号"), t("复制登录命令，在运行 Mixin 的电脑上执行。"),
-      h("ul", { class: "plugin-list" }, accountRows), null, "card-flush") : null,
-    commandRows.length ? card(t("插件命令"), null, h("ul", { class: "plugin-list" }, commandRows), null, "card-flush") : null,
+    unattributedProviders.length ? card(t("其他插件 Provider"), t("复制登录命令，在运行 Mixin 的电脑上执行。"),
+      h("ul", { class: "plugin-list" }, unattributedProviders.map(pluginProviderRow)), null, "card-flush") : null,
+    unattributedCommands.length ? card(t("其他插件命令"), null, h("ul", { class: "plugin-list" }, unattributedCommands.map(pluginCommandRow)), null, "card-flush") : null,
   ].filter(Boolean);
 }
 
@@ -3248,37 +3460,46 @@ function pluginMarketResults() {
 
 RENDERERS.plugins = () => {
   const search = textInput("query", pluginView.query, {
-    type: "search", maxlength: 256, placeholder: t("搜索 Pi 插件"), "aria-label": t("搜索 Pi 插件"),
+    type: "search", maxlength: 260, placeholder: t("搜索 Pi 插件，或输入 npm 包名直接安装"), "aria-label": t("搜索 Pi 插件"),
   });
+  const directInstall = h("button", { class: "btn btn-tinted", type: "button", "data-action": "", hidden: true });
+  const refreshDirectInstall = () => {
+    const value = search.value.trim();
+    const installed = pluginView.profile.data?.status?.installed_packages || [];
+    const canInstall = looksLikeNpmSpec(value) && !installed.some((spec) => samePackageSpec(spec, value));
+    directInstall.hidden = !canInstall;
+    directInstall.disabled = state.busy || !canInstall;
+    directInstall.textContent = t("直接安装 {0}", value);
+  };
+  search.addEventListener("input", () => {
+    pluginView.query = search.value;
+    refreshDirectInstall();
+  });
+  directInstall.addEventListener("click", async () => {
+    const value = search.value.trim();
+    if (!value) return;
+    const result = await runAction(directInstall, "plugin_install", { spec: value }, { ok: t("插件已安装") });
+    if (result) {
+      pluginView.query = "";
+      search.value = "";
+      refreshDirectInstall();
+    }
+  });
+  refreshDirectInstall();
+
   const searchForm = h("form", { class: "plugin-form" }, search,
-    h("button", { class: "btn", type: "submit", text: t("搜索") }));
+    h("button", { class: "btn", type: "submit", text: t("搜索") }),
+    directInstall);
   searchForm.addEventListener("submit", (event) => {
     event.preventDefault();
     pluginView.query = search.value.trim();
+    refreshDirectInstall();
     void searchPlugins();
   });
-
-  const spec = textInput("spec", pluginView.spec, {
-    class: "input mono", maxlength: 260, required: true, placeholder: "npm:pi-provider-kiro", "aria-label": t("npm 包名"),
-  });
-  const install = h("button", { class: "btn btn-tinted", type: "submit", "data-action": "", disabled: state.busy, text: t("安装") });
-  const installForm = h("form", { class: "plugin-form" }, spec, install);
-  spec.addEventListener("input", () => { pluginView.spec = spec.value; });
-  installForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const value = spec.value.trim();
-    if (!value) return;
-    const result = await runAction(install, "plugin_install", { spec: value }, { ok: t("插件已安装") });
-    if (result) {
-      pluginView.spec = "";
-      spec.value = "";
-    }
-  });
-
   return [
     h("div", { id: "plugin-profile", class: "plugin-profile", "aria-busy": String(Boolean(pluginView.profile.loading)) }, pluginProfile()),
     card(t("Pi 插件市场"), t("插件安装到 Mixin 管理的 Pi，并以当前系统用户权限运行。"),
-      h("div", null, h("div", { class: "plugin-market-toolbar" }, searchForm, installForm),
+      h("div", null, h("div", { class: "plugin-market-toolbar" }, searchForm),
         h("div", { id: "plugin-market-results", "aria-live": "polite", "aria-busy": String(Boolean(pluginView.market.loading)) }, pluginMarketResults())),
       null, "card-flush"),
   ];
@@ -3859,6 +4080,7 @@ function boot() {
     refresh(true);
     if (state.page === "apps") loadAgents();
     if (state.page === "plugins") reloadPlugins();
+    if (state.page === "providers" && svc.tab === "plugin") void ensurePluginProfile();
   });
   $("#sheet-close").addEventListener("click", closeSheet);
   $("#sheet").addEventListener("cancel", (event) => {

@@ -53,13 +53,11 @@ pub use types::{
     AwsSigV4AuthConfig, BaiduAuthBridge, CONFIG_VERSION, MANUAL_MODEL_CONTEXT_WINDOW,
     MIN_MODEL_REFRESH_INTERVAL_SECONDS, ModelRefreshPolicy, ProviderAuthConfig, ProviderAuthHeader,
     ProviderDefinition, ProviderModel, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy,
+    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy, is_managed_pi_provider,
 };
 
 pub(crate) use auth::aws_sigv4::sign_request as sign_aws_request;
-pub(crate) use types::{
-    AUTO_REVIEW_MODEL_ID, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID, is_managed_pi_provider,
-};
+pub(crate) use types::{AUTO_REVIEW_MODEL_ID, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID};
 
 pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 

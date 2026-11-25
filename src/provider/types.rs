@@ -11,8 +11,11 @@ pub(crate) const AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
 pub(crate) const PI_BRIDGE_PROVIDER_ID: &str = "pi-bridge";
 pub(crate) const PI_BRIDGE_PLACEHOLDER_URL: &str = "http://127.0.0.1:0";
 
-pub(crate) fn is_managed_pi_provider(provider: &ProviderDefinition) -> bool {
-    provider.id == PI_BRIDGE_PROVIDER_ID && provider.base_url == PI_BRIDGE_PLACEHOLDER_URL
+pub fn is_managed_pi_provider(provider: &ProviderDefinition) -> bool {
+    provider.base_url == PI_BRIDGE_PLACEHOLDER_URL
+        && (provider.id == PI_BRIDGE_PROVIDER_ID
+            || provider.pi_provider_id.is_some()
+            || provider.pi_plugin_package.is_some())
 }
 
 pub fn is_auto_review_model_id(model_id: &str) -> bool {
@@ -253,6 +256,12 @@ pub struct ProviderDefinition {
     /// the gateway default of refreshing on every cycle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_refresh: Option<ModelRefreshPolicy>,
+    /// Installed Pi package source (e.g. `npm:pi-workbuddy-hub`) that owns this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi_plugin_package: Option<String>,
+    /// Provider identifier registered inside the isolated Pi runtime (e.g. `workbuddy`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi_provider_id: Option<String>,
 }
 
 /// Whether the gateway refreshes a provider's model list in the background,
