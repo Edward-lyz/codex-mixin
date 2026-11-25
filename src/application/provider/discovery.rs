@@ -6,7 +6,7 @@ use crate::config::GatewayConfig;
 use crate::provider::capabilities::ProviderCapabilities;
 use crate::provider::{
     ModelDiscoveryChanges, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    ProviderRegistry, discover_provider_models, redact_provider_error,
+    ProviderRegistry, discover_provider_models, is_managed_pi_provider, redact_provider_error,
 };
 use anyhow::Context;
 use futures_util::{StreamExt, stream};
@@ -89,6 +89,14 @@ pub struct ProviderRefreshResult {
 /// original discovery error is returned.
 pub async fn refresh_provider_models(id: &str) -> anyhow::Result<ProviderRefreshResult> {
     let provider = provider_for_refresh(id)?;
+    if is_managed_pi_provider(&provider) {
+        let (model_count, changes) = crate::application::pi_plugins::sync_with_changes().await?;
+        return Ok(ProviderRefreshResult {
+            changes,
+            model_count,
+            quota_url: None,
+        });
+    }
     static DISCOVERY_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = match DISCOVERY_CLIENT.get() {
         Some(client) => client.clone(),

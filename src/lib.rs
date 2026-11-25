@@ -14,6 +14,7 @@ pub mod fusion;
 mod gateway;
 pub mod gateway_access;
 mod images;
+mod pi_plugins;
 pub use codex_mixin_platform as platform;
 pub mod protocol;
 pub mod provider;

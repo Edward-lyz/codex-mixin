@@ -7,6 +7,25 @@ use crate::error::GatewayError;
 use crate::provider::AwsSigV4AuthConfig;
 
 impl UpstreamAccess {
+    pub(super) async fn send_pi_bridge_json<T>(
+        &self,
+        request: reqwest::RequestBuilder,
+        value: T,
+    ) -> Result<(reqwest::Response, T), GatewayError>
+    where
+        T: Serialize + Send + 'static,
+    {
+        // This authenticated loopback hop accepts plain JSON. Its endpoint
+        // changes on restart, so it never enters upstream compression probes.
+        let (client, base) = request.build_split();
+        let base = base?;
+        let (prepared, value) = prepare_json_body(value, false, false).await?;
+        let response = self
+            .send_json_file(&client, base, prepared.raw, false, None)
+            .await?;
+        Ok((response, value))
+    }
+
     pub(crate) async fn send_json<T>(
         &self,
         request: reqwest::RequestBuilder,

@@ -9,6 +9,7 @@ use codex_mixin::provider::{ModelOrder, ProviderPreset};
 
 use super::InteractiveStart;
 use super::codex::InstallCodexOptions;
+use super::plugin::PluginCommand;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,6 +39,11 @@ pub(super) enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+    /// Manage packages and providers in the isolated Pi runtime.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
     },
     /// Internal: return DUCX-injected authentication to the parent gateway.
     #[command(name = "ducx-auth-carrier", hide = true)]

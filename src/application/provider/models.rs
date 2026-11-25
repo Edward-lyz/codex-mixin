@@ -9,7 +9,7 @@ use crate::provider::capabilities::{ProviderCapabilities, ProviderProbeSummary};
 use crate::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
     ProviderDefinition, ProviderModel, ProviderModelSource, aws_bedrock_runtime_base_url,
-    discover_provider_models,
+    discover_provider_models, is_managed_pi_provider,
 };
 
 use super::super::error::OperationError;
@@ -250,6 +250,13 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
         .into_iter()
         .find(|provider| provider.id == input.id)
         .ok_or_else(|| anyhow::anyhow!("unknown provider: {}", input.id))?;
+    if is_managed_pi_provider(&provider) {
+        let models = crate::application::pi_plugins::configured_models().await?;
+        return Ok(ProviderTestResult {
+            mode: ProviderTestMode::ModelsEndpoint,
+            model_count: models.len(),
+        });
+    }
     if let Some(key) = input.key {
         provider.auth.api_key = required("key", key)?;
         provider.auth.aws_sigv4 = None;

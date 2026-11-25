@@ -9,7 +9,7 @@ use std::time::Duration;
 use gpui_kit::{App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task};
 
 use crate::cli::{Cli, CliError, CliResult, Progress, Secret};
-use crate::model::{Autostart, Interface, ProviderList, QuotaEntry, ServiceStatus};
+use crate::model::{Autostart, Interface, PluginData, ProviderList, QuotaEntry, ServiceStatus};
 use crate::startup;
 
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(20);
@@ -39,7 +39,7 @@ impl<T> Default for Snapshot<T> {
 impl<T> Snapshot<T> {
     /// Marks a query as started; `false` means one is already running and
     /// will be repeated when it finishes.
-    fn begin(&mut self) -> bool {
+    pub(crate) fn begin(&mut self) -> bool {
         if self.loading {
             self.stale = true;
             return false;
@@ -49,7 +49,7 @@ impl<T> Snapshot<T> {
     }
 
     /// Stores the result and reports whether the query must run again.
-    fn finish(&mut self, result: CliResult<T>) -> bool {
+    pub(crate) fn finish(&mut self, result: CliResult<T>) -> bool {
         self.loading = false;
         match result {
             Ok(value) => {
@@ -442,6 +442,11 @@ pub fn query<T: serde::de::DeserializeOwned + Send + 'static>(
         cli.query::<T>(&args)
     });
     cx.background_spawn(work)
+}
+
+pub fn plugin_data(cx: &App) -> Task<CliResult<PluginData>> {
+    let cli = Store::global(cx).read(cx).cli();
+    cx.background_spawn(cli_thread(move || cli.plugin_data()))
 }
 
 /// Runs CLI work on a plain OS thread. Executor threads carry a background

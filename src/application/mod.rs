@@ -9,6 +9,7 @@ pub mod dsh;
 pub mod error;
 pub mod fusion;
 pub mod lifecycle;
+pub mod pi_plugins;
 pub mod provider;
 pub mod routing;
 

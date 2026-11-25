@@ -46,6 +46,7 @@ mod metadata;
 mod official_models;
 mod opencode;
 mod pi;
+mod plugin;
 mod providers;
 mod report_hook;
 mod route_config;
@@ -479,6 +480,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::Interface { json } => interface::describe(json),
         Command::Agent { command } => agents::run(command).await,
+        Command::Plugin { command } => plugin::run(command).await,
         Command::DucxAuthCarrier => print_ducx_auth_carrier(),
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {

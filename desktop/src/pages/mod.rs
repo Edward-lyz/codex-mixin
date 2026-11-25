@@ -2,6 +2,7 @@ pub mod agents;
 pub mod connection;
 pub mod context;
 pub mod models;
+pub mod plugins;
 pub mod providers;
 pub mod routing;
 pub mod settings;

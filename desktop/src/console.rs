@@ -24,8 +24,8 @@ use objc2_app_kit::{NSApplication, NSWindow};
 use rust_i18n::t;
 
 use crate::pages::{
-    agents::AgentsPage, context::ContextPage, providers::ProvidersPage, routing::RoutingPage,
-    settings::SettingsPage, usage::UsagePage,
+    agents::AgentsPage, context::ContextPage, plugins::PluginsPage, providers::ProvidersPage,
+    routing::RoutingPage, settings::SettingsPage, usage::UsagePage,
 };
 use crate::store::{Store, StoreEvent};
 use crate::theme;
@@ -36,15 +36,17 @@ use crate::windmill;
 pub enum Page {
     Providers,
     Agents,
+    Plugins,
     Usage,
     Context,
     Routing,
     Settings,
 }
 
-const PAGES: [Page; 6] = [
+const PAGES: [Page; 7] = [
     Page::Providers,
     Page::Agents,
+    Page::Plugins,
     Page::Usage,
     Page::Context,
     Page::Routing,
@@ -69,6 +71,7 @@ impl Page {
         match self {
             Page::Providers => IconName::Server,
             Page::Agents => IconName::Bot,
+            Page::Plugins => IconName::Puzzle,
             Page::Usage => IconName::ChartColumn,
             Page::Context => IconName::Layers,
             Page::Routing => IconName::Route,
@@ -80,6 +83,7 @@ impl Page {
         match self {
             Page::Providers => t!("console.page.providers"),
             Page::Agents => t!("console.page.agents"),
+            Page::Plugins => t!("console.page.plugins"),
             Page::Usage => t!("console.page.usage"),
             Page::Context => t!("console.page.context"),
             Page::Routing => t!("console.page.routing"),
@@ -236,6 +240,7 @@ pub struct Console {
     logo_spin: u64,
     providers: Entity<ProvidersPage>,
     agents: Option<Entity<AgentsPage>>,
+    plugins: Option<Entity<PluginsPage>>,
     usage: Option<Entity<UsagePage>>,
     context: Option<Entity<ContextPage>>,
     routing: Option<Entity<RoutingPage>>,
@@ -355,6 +360,7 @@ impl Console {
             logo_spin: 0,
             providers,
             agents: None,
+            plugins: None,
             usage: None,
             context: None,
             routing: None,
@@ -391,6 +397,10 @@ impl Console {
                 self.agents
                     .get_or_insert_with(|| cx.new(|cx| AgentsPage::new(window, cx)));
             }
+            Page::Plugins => match &self.plugins {
+                Some(plugins) => plugins.update(cx, |page, cx| page.reload_status(cx)),
+                None => self.plugins = Some(cx.new(|cx| PluginsPage::new(window, cx))),
+            },
             Page::Usage => {
                 self.usage
                     .get_or_insert_with(|| cx.new(|cx| UsagePage::new(window, cx)));
@@ -433,6 +443,10 @@ impl Console {
             Page::Providers => self.providers.clone().into_any_element(),
             Page::Agents => self
                 .agents
+                .clone()
+                .map_or_else(empty, IntoElement::into_any_element),
+            Page::Plugins => self
+                .plugins
                 .clone()
                 .map_or_else(empty, IntoElement::into_any_element),
             Page::Usage => self

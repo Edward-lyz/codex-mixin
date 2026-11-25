@@ -15,6 +15,7 @@ const PAGES = [
   { id: "speed", title: t("测速") },
   { id: "routing", title: t("模型路由") },
   { id: "apps", title: "Agent" },
+  { id: "plugins", title: t("插件") },
   { id: "keys", title: t("访问密钥") },
   { id: "advanced", title: t("高级") },
   { id: "system", title: t("系统") },
@@ -460,7 +461,7 @@ async function runAction(button, action, params, messages = {}) {
     }
     resultSummary.textContent = t("执行已结束，无需继续等待。可以关闭此窗口继续操作。");
     resultSummary.hidden = false;
-    details.open = false;
+    details.open = Boolean(messages.showOutput);
     toast("ok", messages.ok || t("已完成"), lastLine(result.stdout));
   } catch (error) {
     const [title, detail] = describeError(error);
@@ -504,6 +505,7 @@ async function runAction(button, action, params, messages = {}) {
     void refresh(true);
     // Agent state comes from a separate CLI query; re-read it after changes.
     if (state.page === "apps") void loadAgents();
+    if (state.page === "plugins") reloadPlugins();
   }
   // Result sheets and follow-up navigation wait until this result is acknowledged.
   await closed;
@@ -624,6 +626,7 @@ function navigate(pageId, options = {}) {
   render({ animate: true });
   if (changed && options.focus !== false) $("#main").focus({ preventScroll: true });
   if (page.id === "logs" && !state.logs) loadLogs();
+  if (page.id === "plugins") reloadPlugins();
   if (page.id === "context" && !state.context && !state.contextLoading) loadContext();
   else if (changed && page.id === "context" && contextArchive.session) loadContextArchive(contextArchive.session);
 }
@@ -666,13 +669,13 @@ async function refresh(force = false) {
     state.loadError = null;
     updateChrome();
     // An unrelated usage snapshot must not collapse the archive being read.
-    if (changed && (force || (!userIsEditing() && !(state.page === "context" && contextArchive.session)))) render({ animate: false });
+    if (state.page !== "plugins" && changed && (force || (!userIsEditing() && !(state.page === "context" && contextArchive.session)))) render({ animate: false });
   } catch (error) {
     if (sequence !== state.refreshSequence) return;
     if (error.status === 401) return;
     state.loadError = error;
     updateChrome();
-    if (!state.snapshot) render({ animate: false });
+    if (!state.snapshot && state.page !== "plugins") render({ animate: false });
   } finally {
     if (sequence === state.refreshSequence) setTimeout(() => button.classList.remove("is-spinning"), 420);
     if (sequence === state.refreshSequence && state.token && document.visibilityState === "visible") {
@@ -712,7 +715,9 @@ function render({ animate }) {
   const view = $("#view");
   const scroll = window.scrollY;
   let content;
-  if (!state.snapshot && !state.loadError) {
+  if (state.page === "plugins") {
+    content = RENDERERS.plugins();
+  } else if (!state.snapshot && !state.loadError) {
     content = [h("div", { class: "skeleton" }), h("div", { class: "grid grid-3" }, h("div", { class: "skeleton" }), h("div", { class: "skeleton" }), h("div", { class: "skeleton" }))];
   } else if (!state.snapshot) {
     content = [errorCard(state.loadError)];
@@ -3089,6 +3094,196 @@ RENDERERS.apps = () => {
   ];
 };
 
+// ---------- Pi plugins ----------
+
+const pluginView = { profile: {}, market: {}, query: "", spec: "" };
+
+function reloadPlugins() {
+  // Status and command discovery may each initialize a separate Pi child.
+  void loadPlugins(pluginView.profile, "#plugin-profile", "/api/plugins", pluginProfile, { signal: AbortSignal.timeout(90000) });
+  void searchPlugins();
+}
+
+function searchPlugins() {
+  const query = new URLSearchParams({ q: pluginView.query });
+  return loadPlugins(pluginView.market, "#plugin-market-results", "/api/plugins/market?" + query, pluginMarketResults);
+}
+
+async function loadPlugins(resource, selector, path, content, options) {
+  const request = resource.request = (resource.request || 0) + 1;
+  const update = () => {
+    const root = $(selector);
+    if (!root) return;
+    root.setAttribute("aria-busy", String(resource.loading));
+    root.replaceChildren(...content());
+  };
+  resource.error = null;
+  resource.loading = true;
+  update();
+  try {
+    const data = await api(path, options);
+    if (request === resource.request) resource.data = data;
+  } catch (error) {
+    if (request === resource.request && error.status !== 401) resource.error = error;
+  } finally {
+    if (request === resource.request) {
+      resource.loading = false;
+      update();
+    }
+  }
+}
+
+function pluginError(title, error) {
+  return h("div", { class: "notice", role: "alert" },
+    h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }),
+    h("div", null, h("strong", { text: title }), h("p", { class: "card-note", text: error.message })));
+}
+
+function pluginRow(name, description, actions, badge) {
+  return h("li", { class: "plugin-row" },
+    h("div", { class: "plugin-row-main" },
+      h("div", { class: "plugin-row-heading" },
+        h("span", { class: "mono plugin-name", text: name }), badge),
+      description),
+    actions ? h("div", { class: "card-actions" }, actions) : null);
+}
+
+function pluginCommand(command) {
+  const form = h("form", { class: "form" });
+  const args = textInput("args", "", { maxlength: 4096 });
+  const run = h("button", { class: "btn btn-primary", type: "submit", text: t("运行") });
+  append(form, [
+    field(t("命令参数（可选）"), args),
+    h("div", { class: "form-actions" }, run),
+  ]);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void runAction(run, "plugin_run_command", { name: command.name, args: args.value }, { showOutput: true });
+  });
+  openSheet(command.name, form);
+}
+
+function pluginProfile() {
+  const { data, error, loading } = pluginView.profile;
+  if (error) return [pluginError(t("无法读取 Pi 运行状态"), error)];
+  if (!data) return [h("div", { class: "skeleton", "aria-hidden": "true" })];
+  const { status, commands } = data;
+  const installed = status.installed_packages;
+  const providers = status.discovered_providers;
+  const models = status.discovered_models;
+  const sync = actionButton(t("同步模型"), "plugin_sync", null, { ok: t("插件模型已同步") });
+  const update = actionButton(t("更新全部"), "plugin_update", {}, { ok: t("插件已更新") });
+  sync.disabled ||= !installed.length;
+  update.disabled ||= !installed.length;
+
+  const packageRows = installed.map((spec) => pluginRow(spec, null, [
+    actionButton(t("更新"), "plugin_update", { spec }, { ok: t("插件已更新") }, "btn-sm"),
+    actionButton(t("卸载"), "plugin_remove", { spec }, {
+      ok: t("插件已卸载"),
+      confirm: [t("卸载 {0}？", spec), t("这会移除插件并同步模型目录。"), t("卸载")],
+    }, "btn-sm btn-ghost"),
+  ]));
+  const accountRows = providers.map((provider) => {
+    // A package can register arbitrary provider IDs. Offer shell copy only for
+    // IDs that the CLI accepts and that have no shell syntax.
+    if (!/^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,255}$/.test(provider)) return pluginRow(provider);
+    const login = "codex-mixin plugin auth login " + provider;
+    const copy = h("button", { class: "btn btn-sm", type: "button", text: t("复制登录命令"), onclick: () => copyText(login) });
+    const logout = actionButton(t("退出登录"), "plugin_auth_logout", { provider }, {
+      ok: t("已退出登录"),
+      confirm: [t("退出 {0} 的登录？", provider), t("Pi 会清除该 Provider 已保存的登录凭据。"), t("退出登录")],
+    }, "btn-sm btn-ghost");
+    return pluginRow(provider, h("code", { class: "card-note plugin-login", text: login }), [copy, logout]);
+  });
+  const commandRows = commands.map((command) => {
+    const run = h("button", {
+      class: "btn btn-sm", type: "button", text: t("运行"), "data-action": "",
+      disabled: state.busy, onclick: () => pluginCommand(command),
+    });
+    return pluginRow(command.name, h("p", { class: "card-note", text: command.description }), run);
+  });
+  const diagnostics = [];
+  if (status.bridge_error) {
+    diagnostics.push(h("div", { class: "notice", role: "alert" },
+      h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }),
+      h("div", null, h("strong", { text: t("Pi 桥接异常") }), h("div", { class: "card-note", text: status.bridge_error }))));
+  }
+  if (status.extension_errors > 0) {
+    diagnostics.push(h("div", { class: "notice", role: "status" },
+      h("span", { class: "dot is-warn notice-mark", "aria-hidden": "true" }),
+      h("div", null, h("strong", { text: t("部分插件加载失败") }), h("div", { class: "card-note", text: t("共有 {0} 个扩展报错，可在终端执行同步查看详情。", status.extension_errors) }))));
+  }
+  return [
+    card(t("Pi 运行环境"), null, h("div", null, h("dl", { class: "plugin-status-grid" },
+      [
+        ["Node.js", status.node_available ? status.node_version || t("可用") : t("未检测到 Node.js")],
+        ["Pi", status.runtime_initialized ? status.pi_version || t("已初始化") : t("安装首个插件时初始化")],
+        [t("已发现模型"), t("{0} 个模型 · {1} 个 Provider", models.length, providers.length)],
+        [t("包下载源"), status.npm_registry],
+      ].map(([label, value]) => h("div", null, h("dt", { text: label }), h("dd", { text: value })))), ...diagnostics),
+      [sync, update], "card-flush plugin-runtime"),
+    card(t("已安装插件"), null, packageRows.length
+      ? h("ul", { class: "plugin-list" }, packageRows)
+      : emptyState(loading ? t("正在读取插件…") : t("尚未安装插件")), null, "card-flush"),
+    accountRows.length ? card(t("Pi Provider 账号"), t("复制登录命令，在运行 Mixin 的电脑上执行。"),
+      h("ul", { class: "plugin-list" }, accountRows), null, "card-flush") : null,
+    commandRows.length ? card(t("插件命令"), null, h("ul", { class: "plugin-list" }, commandRows), null, "card-flush") : null,
+  ].filter(Boolean);
+}
+
+function pluginMarketResults() {
+  const { data, error, loading } = pluginView.market;
+  if (error) return [pluginError(t("无法搜索 Pi 插件市场"), error)];
+  if (loading || !data) return [h("div", { class: "plugin-market-loading", role: "status", text: t("正在查询插件市场…") })];
+  if (!data.packages.length) return [emptyState(t("没有找到匹配的插件"))];
+  const rows = data.packages.map((pkg) => {
+    const install = actionButton(pkg.installed ? t("已安装") : t("安装"), "plugin_install", { spec: pkg.name },
+      { ok: t("插件已安装") }, pkg.installed ? "btn-sm" : "btn-sm btn-tinted");
+    install.disabled ||= pkg.installed;
+    return pluginRow(pkg.name, h("p", { class: "card-note", text: pkg.description }), install,
+      pkg.version ? h("span", { class: "badge", text: pkg.version }) : null);
+  });
+  return [h("ul", { class: "plugin-list" }, rows)];
+}
+
+RENDERERS.plugins = () => {
+  const search = textInput("query", pluginView.query, {
+    type: "search", maxlength: 256, placeholder: t("搜索 Pi 插件"), "aria-label": t("搜索 Pi 插件"),
+  });
+  const searchForm = h("form", { class: "plugin-form" }, search,
+    h("button", { class: "btn", type: "submit", text: t("搜索") }));
+  searchForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    pluginView.query = search.value.trim();
+    void searchPlugins();
+  });
+
+  const spec = textInput("spec", pluginView.spec, {
+    class: "input mono", maxlength: 260, required: true, placeholder: "npm:pi-provider-kiro", "aria-label": t("npm 包名"),
+  });
+  const install = h("button", { class: "btn btn-tinted", type: "submit", "data-action": "", disabled: state.busy, text: t("安装") });
+  const installForm = h("form", { class: "plugin-form" }, spec, install);
+  spec.addEventListener("input", () => { pluginView.spec = spec.value; });
+  installForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = spec.value.trim();
+    if (!value) return;
+    const result = await runAction(install, "plugin_install", { spec: value }, { ok: t("插件已安装") });
+    if (result) {
+      pluginView.spec = "";
+      spec.value = "";
+    }
+  });
+
+  return [
+    h("div", { id: "plugin-profile", class: "plugin-profile", "aria-busy": String(Boolean(pluginView.profile.loading)) }, pluginProfile()),
+    card(t("Pi 插件市场"), t("插件安装到 Mixin 管理的 Pi，并以当前系统用户权限运行。"),
+      h("div", null, h("div", { class: "plugin-market-toolbar" }, searchForm, installForm),
+        h("div", { id: "plugin-market-results", "aria-live": "polite", "aria-busy": String(Boolean(pluginView.market.loading)) }, pluginMarketResults())),
+      null, "card-flush"),
+  ];
+};
+
 // ---------- System ----------
 
 RENDERERS.system = () => {
@@ -3663,6 +3858,7 @@ function boot() {
   $("#refresh").addEventListener("click", () => {
     refresh(true);
     if (state.page === "apps") loadAgents();
+    if (state.page === "plugins") reloadPlugins();
   });
   $("#sheet-close").addEventListener("click", closeSheet);
   $("#sheet").addEventListener("cancel", (event) => {

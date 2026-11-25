@@ -20,6 +20,23 @@ pub fn prepare_background_tokio_command(command: &mut tokio::process::Command) {
     let _ = command;
 }
 
+/// Route an interactive child's stdout to the caller's stderr while reserving
+/// the caller's stdout for structured output.
+pub fn interactive_output_to_stderr(command: &mut tokio::process::Command) -> std::io::Result<()> {
+    #[cfg(unix)]
+    let stderr = {
+        use std::os::fd::AsFd;
+        std::io::stderr().as_fd().try_clone_to_owned()?
+    };
+    #[cfg(windows)]
+    let stderr = {
+        use std::os::windows::io::AsHandle;
+        std::io::stderr().as_handle().try_clone_to_owned()?
+    };
+    command.stdout(Stdio::from(stderr));
+    Ok(())
+}
+
 pub fn prepare_daemon_command(command: &mut Command) -> std::io::Result<()> {
     #[cfg(unix)]
     {

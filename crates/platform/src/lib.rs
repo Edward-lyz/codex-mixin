@@ -39,10 +39,10 @@ pub use paths::{
 pub use permissions::{restrict_owner_only_dir, restrict_owner_only_file};
 pub use process::{
     ShutdownSignal, current_executable_image_name, force_kill_process_tree,
-    force_kill_process_tree_async, isolate_process_group, isolate_tokio_process_group,
-    kill_process_tree, kill_process_tree_async, pid_is_running, prepare_background_command,
-    prepare_background_tokio_command, prepare_daemon_command, send_process_signal,
-    terminate_isolated_child, terminate_isolated_tokio_child,
+    force_kill_process_tree_async, interactive_output_to_stderr, isolate_process_group,
+    isolate_tokio_process_group, kill_process_tree, kill_process_tree_async, pid_is_running,
+    prepare_background_command, prepare_background_tokio_command, prepare_daemon_command,
+    send_process_signal, terminate_isolated_child, terminate_isolated_tokio_child,
 };
 pub use shell::{
     PYTHON_LAUNCHER, is_report_hook_command, portable_path_text, report_hook_command, shell_quote,

@@ -6,6 +6,54 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+#[derive(Deserialize)]
+pub struct PluginStatus {
+    pub node_available: bool,
+    pub node_version: Option<String>,
+    pub runtime_initialized: bool,
+    pub pi_version: Option<String>,
+    pub installed_packages: Vec<String>,
+    pub discovered_providers: Vec<String>,
+    pub discovered_models: Vec<String>,
+    pub npm_registry: String,
+    #[serde(default)]
+    pub extension_errors: usize,
+    #[serde(alias = "runtime_error")]
+    pub bridge_error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct MarketPackage {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: String,
+    pub installed: bool,
+}
+
+#[derive(Deserialize)]
+pub struct PluginCommand {
+    pub name: String,
+    pub description: String,
+}
+
+pub struct PluginData {
+    pub status: PluginStatus,
+    pub commands: Vec<PluginCommand>,
+    pub commands_error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PluginCommandOutput {
+    pub notifications: Vec<PluginCommandNotification>,
+}
+
+#[derive(Deserialize)]
+pub struct PluginCommandNotification {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub message: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Autostart {
     pub enabled: bool,

@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::model::{PluginCommand, PluginData, PluginStatus};
+
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(90);
 const CHANGE_TIMEOUT: Duration = Duration::from_secs(20 * 60);
@@ -122,6 +124,42 @@ impl Cli {
                 error = error.to_string()
             ))
         })
+    }
+
+    /// A failing extension can leave the package list available for removal.
+    pub fn plugin_data(&self) -> CliResult<PluginData> {
+        let status = self.query::<PluginStatus>(&["plugin", "status", "--json"])?;
+        let mut data = PluginData {
+            status,
+            commands: Vec::new(),
+            commands_error: None,
+        };
+        if !data.status.installed_packages.is_empty() && data.status.bridge_error.is_none() {
+            match self.query::<Vec<PluginCommand>>(&["plugin", "commands", "--json"]) {
+                Ok(commands) => data.commands = commands,
+                Err(error) => data.commands_error = Some(error.message),
+            }
+        }
+        Ok(data)
+    }
+
+    /// An interactive command for the bundled CLI, including on app-only installs.
+    pub fn plugin_login_command(&self, provider: &str) -> String {
+        let argument = format!("--provider={provider}");
+        let path = self.executable.to_string_lossy();
+        if cfg!(windows) {
+            format!(
+                "& '{}' plugin auth login '{}'",
+                path.replace('\'', "''"),
+                argument.replace('\'', "''")
+            )
+        } else {
+            format!(
+                "'{}' plugin auth login '{}'",
+                path.replace('\'', "'\\''"),
+                argument.replace('\'', "'\\''")
+            )
+        }
     }
 
     /// Runs a configuration change. With `apply`, a successful change is

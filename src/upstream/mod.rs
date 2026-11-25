@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
+use crate::pi_plugins::{Bridge, is_managed_provider};
 use crate::provider::auth::ducx::DucxRuntime;
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
@@ -64,6 +65,8 @@ pub(crate) struct UpstreamAccess {
     responses_websockets: Arc<tokio::sync::Mutex<responses_websocket::ResponsesWebSockets>>,
     proxy_selection: crate::platform::proxy::ProxySelection,
     claude_code: Arc<claude_code::ClaudeCodeSessions>,
+    pi_bridge: Arc<Bridge>,
+    pi_bridge_client: Arc<tokio::sync::OnceCell<Client>>,
 }
 
 impl UpstreamAccess {
@@ -84,6 +87,8 @@ impl UpstreamAccess {
             responses_websockets: Arc::default(),
             proxy_selection,
             claude_code: Arc::default(),
+            pi_bridge: Arc::default(),
+            pi_bridge_client: Arc::default(),
         }
     }
 
@@ -99,6 +104,13 @@ impl UpstreamAccess {
     where
         T: serde::Serialize + Send + 'static,
     {
+        if is_managed_provider(provider.definition()) {
+            let request = self.pi_bridge_request(protocol, hash_key).await?;
+            return self
+                .send_pi_bridge_json(request, body)
+                .await
+                .map(|(response, _)| response);
+        }
         if provider.definition().preset_id.as_deref() == Some("agy-business") {
             let mut payload = serde_json::to_value(body)?;
             let mut response = None;
@@ -165,6 +177,10 @@ impl UpstreamAccess {
     where
         T: serde::Serialize + Send + 'static,
     {
+        if is_managed_provider(provider.definition()) {
+            let request = self.pi_bridge_request(protocol, hash_key).await?;
+            return self.send_pi_bridge_json(request, body).await;
+        }
         if provider.definition().preset_id.as_deref() == Some("agy-business") {
             // Business wraps the supplied representation in a different wire
             // envelope; retain its source for the caller's explicit retries.
@@ -204,6 +220,43 @@ impl UpstreamAccess {
             .apply_session_affinity(authenticated, hash_key)
             .header(reqwest::header::ACCEPT, "text/event-stream");
         self.send_json_retaining(request, body, None).await
+    }
+
+    async fn pi_bridge_request(
+        &self,
+        protocol: ProviderProtocol,
+        hash_key: Option<&str>,
+    ) -> Result<reqwest::RequestBuilder, GatewayError> {
+        if protocol != ProviderProtocol::OpenAiChat {
+            return Err(GatewayError::Upstream(
+                "the managed Pi provider uses Chat Completions".to_owned(),
+            ));
+        }
+        let endpoint = self.pi_bridge.endpoint().await.map_err(|error| {
+            tracing::warn!(
+                error = %crate::error::format_error_chain(error.as_ref()),
+                "could not start the isolated Pi bridge"
+            );
+            GatewayError::Upstream("the isolated Pi runtime is unavailable".to_owned())
+        })?;
+        let client = self
+            .pi_bridge_client
+            .get_or_try_init(|| async {
+                Client::builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(self.config.request_timeout)
+                    .build()
+            })
+            .await?;
+        let request = client
+            .post(format!("{}/v1/chat/completions", endpoint.base_url))
+            .bearer_auth(endpoint.token)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        Ok(match hash_key {
+            Some(key) => request.header("x-mixin-pi-session", key),
+            None => request,
+        })
     }
 
     pub(crate) async fn agy_native_project(

@@ -1,6 +1,14 @@
 use std::net::SocketAddr;
 
 use crate::config::GatewayConfig;
+use crate::provider::{ProviderDefinition, is_managed_pi_provider};
+
+/// Find the Pi model catalog whose changes need to reach the live gateway.
+pub fn managed_pi_provider(providers: &[ProviderDefinition]) -> Option<&ProviderDefinition> {
+    providers
+        .iter()
+        .find(|provider| is_managed_pi_provider(provider))
+}
 
 /// Reload committed runtime configuration after startup integration work and
 /// retain the listener address selected by the operating system.

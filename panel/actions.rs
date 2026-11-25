@@ -121,6 +121,23 @@ pub(super) enum PanelAction {
     AgentUpgrade {
         id: String,
     },
+    PluginInstall {
+        spec: String,
+    },
+    PluginRemove {
+        spec: String,
+    },
+    PluginUpdate {
+        spec: Option<String>,
+    },
+    PluginSync,
+    PluginAuthLogout {
+        provider: String,
+    },
+    PluginRunCommand {
+        name: String,
+        args: Option<String>,
+    },
     EchEnable,
     EchDisable,
     EchTest,
@@ -356,12 +373,54 @@ fn provider_id_command(operation: &str, id: &str) -> Result<CliInvocation, Strin
     Ok(invocation)
 }
 
+fn plugin_package_command(operation: &str, spec: Option<&str>) -> Result<CliInvocation, String> {
+    let mut invocation = CliInvocation::fixed(&["plugin", operation, "--json"]);
+    if let Some(spec) = spec {
+        let package = spec.strip_prefix("npm:").unwrap_or(spec);
+        validate_positional("npm package", package)?;
+        if package.len() > 256
+            || !package
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"@/.-_+^~".contains(&byte))
+        {
+            return Err("invalid npm package specifier".to_owned());
+        }
+        invocation.push_value("spec", spec)?;
+    }
+    Ok(invocation)
+}
+
+fn plugin_identifier(
+    invocation: &mut CliInvocation,
+    flag: &str,
+    id: &str,
+    punctuation: &[u8],
+) -> Result<(), String> {
+    validate_positional(flag, id)?;
+    if id.len() > 256
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || punctuation.contains(&byte))
+    {
+        return Err(format!("invalid plugin {flag}"));
+    }
+    invocation.push_value(flag, id)
+}
+
 impl PanelAction {
     /// Whether stdout is a JSON document the panel should parse.
     pub(super) fn prints_json(&self) -> bool {
         matches!(
             self,
-            Self::ProviderTest { .. } | Self::EchTest | Self::KeyCreate { .. }
+            Self::ProviderTest { .. }
+                | Self::EchTest
+                | Self::KeyCreate { .. }
+                | Self::PluginInstall { .. }
+                | Self::PluginRemove { .. }
+                | Self::PluginUpdate { .. }
+                | Self::PluginSync
+                | Self::PluginAuthLogout { .. }
+                | Self::PluginRunCommand { .. }
         )
     }
 
@@ -558,6 +617,27 @@ impl PanelAction {
             }
             Self::AgentDisconnect { id } => agent_command("disconnect", id),
             Self::AgentUpgrade { id } => agent_command("upgrade", id),
+            Self::PluginInstall { spec } => plugin_package_command("install", Some(spec)),
+            Self::PluginRemove { spec } => plugin_package_command("remove", Some(spec)),
+            Self::PluginUpdate { spec } => plugin_package_command("update", spec.as_deref()),
+            Self::PluginSync => Ok(CliInvocation::fixed(&["plugin", "sync", "--json"])),
+            Self::PluginAuthLogout { provider } => {
+                let mut invocation = CliInvocation::fixed(&["plugin", "auth", "logout", "--json"]);
+                plugin_identifier(&mut invocation, "provider", provider, b"-_.")?;
+                Ok(invocation)
+            }
+            Self::PluginRunCommand { name, args } => {
+                let mut invocation = CliInvocation::fixed(&["plugin", "run-command", "--json"]);
+                // Pi appends a colon and number when two plugins register the same command name.
+                plugin_identifier(&mut invocation, "name", name, b"-_.:")?;
+                if let Some(args) = args {
+                    if args.len() > 4096 {
+                        return Err("plugin command arguments are too long".to_owned());
+                    }
+                    invocation.push_value("args", args)?;
+                }
+                Ok(invocation)
+            }
             Self::EchEnable => Ok(CliInvocation::fixed(&["ech", "enable"])),
             Self::EchDisable => Ok(CliInvocation::fixed(&["ech", "disable"])),
             Self::EchTest => Ok(CliInvocation::fixed(&["ech", "test", "--json"])),

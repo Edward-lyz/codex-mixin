@@ -53,6 +53,9 @@ console.page.providers:
 console.page.agents:
   en: "Agents"
   zh-CN: "Agent"
+console.page.plugins:
+  en: "Plugins"
+  zh-CN: "插件"
 console.page.usage:
   en: "Usage"
   zh-CN: "用量"
@@ -65,6 +68,132 @@ console.page.routing:
 console.page.settings:
   en: "Settings"
   zh-CN: "设置"
+plugins.subtitle:
+  en: "Install Pi packages and make their models available through Mixin."
+  zh-CN: "安装 Pi 插件，通过 Mixin 使用插件提供的模型。"
+plugins.runtime_section:
+  en: "Runtime"
+  zh-CN: "运行环境"
+plugins.runtime:
+  en: "Isolated Pi profile"
+  zh-CN: "独立 Pi 环境"
+plugins.runtime_pending:
+  en: "Set up on first install"
+  zh-CN: "首次安装插件时初始化"
+plugins.pi_version:
+  en: "Pi %{version}"
+  zh-CN: "Pi %{version}"
+plugins.node_version:
+  en: "Node.js %{version}"
+  zh-CN: "Node.js %{version}"
+plugins.node_missing:
+  en: "Install Node.js to continue"
+  zh-CN: "请先安装 Node.js"
+plugins.npm_registry:
+  en: "npm download source"
+  zh-CN: "npm 下载源"
+plugins.model_summary:
+  en: "%{providers} providers · %{models} models"
+  zh-CN: "%{providers} 个服务商 · %{models} 个模型"
+plugins.models_unavailable:
+  en: "Model catalog unavailable"
+  zh-CN: "暂时无法读取模型目录"
+plugins.extension_errors:
+  en: "Pi reported %{count} extension errors."
+  zh-CN: "Pi 报告了 %{count} 个插件错误。"
+plugins.update_all:
+  en: "Update All"
+  zh-CN: "更新全部"
+plugins.sync:
+  en: "Sync Models"
+  zh-CN: "同步模型"
+plugins.refresh:
+  en: "Refresh"
+  zh-CN: "刷新"
+plugins.in_progress:
+  en: "%{action} in progress…"
+  zh-CN: "正在%{action}…"
+plugins.installed_section:
+  en: "Installed Packages"
+  zh-CN: "已安装插件"
+plugins.market_tab:
+  en: "Marketplace"
+  zh-CN: "市场"
+plugins.installed_tab:
+  en: "Installed"
+  zh-CN: "已安装"
+plugins.none_installed:
+  en: "No packages installed."
+  zh-CN: "还没有安装插件。"
+plugins.update:
+  en: "Update"
+  zh-CN: "更新"
+plugins.remove:
+  en: "Remove"
+  zh-CN: "卸载"
+plugins.provider_section:
+  en: "Provider Accounts"
+  zh-CN: "服务商账号"
+plugins.copy_login:
+  en: "Copy Login Command"
+  zh-CN: "复制登录命令"
+plugins.login_copied:
+  en: "Login command copied. Run it in your terminal."
+  zh-CN: "已复制登录命令，请在终端中运行。"
+plugins.login_copied_powershell:
+  en: "Login command copied. Run it in PowerShell."
+  zh-CN: "已复制登录命令，请在 PowerShell 中运行。"
+plugins.logout:
+  en: "Log Out"
+  zh-CN: "退出登录"
+plugins.command_section:
+  en: "Plugin Commands"
+  zh-CN: "插件命令"
+plugins.run:
+  en: "Run"
+  zh-CN: "运行"
+plugins.run_command_title:
+  en: "Run %{name}"
+  zh-CN: "运行 %{name}"
+plugins.arguments:
+  en: "Arguments (optional)"
+  zh-CN: "参数（可选）"
+plugins.command_output:
+  en: "Output from %{name}"
+  zh-CN: "%{name} 的输出"
+plugins.command_no_output:
+  en: "The command completed without output."
+  zh-CN: "命令已完成，没有输出。"
+plugins.market_section:
+  en: "Pi Package Marketplace"
+  zh-CN: "Pi 插件市场"
+plugins.search:
+  en: "Search"
+  zh-CN: "搜索"
+plugins.search_hint:
+  en: "Search packages by name or keyword"
+  zh-CN: "按包名或关键词搜索"
+plugins.package_hint:
+  en: "Install by npm package name"
+  zh-CN: "输入 npm 包名安装"
+plugins.package_permissions:
+  en: "Install packages you trust. Plugin code runs with your local user permissions."
+  zh-CN: "请安装信任的插件。插件代码以当前用户权限运行。"
+plugins.install:
+  en: "Install"
+  zh-CN: "安装"
+plugins.already_installed:
+  en: "Installed"
+  zh-CN: "已安装"
+plugins.no_results:
+  en: "No matching packages."
+  zh-CN: "没有匹配的插件。"
+plugins.loading:
+  en: "Loading Pi runtime…"
+  zh-CN: "正在读取 Pi 运行环境…"
+plugins.load_failed:
+  en: "Could not load Pi runtime"
+  zh-CN: "无法读取 Pi 运行环境"
 providers.add:
   en: "Add Provider…"
   zh-CN: "添加服务商…"

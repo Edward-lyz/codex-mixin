@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_VERSION: u32 = 2;
 pub const MANUAL_MODEL_CONTEXT_WINDOW: u64 = 128_000;
 pub(crate) const AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
+pub(crate) const PI_BRIDGE_PROVIDER_ID: &str = "pi-bridge";
+pub(crate) const PI_BRIDGE_PLACEHOLDER_URL: &str = "http://127.0.0.1:0";
+
+pub(crate) fn is_managed_pi_provider(provider: &ProviderDefinition) -> bool {
+    provider.id == PI_BRIDGE_PROVIDER_ID && provider.base_url == PI_BRIDGE_PLACEHOLDER_URL
+}
 
 pub fn is_auto_review_model_id(model_id: &str) -> bool {
     matches!(
@@ -303,7 +309,8 @@ impl ProviderDefinition {
     /// capabilities. Capability and web-search probes are paid completions,
     /// so such providers are never probed.
     pub fn declares_model_capabilities(&self) -> bool {
-        self.model_source == ProviderModelSource::BaiduOneApi
+        is_managed_pi_provider(self)
+            || self.model_source == ProviderModelSource::BaiduOneApi
             || crate::provider::spec_for(self.preset_id.as_deref()).declares_model_capabilities
     }
 
@@ -511,7 +518,8 @@ impl ProviderDefinition {
     /// Drop an auto review model the provider no longer offers, so an upstream
     /// model list change cannot invalidate the stored provider.
     pub fn has_configured_credentials(&self) -> bool {
-        self.auth.is_configured()
+        is_managed_pi_provider(self)
+            || self.auth.is_configured()
             || matches!(
                 self.preset_id.as_deref(),
                 Some("openai" | "agy" | "agy-business" | "kiro" | "claude-code")

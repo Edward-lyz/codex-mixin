@@ -17,6 +17,8 @@
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
 //!   `GET /api/agents/versions` -> `agent versions --json` (network).
+//! - `GET /api/plugins` -> Pi profile status and registered commands;
+//!   `GET /api/plugins/market?q=<query>&limit=<limit>` -> Pi package search.
 //! - `GET /api/context` -> `{settings, database_path, totals, sessions}` from
 //!   `context stats --json` and `context config get --json`; with `?session=key`,
 //!   returns `context export --compact --session=key` metadata on demand.
@@ -120,6 +122,8 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/logs", get(logs))
         .route("/api/agents", get(agents))
         .route("/api/agents/versions", get(agent_versions))
+        .route("/api/plugins", get(plugins))
+        .route("/api/plugins/market", get(plugin_market))
         .route("/api/context", get(context_stats))
         .route("/api/ech", get(ech_status))
         .route("/api/config/export", get(export_config))
@@ -475,6 +479,50 @@ async fn agents() -> Result<Json<Value>, ApiError> {
 
 async fn agent_versions() -> Result<Json<Value>, ApiError> {
     Ok(Json(run_json(&["agent", "versions", "--json"]).await?))
+}
+
+async fn plugins() -> Result<Json<Value>, ApiError> {
+    let status = run_json(&["plugin", "status", "--json"]).await?;
+    let commands = if status["runtime_initialized"] == true
+        && status["installed_packages"]
+            .as_array()
+            .is_some_and(|packages| !packages.is_empty())
+    {
+        run_json(&["plugin", "commands", "--json"]).await?
+    } else {
+        json!([])
+    };
+    Ok(Json(json!({ "status": status, "commands": commands })))
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginMarketQuery {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn plugin_market(Query(query): Query<PluginMarketQuery>) -> Result<Json<Value>, ApiError> {
+    let q = query.q.as_deref().unwrap_or_default();
+    if q.len() > 256 || q.chars().any(char::is_control) || q.trim_start().starts_with("@env:") {
+        return Err(ApiError::invalid(
+            "invalid Pi package search query".to_owned(),
+        ));
+    }
+    let limit = query.limit.unwrap_or(30);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::invalid(
+            "Pi package search limit must be 1 to 100".to_owned(),
+        ));
+    }
+    let packages = run_json(&[
+        "plugin",
+        "search",
+        &format!("--query={}", q.trim()),
+        &format!("--limit={limit}"),
+        "--json",
+    ])
+    .await?;
+    Ok(Json(json!({ "packages": packages })))
 }
 
 #[derive(Debug, Deserialize)]
