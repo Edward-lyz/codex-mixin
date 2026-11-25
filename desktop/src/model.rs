@@ -14,12 +14,38 @@ pub struct PluginStatus {
     pub pi_version: Option<String>,
     pub installed_packages: Vec<String>,
     pub discovered_providers: Vec<String>,
+    #[serde(default)]
+    pub provider_details: Vec<PluginProvider>,
     pub discovered_models: Vec<String>,
+    #[serde(default)]
+    pub commands: Vec<PluginCommand>,
     pub npm_registry: String,
     #[serde(default)]
     pub extension_errors: usize,
     #[serde(alias = "runtime_error")]
     pub bridge_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PluginProvider {
+    pub id: String,
+    #[serde(default)]
+    pub mixin_provider_id: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub model_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PluginCommandArgument {
+    pub value: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -30,10 +56,14 @@ pub struct MarketPackage {
     pub installed: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct PluginCommand {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub arguments: Vec<PluginCommandArgument>,
 }
 
 pub struct PluginData {
@@ -187,6 +217,12 @@ pub struct Provider {
     pub auto_review_model: Option<String>,
     #[serde(default)]
     pub codex_thread_title_model: Option<String>,
+    #[serde(default)]
+    pub plugin_managed: bool,
+    #[serde(default)]
+    pub pi_plugin_package: Option<String>,
+    #[serde(default)]
+    pub pi_provider_id: Option<String>,
 }
 
 impl Provider {

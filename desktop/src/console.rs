@@ -250,6 +250,50 @@ pub struct Console {
 }
 
 impl Console {
+    /// Focuses a specific provider on the Providers page.
+    pub fn open_provider(provider_id: String, cx: &mut App) {
+        Self::open(Some(Page::Providers), cx);
+        if let Some(handle) = cx.try_global::<ConsoleWindow>().map(|window| window.handle)
+            && cx.windows().contains(&handle)
+        {
+            let _ = handle.update(cx, |root, window, cx| {
+                if let Ok(root) = root.downcast::<gpui_kit::base::Root>()
+                    && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
+                {
+                    console.update(cx, |console, cx| {
+                        console.select(Page::Providers, window, cx);
+                        console.providers.update(cx, |providers, cx| {
+                            providers.focus_provider(provider_id.clone(), window, cx);
+                        });
+                    });
+                }
+            });
+        }
+    }
+
+    /// Focuses an installed plugin's detail page on the Plugins page.
+    pub fn open_plugin(package: String, cx: &mut App) {
+        Self::open(Some(Page::Plugins), cx);
+        if let Some(handle) = cx.try_global::<ConsoleWindow>().map(|window| window.handle)
+            && cx.windows().contains(&handle)
+        {
+            let _ = handle.update(cx, |root, window, cx| {
+                if let Ok(root) = root.downcast::<gpui_kit::base::Root>()
+                    && let Ok(console) = root.read(cx).view().clone().downcast::<Console>()
+                {
+                    console.update(cx, |console, cx| {
+                        console.select(Page::Plugins, window, cx);
+                        if let Some(plugins) = &console.plugins {
+                            plugins.update(cx, |plugins, cx| {
+                                plugins.open_package_detail(package.clone(), cx);
+                            });
+                        }
+                    });
+                }
+            });
+        }
+    }
+
     /// Shows the console, reusing the open window.
     pub fn open(page: Option<Page>, cx: &mut App) {
         // The console is a regular window: it gets a Dock icon, Command-Tab

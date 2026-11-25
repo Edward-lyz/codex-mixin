@@ -251,6 +251,8 @@ impl ProviderSpec {
             models_refresh_error: None,
             discovered_credential: None,
             model_refresh: None,
+            pi_plugin_package: None,
+            pi_provider_id: None,
         }
     }
 }

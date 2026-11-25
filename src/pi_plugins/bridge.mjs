@@ -3,8 +3,8 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import {
-  ModelRuntime, SessionManager, VERSION,
-  createAgentSessionFromServices, createAgentSessionServices,
+  DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, VERSION,
+  createAgentSessionFromServices,
 } from '@earendil-works/pi-coding-agent';
 
 const agentDir = process.env.PI_CODING_AGENT_DIR;
@@ -18,14 +18,53 @@ const modelRuntime = await ModelRuntime.create({
   modelsPath: join(agentDir, 'models.json'),
   refreshOnCreate: false,
 });
-const services = await createAgentSessionServices({
-  cwd, agentDir, modelRuntime,
-  resourceLoaderOptions: {
-    disabledBuiltinExtensions: ['mcp', 'codemode', 'tool-search'],
-    noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-  },
-  resourceLoaderReloadOptions: { resolveProjectTrust: async () => false },
+const settingsManager = SettingsManager.create(cwd, agentDir);
+const resourceLoader = new DefaultResourceLoader({
+  cwd, agentDir, settingsManager,
+  disabledBuiltinExtensions: ['mcp', 'codemode', 'tool-search'],
+  noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
 });
+await resourceLoader.reload({ resolveProjectTrust: async () => false });
+const diagnostics = [];
+const loadedExtensions = resourceLoader.getExtensions();
+const pathToSource = new Map();
+for (const ext of loadedExtensions.extensions) {
+  const source = ext.sourceInfo?.source ?? null;
+  if (ext.path) pathToSource.set(ext.path, source);
+  if (ext.resolvedPath) pathToSource.set(ext.resolvedPath, source);
+}
+const providerMeta = new Map();
+for (const { name, config, extensionPath } of loadedExtensions.runtime.pendingProviderRegistrations ?? []) {
+  providerMeta.set(name, {
+    display_name: typeof config?.name === 'string' && config.name.trim() ? config.name.trim() : name,
+    package: pathToSource.get(extensionPath) ?? null,
+  });
+  try {
+    modelRuntime.registerProvider(name, config);
+  } catch (error) {
+    diagnostics.push({ type: 'error', message: `Extension "${extensionPath}" error: ${error instanceof Error ? error.message : String(error)}` });
+  }
+}
+loadedExtensions.runtime.pendingProviderRegistrations = [];
+for (const { provider, extensionPath } of loadedExtensions.runtime.pendingNativeProviderRegistrations ?? []) {
+  providerMeta.set(provider.id, {
+    display_name: typeof provider.name === 'string' && provider.name.trim() ? provider.name.trim() : provider.id,
+    package: pathToSource.get(extensionPath) ?? null,
+  });
+  try {
+    modelRuntime.registerNativeProvider(provider);
+  } catch (error) {
+    diagnostics.push({ type: 'error', message: `Extension "${extensionPath}" error: ${error instanceof Error ? error.message : String(error)}` });
+  }
+}
+loadedExtensions.runtime.pendingNativeProviderRegistrations = [];
+for (const { definition, extensionPath } of loadedExtensions.runtime.pendingVirtualModelRegistrations ?? []) {
+  try { modelRuntime.registerVirtualModel(definition); }
+  catch (error) { diagnostics.push({ type: 'error', message: `Extension "${extensionPath}" error: ${error instanceof Error ? error.message : String(error)}` }); }
+}
+loadedExtensions.runtime.pendingVirtualModelRegistrations = [];
+await modelRuntime.refresh({ allowNetwork: false });
+const services = { cwd, agentDir, modelRuntime, settingsManager, resourceLoader, diagnostics };
 let lifecycleErrors = 0;
 const { session, extensionsResult } = await createAgentSessionFromServices({
   services, sessionManager: SessionManager.inMemory(cwd), noTools: 'all',
@@ -37,9 +76,61 @@ const extensionErrors = () => lifecycleErrors + extensionsResult.errors.length +
 const providerIds = () => modelRuntime.getRegisteredProviderIds().filter(provider => provider !== 'codex-mixin');
 const modelId = model => `${model.provider}/${model.id}`;
 const models = () => providerIds().flatMap(provider => modelRuntime.getModels(provider));
-const commands = () => runner.getRegisteredCommands().map(command => ({
-  name: command.invocationName, description: command.description ?? '',
-}));
+
+function providerDisplayName(providerId) {
+  const meta = providerMeta.get(providerId);
+  if (meta?.display_name) return meta.display_name;
+  const reg = modelRuntime.getRegisteredProvider?.(providerId);
+  if (typeof reg?.name === 'string' && reg.name.trim()) return reg.name.trim();
+  return providerId;
+}
+
+function providerDetails() {
+  return providerIds().map(provider => ({
+    id: provider,
+    display_name: providerDisplayName(provider),
+    package: providerMeta.get(provider)?.package ?? null,
+    auth_status: modelRuntime.getProviderAuthStatus(provider).configured ? 'configured' : 'not_configured',
+    using_oauth: modelRuntime.isUsingOAuth(provider),
+    model_count: modelRuntime.getModels(provider).length,
+  }));
+}
+
+async function commandArguments(command) {
+  if (typeof command.getArgumentCompletions !== 'function') return [];
+  let timer;
+  try {
+    const raw = await Promise.race([
+      Promise.resolve().then(() => command.getArgumentCompletions('')),
+      new Promise(resolve => { timer = setTimeout(() => resolve(null), 500); }),
+    ]);
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const item of raw) {
+      if (!item || typeof item.value !== 'string') continue;
+      const value = item.value.trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : value;
+      const description = typeof item.description === 'string' && item.description.trim() ? item.description.trim() : null;
+      out.push({ value, label, description });
+      if (out.length >= 24) break;
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const commands = () => Promise.all(runner.getRegisteredCommands().map(async command => ({
+  name: command.invocationName,
+  description: command.description ?? '',
+  package: command.sourceInfo?.source ?? null,
+  arguments: await commandArguments(command),
+})));
 
 async function refreshModels() {
   const providers = providerIds();
@@ -310,12 +401,22 @@ const server = createServer(async (request, response) => {
   try {
     switch (`${request.method} ${request.url}`) {
       case 'GET /health':
-        respond(response, 200, { ok: true, version: VERSION, providers: providerIds(),
-          model_count: models().length, commands: commands(), extension_errors: extensionErrors() });
+        respond(response, 200, {
+          ok: true,
+          version: VERSION,
+          providers: providerIds(),
+          provider_details: providerDetails(),
+          model_count: models().length,
+          commands: await commands(),
+          extension_errors: extensionErrors(),
+        });
         break;
       case 'GET /v1/models':
         respond(response, 200, { object: 'list', extension_errors: extensionErrors(), data: models().map(model => ({
-          id: modelId(model), object: 'model', provider: model.provider, name: model.name,
+          id: modelId(model), object: 'model', provider: model.provider,
+          provider_display_name: providerDisplayName(model.provider),
+          package: providerMeta.get(model.provider)?.package ?? null,
+          name: model.name,
           context_window: model.contextWindow, max_tokens: model.maxTokens, reasoning: model.reasoning,
           supports_image: model.input.includes('image'),
           auth_status: modelRuntime.getProviderAuthStatus(model.provider).configured ? 'configured' : 'not_configured',
@@ -329,7 +430,7 @@ const server = createServer(async (request, response) => {
         await complete(request, response);
         break;
       case 'GET /admin/commands':
-        respond(response, 200, commands());
+        respond(response, 200, await commands());
         break;
       case 'POST /admin/commands/run':
         await runCommand(request, response);

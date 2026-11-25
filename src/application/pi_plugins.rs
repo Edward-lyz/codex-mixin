@@ -1,5 +1,6 @@
 //! Package and account operations for the Mixin-managed Pi profile.
 
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 use std::process::Stdio;
@@ -34,16 +35,48 @@ pub struct Status {
     pub pi_version: Option<String>,
     pub installed_packages: Vec<String>,
     pub discovered_providers: Vec<String>,
+    pub provider_details: Vec<PluginProvider>,
     pub discovered_models: Vec<String>,
+    pub commands: Vec<PluginCommand>,
     pub bridge_error: Option<String>,
     pub extension_errors: usize,
     pub npm_registry: &'static str,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PluginProvider {
+    pub id: String,
+    #[serde(default)]
+    pub mixin_provider_id: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub auth_status: String,
+    #[serde(default)]
+    pub using_oauth: bool,
+    #[serde(default)]
+    pub model_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PluginCommandArgument {
+    pub value: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginCommand {
     pub name: String,
     pub description: String,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub arguments: Vec<PluginCommandArgument>,
 }
 
 #[derive(Deserialize)]
@@ -68,17 +101,56 @@ struct BridgeCatalog {
 #[derive(Deserialize)]
 struct BridgeHealth {
     providers: Vec<String>,
+    #[serde(default)]
+    provider_details: Vec<PluginProvider>,
+    #[serde(default)]
+    commands: Vec<PluginCommand>,
 }
 
 #[derive(Deserialize)]
 struct PiModel {
     id: String,
+    provider: String,
+    #[serde(default)]
+    provider_display_name: Option<String>,
+    #[serde(default)]
+    package: Option<String>,
     name: String,
     context_window: Option<u64>,
     max_tokens: Option<u64>,
     reasoning: Option<bool>,
     supports_image: Option<bool>,
+    #[allow(dead_code)]
     auth_status: String,
+}
+
+struct DiscoveredPiProvider {
+    pi_provider_id: String,
+    mixin_provider_id: String,
+    display_name: String,
+    package: Option<String>,
+    models: Vec<ProviderModel>,
+}
+
+pub fn mixin_provider_id_for(pi_provider_id: &str) -> String {
+    let mut slug = String::with_capacity(pi_provider_id.len());
+    let mut last_dash = false;
+    for ch in pi_provider_id.chars() {
+        let lowered = ch.to_ascii_lowercase();
+        if lowered.is_ascii_alphanumeric() {
+            slug.push(lowered);
+            last_dash = false;
+        } else if !last_dash && !slug.is_empty() {
+            slug.push('-');
+            last_dash = true;
+        }
+    }
+    let slug = slug.trim_end_matches('-');
+    if slug.is_empty() {
+        PI_BRIDGE_PROVIDER_ID.to_owned()
+    } else {
+        format!("pi-{slug}")
+    }
 }
 
 pub async fn status() -> anyhow::Result<Status> {
@@ -101,20 +173,48 @@ pub async fn status() -> anyhow::Result<Status> {
     };
     let runtime_initialized = pi_plugins::pi_cli_path(&root).is_file();
     let installed_packages = installed_sources(&root).await?;
-    let (discovered_providers, discovered_models, bridge_error, extension_errors) =
-        if runtime_initialized && !installed_packages.is_empty() {
-            match bridge_catalog().await {
-                Ok((health, catalog)) => (
+    let (
+        discovered_providers,
+        provider_details,
+        discovered_models,
+        commands,
+        bridge_error,
+        extension_errors,
+    ) = if runtime_initialized && !installed_packages.is_empty() {
+        match bridge_catalog().await {
+            Ok((health, catalog)) => {
+                let details = health
+                    .provider_details
+                    .into_iter()
+                    .map(|mut detail| {
+                        detail.mixin_provider_id = mixin_provider_id_for(&detail.id);
+                        if detail.display_name.trim().is_empty() {
+                            detail.display_name = detail.id.clone();
+                        }
+                        detail
+                    })
+                    .collect();
+                (
                     health.providers,
+                    details,
                     catalog.data.into_iter().map(|model| model.id).collect(),
+                    health.commands,
                     None,
                     catalog.extension_errors,
-                ),
-                Err(error) => (Vec::new(), Vec::new(), Some(error.to_string()), 0),
+                )
             }
-        } else {
-            (Vec::new(), Vec::new(), None, 0)
-        };
+            Err(error) => (
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Some(error.to_string()),
+                0,
+            ),
+        }
+    } else {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), None, 0)
+    };
     Ok(Status {
         node_available: node_version.is_some(),
         node_version,
@@ -122,7 +222,9 @@ pub async fn status() -> anyhow::Result<Status> {
         pi_version: runtime_initialized.then(|| PI_VERSION.to_owned()),
         installed_packages,
         discovered_providers,
+        provider_details,
         discovered_models,
+        commands,
         bridge_error,
         extension_errors,
         npm_registry: NPM_REGISTRY,
@@ -279,6 +381,7 @@ pub async fn run_command(name: &str, args: &str) -> anyhow::Result<serde_json::V
     );
     let result = response.error_for_status()?.json().await?;
     pi_plugins::invalidate(&root).await?;
+    let _ = sync_models(&root).await;
     Ok(result)
 }
 
@@ -316,17 +419,24 @@ fn before_commit(source: anyhow::Error) -> OperationError {
 }
 
 async fn sync_models(root: &Path) -> anyhow::Result<(usize, ModelDiscoveryChanges)> {
-    let models = discover_models(root).await?;
-    let count = models.len();
-    let changes = tokio::task::spawn_blocking(move || save_models(models)).await??;
+    let providers = discover_provider_models(root).await?;
+    let count = providers.iter().map(|provider| provider.models.len()).sum();
+    let changes = tokio::task::spawn_blocking(move || save_provider_models(providers)).await??;
     Ok((count, changes))
 }
 
-pub(crate) async fn configured_models() -> anyhow::Result<Vec<ProviderModel>> {
-    discover_models(&pi_plugins::root()?).await
+pub(crate) async fn configured_models(
+    pi_provider_id: Option<&str>,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let providers = discover_provider_models(&pi_plugins::root()?).await?;
+    Ok(providers
+        .into_iter()
+        .filter(|provider| pi_provider_id.is_none_or(|id| provider.pi_provider_id == id))
+        .flat_map(|provider| provider.models)
+        .collect())
 }
 
-async fn discover_models(root: &Path) -> anyhow::Result<Vec<ProviderModel>> {
+async fn discover_provider_models(root: &Path) -> anyhow::Result<Vec<DiscoveredPiProvider>> {
     if installed_sources(root).await?.is_empty() {
         return Ok(Vec::new());
     }
@@ -338,12 +448,30 @@ async fn discover_models(root: &Path) -> anyhow::Result<Vec<ProviderModel>> {
         .await?
         .error_for_status()?;
     let catalog = catalog_at(&endpoint).await?;
-    Ok(catalog
-        .data
-        .into_iter()
-        .filter(|model| model.auth_status == "configured")
-        .map(ProviderModel::from)
-        .collect())
+    let mut grouped: BTreeMap<String, DiscoveredPiProvider> = BTreeMap::new();
+    for model in catalog.data {
+        let pi_provider_id = model.provider.clone();
+        let display_name = model
+            .provider_display_name
+            .clone()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| pi_provider_id.clone());
+        let package = model.package.clone();
+        let entry = grouped
+            .entry(pi_provider_id.clone())
+            .or_insert_with(|| DiscoveredPiProvider {
+                mixin_provider_id: mixin_provider_id_for(&pi_provider_id),
+                pi_provider_id,
+                display_name,
+                package,
+                models: Vec::new(),
+            });
+        if entry.package.is_none() {
+            entry.package = model.package.clone();
+        }
+        entry.models.push(ProviderModel::from(model));
+    }
+    Ok(grouped.into_values().collect())
 }
 
 impl From<PiModel> for ProviderModel {
@@ -360,80 +488,113 @@ impl From<PiModel> for ProviderModel {
     }
 }
 
-fn save_models(models: Vec<ProviderModel>) -> anyhow::Result<ModelDiscoveryChanges> {
-    if models.is_empty() && !crate::config::stored_config_path().is_file() {
+fn save_provider_models(
+    providers: Vec<DiscoveredPiProvider>,
+) -> anyhow::Result<ModelDiscoveryChanges> {
+    if providers.is_empty() && !crate::config::stored_config_path().is_file() {
         return Ok(ModelDiscoveryChanges::default());
     }
     crate::config::mutate_stored_config(|config| {
-        let existing = config
+        let mut total = ModelDiscoveryChanges::default();
+        let active_ids: HashSet<String> = providers
+            .iter()
+            .map(|provider| provider.mixin_provider_id.clone())
+            .collect();
+
+        for discovered in providers {
+            let existing = config.providers.iter().position(|provider| {
+                provider.id == discovered.mixin_provider_id
+                    || (is_managed_provider(provider)
+                        && provider.pi_provider_id.as_deref()
+                            == Some(discovered.pi_provider_id.as_str()))
+            });
+            if let Some(index) = existing {
+                ensure!(
+                    is_managed_provider(&config.providers[index]),
+                    "provider ID {} is already in use",
+                    discovered.mixin_provider_id
+                );
+                let provider = &mut config.providers[index];
+                provider.display_name = discovered.display_name;
+                provider.pi_provider_id = Some(discovered.pi_provider_id);
+                provider.pi_plugin_package = discovered.package;
+                if provider.cached_models.is_empty() {
+                    provider.enabled = true;
+                    provider.models_refreshed_at_ms = None;
+                }
+                if provider
+                    .codex_thread_title_model
+                    .as_ref()
+                    .is_some_and(|id| {
+                        !discovered.models.iter().any(|model| &model.id == id)
+                            && !provider
+                                .cached_models
+                                .iter()
+                                .any(|model| &model.id == id && model.manually_added)
+                    })
+                {
+                    provider.codex_thread_title_model = None;
+                }
+                let changes = apply_discovered_models(provider, discovered.models)?;
+                total.added.extend(changes.added);
+                total.removed.extend(changes.removed);
+                total.auto_selected.extend(changes.auto_selected);
+            } else {
+                let mut provider = ProviderPreset::Custom.create(&discovered.mixin_provider_id, "");
+                provider.display_name = discovered.display_name;
+                provider.base_url = PI_BRIDGE_PLACEHOLDER_URL.to_owned();
+                provider.api_path = "/v1/chat/completions".to_owned();
+                provider.protocol = ProviderProtocol::OpenAiChat;
+                provider.model_source = ProviderModelSource::Static;
+                provider.pi_provider_id = Some(discovered.pi_provider_id);
+                provider.pi_plugin_package = discovered.package;
+                let mut changes = apply_discovered_models(&mut provider, discovered.models)?;
+                changes.added = provider
+                    .cached_models
+                    .iter()
+                    .map(|model| model.id.clone())
+                    .collect();
+                changes.auto_selected = provider.selected_models.clone();
+                total.added.extend(changes.added);
+                total.removed.extend(changes.removed);
+                total.auto_selected.extend(changes.auto_selected);
+                config.providers.push(provider);
+            }
+        }
+
+        let stale_indices: Vec<usize> = config
             .providers
             .iter()
-            .position(|provider| provider.id == PI_BRIDGE_PROVIDER_ID);
-        let changes = if let Some(index) = existing {
-            ensure!(
-                is_managed_provider(&config.providers[index]),
-                "provider ID {PI_BRIDGE_PROVIDER_ID} is already in use"
-            );
-            if models.is_empty() {
+            .enumerate()
+            .filter(|(_, provider)| {
+                is_managed_provider(provider) && !active_ids.contains(&provider.id)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in stale_indices.into_iter().rev() {
+            if config.providers.len() > 1 {
+                let removed_provider = config.providers.remove(index);
+                total.removed.extend(
+                    removed_provider
+                        .cached_models
+                        .into_iter()
+                        .map(|model| model.id),
+                );
+            } else {
                 let provider = &mut config.providers[index];
-                let removed = std::mem::take(&mut provider.cached_models)
-                    .into_iter()
-                    .map(|model| model.id)
-                    .collect();
-                if config.providers.len() > 1 {
-                    config.providers.remove(index);
-                } else {
-                    let provider = &mut config.providers[index];
-                    provider.enabled = false;
-                    provider.codex_thread_title_model = None;
-                    apply_discovered_models(provider, models)?;
-                }
-                super::routing::disable_unavailable_routes(config)?;
-                return Ok(ModelDiscoveryChanges {
-                    removed,
-                    ..Default::default()
-                });
-            }
-            let provider = &mut config.providers[index];
-            if provider.cached_models.is_empty() {
-                provider.enabled = true;
-                provider.models_refreshed_at_ms = None;
-            }
-            if provider
-                .codex_thread_title_model
-                .as_ref()
-                .is_some_and(|id| {
-                    !models.iter().any(|model| &model.id == id)
-                        && !provider
-                            .cached_models
-                            .iter()
-                            .any(|model| &model.id == id && model.manually_added)
-                })
-            {
+                total.removed.extend(
+                    std::mem::take(&mut provider.cached_models)
+                        .into_iter()
+                        .map(|model| model.id),
+                );
+                provider.enabled = false;
                 provider.codex_thread_title_model = None;
+                let _ = apply_discovered_models(provider, Vec::new())?;
             }
-            apply_discovered_models(provider, models)?
-        } else if !models.is_empty() {
-            let mut provider = ProviderPreset::Custom.create(PI_BRIDGE_PROVIDER_ID, "");
-            provider.display_name = "Pi plugins".to_owned();
-            provider.base_url = PI_BRIDGE_PLACEHOLDER_URL.to_owned();
-            provider.api_path = "/v1/chat/completions".to_owned();
-            provider.protocol = ProviderProtocol::OpenAiChat;
-            provider.model_source = ProviderModelSource::Static;
-            let mut changes = apply_discovered_models(&mut provider, models)?;
-            changes.added = provider
-                .cached_models
-                .iter()
-                .map(|model| model.id.clone())
-                .collect();
-            changes.auto_selected = provider.selected_models.clone();
-            config.providers.push(provider);
-            changes
-        } else {
-            ModelDiscoveryChanges::default()
-        };
+        }
+
         super::routing::disable_unavailable_routes(config)?;
-        Ok(changes)
+        Ok(total)
     })
 }
 

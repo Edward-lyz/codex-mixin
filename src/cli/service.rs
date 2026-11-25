@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use codex_mixin::application::lifecycle::{
-    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action, managed_pi_provider,
+    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action, managed_pi_providers,
 };
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::gateway_access::GatewayClientKeys;
@@ -354,7 +354,7 @@ type ClientCredentials = (
 #[derive(PartialEq)]
 struct WatchedRuntimeConfig {
     credentials: ClientCredentials,
-    pi_provider: Option<ProviderDefinition>,
+    pi_providers: Vec<ProviderDefinition>,
 }
 
 fn stored_watched_runtime_config() -> anyhow::Result<WatchedRuntimeConfig> {
@@ -365,7 +365,7 @@ fn stored_watched_runtime_config() -> anyhow::Result<WatchedRuntimeConfig> {
             stored.gateway_api_keys,
             stored.gateway_client_keys,
         ),
-        pi_provider: managed_pi_provider(&stored.providers).cloned(),
+        pi_providers: managed_pi_providers(&stored.providers),
     })
 }
 
@@ -864,7 +864,7 @@ pub(super) async fn start(
             config.gateway_api_keys.clone(),
             config.gateway_client_keys.clone(),
         ),
-        pi_provider: managed_pi_provider(&config.providers).cloned(),
+        pi_providers: managed_pi_providers(&config.providers),
     };
     let stop_runtime_config_watch = Arc::new(AtomicBool::new(false));
     spawn_runtime_config_watch(

@@ -156,12 +156,60 @@ pub fn logo_tile(path: SharedString, template: bool, large: bool, cx: &App) -> A
 }
 
 pub fn provider_logo(icon: &str, large: bool, cx: &App) -> AnyElement {
-    logo_tile(
+    provider_logo_with_badge(icon, false, large, cx)
+}
+
+pub fn provider_logo_with_badge(
+    icon: &str,
+    plugin_managed: bool,
+    large: bool,
+    cx: &App,
+) -> AnyElement {
+    let tile = logo_tile(
         provider_icon_path(icon),
         TEMPLATE_PROVIDER_ICONS.contains(&icon),
         large,
         cx,
-    )
+    );
+    if !plugin_managed {
+        return tile;
+    }
+    let colors = cx.theme().colors;
+    let badge_size = if large {
+        gpui_kit::px(16.0)
+    } else {
+        gpui_kit::px(14.0)
+    };
+    let icon_size = if large {
+        gpui_kit::px(10.0)
+    } else {
+        gpui_kit::px(9.0)
+    };
+    div()
+        .relative()
+        .flex_none()
+        .child(tile)
+        .child(
+            div()
+                .absolute()
+                .bottom(gpui_kit::px(-2.0))
+                .right(gpui_kit::px(-2.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(badge_size)
+                .rounded_full()
+                .bg(colors.background)
+                .border_1()
+                .border_color(colors.border)
+                .shadow_xs()
+                .child(
+                    Icon::new(IconName::Puzzle)
+                        .size(icon_size)
+                        .text_color(colors.primary),
+                ),
+        )
+        .into_any_element()
 }
 
 /// A small filled status dot.

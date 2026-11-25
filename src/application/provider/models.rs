@@ -251,7 +251,9 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
         .find(|provider| provider.id == input.id)
         .ok_or_else(|| anyhow::anyhow!("unknown provider: {}", input.id))?;
     if is_managed_pi_provider(&provider) {
-        let models = crate::application::pi_plugins::configured_models().await?;
+        let models =
+            crate::application::pi_plugins::configured_models(provider.pi_provider_id.as_deref())
+                .await?;
         return Ok(ProviderTestResult {
             mode: ProviderTestMode::ModelsEndpoint,
             model_count: models.len(),

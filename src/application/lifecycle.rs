@@ -3,11 +3,13 @@ use std::net::SocketAddr;
 use crate::config::GatewayConfig;
 use crate::provider::{ProviderDefinition, is_managed_pi_provider};
 
-/// Find the Pi model catalog whose changes need to reach the live gateway.
-pub fn managed_pi_provider(providers: &[ProviderDefinition]) -> Option<&ProviderDefinition> {
+/// Find the Pi-managed providers whose changes need to reach the live gateway.
+pub fn managed_pi_providers(providers: &[ProviderDefinition]) -> Vec<ProviderDefinition> {
     providers
         .iter()
-        .find(|provider| is_managed_pi_provider(provider))
+        .filter(|provider| is_managed_pi_provider(provider))
+        .cloned()
+        .collect()
 }
 
 /// Reload committed runtime configuration after startup integration work and
