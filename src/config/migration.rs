@@ -1,5 +1,7 @@
 use super::StoredGatewayConfig;
-use crate::config::ensure_config_version;
+use crate::config::{
+    ensure_config_version, validate_failover_model_references, validate_fusion_model_references,
+};
 use crate::provider::CONFIG_VERSION;
 use crate::provider::ProviderModel;
 use crate::provider::ProviderModelSource;
@@ -7,6 +9,7 @@ use crate::provider::ProviderPreset;
 use crate::provider::ProviderProtocol;
 use crate::provider::ProviderQuotaParser;
 use crate::provider::ProviderRegistry;
+use crate::provider::is_managed_pi_provider;
 use anyhow::{Context, anyhow};
 use serde::Deserialize;
 
@@ -191,37 +194,91 @@ fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
 /// while loading so every reader and the next save see only valid providers;
 /// the next Pi plugin sync recreates providers that are still installed.
 fn drop_invalid_pi_plugin_providers(config: &mut StoredGatewayConfig) {
-    let is_plugin_provider = |provider: &crate::provider::ProviderDefinition| {
-        provider.pi_plugin_package.is_some() || provider.pi_provider_id.is_some()
-    };
-    config.providers.retain(|provider| {
-        if !is_plugin_provider(provider) {
-            return true;
+    let mut dropped = Vec::new();
+    let mut index = 0;
+    while index < config.providers.len() {
+        let provider = &config.providers[index];
+        if !is_managed_pi_provider(provider) {
+            index += 1;
+            continue;
         }
         match ProviderRegistry::new(vec![provider.clone()]) {
-            Ok(_) => true,
+            Ok(_) => index += 1,
             Err(error) => {
                 tracing::warn!(
                     provider = %provider.id,
                     error = %format!("{error:#}"),
                     "skipping invalid Pi plugin provider"
                 );
-                false
+                dropped.push(config.providers.remove(index));
             }
         }
-    });
+    }
     // Plugin providers can also conflict with other providers (duplicate
-    // routes, a second thread-title model). Keep the user's own providers.
-    if let Err(error) = ProviderRegistry::new(config.providers.clone())
-        && config.providers.iter().any(is_plugin_provider)
-    {
+    // routes, a second thread-title model). Drop the most recently added
+    // plugin provider until the remaining providers load together.
+    while let Err(error) = ProviderRegistry::new(config.providers.clone()) {
+        let Some(index) = config.providers.iter().rposition(is_managed_pi_provider) else {
+            break;
+        };
+        let provider = config.providers.remove(index);
         tracing::warn!(
+            provider = %provider.id,
             error = %format!("{error:#}"),
-            "skipping Pi plugin providers that conflict with configured providers"
+            "skipping Pi plugin provider that conflicts with configured providers"
         );
-        config
-            .providers
-            .retain(|provider| !is_plugin_provider(provider));
+        dropped.push(provider);
+    }
+    if dropped.is_empty() {
+        return;
+    }
+    // Keep one disabled entry when plugin providers were the only providers,
+    // matching how a Pi sync retires the last provider.
+    if config.providers.is_empty() {
+        // Rebuild from scratch so no field of the invalid entry survives.
+        let source = &dropped[0];
+        let mut provider = ProviderPreset::Custom.create(&source.id, "");
+        provider.display_name = source.display_name.clone();
+        provider.base_url = crate::provider::PI_BRIDGE_PLACEHOLDER_URL.to_owned();
+        provider.api_path = "/v1/chat/completions".to_owned();
+        provider.protocol = ProviderProtocol::OpenAiChat;
+        provider.model_source = ProviderModelSource::Static;
+        provider.pi_provider_id = source.pi_provider_id.clone();
+        provider.pi_plugin_package = source.pi_plugin_package.clone();
+        provider.enabled = false;
+        match ProviderRegistry::new(vec![provider.clone()]) {
+            Ok(_) => config.providers.push(provider),
+            Err(error) => tracing::warn!(
+                provider = %provider.id,
+                error = %format!("{error:#}"),
+                "failed to keep a disabled Pi plugin provider placeholder"
+            ),
+        }
+    }
+    // Routes that referenced the dropped models would otherwise fail every
+    // later load and save.
+    let Ok(providers) = ProviderRegistry::new(config.providers.clone()) else {
+        return;
+    };
+    let mut unavailable_routes = Vec::new();
+    for profile in &config.fusion_profiles {
+        if validate_fusion_model_references(std::slice::from_ref(profile), &providers).is_err() {
+            unavailable_routes.push(profile.model_slug());
+        }
+    }
+    for route in &config.failover_routes {
+        if validate_failover_model_references(std::slice::from_ref(route), &providers).is_err() {
+            unavailable_routes.push(route.entry_model());
+        }
+    }
+    for route in unavailable_routes {
+        if !config.disabled_routes.contains(&route) {
+            tracing::warn!(
+                route = %route,
+                "model route disabled because referenced Pi plugin provider was skipped"
+            );
+            config.disabled_routes.push(route);
+        }
     }
 }
 fn upgrade_deepseek_quota_defaults(config: &mut StoredGatewayConfig) {

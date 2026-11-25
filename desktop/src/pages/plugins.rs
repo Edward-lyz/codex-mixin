@@ -603,8 +603,15 @@ impl PluginsPage {
             let login = cli.plugin_login_command(&provider.id);
             let notice = copy_notice.clone();
             let mixin_id = provider.mixin_provider_id.clone();
-            let detail: SharedString =
-                format!("{} · {} models", provider.id, provider.model_count).into();
+            let mut detail = format!(
+                "{} · {}",
+                provider.id,
+                t!("plugins.model_count", count = provider.model_count)
+            );
+            if provider.auth_status == "not_configured" {
+                detail.push_str(&format!(" · {}", t!("plugins.not_signed_in")));
+            }
+            let detail: SharedString = detail.into();
             v_flex()
                 .when(index != 0, |row| row.child(row_divider(cx)))
                 .child(setting_row(

@@ -1055,17 +1055,20 @@ pub(super) async fn start(
                 reload_receiver.borrow_and_update();
                 // An invalid saved config keeps the previous runtime state
                 // instead of stopping the gateway.
-                match GatewayConfig::from_stored_config() {
-                    Ok(mut reloaded) => {
-                        reloaded.bind = actual_bind;
-                        serve_config = reloaded;
-                    }
-                    Err(error) => tracing::error!(
-                        error = %format!("{error:#}"),
-                        "failed to reload stored configuration; keeping previous state"
-                    ),
-                }
+                let reloaded = GatewayConfig::from_stored_config();
                 serve_listener = bind_gateway_listener(actual_bind, false).await?;
+                let mut reloaded = match reloaded {
+                    Ok(reloaded) => reloaded,
+                    Err(error) => {
+                        tracing::error!(
+                            error = %format!("{error:#}"),
+                            "failed to reload stored configuration; keeping previous state"
+                        );
+                        continue;
+                    }
+                };
+                reloaded.bind = actual_bind;
+                serve_config = reloaded;
                 save_runtime_metadata(&RuntimeMetadata {
                     pid,
                     bind: actual_bind,

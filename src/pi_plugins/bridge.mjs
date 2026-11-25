@@ -333,7 +333,7 @@ async function complete(request, response) {
     };
     const chunk = (choices, usage) => write(JSON.stringify({ ...reply, object: 'chat.completion.chunk', choices, usage }));
     for await (const event of stream) {
-      if (event.type === 'error') throw httpError(502, 'Pi provider request failed');
+      if (event.type === 'error') throw httpError(502, event.error?.errorMessage || 'Pi provider request failed');
       if (event.type === 'done') {
         if (event.reason === 'deferred') throw httpError(502, 'Pi provider returned a deferred response');
         const usage = usageOf(event.message.usage);

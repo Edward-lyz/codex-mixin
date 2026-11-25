@@ -37,6 +37,8 @@ pub struct PluginProvider {
     pub package: Option<String>,
     #[serde(default)]
     pub model_count: usize,
+    #[serde(default)]
+    pub auth_status: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

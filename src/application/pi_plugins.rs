@@ -275,12 +275,12 @@ pub async fn remove(spec: &str) -> Result<usize, OperationError> {
     if crate::config::stored_config_path().is_file() {
         let package = npm_name(&spec);
         crate::config::mutate_stored_config(|config| {
+            // `spec` is always an npm source, so only npm sources can match.
             let owned_by_package = |provider: &crate::provider::ProviderDefinition| {
                 is_managed_provider(provider)
-                    && provider
-                        .pi_plugin_package
-                        .as_deref()
-                        .is_some_and(|source| npm_name(source) == package)
+                    && provider.pi_plugin_package.as_deref().is_some_and(|source| {
+                        source.starts_with("npm:") && npm_name(source) == package
+                    })
             };
             if config
                 .providers
@@ -290,8 +290,17 @@ pub async fn remove(spec: &str) -> Result<usize, OperationError> {
                 config
                     .providers
                     .retain(|provider| !owned_by_package(provider));
-                super::routing::disable_unavailable_routes(config)?;
+            } else {
+                // The gateway needs at least one provider entry, so retire
+                // the package's providers instead of deleting them.
+                for provider in &mut config.providers {
+                    provider.enabled = false;
+                    provider.codex_thread_title_model = None;
+                    provider.selected_models.clear();
+                    let _ = apply_discovered_models(provider, Vec::new())?;
+                }
             }
+            super::routing::disable_unavailable_routes(config)?;
             Ok(())
         })
         .map_err(|source| OperationError::AfterCommit {

@@ -188,6 +188,12 @@ plugins.package_summary:
 plugins.open_provider:
   en: "Open in Providers"
   zh-CN: "在服务商中查看"
+plugins.not_signed_in:
+  en: "Not signed in"
+  zh-CN: "未登录"
+plugins.model_count:
+  en: "%{count} models"
+  zh-CN: "%{count} 个模型"
 plugins.open_plugin:
   en: "Open Plugin Page"
   zh-CN: "打开插件详情"
@@ -268,7 +274,7 @@ providers.tab.plugin:
   zh-CN: "插件"
 providers.plugin_managed:
   en: "Plugin"
-  zh-CN: "插件提供"
+  zh-CN: "插件管理"
 providers.plugin_section:
   en: "Plugin"
   zh-CN: "插件"
@@ -277,7 +283,7 @@ providers.plugin_source:
   zh-CN: "来源插件"
 providers.open_plugin_detail:
   en: "Open Plugin"
-  zh-CN: "查看插件"
+  zh-CN: "打开插件"
 providers.plugin_auth:
   en: "Sign-in"
   zh-CN: "登录授权"
