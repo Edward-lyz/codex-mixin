@@ -37,51 +37,51 @@ check_no_match() {
     fi
 }
 
-CORE=(
-    src/gateway src/upstream src/ech src/provider src/protocol src/fusion
-    src/catalog src/config src/benchmark
-    src/web_search src/images src/application src/clients crates/platform/src src/context
+# Four layers, strictly lower-triangular: core <- infra <- runtime <- app.
+CORE_LAYER=(
+    src/core src/infra src/app crates/platform/src
+    src/runtime/benchmark src/runtime/catalog src/runtime/context
+    src/runtime/fusion src/runtime/gateway src/runtime/upstream
 )
 PROTO_CONVERT=(
-    src/protocol/convert src/protocol/sse.rs src/protocol/openai_chat
-    src/protocol/openai_events src/protocol/anthropic_compat.rs
-    src/protocol/compaction.rs src/protocol/model_reasoning.rs
+    src/core/protocol/convert src/core/protocol/sse.rs src/core/protocol/openai_chat
+    src/core/protocol/openai_events src/core/protocol/anthropic_compat.rs
+    src/core/protocol/compaction.rs src/core/protocol/model_reasoning.rs
 )
 LOWER=(
-    src/upstream src/ech src/provider src/protocol src/catalog
-    src/config src/benchmark src/web_search src/images
+    src/runtime/upstream src/infra/ech src/core/provider src/core/protocol
+    src/runtime/catalog src/infra/config src/runtime/benchmark
+    src/infra/web_search src/core/images
 )
 SHELLS=(desktop panel)
 
-check_paths "core" "${CORE[@]}"
+check_paths "core" "${CORE_LAYER[@]}"
 check_paths "protocol" "${PROTO_CONVERT[@]}"
 check_paths "lower" "${LOWER[@]}"
 check_paths "shell" "${SHELLS[@]}"
 check_paths "test helper" tests/common/mod.rs
-check_no_match "core must not reference crate::server" 'crate::server' "${CORE[@]}"
-check_no_match "core must not reference crate::cli" 'crate::cli\b' "${CORE[@]}"
-check_no_match "core must not reference AppState" '\bAppState\b' "${CORE[@]}"
+check_no_match "core must not reference crate::server" 'crate::(runtime::)?server\b' "${CORE_LAYER[@]}"
+check_no_match "core must not reference crate::cli" 'crate::cli\b' "${CORE_LAYER[@]}"
+check_no_match "core must not reference AppState" '\bAppState\b' "${CORE_LAYER[@]}"
 check_no_match "protocol conversion must not send over the network" 'reqwest::Client|reqwest::blocking|Client::builder|\.send\(\)|\.post\(|\.execute\(' "${PROTO_CONVERT[@]}"
-check_no_match "application must not use clap" '\bclap::' src/application
-check_no_match "application must not use terminal/UI crates" '\b(indicatif|ratatui|console|crossterm)::' src/application
-check_no_match "application must not print" '\b(print|println|eprint|eprintln)!' src/application
-check_no_match "clients must not use clap" '\bclap::' src/clients
-check_no_match "clients must not use terminal/UI crates" '\b(indicatif|ratatui|console|crossterm)::' src/clients
-check_no_match "clients must not print" '\b(print|println|eprint|eprintln)!' src/clients
+check_no_match "application must not use clap" '\bclap::' src/app
+check_no_match "application must not use terminal/UI crates" '\b(indicatif|ratatui|console|crossterm)::' src/app
+check_no_match "application must not print" '\b(print|println|eprint|eprintln)!' src/app
+check_no_match "clients must not use clap" '\bclap::' src/infra/clients
+check_no_match "clients must not use terminal/UI crates" '\b(indicatif|ratatui|console|crossterm)::' src/infra/clients
+check_no_match "clients must not print" '\b(print|println|eprint|eprintln)!' src/infra/clients
 check_no_match "lower layers must not reference FusionEngine" '\bFusionEngine\b' "${LOWER[@]}"
-check_no_match "provider rules must not reference gateway" 'crate::gateway::' src/provider
-check_no_match "protocol rules must not reference gateway or provider runtime" 'crate::gateway::|crate::provider::(ProviderRuntime|ProviderRegistry)' src/protocol
-check_no_match "protocol must not read or write stored config" 'crate::config::(ensure_|load_stored|mutate_stored|save_stored)|\b(ensure_compaction_secret|ensure_gateway_client_key|(load|mutate|save|delete|import|export)_stored_config\w*|stored_config_path)\b' src/protocol
-check_no_match "protocol must not depend on the HTTP transport" '\breqwest\b' src/protocol
-check_no_match "gateway must not reference fusion" 'crate::fusion\b|crate::\{[^}]*\bfusion\b' src/gateway
-check_no_match "catalog must not reference fusion" 'crate::fusion\b|crate::\{[^}]*\bfusion\b' src/catalog
-check_no_match "clients must not reference application" 'crate::application\b|crate::\{[^}]*\bapplication\b' src/clients
-check_no_match "provider must not reference clients" 'crate::clients\b|crate::\{[^}]*\bclients\b' src/provider
-check_no_match "server must not reference crate::cli" 'crate::cli\b' src/server
+check_no_match "provider rules must not reference gateway" 'crate::(runtime::)?gateway::' src/core/provider
+check_no_match "protocol rules must not reference gateway or provider runtime" 'crate::(runtime::)?gateway::|crate::(core::)?provider::(ProviderRuntime|ProviderRegistry)' src/core/protocol
+check_no_match "protocol must not read or write stored config" 'crate::(infra::)?config::(ensure_|load_stored|mutate_stored|save_stored)|\b(ensure_compaction_secret|ensure_gateway_client_key|(load|mutate|save|delete|import|export)_stored_config\w*|stored_config_path)\b' src/core/protocol
+check_no_match "protocol must not depend on the HTTP transport" '\breqwest\b' src/core/protocol
+check_no_match "gateway must not reference fusion" 'crate::(runtime::)?fusion\b|crate::(runtime::)?\{[^}]*\bfusion\b' src/runtime/gateway
+check_no_match "catalog must not reference fusion" 'crate::(runtime::)?fusion\b|crate::(runtime::)?\{[^}]*\bfusion\b' src/runtime/catalog
+check_no_match "clients must not reference application" 'crate::(app|application)\b|crate::\{[^}]*\b(app|application)\b' src/infra/clients
+check_no_match "provider must not reference clients" 'crate::(infra::)?clients\b|crate::(infra::)?\{[^}]*\bclients\b' src/core/provider
+check_no_match "server must not reference crate::cli" 'crate::cli\b' src/runtime/server
 check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|path\s*=\s*"\.\./(tui|panel)/' \
-    src/lib.rs src/application src/gateway src/upstream src/ech src/provider src/protocol \
-    src/fusion src/catalog src/config src/benchmark \
-    src/web_search src/images src/clients src/server src/cli
+    src/lib.rs src/core src/infra src/runtime src/app src/cli
 check_no_match "panel shell must not reach CLI internals" 'crate::cli\b|super::super::cli' panel
 
 # Every OS difference lives behind crates/platform; the rest of the code only
@@ -98,8 +98,8 @@ if ! rg -q 'CODEX_GATEWAY_SERVICE_ID' tests/common/mod.rs; then
     fail=1
 fi
 
-# MIT Axiomatic Design: the module dependency matrix must be strictly
-# lower-triangular, so the library crate's module graph may hold no cycles.
+# MIT Axiomatic Design: the macro 4-layer matrix (core <- infra <- runtime <-
+# app) and the micro 19-module matrix must both be strictly lower-triangular.
 if ! python3 - "$ROOT" <<'PY'
 import os
 import re
@@ -109,24 +109,69 @@ from collections import defaultdict
 root = sys.argv[1]
 src = os.path.join(root, "src")
 
-# `cli` and `main.rs` belong to the binary crate, whose root is `main.rs`.
-modules = set()
-for entry in sorted(os.listdir(src)):
-    path = os.path.join(src, entry)
-    if os.path.isdir(path):
-        if entry != "cli":
-            modules.add(entry)
-    elif entry.endswith(".rs") and entry not in ("lib.rs", "main.rs"):
-        modules.add(entry[:-3])
+LAYERS = [
+    ("core", ["access", "error", "images", "protocol", "provider", "usage"]),
+    ("infra", ["clients", "config", "ech", "pi_plugins", "web_search"]),
+    (
+        "runtime",
+        ["benchmark", "catalog", "context", "fusion", "gateway", "server", "upstream"],
+    ),
+    ("app", ["application"]),
+]
+LAYER_INDEX = {name: index for index, (name, _) in enumerate(LAYERS)}
 
-pattern = re.compile(r"\bcrate::([A-Za-z_][A-Za-z0-9_]*)")
-group_pattern = re.compile(r"\bcrate::\{([^}]*)\}", re.DOTALL)
-alias_re = re.compile(
-    r"\bpub(?:\([^)]*\))?\s+use\s+([A-Za-z_][A-Za-z0-9_]*)::[^;]*?\bas\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
-)
-reexport_re = re.compile(
-    r"\bpub(?:\([^)]*\))?\s+use\s+([A-Za-z_][A-Za-z0-9_]*)(?:::[A-Za-z_][A-Za-z0-9_]*)*::([A-Za-z_][A-Za-z0-9_]*)\s*;"
-)
+# Directory prefixes that belong to each leaf module.
+LEAF_OF_PREFIX = {
+    "core/access.rs": "access",
+    "core/error.rs": "error",
+    "core/usage.rs": "usage",
+    "core/images": "images",
+    "core/protocol": "protocol",
+    "core/provider": "provider",
+    "infra/clients": "clients",
+    "infra/config": "config",
+    "infra/ech": "ech",
+    "infra/pi_plugins": "pi_plugins",
+    "infra/web_search": "web_search",
+    "runtime/benchmark": "benchmark",
+    "runtime/catalog": "catalog",
+    "runtime/context": "context",
+    "runtime/fusion": "fusion",
+    "runtime/gateway": "gateway",
+    "runtime/server": "server",
+    "runtime/upstream": "upstream",
+    "app": "application",
+}
+LEAF_LAYER = {}
+for layer, leaves in LAYERS:
+    for leaf in leaves:
+        LEAF_LAYER[leaf] = LAYER_INDEX[layer]
+
+# `src/lib.rs` re-exports a leaf module under its historic root name.
+ROOT_ALIAS = {
+    "app": "application",
+    "application": "application",
+    "gateway_access": "access",
+    "error": "error",
+    "protocol": "protocol",
+    "anthropic": "protocol",
+    "provider": "provider",
+    "ducx_auth_carrier": "provider",
+    "clients": "clients",
+    "config": "config",
+    "web_search": "web_search",
+    "images": "images",
+    "usage": "usage",
+    "ech": "ech",
+    "pi_plugins": "pi_plugins",
+    "benchmark": "benchmark",
+    "catalog": "catalog",
+    "context": "context",
+    "fusion": "fusion",
+    "gateway": "gateway",
+    "server": "server",
+    "upstream": "upstream",
+}
 
 def strip_comments_and_strings(text):
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
@@ -134,55 +179,91 @@ def strip_comments_and_strings(text):
     text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     return text
 
-# Resolve root-level `pub use` aliases in `src/lib.rs` (e.g. `crate::anthropic` -> `protocol`).
-aliases = {}
-lib_rs = os.path.join(src, "lib.rs")
-if os.path.exists(lib_rs):
-    with open(lib_rs, encoding="utf-8") as handle:
-        lib_text = strip_comments_and_strings(handle.read())
-    for mod_name, alias in alias_re.findall(lib_text):
-        if mod_name in modules:
-            aliases[alias] = mod_name
-    for mod_name, item in reexport_re.findall(lib_text):
-        if mod_name in modules and item not in aliases:
-            aliases[item] = mod_name
+def leaf_of_file(rel):
+    for prefix, leaf in sorted(LEAF_OF_PREFIX.items(), key=lambda kv: -len(kv[0])):
+        if rel == prefix or rel.startswith(prefix + "/"):
+            return leaf
+    return None
 
-def resolve_target(name):
-    if name in modules:
-        return name
-    return aliases.get(name)
+single = re.compile(r"\bcrate::([A-Za-z_][A-Za-z0-9_]*)")
+grouped = re.compile(r"\bcrate::\{([^}]*)\}", re.DOTALL)
+layered = re.compile(
+    r"\bcrate::(core|infra|runtime|app)::([A-Za-z_][A-Za-z0-9_]*)"
+)
+layered_grouped = re.compile(
+    r"\bcrate::(core|infra|runtime|app)::\{([^}]*)\}", re.DOTALL
+)
 
 edges = defaultdict(set)
 evidence = defaultdict(list)
+violations = []
+files_scanned = 0
 
-for module in sorted(modules):
-    path = os.path.join(src, module)
-    if os.path.isdir(path):
-        files = sorted(
-            os.path.join(dirpath, name)
-            for dirpath, _, names in os.walk(path)
-            for name in names
-            if name.endswith(".rs")
-        )
-    else:
-        files = [path + ".rs"]
-    for filename in files:
+for directory, _, names in os.walk(src):
+    for name in sorted(names):
+        if not name.endswith(".rs"):
+            continue
+        filename = os.path.join(directory, name)
+        rel = os.path.relpath(filename, src).replace(os.sep, "/")
+        if rel.startswith("cli/") or rel in ("lib.rs", "main.rs"):
+            continue
+        source_leaf = leaf_of_file(rel)
+        if source_leaf is None:
+            continue
+        files_scanned += 1
         with open(filename, encoding="utf-8") as handle:
             cleaned = strip_comments_and_strings(handle.read())
-        candidates = list(pattern.findall(cleaned))
-        for group in group_pattern.findall(cleaned):
-            for part in group.split(","):
+
+        targets = []
+        for layer_name, leaf in layered.findall(cleaned):
+            if layer_name == "app":
+                targets.append("application")
+            elif layer_name in LAYER_INDEX and leaf in LEAF_LAYER:
+                targets.append(leaf)
+        for layer_name, body in layered_grouped.findall(cleaned):
+            if layer_name == "app":
+                targets.append("application")
+            elif layer_name in LAYER_INDEX:
+                for part in body.split(","):
+                    match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", part)
+                    if match and match.group(1) in LEAF_LAYER:
+                        targets.append(match.group(1))
+        for name_hit in single.findall(cleaned):
+            leaf = ROOT_ALIAS.get(name_hit, name_hit if name_hit in LEAF_LAYER else None)
+            if leaf:
+                targets.append(leaf)
+        for body in grouped.findall(cleaned):
+            for part in body.split(","):
                 match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", part)
                 if match:
-                    candidates.append(match.group(1))
-        for name in candidates:
-            target = resolve_target(name)
-            if target and target != module:
-                edges[module].add(target)
-                evidence[(module, target)].append(filename)
+                    hit = match.group(1)
+                    leaf = ROOT_ALIAS.get(hit, hit if hit in LEAF_LAYER else None)
+                    if leaf:
+                        targets.append(leaf)
+
+        for target in targets:
+            if target == source_leaf:
+                continue
+            edges[source_leaf].add(target)
+            evidence[(source_leaf, target)].append(rel)
+            if LEAF_LAYER[source_leaf] < LEAF_LAYER[target]:
+                violations.append((rel, source_leaf, target))
+
+if violations:
+    print(
+        "ARCH FAIL: upward layer dependency detected "
+        "(violates Axiomatic Design lower-triangular matrix):"
+    )
+    for rel, source_leaf, target in violations:
+        print(
+            f"  {rel}: {source_leaf} (L{LEAF_LAYER[source_leaf]}) -> "
+            f"{target} (L{LEAF_LAYER[target]})"
+        )
+    sys.exit(1)
 
 index, low, stack, on_stack, components = {}, {}, [], set(), []
 counter = 0
+nodes = sorted(LEAF_LAYER)
 
 def strongconnect(node):
     global counter
@@ -207,9 +288,9 @@ def strongconnect(node):
         components.append(sorted(component))
 
 sys.setrecursionlimit(10000)
-for module in sorted(modules):
-    if module not in index:
-        strongconnect(module)
+for node in nodes:
+    if node not in index:
+        strongconnect(node)
 
 cycles = [component for component in components if len(component) > 1]
 if cycles:
@@ -222,9 +303,13 @@ if cycles:
         for position, member in enumerate(component):
             target = component[(position + 1) % len(component)]
             for filename in evidence.get((member, target), []):
-                print("    " + os.path.relpath(filename, root))
+                print("    src/" + filename)
     sys.exit(1)
-print(f"lower-triangular dependency matrix OK ({len(modules)} modules, 0 cycles)")
+
+print(
+    f"lower-triangular dependency matrix OK "
+    f"({len(LAYERS)} layers, {len(nodes)} modules, {files_scanned} files, 0 cycles)"
+)
 PY
 then
     fail=1

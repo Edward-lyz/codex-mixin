@@ -5,26 +5,17 @@
 
 ## 模块职责
 
-| 模块 | 职责 | 允许依赖 |
-|---|---|---|
-| `cli`（二进制） | clap 参数、交互输入、输出渲染、进度、退出码 | `application` 及公开类型 |
-| `application` | provider 管理、刷新、客户端接入等用例；`OperationError` 错误语义 | `provider`/`config`/`catalog`/`clients` |
-| `server` | HTTP/WS 解析、连接状态、请求分发、响应封装 | `gateway`/`fusion`/`catalog`/`benchmark`/`upstream`/`provider` |
-| `gateway` | 路由、请求计划、单次执行（含显式故障转移）、缓存观测 | `upstream`/`provider`/`protocol`/`images`/`web_search` |
-| `fusion` | 多模型编排、工具执行协调、结果整合 | `gateway`（普通执行能力） |
-| `upstream` | 请求准备、上游传输、认证运行时、协议相关重试 | `provider`/`protocol`/`config` |
-| `catalog` | 目录生成、来源加载、目录缓存 | `provider`/`web_search`/`protocol` |
-| `provider` | 定义、校验、preset、能力与路由元数据 | 纯规则，不依赖上层 |
-| `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
-| `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
-| `context` | 原始消息归档、压缩视图、会话 revision、检索与导出 | `config`（仅取配置路径），不依赖 `server`/`gateway`/`cli` |
-| `clients` | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
-| `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
-| `desktop` / `panel` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
+| 层级 | 目录 / 模块 | 职责 | 允许依赖 |
+|---|---|---|---|
+| **L0 `core/`** | `access`、`error`、`usage`、`images`、`protocol`、`provider` | 纯内核与领域规则：错误边界、访问凭据、计量、图片规范化、协议 DTO/转换/流式 FSM、Provider 规范/Adapter/发现/探测 | 仅层内下级，不依赖上层 |
+| **L1 `infra/`** | `config`、`clients`、`ech`、`pi_plugins`、`web_search` | 本地存储与外部基础设施：配置持久化与迁移、客户端配置文件渲染、ECH 客户端、Pi 插件、联网搜索探测 | `core` |
+| **L2 `runtime/`** | `catalog`、`context`、`upstream`、`gateway`、`fusion`、`benchmark`、`server` | 在线网关数据面：目录缓存、长上下文压缩、出站传输、路由/故障转移、多模型融合、压测、HTTP/WS 入口 | `core`、`infra` |
+| **L3 `app/`** | `app`（对外别名 `application`） | 离线管理用例编排：provider 管理/刷新、客户端接入、诊断、上报；`OperationError` 错误语义 | `core`、`infra`、`runtime`（不依赖 `server`） |
+| **二进制外壳** | `cli/`（子命令位于 `cli/commands/`） | clap 参数、交互输入、输出渲染、进度、退出码 | `app` 及公开库类型 |
+| **平台层** | `crates/platform` | 全部操作系统差异：路径、进程组、权限与锁、开机自启、桌面通知、终端窗口、代码签名 | 标准库与平台命令 |
+| **GUI 壳** | `desktop` / `panel` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
-依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，
-`server -> gateway -> upstream -> provider/protocol`。`gateway` 与 `fusion`
-不再引用 `server` 或 `AppState`。
+依赖方向严格单向下三角：`cli -> app -> runtime -> infra -> core`。`gateway` 与 `fusion` 不引用 `server` 或 `AppState`。
 
 ## 平台无关的核心
 
@@ -111,4 +102,4 @@ clippy 与测试仍是权威检查。当前规则：
 - core/CLI 不得引用具体 `panel` 壳；面板不得访问 CLI 私有实现。
 - `crates/platform` 以外的代码不得出现平台条件编译、平台工具名、平台路径或平台
   环境变量。
-- MIT 公理设计下三角依赖矩阵门禁：`src/` 全部库模块（不含 `lib.rs`、`main.rs`、`cli/`）的 `crate::*` 跨模块依赖必须构成严格有向无环图（0 个长度 > 1 的强连通分量），由 `scripts/check_arch.sh` 自动用 Tarjan SCC 校验。
+- MIT 公理设计双层下三角依赖矩阵门禁：`scripts/check_arch.sh` 同时校验 4 层宏边界（禁止 L(i) → L(j), j > i）与 19 个库模块的 Tarjan SCC 零环约束。

@@ -1,0 +1,12 @@
+# 编码客户端适配规范
+
+继承上级规范。这里渲染并修改编码客户端配置，接收明确路径与网关数据；操作次序由 application 负责。
+
+- 每个客户端适配保留自己的格式与能力限制，不能以“通用接入”伪造不支持的协议或 API。
+- 框架客户端元数据、驱动类型（`Schema` / `NativeVendorModels` / `NativeApp`）、启动需求与断开撤销 key 策略统一声明在 `src/infra/clients/frameworks/registry.rs` 的 `FRAMEWORKS` 表中；禁止在 `cli`/`startup`/`frameworks` 新增散落的 `match id`，详见 `docs/abstraction-architecture.md`。
+- 只改托管字段，保留无关设置与原有认证；断开时恢复原值，检测到用户修改则报告冲突。
+  - 例外：Codex 断开不恢复备份，直接把 `config.toml` 重置为 `model_provider = "openai"`，移除 Mixin 假认证与模型目录，并尽力把全部历史 provider 归一为 `openai`（单项失败只告警）。
+- 文件保存使用既有原子写入与 platform 权限 API；非法/损坏配置不能被空默认配置覆盖。
+- 不使用终端/UI 依赖、不打印；安装、同步、卸载返回真实变更结果，不自行启动业务服务。
+- 不反向调用 application 流程；历史共享状态类型在相关改动中归回合适下层，不扩大反向依赖。
+- 用 E2E 验证接入/断开往返与无关字段保留，并运行根级门禁。

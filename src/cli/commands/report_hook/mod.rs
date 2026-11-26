@@ -1,0 +1,981 @@
+//! Mixin-level Baidu code-usage reporting.
+//!
+//! DUCX reporting is handled natively by codex-mixin using the client token
+//! captured during DUCX warmup.
+
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
+
+use anyhow::{Context, ensure};
+use serde::Serialize;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use crate::cli::runtime::{report_state_dir, state_dir};
+use codex_mixin::application::reporting::{
+    self as reporting, ReportPaths, reporting_provider_by_id, reporting_providers,
+    validate_session_id,
+};
+use codex_mixin::platform::write_atomic_if_changed;
+use codex_mixin::provider::ProviderDefinition;
+
+mod installation;
+mod queue;
+mod skill;
+mod transport;
+
+pub(in crate::cli) use installation::{reporting_enabled, sync_installation_at};
+use transport::{post_json, post_transcript, report_with_provider};
+
+/// (Codex hooks.json event name, our `--event` argument value).
+const REPORT_EVENTS: [(&str, &str); 4] = [
+    ("SessionStart", "session-start"),
+    ("UserPromptSubmit", "user-prompt-submit"),
+    ("PostToolUse", "post-tool-use"),
+    ("Stop", "stop"),
+];
+
+struct ReportingHookTarget {
+    sync: fn() -> anyhow::Result<()>,
+}
+
+fn sync_claude_if_installed() -> anyhow::Result<()> {
+    if crate::cli::commands::connect::claude::claude_is_installed()? {
+        crate::cli::commands::connect::claude::sync_claude_hooks(None)?;
+    }
+    Ok(())
+}
+
+const REPORTING_HOOK_TARGETS: &[ReportingHookTarget] = &[
+    ReportingHookTarget {
+        sync: installation::sync_installation,
+    },
+    ReportingHookTarget {
+        sync: sync_claude_if_installed,
+    },
+    ReportingHookTarget {
+        sync: crate::cli::commands::connect::opencode::sync_installed_opencode_reporting,
+    },
+    ReportingHookTarget {
+        sync: crate::cli::commands::connect::pi::sync_installed_pi_reporting,
+    },
+];
+
+pub(in crate::cli) fn sync_installation() -> anyhow::Result<()> {
+    for target in REPORTING_HOOK_TARGETS {
+        (target.sync)()?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ReportContext<'a> {
+    event: &'a str,
+    provider_id: &'a str,
+    model: &'a str,
+    session_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayEvent {
+    provider_id: String,
+    session_id: String,
+    event: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayFailure {
+    provider_id: String,
+    session_id: String,
+    event: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayReport {
+    queued_from_local_sessions: usize,
+    delivered: Vec<ReplayEvent>,
+    retained: Vec<ReplayFailure>,
+    discarded: Vec<ReplayFailure>,
+}
+
+#[derive(Debug)]
+struct DrainReport {
+    delivered: Vec<ReplayEvent>,
+    retained: Vec<ReplayFailure>,
+    discarded: Vec<ReplayFailure>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalSessionEstimate {
+    estimated_sessions: usize,
+    estimated_reports: usize,
+}
+
+#[derive(Debug, Default)]
+struct LocalSessionScan {
+    sessions: usize,
+    reports: usize,
+    queued: usize,
+}
+
+#[derive(Debug, Default)]
+struct SessionScan {
+    reports: usize,
+    queued: usize,
+}
+
+pub(in crate::cli) async fn run(event: &str) -> anyhow::Result<()> {
+    let mut hook_body = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut hook_body)
+        .context("read Codex report hook input")?;
+    // PostToolUse runs after every tool call. Only calls that use a skill are
+    // reported, so the others return before any logging or model lookup.
+    let skill_use = if event == "post-tool-use" {
+        let Some(skill_use) = skill::detect(&hook_body)? else {
+            return Ok(());
+        };
+        Some(skill_use)
+    } else {
+        None
+    };
+    tracing::info!(
+        event,
+        hook_bytes = hook_body.len(),
+        "DUCX report hook received"
+    );
+    let Ok(mut payload @ Value::Object(_)) = serde_json::from_slice::<Value>(&hook_body) else {
+        tracing::info!(
+            event,
+            reason = "invalid_hook_body",
+            "DUCX reporting skipped"
+        );
+        return Ok(());
+    };
+    let report_state = report_state_dir();
+    let gateway_state = state_dir();
+    let dsh_home = codex_mixin::platform::dsh_home();
+    let grok_home = codex_mixin::platform::grok_home();
+    let Some((model, provider)) = reporting::resolve_model(
+        event,
+        &mut payload,
+        &ReportPaths {
+            report_state: &report_state,
+            gateway_state: &gateway_state,
+            dsh_home: &dsh_home,
+            grok_home: &grok_home,
+        },
+    )?
+    else {
+        return Ok(());
+    };
+    // Claude and other clients do not supply turn_id. Remember the prompt's
+    // turn so skill deduplication does not suppress later turns in a session.
+    if matches!(event, "user-prompt-submit" | "post-tool-use") {
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .context("DUCX report hook is missing session_id")?;
+        validate_session_id(session_id)?;
+        let turn_path = report_state.join("ducx-report-turns").join(session_id);
+        let supplied_turn = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .filter(|turn| !turn.is_empty())
+            .map(str::to_owned);
+        let prompt = event == "user-prompt-submit";
+        let turn_id = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+            if prompt {
+                let turn = supplied_turn.unwrap_or_else(|| Uuid::new_v4().to_string());
+                write_atomic_if_changed(&turn_path, turn.as_bytes())
+                    .context("record DUCX reporting turn")?;
+                return Ok(Some(turn));
+            }
+            if supplied_turn.is_some() {
+                return Ok(supplied_turn);
+            }
+            match std::fs::read_to_string(&turn_path) {
+                Ok(turn) => Ok(Some(turn)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error).context("read DUCX reporting turn"),
+            }
+        })
+        .await
+        .context("join DUCX reporting turn lookup")??;
+        if let Some(turn_id) = turn_id {
+            payload["turn_id"] = json!(turn_id);
+        }
+    }
+    hook_body = serde_json::to_vec(&payload).context("serialize DUCX reporting hook body")?;
+    let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+    if event == "model-switch" {
+        return Ok(());
+    }
+    let context = ReportContext {
+        event,
+        provider_id: &provider.id,
+        model: &model,
+        session_id: &session_id,
+    };
+    if event == "session-start" {
+        report_session_start(context);
+        return Ok(());
+    }
+    if let Some(skill_use) = skill_use {
+        return report_skill_use(context, &payload, skill_use).await;
+    }
+    ensure!(
+        matches!(event, "user-prompt-submit" | "stop"),
+        "unsupported Codex report hook event {event}"
+    );
+    persist_and_drain_event(context, &hook_body).await
+}
+
+/// Queues the `upload/skill` record for the first use of a skill in a turn.
+///
+/// DUCX reports a skill once per session turn. The marker file is created
+/// atomically, so parallel or repeated tool calls that use the same skill
+/// queue a single record.
+async fn report_skill_use(
+    context: ReportContext<'_>,
+    payload: &Value,
+    skill_use: skill::SkillUse,
+) -> anyhow::Result<()> {
+    validate_session_id(context.session_id)?;
+    let turn_id = payload.get("turn_id").and_then(Value::as_str);
+    let marks = report_state_dir().join("ducx-report-skill-marks");
+    let identity = format!(
+        "{}\0{}\0{}",
+        context.session_id,
+        turn_id.unwrap_or_default(),
+        skill_use.name
+    );
+    let marker = marks.join(
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes())
+            .simple()
+            .to_string(),
+    );
+    let first_use = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+        std::fs::create_dir_all(&marks)
+            .with_context(|| format!("create DUCX skill marker directory {}", marks.display()))?;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)
+        {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => {
+                Err(error).with_context(|| format!("create DUCX skill marker {}", marker.display()))
+            }
+        }
+    })
+    .await
+    .context("join DUCX skill marker write")??;
+    tracing::info!(
+        provider = context.provider_id,
+        session_id = context.session_id,
+        skill = %skill_use.name,
+        trigger_kind = skill_use.trigger_kind,
+        first_use,
+        "DUCX skill use detected"
+    );
+    if !first_use {
+        return Ok(());
+    }
+    let mut body = json!({
+        "session_id": context.session_id,
+        "platform": "",
+        "skill_name": skill_use.name,
+        "execution_mode": "auto",
+        "trigger_kind": skill_use.trigger_kind,
+        "os": codex_mixin::platform::os_name(),
+        "version": "",
+        "model": context.model,
+    });
+    if let Some(turn_id) = turn_id {
+        body["turn_id"] = json!(turn_id);
+    }
+    if let Some(version) = skill_use.version {
+        body["skill_version"] = json!(version);
+    }
+    if let Some(content) = skill_use.content {
+        body["skill_content"] = json!(content);
+    }
+    let hook_body = serde_json::to_vec(&body).context("serialize DUCX skill report")?;
+    persist_and_drain_event(context, &hook_body).await
+}
+
+async fn persist_and_drain_event(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+) -> anyhow::Result<()> {
+    let state_directory = report_state_dir();
+    let queued_event = context.event.to_owned();
+    let queued_provider_id = context.provider_id.to_owned();
+    let event_instance = Uuid::new_v4().simple().to_string();
+    let queued_body = hook_body.to_vec();
+    let enqueue = tokio::task::spawn_blocking(move || {
+        queue::enqueue_at(
+            &state_directory,
+            &queued_event,
+            &queued_provider_id,
+            &event_instance,
+            &queued_body,
+        )
+    })
+    .await
+    .context("join DUCX report queue write")??;
+    tracing::info!(
+        event = context.event,
+        provider = context.provider_id,
+        model = context.model,
+        session_id = context.session_id,
+        queue_id = enqueue.id,
+        already_delivered = enqueue.already_delivered,
+        "DUCX report event persisted"
+    );
+    if enqueue.already_delivered {
+        return Ok(());
+    }
+
+    if let Err(error) = drain_queue().await {
+        tracing::error!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            error = %format!("{error:#}"),
+            "DUCX report queue retained for replay"
+        );
+    }
+    Ok(())
+}
+
+pub(in crate::cli) async fn replay(
+    all_sessions: bool,
+    prepare_warmup: bool,
+    json_output: bool,
+    estimate: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        !estimate || (all_sessions && json_output && !prepare_warmup),
+        "--estimate requires --all-sessions and --json"
+    );
+    if prepare_warmup {
+        ensure!(
+            !all_sessions && !json_output,
+            "--prepare-warmup cannot be combined with --all-sessions or --json"
+        );
+        codex_mixin::config::mutate_stored_config(|config| {
+            let mut cleared = 0;
+            for provider in &mut config.providers {
+                if provider.enabled
+                    && codex_mixin::provider::provider_reports_usage_telemetry(provider)
+                {
+                    provider.request_policy.data_report_client_token = None;
+                    cleared += 1;
+                }
+            }
+            ensure!(
+                cleared > 0,
+                "no enabled Baidu reporting provider is configured"
+            );
+            Ok(())
+        })?;
+        println!("DUCX report warmup prepared");
+        return Ok(());
+    }
+    ensure!(
+        !json_output || all_sessions,
+        "--json requires --all-sessions"
+    );
+    if estimate {
+        let scan = enqueue_local_sessions(true)?;
+        println!(
+            "{}",
+            serde_json::to_string(&LocalSessionEstimate {
+                estimated_sessions: scan.sessions,
+                estimated_reports: scan.reports,
+            })?
+        );
+        return Ok(());
+    }
+    if all_sessions {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let providers = reporting_providers()?;
+            ensure!(
+                !providers.is_empty(),
+                "no enabled Baidu reporting provider is configured"
+            );
+            if providers
+                .iter()
+                .all(|provider| provider.request_policy.data_report_client_token.is_some())
+            {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for DUCX report warmup for providers: {}",
+                providers
+                    .iter()
+                    .filter(|provider| provider.request_policy.data_report_client_token.is_none())
+                    .map(|provider| provider.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    let discovered = if all_sessions {
+        enqueue_local_sessions(false)?.queued
+    } else {
+        0
+    };
+    let drain_report = drain_queue_report().await?;
+    let report = ReplayReport {
+        queued_from_local_sessions: discovered,
+        delivered: drain_report.delivered,
+        retained: drain_report.retained,
+        discarded: drain_report.discarded,
+    };
+    if json_output {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    println!("DUCX reports queued from local sessions: {discovered}");
+    println!("DUCX reports delivered: {}", report.delivered.len());
+    println!(
+        "DUCX reports discarded after retry limit: {}",
+        report.discarded.len()
+    );
+    if let Some(failure) = report.retained.first() {
+        anyhow::bail!(
+            "delivered {} queued DUCX reports; retained {} failed sessions: {}",
+            report.delivered.len(),
+            report.retained.len(),
+            failure.error
+        );
+    }
+    Ok(())
+}
+
+async fn drain_queue() -> anyhow::Result<usize> {
+    let report = drain_queue_report().await?;
+    if let Some(failure) = report.retained.first() {
+        anyhow::bail!(
+            "delivered {} queued DUCX reports; retained {} failed sessions: {}",
+            report.delivered.len(),
+            report.retained.len(),
+            failure.error
+        );
+    }
+    Ok(report.delivered.len())
+}
+
+async fn drain_queue_report() -> anyhow::Result<DrainReport> {
+    let state_directory = report_state_dir();
+    let lock_directory = state_directory.clone();
+    let _lock = tokio::task::spawn_blocking(move || queue::lock_at(&lock_directory))
+        .await
+        .context("join DUCX report queue lock")??;
+    let load_directory = state_directory.clone();
+    let pending = tokio::task::spawn_blocking(move || queue::load_pending_at(&load_directory))
+        .await
+        .context("join DUCX report queue read")??;
+    let mut delivered = Vec::new();
+    let mut failed_sessions = HashSet::new();
+    let mut retained = Vec::new();
+    let mut discarded = Vec::new();
+    for record in pending {
+        let hook_body = serde_json::to_vec(&record.hook_body)?;
+        let model = hook_body_model(&hook_body)
+            .with_context(|| format!("queued DUCX report {} is missing model", record.id))?;
+        let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+        let session_key = (record.provider_id.clone(), session_id.clone());
+        if failed_sessions.contains(&session_key) {
+            continue;
+        }
+        let provider = match reporting_provider_by_id(&record.provider_id)? {
+            Some(provider) => provider,
+            None => {
+                failed_sessions.insert(session_key);
+                let failure = ReplayFailure {
+                    provider_id: record.provider_id.clone(),
+                    session_id,
+                    event: record.event.clone(),
+                    error: format!(
+                        "queued DUCX report {} provider {} is unavailable or reporting is disabled",
+                        record.id, record.provider_id
+                    ),
+                };
+                let retry = tokio::task::spawn_blocking({
+                    let state_directory = state_directory.clone();
+                    let record = record.clone();
+                    move || queue::mark_failed_at(&state_directory, &record)
+                })
+                .await
+                .context("join DUCX failure state write")??;
+                if retry {
+                    retained.push(failure);
+                } else {
+                    discarded.push(failure);
+                }
+                continue;
+            }
+        };
+        let context = ReportContext {
+            event: &record.event,
+            provider_id: &record.provider_id,
+            model: &model,
+            session_id: &session_id,
+        };
+        if let Err(error) = report_with_provider(context, &hook_body, &provider).await {
+            failed_sessions.insert(session_key);
+            let failure = ReplayFailure {
+                provider_id: record.provider_id.clone(),
+                session_id,
+                event: record.event.clone(),
+                error: format!(
+                    "{:#}",
+                    error.context(format!("replay queued DUCX report {}", record.id))
+                ),
+            };
+            let retry = tokio::task::spawn_blocking({
+                let state_directory = state_directory.clone();
+                let record = record.clone();
+                move || queue::mark_failed_at(&state_directory, &record)
+            })
+            .await
+            .context("join DUCX report failure state write")??;
+            if retry {
+                retained.push(failure);
+            } else {
+                discarded.push(failure);
+            }
+            continue;
+        }
+        let delivered_event = ReplayEvent {
+            provider_id: record.provider_id.clone(),
+            session_id,
+            event: record.event.clone(),
+        };
+        let delivered_directory = state_directory.clone();
+        tokio::task::spawn_blocking(move || {
+            queue::mark_delivered_at(&delivered_directory, &record)
+        })
+        .await
+        .context("join DUCX report delivery state write")??;
+        delivered.push(delivered_event);
+    }
+    Ok(DrainReport {
+        delivered,
+        retained,
+        discarded,
+    })
+}
+
+fn enqueue_local_sessions(estimate_only: bool) -> anyhow::Result<LocalSessionScan> {
+    let codex_home = if let Some(path) = std::env::var_os("CODEX_HOME") {
+        PathBuf::from(path)
+    } else {
+        codex_mixin::platform::home_dir_required()?.join(".codex")
+    };
+    let sessions_directory = codex_home.join("sessions");
+    ensure!(
+        sessions_directory.is_dir(),
+        "Codex sessions directory is missing: {}",
+        sessions_directory.display()
+    );
+    let providers = reporting_providers()?;
+    ensure!(
+        !providers.is_empty(),
+        "no enabled Baidu reporting provider is configured"
+    );
+    let state_directory = report_state_dir();
+    let mut scan = LocalSessionScan::default();
+    for entry in walkdir::WalkDir::new(&sessions_directory) {
+        let entry = entry?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
+        {
+            continue;
+        }
+        let session = enqueue_session_file_with_mode(
+            entry.path(),
+            &providers,
+            &state_directory,
+            !estimate_only,
+        )?;
+        if session.reports > 0 {
+            scan.sessions += 1;
+            scan.reports += session.reports;
+        }
+        scan.queued += session.queued;
+    }
+    Ok(scan)
+}
+
+fn enqueue_session_file_with_mode(
+    path: &Path,
+    providers: &[ProviderDefinition],
+    state_directory: &Path,
+    should_enqueue: bool,
+) -> anyhow::Result<SessionScan> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("open Codex session {}", path.display()))?;
+    let mut session_id = None;
+    let mut cwd = None;
+    let mut pending_user_prompt = None;
+    let mut last_reporting_route = None;
+    let mut scan = SessionScan::default();
+    for (line_number, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.with_context(|| format!("read {}:{}", path.display(), line_number + 1))?;
+        let entry: Value = serde_json::from_str(&line)
+            .with_context(|| format!("parse {}:{}", path.display(), line_number + 1))?;
+        match entry.get("type").and_then(Value::as_str) {
+            Some("session_meta") => {
+                let payload = &entry["payload"];
+                session_id = payload
+                    .get("session_id")
+                    .or_else(|| payload.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                cwd = payload
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            Some("response_item")
+                if entry["payload"].get("type").and_then(Value::as_str) == Some("message")
+                    && entry["payload"].get("role").and_then(Value::as_str) == Some("user") =>
+            {
+                pending_user_prompt = response_message_text(&entry["payload"]);
+            }
+            Some("turn_context") => {
+                let Some(prompt) = pending_user_prompt.take() else {
+                    continue;
+                };
+                let Some(model) = entry["payload"].get("model").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(provider) = providers
+                    .iter()
+                    .find(|provider| reporting::provider_owns_model(provider, model))
+                else {
+                    continue;
+                };
+                let session_id = session_id.as_deref().with_context(|| {
+                    format!(
+                        "Codex session metadata has no session ID: {}",
+                        path.display()
+                    )
+                })?;
+                let hook_body = serde_json::to_vec(&json!({
+                    "session_id": session_id,
+                    "model": model,
+                    "cwd": entry["payload"].get("cwd").and_then(Value::as_str).or(cwd.as_deref()).unwrap_or(""),
+                    "prompt": prompt,
+                }))?;
+                let event_instance = format!("{}:{}", path.display(), line_number + 1);
+                scan.reports += 1;
+                if should_enqueue
+                    && !queue::enqueue_at(
+                        state_directory,
+                        "user-prompt-submit",
+                        &provider.id,
+                        &event_instance,
+                        &hook_body,
+                    )?
+                    .already_delivered
+                {
+                    scan.queued += 1;
+                }
+                last_reporting_route = Some((provider.id.clone(), model.to_owned()));
+            }
+            _ => {}
+        }
+    }
+    if let Some((provider_id, model)) = last_reporting_route {
+        let session_id = session_id.context("Codex reporting session lost its session ID")?;
+        let hook_body = serde_json::to_vec(&json!({
+            "session_id": session_id,
+            "model": model,
+            "transcript_path": path,
+        }))?;
+        scan.reports += 1;
+        if should_enqueue
+            && !queue::enqueue_at(
+                state_directory,
+                "stop",
+                &provider_id,
+                &path.to_string_lossy(),
+                &hook_body,
+            )?
+            .already_delivered
+        {
+            scan.queued += 1;
+        }
+    }
+    Ok(scan)
+}
+
+fn response_message_text(payload: &Value) -> Option<String> {
+    if let Some(content) = payload.get("content").and_then(Value::as_str) {
+        return Some(content.to_owned());
+    }
+    let parts = payload.get("content")?.as_array()?;
+    let text = parts
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
+}
+
+async fn report_ducx_event(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    username: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    match context.event {
+        "user-prompt-submit" => report_query(context, hook_body, token, username, client).await,
+        "session-start" => {
+            report_session_start(context);
+            Ok(())
+        }
+        "stop" => report_stop(context, hook_body, token, client).await,
+        "post-tool-use" => {
+            let mut payload: Value =
+                serde_json::from_slice(hook_body).context("parse queued DUCX skill report")?;
+            let body = payload
+                .as_object_mut()
+                .context("queued DUCX skill report is not an object")?;
+            body.remove("model");
+            body.insert("username".to_owned(), Value::String(username.to_owned()));
+            post_json(context, client, "upload/skill", token, payload).await
+        }
+        other => {
+            let message = format!(
+                "unsupported Codex report hook event {other} for provider {}",
+                context.provider_id
+            );
+            tracing::error!(
+                event = context.event,
+                provider = context.provider_id,
+                model = context.model,
+                session_id = context.session_id,
+                "DUCX reporting failed: unsupported event"
+            );
+            Err(anyhow::anyhow!(message))
+        }
+    }
+}
+
+async fn report_query(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    username: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    post_json(
+        context,
+        client,
+        "upload/query",
+        token,
+        query_payload(hook_body, username),
+    )
+    .await?;
+    record_successful_query(context).await
+}
+
+fn report_session_start(context: ReportContext<'_>) {
+    tracing::info!(
+        event = context.event,
+        provider = context.provider_id,
+        model = context.model,
+        session_id = context.session_id,
+        reason = "session_metadata_is_created_by_query",
+        "DUCX transcript upload deferred"
+    );
+}
+
+async fn report_stop(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    if !session_metadata_exists(context).await? {
+        anyhow::bail!(
+            "DUCX query metadata is not delivered for provider {} session {}",
+            context.provider_id,
+            context.session_id
+        );
+    }
+    post_transcript(context, client, token, hook_body).await
+}
+
+fn hook_body_model(hook_body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(hook_body)
+        .ok()?
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn hook_body_string(hook_body: &[u8], field: &str) -> Option<String> {
+    serde_json::from_slice::<Value>(hook_body)
+        .ok()?
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+async fn session_metadata_exists(context: ReportContext<'_>) -> anyhow::Result<bool> {
+    let session_id = context.session_id.to_owned();
+    let provider_id = context.provider_id.to_owned();
+    let exists = tokio::task::spawn_blocking(move || {
+        successful_query_marker_exists(&provider_id, &session_id)
+    })
+    .await
+    .context("join DUCX query session state lookup")??;
+    if !exists {
+        tracing::warn!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            reason = "query_not_reported",
+            "DUCX session-scoped upload skipped"
+        );
+    }
+    Ok(exists)
+}
+
+async fn record_successful_query(context: ReportContext<'_>) -> anyhow::Result<()> {
+    let provider_id = context.provider_id.to_owned();
+    let session_id = context.session_id.to_owned();
+    tokio::task::spawn_blocking(move || record_successful_query_marker(&provider_id, &session_id))
+        .await
+        .context("join DUCX query session state write")?
+}
+
+fn successful_query_marker_exists(provider_id: &str, session_id: &str) -> anyhow::Result<bool> {
+    successful_query_marker_exists_at(&report_state_dir(), provider_id, session_id)
+}
+
+fn successful_query_marker_exists_at(
+    state_directory: &Path,
+    provider_id: &str,
+    session_id: &str,
+) -> anyhow::Result<bool> {
+    let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
+    match std::fs::metadata(&marker) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_file(),
+                "DUCX query session state is not a file: {}",
+                marker.display()
+            );
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("read DUCX query session state {}", marker.display())),
+    }
+}
+
+fn record_successful_query_marker(provider_id: &str, session_id: &str) -> anyhow::Result<()> {
+    record_successful_query_marker_at(&report_state_dir(), provider_id, session_id)
+}
+
+fn record_successful_query_marker_at(
+    state_directory: &Path,
+    provider_id: &str,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
+    write_atomic_if_changed(&marker, b"")
+        .with_context(|| format!("record DUCX query session state {}", marker.display()))?;
+    Ok(())
+}
+
+fn successful_query_marker_path(
+    state_directory: &Path,
+    provider_id: &str,
+    session_id: &str,
+) -> anyhow::Result<PathBuf> {
+    ensure!(
+        !provider_id.is_empty()
+            && provider_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "DUCX reporting provider ID contains unsupported characters"
+    );
+    validate_session_id(session_id)?;
+    Ok(state_directory
+        .join("ducx-report-sessions")
+        .join(provider_id)
+        .join(session_id))
+}
+
+fn query_payload(hook_body: &[u8], username: &str) -> Value {
+    let hook = serde_json::from_slice::<Value>(hook_body).unwrap_or(Value::Null);
+    let cwd = hook.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+    let (repo, _) = cwd
+        .as_deref()
+        .map(git_repo_and_branch)
+        .unwrap_or((None, None));
+    json!({
+        "session_id": hook.get("session_id").and_then(Value::as_str).unwrap_or(""),
+        "platform": "",
+        "username": username,
+        "query": hook.get("prompt").and_then(Value::as_str).unwrap_or(""),
+        "model": hook.get("model").and_then(Value::as_str).unwrap_or(""),
+        "repo": repo.unwrap_or_default(),
+        "os": codex_mixin::platform::os_name(),
+        "arch": "",
+        "version": ""
+    })
+}
+
+fn git_repo_and_branch(cwd: &Path) -> (Option<String>, Option<String>) {
+    let repo = git_output(cwd, &["config", "--get", "remote.origin.url"])
+        .map(|remote| parse_remote_repo(&remote));
+    let branch = git_output(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    (repo, branch)
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
+    let output = StdCommand::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn parse_remote_repo(remote: &str) -> String {
+    let trimmed = remote.trim().trim_end_matches(".git");
+    let path = if let Some((_, rest)) = trimmed.split_once("://") {
+        rest.split_once('/').map(|(_, p)| p).unwrap_or(rest)
+    } else if let Some((_, rest)) = trimmed.split_once(':') {
+        rest
+    } else {
+        trimmed
+    };
+    path.trim_matches('/').to_owned()
+}

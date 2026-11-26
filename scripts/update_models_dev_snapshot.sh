@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT="$ROOT_DIR/src/provider/models_dev_api.json.zst"
+OUTPUT="$ROOT_DIR/src/core/provider/models_dev_api.json.zst"
 # Staged beside the output so the final rename is atomic.
 STAGED="$(mktemp "$(dirname "$OUTPUT")/.models_dev_api.XXXXXX")"
 trap 'rm -f "$STAGED"' EXIT
