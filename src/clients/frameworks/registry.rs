@@ -86,8 +86,7 @@ impl FrameworkSpec {
     }
 
     pub const fn requires_launch(&self) -> bool {
-        self.launch_required
-            || (cfg!(feature = "client-auth") && self.client_auth_launch_required)
+        self.launch_required || (cfg!(feature = "client-auth") && self.client_auth_launch_required)
     }
 
     pub const fn is_native_models(&self) -> bool {

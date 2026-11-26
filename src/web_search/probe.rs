@@ -117,11 +117,7 @@ pub(super) async fn probe_model_once(
             "user_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
         });
     }
-    let native_headers = if provider.is_baidu_model_source() && provider.uses_ducx_loopback() {
-        Some(crate::provider::native_baidu_headers(provider).await?)
-    } else {
-        None
-    };
+    let native_headers = provider.native_auth_headers().await?;
     let base = client
         .post(provider.api_url().clone())
         .header("accept", "text/event-stream");

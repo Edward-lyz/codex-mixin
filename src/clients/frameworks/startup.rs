@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::engine;
 
 pub(super) fn required(id: &str) -> bool {
-    super::registry::spec(id).is_ok_and(|spec| spec.requires_launch())
+    super::registry::spec(id).is_ok_and(super::registry::FrameworkSpec::requires_launch)
 }
 
 pub(super) fn is_installed(manifest: &Path) -> anyhow::Result<bool> {

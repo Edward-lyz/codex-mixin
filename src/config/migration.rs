@@ -235,28 +235,38 @@ fn drop_invalid_pi_plugin_providers(config: &mut StoredGatewayConfig) {
     // Keep one disabled entry when plugin providers were the only providers,
     // matching how a Pi sync retires the last provider.
     if config.providers.is_empty() {
-        // Rebuild from scratch so no field of the invalid entry survives.
-        let source = &dropped[0];
-        let mut provider = ProviderPreset::Custom.create(&source.id, "");
-        provider.display_name = source.display_name.clone();
-        provider.base_url = crate::provider::PI_BRIDGE_PLACEHOLDER_URL.to_owned();
-        provider.api_path = "/v1/chat/completions".to_owned();
-        provider.protocol = ProviderProtocol::OpenAiChat;
-        provider.model_source = ProviderModelSource::Static;
-        provider.pi_provider_id = source.pi_provider_id.clone();
-        provider.pi_plugin_package = source.pi_plugin_package.clone();
-        provider.enabled = false;
-        match ProviderRegistry::new(vec![provider.clone()]) {
-            Ok(_) => config.providers.push(provider),
-            Err(error) => tracing::warn!(
-                provider = %provider.id,
-                error = %format!("{error:#}"),
-                "failed to keep a disabled Pi plugin provider placeholder"
-            ),
-        }
+        keep_disabled_pi_placeholder(config, &dropped[0]);
     }
     // Routes that referenced the dropped models would otherwise fail every
     // later load and save.
+    disable_routes_for_dropped_pi_providers(config);
+}
+
+fn keep_disabled_pi_placeholder(
+    config: &mut StoredGatewayConfig,
+    source: &crate::provider::ProviderDefinition,
+) {
+    // Rebuild from scratch so no field of the invalid entry survives.
+    let mut provider = ProviderPreset::Custom.create(&source.id, "");
+    provider.display_name = source.display_name.clone();
+    provider.base_url = crate::provider::PI_BRIDGE_PLACEHOLDER_URL.to_owned();
+    provider.api_path = "/v1/chat/completions".to_owned();
+    provider.protocol = ProviderProtocol::OpenAiChat;
+    provider.model_source = ProviderModelSource::Static;
+    provider.pi_provider_id = source.pi_provider_id.clone();
+    provider.pi_plugin_package = source.pi_plugin_package.clone();
+    provider.enabled = false;
+    match ProviderRegistry::new(vec![provider.clone()]) {
+        Ok(_) => config.providers.push(provider),
+        Err(error) => tracing::warn!(
+            provider = %provider.id,
+            error = %format!("{error:#}"),
+            "failed to keep a disabled Pi plugin provider placeholder"
+        ),
+    }
+}
+
+fn disable_routes_for_dropped_pi_providers(config: &mut StoredGatewayConfig) {
     let Ok(providers) = ProviderRegistry::new(config.providers.clone()) else {
         return;
     };

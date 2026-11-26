@@ -82,6 +82,10 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
 - `server::AppState`：纯组合对象，持有上述组件与 benchmark/图片路由等
   handler 所需状态，不再实现发送、认证或目录业务。
 
+## 核心抽象与扩展规范
+
+Provider 端点解析（`EndpointSpec` + `WirePolicy`）、Agent 注册表（`AgentManifest` + `FrameworkSpec`）与协议流式两层状态机（`MapperState` + `ResponsePhase`）的设计思路、UML 图与开发准入规则见 [Provider、Agent 与协议流式抽象设计规范](abstraction-architecture.md)。
+
 ## 提交语义
 
 provider 管理用例把网络操作放在锁外，先提交主配置，再执行缓存失效、发现、

@@ -41,7 +41,7 @@ pub fn name(id: &str) -> anyhow::Result<&'static str> {
 }
 
 pub fn is_native_models(id: &str) -> bool {
-    registry::spec(id).is_ok_and(|spec| spec.is_native_models())
+    registry::spec(id).is_ok_and(registry::FrameworkSpec::is_native_models)
 }
 
 pub fn revoke_key_before_remove(id: &str) -> bool {
@@ -70,12 +70,14 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     let spec = registry::spec(id)?;
     if let Some(driver) = spec.native_app_driver() {
-        return Ok((driver.status)(manifest).unwrap_or_else(|error| IntegrationStatus {
-            state: "error",
-            mode: Some("native_app"),
-            detail: "Native integration could not be inspected.",
-            error: Some(format!("{error:#}")),
-        }));
+        return Ok(
+            (driver.status)(manifest).unwrap_or_else(|error| IntegrationStatus {
+                state: "error",
+                mode: Some("native_app"),
+                detail: "Native integration could not be inspected.",
+                error: Some(format!("{error:#}")),
+            }),
+        );
     }
     let native = spec.is_native_models();
     if let Some(detail) = limitation(id).filter(|_| !manifest.exists()) {

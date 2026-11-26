@@ -17,8 +17,6 @@ use crate::usage::{
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
 
-const CLAUDE_FAMILY_NAMES: &[&str] = &["claude", "fable", "opus", "sonet", "sonnet", "haiku"];
-
 /// Provider-level token and prompt cache counters observed on upstream
 /// responses, kept compact so the menu can visualize usage without retaining
 /// request bodies or history.
@@ -546,7 +544,7 @@ pub(crate) struct TokenUsageAggregator {
     state: Mutex<TokenUsageState>,
     persist_path: Option<PathBuf>,
     turns: TurnLedger,
-    oneapi_providers: HashSet<String>,
+    provider_adapters: HashMap<String, &'static dyn crate::provider::ProviderAdapter>,
     configured_providers: Option<HashSet<String>>,
     prices: crate::provider::LivePrices,
 }
@@ -565,7 +563,7 @@ impl TokenUsageAggregator {
             state: Mutex::new(state),
             turns: TurnLedger::load(path.clone())?,
             persist_path: path,
-            oneapi_providers: HashSet::new(),
+            provider_adapters: HashMap::new(),
             configured_providers: None,
             prices,
         })
@@ -584,10 +582,9 @@ impl TokenUsageAggregator {
                 .chain(std::iter::once("official".to_owned()))
                 .collect(),
         );
-        self.oneapi_providers = providers
+        self.provider_adapters = providers
             .iter()
-            .filter(|provider| crate::provider::is_baidu_provider(provider))
-            .map(|provider| provider.id.clone())
+            .map(|provider| (provider.id.clone(), crate::provider::adapter_for(provider)))
             .collect();
         self
     }
@@ -634,11 +631,9 @@ impl TokenUsageAggregator {
     }
 
     pub(crate) fn cache_metrics_available(&self, provider_id: &str, model_id: &str) -> bool {
-        if !self.oneapi_providers.contains(provider_id) {
-            return true;
-        }
-        let model = model_id.to_ascii_lowercase();
-        !CLAUDE_FAMILY_NAMES.iter().any(|name| model.contains(name))
+        self.provider_adapters
+            .get(provider_id)
+            .is_none_or(|adapter| adapter.cache_metrics_available(model_id))
     }
 
     /// Adds one reply's counters and returns its list-price estimate. A failed

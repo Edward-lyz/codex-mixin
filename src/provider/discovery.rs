@@ -161,7 +161,7 @@ pub async fn discover_provider_models(
         return official_models_from_catalog(&catalog);
     }
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
-    let native_headers = native_baidu_headers_if_needed(definition, &provider).await?;
+    let native_headers = provider.native_auth_headers().await?;
     if definition.preset_id.as_deref() == Some("agy") {
         return super::agy::discover_models(client, definition, &provider).await;
     }
@@ -385,18 +385,6 @@ fn lookup_without_region_prefix<'metadata>(
         metadata.get(rest)
     } else {
         None
-    }
-}
-
-async fn native_baidu_headers_if_needed(
-    definition: &ProviderDefinition,
-    provider: &ProviderRuntime,
-) -> anyhow::Result<Option<reqwest::header::HeaderMap>> {
-    if definition.model_source == ProviderModelSource::BaiduOneApi && provider.uses_ducx_loopback()
-    {
-        Ok(Some(super::native_baidu_headers(provider).await?))
-    } else {
-        Ok(None)
     }
 }
 

@@ -476,7 +476,7 @@ async fn stream_anthropic_messages(
         downstream_body,
         tool_names,
         executor.custom_image_routes(provider),
-        wire_policy.baidu_oneapi_usage,
+        wire_policy.unsigned_thinking_replay,
     )
     .boxed())
 }
