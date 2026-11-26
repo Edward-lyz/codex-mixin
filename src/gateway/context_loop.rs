@@ -98,7 +98,7 @@ impl ContextRun {
         // Routing keys include prompt namespaces and subagents, so their UUID
         // cannot in general be reversed to the desktop thread for display.
         let codex_thread_id = if executor.client_identity(headers) == "Codex" {
-            super::stable_oneapi_routing(headers, body)?.map(|routing| routing.session_id)
+            super::stable_session_routing(headers, body)?.map(|routing| routing.session_id)
         } else {
             None
         };
@@ -796,7 +796,7 @@ pub(crate) async fn context_input(
     let allow_desktop_fork = headers
         .get("thread-id")
         .is_some_and(|value| !value.is_empty());
-    let parent_session = super::stable_oneapi_routing(headers, body)?
+    let parent_session = super::stable_session_routing(headers, body)?
         .filter(|routing| routing.hash_key != routing.context_hash_key)
         .and_then(|routing| {
             session
@@ -900,7 +900,7 @@ pub(crate) fn explicit_context_session(
     headers: &HeaderMap,
     body: &Value,
 ) -> Result<Option<String>, GatewayError> {
-    if super::stable_oneapi_routing(headers, body)?.is_none_or(|routing| routing.derived) {
+    if super::stable_session_routing(headers, body)?.is_none_or(|routing| routing.derived) {
         return Ok(None);
     }
     context_session(executor, headers, body)
@@ -913,7 +913,7 @@ pub(crate) fn context_session(
     headers: &HeaderMap,
     body: &Value,
 ) -> Result<Option<String>, GatewayError> {
-    let Some(routing) = super::stable_oneapi_routing(headers, body)? else {
+    let Some(routing) = super::stable_session_routing(headers, body)? else {
         return Ok(None);
     };
     let client = executor.client_identity(headers);

@@ -60,7 +60,7 @@ pub(crate) struct UpstreamAccess {
     official_direct_client: Arc<tokio::sync::OnceCell<Client>>,
     official_auth_cache: OfficialAuthSlot,
     official_account_auth: Arc<tokio::sync::Mutex<HashMap<PathBuf, OfficialAuthSlot>>>,
-    ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
+    managed_auth_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
     gzip_support: Arc<tokio::sync::Mutex<HashMap<reqwest::Url, bool>>>,
     responses_websockets: Arc<tokio::sync::Mutex<responses_websocket::ResponsesWebSockets>>,
     proxy_selection: crate::platform::proxy::ProxySelection,
@@ -81,7 +81,7 @@ impl UpstreamAccess {
             official_direct_client: Arc::new(tokio::sync::OnceCell::new()),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_account_auth: Arc::default(),
-            ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            managed_auth_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             gzip_support: Arc::default(),
             responses_websockets: Arc::default(),
             proxy_selection,
@@ -455,8 +455,8 @@ impl UpstreamAccess {
     }
 
     /// Send a provider Anthropic Messages request and return its SSE byte
-    /// stream. Refreshes DUCX headers once when the upstream rejects cached
-    /// headers with 401.
+    /// stream. Refreshes managed auth headers once when the upstream rejects
+    /// cached headers with 401.
     pub(crate) async fn send_anthropic_request(
         &self,
         provider: &ProviderRuntime,
@@ -492,11 +492,11 @@ impl UpstreamAccess {
             provider.definition().anthropic_beta.clone()
         };
         let beta = merge_anthropic_beta(provider_beta.as_deref(), client_beta);
-        let mut refreshed_ducx_auth = false;
+        let mut refreshed_native_auth = false;
         loop {
-            // DUCX acts as a header generator. Merge its native headers instead
-            // of the stored key.
-            let native = self.baidu_native_headers(provider).await?;
+            // The managed auth bridge acts as a header generator. Merge its
+            // native headers instead of the stored key.
+            let native = self.native_auth_headers(provider).await?;
             // Use the model-level endpoint like the OpenAI protocols so a
             // per-model api_path is honored for Anthropic Messages too.
             let base_request = self
@@ -537,16 +537,16 @@ impl UpstreamAccess {
             };
             let status = response.status();
             if status == reqwest::StatusCode::UNAUTHORIZED
-                && provider.uses_ducx_loopback()
-                && !refreshed_ducx_auth
+                && provider.uses_managed_auth_bridge()
+                && !refreshed_native_auth
             {
                 tracing::warn!(
                     provider_id = provider.id(),
                     upstream_model_id = %request.model,
-                    "refreshing DUCX authentication after upstream rejected cached headers"
+                    "refreshing managed authentication after upstream rejected cached headers"
                 );
-                self.invalidate_ducx_headers(provider).await?;
-                refreshed_ducx_auth = true;
+                self.invalidate_native_auth_headers(provider).await?;
+                refreshed_native_auth = true;
                 continue;
             }
             if !status.is_success() {

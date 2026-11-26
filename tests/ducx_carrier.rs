@@ -147,7 +147,7 @@ async fn gateway_gives_up_on_a_stuck_carrier_after_thirty_seconds() {
 
     let started = Instant::now();
     while !fs::read_to_string(&gateway_log)
-        .is_ok_and(|text| text.contains("managed DUCX warmup failed"))
+        .is_ok_and(|text| text.contains("managed provider auth warmup failed"))
     {
         assert!(
             started.elapsed() < Duration::from_secs(50),

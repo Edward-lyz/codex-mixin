@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::super::AppState;
-use super::super::auth::stable_oneapi_routing;
+use super::super::auth::stable_session_routing;
 use super::super::compact;
 use super::{ResponsesWsContext, take_custom_request_input};
 use crate::fusion::{FusionEngine, should_fuse_turn};
@@ -203,7 +203,7 @@ async fn proxy_custom_responses_ws(
     if !body.get("input").is_some_and(Value::is_array) {
         anyhow::bail!("custom request input must be an array");
     }
-    let provider_routing = stable_oneapi_routing(headers, &body)?;
+    let provider_routing = stable_session_routing(headers, &body)?;
     let mut preserved_history = None;
     let (stream, returned_body) = match &route {
         ResolvedModelRoute::Official => {

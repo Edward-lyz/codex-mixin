@@ -27,7 +27,7 @@ pub(crate) use provider::{
 pub(crate) use responses::{collect_response_stream, map_openai_responses_sse};
 pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,
-    stable_oneapi_routing,
+    stable_session_routing,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

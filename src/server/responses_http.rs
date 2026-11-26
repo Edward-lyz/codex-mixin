@@ -75,7 +75,7 @@ pub(super) async fn stream_custom_responses(
     body: Value,
     route: ResolvedModelRoute,
 ) -> Result<ResponseStream, GatewayError> {
-    let provider_routing = crate::gateway::stable_oneapi_routing(headers, &body)?;
+    let provider_routing = crate::gateway::stable_session_routing(headers, &body)?;
     let downstream_model = body.get("model").and_then(Value::as_str).map(str::to_owned);
     match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),

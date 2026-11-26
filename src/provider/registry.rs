@@ -9,8 +9,8 @@ use super::adapter::{ProviderAdapter, adapter_for};
 use super::auth::external::resolve_custom_headers_from_env;
 use super::endpoint::{EndpointSpec, WirePolicy};
 use super::types::{
-    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderProtocol,
-    ProviderQuotaParser, is_auto_review_model_id,
+    ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderProtocol, ProviderQuotaParser,
+    is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "auto/";
@@ -261,17 +261,16 @@ impl ProviderRuntime {
             .is_some()
     }
 
-    pub fn uses_ducx_loopback(&self) -> bool {
-        self.definition.request_policy.effective_baidu_auth_bridge()
-            == BaiduAuthBridge::DucxLoopback
+    pub fn uses_managed_auth_bridge(&self) -> bool {
+        self.adapter.uses_managed_auth_bridge(&self.definition)
     }
 
-    pub fn ducx_executable(&self) -> Option<&std::path::Path> {
-        self.definition.request_policy.ducx_executable.as_deref()
+    pub fn reports_usage_telemetry(&self) -> bool {
+        self.adapter.reports_usage_telemetry(&self.definition)
     }
 
-    pub fn baidu_code_report(&self) -> bool {
-        self.definition.request_policy.baidu_code_report
+    pub fn auth_bridge_executable(&self) -> Option<&std::path::Path> {
+        self.adapter.auth_bridge_executable(&self.definition)
     }
 
     pub fn model_supports_thinking(&self, model: &str) -> Option<bool> {
@@ -305,7 +304,7 @@ impl ProviderRuntime {
 
     pub(crate) async fn native_auth_headers(&self) -> anyhow::Result<Option<HeaderMap>> {
         if self.adapter.uses_native_auth_headers(&self.definition) {
-            Ok(Some(super::native_baidu_headers(self).await?))
+            Ok(Some(super::baidu::native_auth_headers(self).await?))
         } else {
             Ok(None)
         }

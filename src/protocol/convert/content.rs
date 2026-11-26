@@ -4,12 +4,13 @@ use crate::protocol::compaction::{self, SecretSource};
 
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const ANTHROPIC_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:anthropic-unsigned-thinking:v1:";
-const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
+// Wire value stays byte-identical for sessions already carrying this marker.
+const UNSIGNED_THINKING_REPLAY_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
 
 pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
     encrypted_content.starts_with(ANTHROPIC_THINKING_PREFIX)
         || encrypted_content.starts_with(ANTHROPIC_UNSIGNED_THINKING_PREFIX)
-        || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
+        || encrypted_content.starts_with(UNSIGNED_THINKING_REPLAY_PREFIX)
 }
 
 /// Recover the plaintext carried by a Mixin-owned thinking token.
@@ -31,7 +32,7 @@ pub(crate) fn gateway_thinking_text(encrypted_content: &str) -> Option<String> {
             .as_str()?
             .to_owned()
     } else {
-        let payload = encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX)?;
+        let payload = encrypted_content.strip_prefix(UNSIGNED_THINKING_REPLAY_PREFIX)?;
         serde_json::from_str::<Value>(payload)
             .ok()?
             .get("thinking")?
@@ -47,7 +48,7 @@ pub(super) fn append_input_item(
     messages: &mut Vec<Message>,
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
-    allow_baidu_unsigned_thinking_replay: bool,
+    allow_unsigned_thinking_replay: bool,
     compaction_secret: SecretSource<'_>,
 ) -> Result<(), GatewayError> {
     // OpenCode and DSH send message items without the Responses envelope type.
@@ -255,7 +256,7 @@ pub(super) fn append_input_item(
             item,
             messages,
             replay_model,
-            allow_baidu_unsigned_thinking_replay,
+            allow_unsigned_thinking_replay,
         )?,
         "configuration_update"
         | "compaction_trigger"
@@ -281,7 +282,7 @@ fn append_anthropic_reasoning(
     item: &Value,
     messages: &mut Vec<Message>,
     replay_model: Option<&str>,
-    allow_baidu_unsigned_thinking_replay: bool,
+    allow_unsigned_thinking_replay: bool,
 ) -> Result<(), GatewayError> {
     let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) else {
         return Ok(());
@@ -326,20 +327,20 @@ fn append_anthropic_reasoning(
             content: vec![block],
         });
     } else if let (Some(payload), Some(model)) = (
-        encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX),
-        allow_baidu_unsigned_thinking_replay
+        encrypted_content.strip_prefix(UNSIGNED_THINKING_REPLAY_PREFIX),
+        allow_unsigned_thinking_replay
             .then_some(replay_model)
             .flatten(),
     ) {
         let state: Value = serde_json::from_str(payload).map_err(|_| {
-            GatewayError::BadRequest("invalid Baidu unsigned thinking payload".to_owned())
+            GatewayError::BadRequest("invalid unsigned thinking replay payload".to_owned())
         })?;
         if state.get("model").and_then(Value::as_str) == Some(model) {
             let thinking = state
                 .get("thinking")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    GatewayError::BadRequest("invalid Baidu unsigned thinking payload".to_owned())
+                    GatewayError::BadRequest("invalid unsigned thinking replay payload".to_owned())
                 })?;
             messages.push(Message {
                 role: "assistant".to_owned(),
@@ -367,9 +368,9 @@ pub(crate) fn encode_anthropic_unsigned_thinking(thinking: &str) -> String {
     format!("{ANTHROPIC_UNSIGNED_THINKING_PREFIX}{payload}")
 }
 
-pub(crate) fn encode_baidu_unsigned_thinking(model: &str, thinking: &str) -> String {
+pub(crate) fn encode_unsigned_thinking_replay(model: &str, thinking: &str) -> String {
     let payload = json!({"model": model, "thinking": thinking});
-    format!("{BAIDU_UNSIGNED_THINKING_PREFIX}{payload}")
+    format!("{UNSIGNED_THINKING_REPLAY_PREFIX}{payload}")
 }
 
 pub(crate) fn encode_anthropic_redacted_thinking(data: &str) -> String {

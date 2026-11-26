@@ -12,6 +12,7 @@ pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
 pub use claude_code::fetch_claude_code_quota;
 pub use kiro::fetch_kiro_quota;
 mod adapter;
+pub(crate) mod baidu;
 pub mod capabilities;
 mod discovery;
 mod endpoint;
@@ -29,20 +30,15 @@ mod resolver;
 mod spec;
 mod types;
 
-use std::path::PathBuf;
-use std::time::Duration;
-
-use anyhow::{Context, bail};
-use reqwest::header::HeaderMap;
-
 pub(crate) use adapter::{ProviderAdapter, adapter_for};
+pub use adapter::{provider_reports_usage_telemetry, provider_uses_managed_auth_bridge};
 pub use discovery::{
     AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
     discover_provider_models, official_models_from_catalog, redact_provider_error,
 };
 pub use endpoint::{EndpointSpec, WirePolicy};
 pub use models_dev::{MODELS_DEV_API_URL, default_metadata_cache_path, metadata_catalog_path};
-pub use quota::{QuotaUsageSummary, quota_usage};
+pub use quota::{QuotaUsageSummary, quota_usage, quota_usage_pointers};
 pub use registry::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, auxiliary_auto_review_slug,
     catalog_model_slug,
@@ -68,22 +64,4 @@ pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 /// Client-facing label; routing continues to use the separate catalog slug.
 pub fn provider_model_display_name(model: &ProviderModel, provider: &ProviderDefinition) -> String {
     adapter::adapter_for(provider).format_model_display_name(provider, model)
-}
-
-/// Mint the native auth headers for the selected Baidu auth core.
-///
-/// Mint the DUCX native auth headers without keeping a carrier process alive.
-pub(crate) async fn native_baidu_headers(provider: &ProviderRuntime) -> anyhow::Result<HeaderMap> {
-    let executable = provider
-        .ducx_executable()
-        .map(PathBuf::from)
-        .or_else(auth::ducx::default_ducx_executable)
-        .context("Baidu auth bridge is enabled but no managed executable is configured")?;
-    if provider.uses_ducx_loopback() {
-        auth::ducx::DucxRuntime::shared(executable)?
-            .native_headers(Duration::from_secs(30))
-            .await
-    } else {
-        bail!("Baidu provider has no native auth bridge configured")
-    }
 }

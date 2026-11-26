@@ -1,4 +1,4 @@
-use super::auth::{check_gateway_auth, stable_oneapi_routing};
+use super::auth::{check_gateway_auth, stable_session_routing};
 use super::*;
 use crate::anthropic::{ContentBlock, Message, MessageRequest};
 use crate::provider::ProviderProtocol;
@@ -75,13 +75,13 @@ pub(super) async fn messages_body(
     let upstream_model_id = resolved.upstream_model_id;
     state
         .gateway
-        .require_ducx_client(provider, &headers)
+        .require_managed_client(provider, &headers)
         .await?;
     let native_protocol = provider.endpoint_for_model(upstream_model_id).protocol
         == ProviderProtocol::AnthropicMessages;
     let native_passthrough = native_protocol && native_passthrough_body(&body);
     let mut request = normalize_message_request(&body, upstream_model_id, native_protocol)?;
-    let routing = stable_oneapi_routing(&headers, &body)?;
+    let routing = stable_session_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);
     let client_beta = client_anthropic_beta(&headers);
     if !native_protocol {

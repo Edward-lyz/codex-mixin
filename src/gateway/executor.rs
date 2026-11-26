@@ -6,7 +6,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 
 use super::context_loop::ContextRun;
-use super::router::stable_oneapi_routing;
+use super::router::stable_session_routing;
 use super::{RequestPlan, UpstreamTarget};
 use crate::config::GatewayConfig;
 use crate::context::ContextEngine;
@@ -287,12 +287,12 @@ impl GatewayExecutor {
             .is_some_and(|expected| bool::from(actual.as_bytes().ct_eq(expected.as_bytes())))
     }
 
-    pub(crate) async fn require_ducx_client(
+    pub(crate) async fn require_managed_client(
         &self,
         provider: &ProviderRuntime,
         headers: &HeaderMap,
     ) -> Result<(), GatewayError> {
-        if !cfg!(feature = "client-auth") || !provider.uses_ducx_loopback() {
+        if !cfg!(feature = "client-auth") || !provider.uses_managed_auth_bridge() {
             return Ok(());
         }
         if self
@@ -603,7 +603,7 @@ impl GatewayExecutor {
             .get("model")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
-        let routing = stable_oneapi_routing(headers, body)?;
+        let routing = stable_session_routing(headers, body)?;
         Ok(record_provider_prefix(
             &self.cache_shapes,
             "official",

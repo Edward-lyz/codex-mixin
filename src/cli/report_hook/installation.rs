@@ -13,10 +13,10 @@ use codex_mixin::platform::write_atomic_if_changed;
 pub fn reporting_enabled() -> anyhow::Result<bool> {
     Ok(load_stored_config_read_only()?
         .map(|config| {
-            config
-                .providers
-                .iter()
-                .any(|provider| provider.enabled && provider.request_policy.baidu_code_report)
+            config.providers.iter().any(|provider| {
+                provider.enabled
+                    && codex_mixin::provider::provider_reports_usage_telemetry(provider)
+            })
         })
         .unwrap_or(false))
 }

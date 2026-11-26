@@ -3,7 +3,7 @@ use std::io::{self, IsTerminal, Write};
 use anyhow::Context;
 use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 use codex_mixin::config::load_stored_config;
-use codex_mixin::provider::ProviderPreset;
+use codex_mixin::provider::{ProviderPreset, QuotaLogin};
 use console::style;
 
 use super::codex::{InstallCodexOptions, install_codex};
@@ -160,29 +160,32 @@ pub(super) async fn run(
         }
     };
 
-    let quota_username = if preset == "baidu-oneapi" {
+    let preset_spec = ProviderPreset::parse(preset)?.spec();
+    let quota_username = if preset_spec.quota_login == QuotaLogin::Username {
+        let label = preset_spec.display_name;
         match quota_username.or_else(|| std::env::var("CODEX_MIXIN_QUOTA_USERNAME").ok()) {
             Some(username) if !username.trim().is_empty() => Some(username),
             _ if io::stdin().is_terminal() => {
-                print!("Baidu OneAPI quota username: ");
+                print!("{label} quota username: ");
                 io::stdout().flush()?;
                 let mut username = String::new();
                 io::stdin().read_line(&mut username)?;
                 let username = username.trim().to_owned();
                 if username.is_empty() {
-                    anyhow::bail!("Baidu OneAPI quota username cannot be empty")
+                    anyhow::bail!("{label} quota username cannot be empty")
                 }
                 Some(username)
             }
             _ => anyhow::bail!(
-                "Baidu OneAPI quota username is required; pass --quota-username or set CODEX_MIXIN_QUOTA_USERNAME in non-interactive mode"
+                "{label} quota username is required; pass --quota-username or set CODEX_MIXIN_QUOTA_USERNAME in non-interactive mode"
             ),
         }
     } else {
         quota_username
     };
 
-    let ducx_executable = if preset == "baidu-oneapi" {
+    let managed_auth_bridge = preset_spec.default_managed_auth_bridge;
+    let ducx_executable = if managed_auth_bridge == Some("ducx_loopback") {
         Some(
             stage(
                 "Preparing managed DUCX authentication",
@@ -213,7 +216,7 @@ pub(super) async fn run(
                 id: preset.to_owned(),
                 key: Some(key),
                 quota_username,
-                baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
+                baidu_auth_bridge: managed_auth_bridge.map(str::to_owned),
                 ducx_executable,
                 ..UpdateProviderInput::default()
             })
@@ -248,7 +251,7 @@ pub(super) async fn run(
             gateway_key: None,
             static_models: Vec::new(),
             header_env: Vec::new(),
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
+            baidu_auth_bridge: managed_auth_bridge.map(str::to_owned),
             ducx_executable,
             baidu_code_report: None,
         })

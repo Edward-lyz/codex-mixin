@@ -5,9 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::json;
 
-use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
+use crate::anthropic::{ModelInfo, ModelsResponse};
 
 use super::models_dev::fetch_models_dev_catalog;
 use super::resolver::{
@@ -196,7 +195,13 @@ pub async fn discover_provider_models(
             discover_openai_models(client, definition, &provider).await
         }
         ProviderModelSource::BaiduOneApi => {
-            discover_baidu_models(client, definition, &provider, native_headers.as_ref()).await
+            super::baidu::discovery::discover_baidu_models(
+                client,
+                definition,
+                &provider,
+                native_headers.as_ref(),
+            )
+            .await
         }
         ProviderModelSource::AwsBedrock => discover_aws_bedrock_models(client, definition).await,
     }
@@ -542,7 +547,7 @@ fn models_dev_provider_for(definition: &ProviderDefinition) -> Option<&'static s
 /// renamed upstream ids still pick up their model family's metadata. When the
 /// live catalog fetch fails, the locally cached copy (refresh-metadata) keeps
 /// the fuzzy pass working offline.
-async fn enrich_from_models_dev(
+pub(super) async fn enrich_from_models_dev(
     client: &Client,
     definition: &ProviderDefinition,
     models: &mut [ProviderModel],
@@ -632,108 +637,6 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         supports_function_tools,
         capability_probe_error: model.capability_probe_error,
         capabilities_probed_at_ms: model.capabilities_probed_at_ms,
-    }
-}
-
-async fn discover_baidu_models(
-    client: &Client,
-    definition: &ProviderDefinition,
-    provider: &ProviderRuntime,
-    native_headers: Option<&reqwest::header::HeaderMap>,
-) -> anyhow::Result<Vec<ProviderModel>> {
-    let url = provider
-        .models_url()
-        .context("provider available-models URL is not configured")?
-        .clone();
-    let request_client =
-        crate::ech::provider_http_client(client, &url, std::time::Duration::from_secs(30)).await?;
-    let request = match native_headers {
-        Some(headers) => request_client.post(url).headers(headers.clone()),
-        None => provider.apply_auth(request_client.post(url)),
-    };
-    let response = request.json(&json!({})).send().await?;
-    let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "provider {} available-models endpoint returned {status}: {body}",
-            provider.id()
-        );
-    }
-    let available: BaiduAvailableModelsResponse = serde_json::from_str(&body)
-        .context("provider available-models endpoint returned invalid JSON")?;
-    if !available.success {
-        anyhow::bail!(
-            "provider {} available-models endpoint failed: {}",
-            provider.id(),
-            available.message
-        );
-    }
-    let mut models = Vec::with_capacity(available.data.len());
-    let mut model_indices = HashMap::with_capacity(available.data.len());
-    for model in available.data {
-        add_baidu_model(provider, model, &mut models, &mut model_indices);
-    }
-    enrich_from_models_dev(
-        client,
-        definition,
-        &mut models,
-        enrich_models_with_models_dev,
-    )
-    .await;
-    normalize_models(&mut models);
-    Ok(models)
-}
-
-fn add_baidu_model(
-    provider: &ProviderRuntime,
-    model: crate::anthropic::BaiduAvailableModel,
-    models: &mut Vec<ProviderModel>,
-    model_indices: &mut HashMap<String, usize>,
-) {
-    let (id, is_internal) = match model.model.strip_suffix("-内部") {
-        Some(canonical) => (canonical.to_owned(), true),
-        None => (model.model.clone(), false),
-    };
-    let Some(capability) = model.capability else {
-        tracing::warn!(
-            provider_id = provider.id(),
-            model = %model.model,
-            "excluding available-models entry without capability metadata"
-        );
-        return;
-    };
-    let declared_capability = |name| {
-        model
-            .capability_set
-            .iter()
-            .any(|capability| capability == name)
-    };
-    let description = capability.model_description;
-    let converted = ProviderModel {
-        id: id.clone(),
-        display_name: Some(id.clone()),
-        description: Some(description),
-        ratio: Some(capability.ratio),
-        price_type: Some(model.price_type),
-        context_window: Some(capability.context_window),
-        supports_image: Some(capability.supports_image || declared_capability("image")),
-        supports_thinking: Some(true),
-        // The endpoint currently ships an empty capability_set, so an absent
-        // token means "unknown", not "unsupported". The catalog is never
-        // probed; earlier web-search probe results still apply.
-        supports_web_search: declared_capability("web_search").then_some(true),
-        supports_tool_search: Some(false),
-        supports_function_tools: Some(true),
-        ..ProviderModel::default()
-    };
-    if let Some(&index) = model_indices.get(&id) {
-        if !is_internal {
-            models[index] = converted;
-        }
-    } else {
-        model_indices.insert(id, models.len());
-        models.push(converted);
     }
 }
 
@@ -867,7 +770,7 @@ pub fn redact_provider_error(definition: &ProviderDefinition, error: &str) -> St
     redacted.chars().take(8_000).collect()
 }
 
-fn normalize_models(models: &mut Vec<ProviderModel>) {
+pub(super) fn normalize_models(models: &mut Vec<ProviderModel>) {
     models.retain(|model| !model.id.trim().is_empty());
     for model in models.iter_mut() {
         // External catalogs use zero for unknown or inapplicable token limits.

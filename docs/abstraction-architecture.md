@@ -2,7 +2,7 @@
 
 本文档记录 `codex-mixin` 在 **Provider/Model 边界**、**Agent 接入层** 与 **协议流式映射** 三个核心子系统的真实架构设计、UML 结构、抽象接口契约与开发准入规则。
 
-> 范围与状态：本文档描述当前代码库已落地的 Rust 类型与模块边界（`src/provider/adapter.rs`、`src/provider/endpoint.rs`、`src/provider/registry.rs`、`src/application/agents.rs`、`src/clients/frameworks/registry.rs`、`src/protocol/openai_events/state.rs`）。新增或修改对应能力时必须遵守本文档约束，并通过根级 `scripts/check_arch.sh`、`cargo clippy` 与集成测试。
+> 范围与状态：本文档描述当前代码库已落地的 Rust 类型与模块边界（`src/provider/adapter.rs`、`src/provider/baidu/`、`src/provider/endpoint.rs`、`src/provider/registry.rs`、`src/application/agents.rs`、`src/clients/frameworks/registry.rs`、`src/protocol/openai_events/state.rs`）。新增或修改对应能力时必须遵守本文档约束，并通过根级 `scripts/check_arch.sh`、`cargo clippy` 与集成测试。
 
 ---
 
@@ -22,7 +22,7 @@
 
 - **能力（Capability）与线协议策略（WirePolicy）分离**：`ModelCapabilities` 描述“模型能做什么”（reasoning、tools、vision、context window）；`WirePolicy` 描述“该上游通道在线路上如何通信”（session affinity header、MCP bridge 命名、unsigned thinking replay、opaque history 失败重试），字段语义完全通用，不包含厂商命名。
 - **端点解析单一真源**：所有子系统（`CatalogService`、`CapabilityProbe`、`GatewayExecutor`、`Failover`、`MessagesHttp`）统一调用 `ProviderRuntime::endpoint_for_model(upstream_model_id)` 获取 `EndpointSpec<'_>`，保证目录展示、能力探测、请求发送与故障转移对协议、URL 和策略的判断完全一致。
-- **厂商特化完全封装在各自的 `ProviderAdapter` 实例内**：`ProviderRuntime` 持有 `adapter: &'static dyn ProviderAdapter`，所有厂商差异（如 `BaiduOneApiAdapter` 的 `gpt-* -> /v1/responses` 协议分流、展示名格式、unsigned thinking replay、opaque history 重试、缓存指标可用性与原生认证头判定）都在对应适配器实例内完成，不对 `ProviderRuntime`、`WirePolicy` 或外部模块暴露任何 `is_<vendor>()` 专属接口。
+- **厂商特化完全封装在各自子模块与 `ProviderAdapter` 实例内**：`ProviderRuntime` 持有 `adapter: &'static dyn ProviderAdapter`，所有厂商差异（如 `src/provider/baidu/` 下 `BaiduOneApiAdapter` 的 `gpt-* -> /v1/responses` 协议分流、展示名格式、unsigned thinking replay、opaque history 重试、缓存指标可用性、托管认证桥/用量上报能力、模型发现与配额字段表）都在对应厂商子模块与适配器实例内完成，不对 `ProviderRuntime`、`WirePolicy` 或外部模块暴露任何 `is_<vendor>()` 或厂商命名接口。
 
 ### 2. UML 类图
 
@@ -46,6 +46,9 @@ classDiagram
         +wire_policy_for_model(model: &str) WirePolicy
         +endpoint_for_model(model: &str) EndpointSpec
         +cache_metrics_available(model_id: &str) bool
+        +uses_managed_auth_bridge() bool
+        +reports_usage_telemetry() bool
+        +auth_bridge_executable() Option~&Path~
         ~native_auth_headers() Result~Option~HeaderMap~~
     }
 
@@ -59,6 +62,9 @@ classDiagram
         ~format_model_display_name(def, model) String
         ~cache_metrics_available(model_id) bool
         ~uses_native_auth_headers(def) bool
+        ~uses_managed_auth_bridge(def) bool
+        ~reports_usage_telemetry(def) bool
+        ~auth_bridge_executable(def) Option~&Path~
     }
 
     class DefaultProviderAdapter {
@@ -130,7 +136,7 @@ sequenceDiagram
 
 ### 4. 开发规则
 
-1. **厂商特殊逻辑只允许封装在对应的 `ProviderAdapter` 实例内**：禁止在 `ProviderRuntime`、`WirePolicy` 或 `gateway`/`protocol` 暴露厂商专属方法或字段（如 `is_baidu_*`、`baidu_oneapi_usage`）。新增厂商差异时，必须在 `ProviderAdapter`（`src/provider/adapter.rs`）中定义通用语义契约并由具体适配器实现，禁止在 `src/gateway/` 或 `src/protocol/` 新增按 `preset_id` / 模型名后缀的厂商分支（`src/gateway/provider.rs` 中现存的历史 `claude-code` / `deepseek` / `agy` 特判将在后续增量迁入适配器）。
+1. **厂商特殊逻辑只允许封装在对应的厂商子模块与 `ProviderAdapter` 实例内**：如 `src/provider/baidu/`（适配器、模型发现、配额解析、托管认证头），禁止在 `ProviderRuntime`、`WirePolicy`、`gateway`、`upstream`、`server` 或 `protocol` 暴露厂商专属方法或字段（如 `is_baidu_*`、`baidu_oneapi_usage`、`prewarm_ducx`、`stable_oneapi_routing`）。新增厂商差异时，必须在 `ProviderAdapter`（`src/provider/adapter.rs`）或 `ProviderSpec`（`src/provider/spec.rs`）中定义通用语义契约并由具体适配器/预设实现，禁止在 `src/gateway/`、`src/protocol/` 或 `src/cli/setup.rs` 新增按 `preset_id` / 模型名后缀的厂商分支（`src/gateway/provider.rs` 中现存的历史 `claude-code` / `deepseek` / `agy` 特判将在后续增量迁入适配器）。
 2. **禁止绕过 `endpoint_for_model` 自行拼装协议或 URL**：Catalog、Probe、Gateway、Failover 与 `/v1/messages` 统一从 `EndpointSpec` 读取 `protocol`、`url` / `api_path()` 与 `policy`。
 3. **保留历史兼容不变量**：Anthropic Messages 路由继续忽略旧缓存中的模型级 `api_path`；`adapter_for` 路由到 `BaiduOneApiAdapter` 时同时兼容 `ProviderModelSource::BaiduOneApi`、`preset_id == Some("baidu-oneapi")` 与旧配置 `id == "baidu-oneapi"`。
 
