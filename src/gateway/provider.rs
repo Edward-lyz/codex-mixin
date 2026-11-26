@@ -15,7 +15,7 @@ use crate::protocol::openai_chat::responses_to_openai_chat;
 use crate::protocol::openai_events::{
     map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes, map_openai_chat_sse,
 };
-use crate::provider::{ProviderProtocol, ProviderRuntime};
+use crate::provider::{ProviderProtocol, ProviderRuntime, WirePolicy};
 
 use super::responses::map_openai_responses_sse;
 use super::{ResponseStream, UpstreamRouting};
@@ -50,6 +50,7 @@ struct ProviderRequestContext<'a> {
     web_search_enabled: bool,
     native_messages: Option<&'a (crate::anthropic::MessageRequest, Value)>,
     headers: &'a axum::http::HeaderMap,
+    wire_policy: WirePolicy,
 }
 
 async fn authorize_provider_request(
@@ -93,7 +94,9 @@ pub(crate) async fn stream_provider_response(
     let downstream_model = downstream_model.unwrap_or(catalog_slug);
     let web_search_enabled =
         !is_thread_title && executor.web_search_enabled_for_custom_request(body);
-    let protocol = provider.protocol_for_model(upstream_model_id);
+    let endpoint = provider.endpoint_for_model(upstream_model_id);
+    let protocol = endpoint.protocol;
+    let wire_policy = endpoint.policy;
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
     let mut updates = Vec::new();
     if (protocol != ProviderProtocol::OpenAiResponses || is_thread_title)
@@ -259,6 +262,7 @@ pub(crate) async fn stream_provider_response(
         web_search_enabled,
         native_messages,
         headers,
+        wire_policy,
     };
     let result = match protocol {
         ProviderProtocol::AnthropicMessages => stream_anthropic_messages(ctx).await,
@@ -304,6 +308,7 @@ async fn stream_anthropic_messages(
         web_search_enabled,
         native_messages,
         headers,
+        wire_policy,
     } = ctx;
     let body: &Value = body;
     let mut downstream_body = response_metadata_request(body, downstream_model);
@@ -328,7 +333,8 @@ async fn stream_anthropic_messages(
                 tool_type: &executor.config.web_search_tool_type,
                 max_uses: executor.config.web_search_max_uses,
             }),
-            provider.uses_mcp_bridge_names(upstream_model_id),
+            wire_policy.mcp_bridge_names,
+            wire_policy.unsigned_thinking_replay,
             auto_thinking_kind,
             &compaction_secret,
         )?;
@@ -349,7 +355,7 @@ async fn stream_anthropic_messages(
             converted.request.tools = tools;
         }
         if native_messages.is_none()
-            && provider.uses_session_affinity()
+            && wire_policy.uses_session_affinity()
             && let Some(routing) = routing
         {
             // OneAPI's Anthropic-to-OpenAI conversion accepts only an
@@ -369,6 +375,7 @@ async fn stream_anthropic_messages(
                     body,
                     &converted.request,
                     original,
+                    wire_policy.unsigned_thinking_replay,
                     &compaction_secret,
                 )
             })
@@ -469,7 +476,7 @@ async fn stream_anthropic_messages(
         downstream_body,
         tool_names,
         executor.custom_image_routes(provider),
-        provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
+        wire_policy.baidu_oneapi_usage,
     )
     .boxed())
 }
@@ -555,6 +562,7 @@ async fn stream_openai_responses(
         body,
         advertised_thinking,
         headers,
+        wire_policy,
         ..
     } = ctx;
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
@@ -622,8 +630,7 @@ async fn stream_openai_responses(
         })?;
     let mut request_body = request_body;
     let upstream = if upstream.status() == reqwest::StatusCode::BAD_REQUEST
-        && (provider.definition().preset_id.as_deref() == Some("baidu-oneapi")
-            || official_native.is_some())
+        && (wire_policy.retry_without_opaque_history || official_native.is_some())
     {
         let content_type = upstream
             .headers()

@@ -77,8 +77,8 @@ pub(super) async fn messages_body(
         .gateway
         .require_ducx_client(provider, &headers)
         .await?;
-    let native_protocol =
-        provider.protocol_for_model(upstream_model_id) == ProviderProtocol::AnthropicMessages;
+    let native_protocol = provider.endpoint_for_model(upstream_model_id).protocol
+        == ProviderProtocol::AnthropicMessages;
     let native_passthrough = native_protocol && native_passthrough_body(&body);
     let mut request = normalize_message_request(&body, upstream_model_id, native_protocol)?;
     let routing = stable_oneapi_routing(&headers, &body)?;

@@ -33,9 +33,9 @@ where
             .and_then(Value::as_str)
             .map(str::to_owned);
         let mut state = MapperState::new(original_request, tool_names);
-        let created = state.response_base_initial("in_progress");
-        yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
-        yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base_initial("in_progress")})).unwrap());
+        for event in state.begin_stream() {
+            yield Ok(event);
+        }
 
         let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
@@ -47,7 +47,9 @@ where
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
-                    yield Ok(state.failed_event(err.to_string()));
+                    if let Some(failed) = state.emit_failed(err.to_string()) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
             };
@@ -70,37 +72,20 @@ where
                         if let Some(combined) = coalesce_events(&mut pending) {
                             yield Ok(combined);
                         }
-                        yield Ok(state.failed_event(err));
+                        if let Some(failed) = state.emit_failed(err) {
+                            yield Ok(failed);
+                        }
                         return;
                     }
                 }
-                if data.get("type").and_then(Value::as_str) == Some("error") {
+                if state.is_terminal() {
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
                     return;
                 }
                 if data.get("type").and_then(Value::as_str) == Some("message_stop") {
-                    let phase = state.fallback_text_phase();
-                    pending.extend(state.finish_text(phase));
-                    match state.finish_tools(image_routes.as_ref()) {
-                        Ok(events) => pending.extend(events),
-                        Err(err) => {
-                            if let Some(combined) = coalesce_events(&mut pending) {
-                                yield Ok(combined);
-                            }
-                            yield Ok(state.failed_event(err));
-                            return;
-                        }
-                    }
-                    if let Err(err) = state.ensure_web_searches_finished() {
-                        if let Some(combined) = coalesce_events(&mut pending) {
-                            yield Ok(combined);
-                        }
-                        yield Ok(state.failed_event(err));
-                        return;
-                    }
-                    pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":state.completed_response()})).unwrap());
+                    pending.extend(state.finalize_anthropic(image_routes.as_ref()));
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
@@ -111,26 +96,7 @@ where
                 yield Ok(combined);
             }
         }
-        let phase = state.fallback_text_phase();
-        pending.extend(state.finish_text(phase));
-        match state.finish_tools(image_routes.as_ref()) {
-            Ok(events) => pending.extend(events),
-            Err(err) => {
-                if let Some(combined) = coalesce_events(&mut pending) {
-                    yield Ok(combined);
-                }
-                yield Ok(state.failed_event(err));
-                return;
-            }
-        }
-        if let Err(err) = state.ensure_web_searches_finished() {
-            if let Some(combined) = coalesce_events(&mut pending) {
-                yield Ok(combined);
-            }
-            yield Ok(state.failed_event(err));
-            return;
-        }
-        pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":state.completed_response()})).unwrap());
+        pending.extend(state.finalize_anthropic(image_routes.as_ref()));
         if let Some(combined) = coalesce_events(&mut pending) {
             yield Ok(combined);
         }
@@ -463,13 +429,14 @@ fn handle_anthropic_event(
                 None => Ok(Vec::new()),
             }
         }
-        Some("error") => Ok(vec![
-            state.failed_event(
+        Some("error") => Ok(state
+            .emit_failed(
                 data.pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("upstream stream error"),
-            ),
-        ]),
+            )
+            .into_iter()
+            .collect()),
         _ => Ok(Vec::new()),
     }
 }

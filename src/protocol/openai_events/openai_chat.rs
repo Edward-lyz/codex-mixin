@@ -13,9 +13,9 @@ where
 {
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
-        let created = state.response_base_initial("in_progress");
-        yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
-        yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base_initial("in_progress")})).unwrap());
+        for event in state.begin_stream() {
+            yield Ok(event);
+        }
 
         let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
@@ -28,27 +28,15 @@ where
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
-                    yield Ok(state.failed_event(err.to_string()));
+                    if let Some(failed) = state.emit_failed(err.to_string()) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
             };
             for event in decoder.push(&bytes) {
                 if event.data == "[DONE]" {
-                    pending.extend(state.finish_chat_reasoning());
-                    let phase = state.fallback_text_phase();
-                    pending.extend(state.finish_text(phase));
-                    match state.finish_chat_tools(image_routes.as_ref()) {
-                        Ok(events) => pending.extend(events),
-                        Err(err) => {
-                            if let Some(combined) = coalesce_events(&mut pending) {
-                                yield Ok(combined);
-                            }
-                            yield Ok(state.failed_event(err));
-                            return;
-                        }
-                    }
-                    let completed = state.completed_response();
-                    pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+                    pending.extend(state.finalize_chat_completed(image_routes.as_ref()));
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
@@ -58,7 +46,9 @@ where
                     Ok(data) => data,
                     Err(error) => {
                         if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                        yield Ok(state.failed_event(format!("invalid upstream SSE JSON: {error}")));
+                        if let Some(failed) = state.emit_failed(format!("invalid upstream SSE JSON: {error}")) {
+                            yield Ok(failed);
+                        }
                         return;
                     }
                 };
@@ -70,7 +60,9 @@ where
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("OpenAI Chat upstream returned an error");
-                    yield Ok(state.failed_event(message));
+                    if let Some(failed) = state.emit_failed(message) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
                 if let Some(usage) = data.get("usage") {
@@ -101,7 +93,9 @@ where
                             Ok(events) => pending.extend(events),
                             Err(error) => {
                                 if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                                yield Ok(state.failed_event(error));
+                                if let Some(failed) = state.emit_failed(error) {
+                                    yield Ok(failed);
+                                }
                                 return;
                             }
                         }
@@ -117,7 +111,9 @@ where
                                 if let Some(combined) = coalesce_events(&mut pending) {
                                     yield Ok(combined);
                                 }
-                                yield Ok(state.failed_event(err));
+                                if let Some(failed) = state.emit_failed(err) {
+                                    yield Ok(failed);
+                                }
                                 return;
                             }
                         }
@@ -128,15 +124,15 @@ where
                         pending.extend(state.finish_text(AssistantMessagePhase::FinalAnswer));
                         if !state.tools.is_empty() {
                             if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                            yield Ok(state.failed_event("Chat stream stopped before tool calls finished"));
+                            if let Some(failed) = state.emit_failed("Chat stream stopped before tool calls finished") {
+                                yield Ok(failed);
+                            }
                             return;
                         }
                     }
                     Some(reason @ ("length" | "content_filter")) => {
-                        pending.extend(state.finish_chat_reasoning());
-                        pending.extend(state.finish_text(AssistantMessagePhase::FinalAnswer));
                         let reason = if reason == "length" { "max_output_tokens" } else { "content_filter" };
-                        pending.push(state.incomplete_chat(reason));
+                        pending.extend(state.finalize_chat_incomplete(reason));
                         if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
                         return;
                     }
@@ -149,24 +145,12 @@ where
         }
         if !decoder.remaining().is_empty() || !finished && !state.tools.is_empty() {
             if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-            yield Ok(state.failed_event("Chat stream ended before tool calls or SSE data finished"));
+            if let Some(failed) = state.emit_failed("Chat stream ended before tool calls or SSE data finished") {
+                yield Ok(failed);
+            }
             return;
         }
-        pending.extend(state.finish_chat_reasoning());
-        let phase = state.fallback_text_phase();
-        pending.extend(state.finish_text(phase));
-        match state.finish_chat_tools(image_routes.as_ref()) {
-            Ok(events) => pending.extend(events),
-            Err(err) => {
-                if let Some(combined) = coalesce_events(&mut pending) {
-                    yield Ok(combined);
-                }
-                yield Ok(state.failed_event(err));
-                return;
-            }
-        }
-        let completed = state.completed_response();
-        pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+        pending.extend(state.finalize_chat_completed(image_routes.as_ref()));
         if let Some(combined) = coalesce_events(&mut pending) {
             yield Ok(combined);
         }

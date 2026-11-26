@@ -276,7 +276,7 @@ async fn disconnect(id: &str) -> anyhow::Result<()> {
             let _lock = integration_lock()?;
             // Manual native cleanup can outlive this command. Revoke access
             // before publishing its pending-removal state.
-            if matches!(owned_id.as_str(), "cindy" | "hanako") {
+            if codex_mixin::clients::frameworks::revoke_key_before_remove(&owned_id) {
                 codex_mixin::config::revoke_gateway_client_key(client)?;
             }
             codex_mixin::clients::frameworks::remove(&owned_id, &manifest)?;
@@ -356,7 +356,7 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
     {
         return Ok(());
     }
-    if matches!(id, "cursor" | "copilot" | "devin") {
+    if frameworks::is_native_models(id) {
         frameworks::install(id, &manifest, "", "", &[])?;
         return verify_integration(id, "managed").await;
     }

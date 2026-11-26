@@ -47,6 +47,7 @@ pub(super) fn append_input_item(
     messages: &mut Vec<Message>,
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
+    allow_baidu_unsigned_thinking_replay: bool,
     compaction_secret: SecretSource<'_>,
 ) -> Result<(), GatewayError> {
     // OpenCode and DSH send message items without the Responses envelope type.
@@ -250,7 +251,12 @@ pub(super) fn append_input_item(
                 }],
             });
         }
-        "reasoning" => append_anthropic_reasoning(item, messages, replay_model)?,
+        "reasoning" => append_anthropic_reasoning(
+            item,
+            messages,
+            replay_model,
+            allow_baidu_unsigned_thinking_replay,
+        )?,
         "configuration_update"
         | "compaction_trigger"
         | "web_search_call"
@@ -275,6 +281,7 @@ fn append_anthropic_reasoning(
     item: &Value,
     messages: &mut Vec<Message>,
     replay_model: Option<&str>,
+    allow_baidu_unsigned_thinking_replay: bool,
 ) -> Result<(), GatewayError> {
     let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) else {
         return Ok(());
@@ -320,7 +327,9 @@ fn append_anthropic_reasoning(
         });
     } else if let (Some(payload), Some(model)) = (
         encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX),
-        replay_model.filter(|model| model.ends_with("-baidu-oneapi")),
+        allow_baidu_unsigned_thinking_replay
+            .then_some(replay_model)
+            .flatten(),
     ) {
         let state: Value = serde_json::from_str(payload).map_err(|_| {
             GatewayError::BadRequest("invalid Baidu unsigned thinking payload".to_owned())

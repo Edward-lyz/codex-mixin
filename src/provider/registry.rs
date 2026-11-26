@@ -6,6 +6,7 @@ use reqwest::header::HeaderMap;
 use reqwest::{RequestBuilder, Url};
 
 use super::auth::external::resolve_custom_headers_from_env;
+use super::endpoint::{EndpointSpec, WirePolicy, is_baidu_provider};
 use super::types::{
     BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelSource,
     ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
@@ -138,6 +139,30 @@ impl ProviderRuntime {
             } else {
                 Cow::Borrowed(&self.api_url)
             }
+        }
+    }
+
+    pub fn wire_policy_for_model(&self, model: &str) -> WirePolicy {
+        let baidu = self.is_baidu_oneapi();
+        WirePolicy {
+            session_affinity_header: self
+                .definition
+                .request_policy
+                .session_affinity_header
+                .clone(),
+            mcp_bridge_names: self.uses_mcp_bridge_names(model),
+            baidu_oneapi_usage: baidu,
+            unsigned_thinking_replay: baidu,
+            retry_without_opaque_history: baidu,
+        }
+    }
+
+    /// Single-source-of-truth upstream endpoint specification for `(self, model)`.
+    pub fn endpoint_for_model(&self, model: &str) -> EndpointSpec<'_> {
+        EndpointSpec {
+            protocol: self.protocol_for_model(model),
+            url: self.api_url_for_model(model),
+            policy: self.wire_policy_for_model(model),
         }
     }
 
@@ -313,6 +338,10 @@ impl ProviderRuntime {
 
     pub fn is_baidu_model_source(&self) -> bool {
         self.definition.model_source == ProviderModelSource::BaiduOneApi
+    }
+
+    pub fn is_baidu_oneapi(&self) -> bool {
+        is_baidu_provider(&self.definition)
     }
 }
 

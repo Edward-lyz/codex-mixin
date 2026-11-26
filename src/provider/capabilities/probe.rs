@@ -52,13 +52,13 @@ pub(super) async fn probe_model(
     request_limit: &Semaphore,
     native_headers: Option<&HeaderMap>,
 ) -> ModelCapabilities {
-    let protocol = provider.protocol_for_model(model);
+    let endpoint = provider.endpoint_for_model(model);
     let selected = probe_protocol(
         client,
         provider,
         model,
-        protocol,
-        provider.api_url_for_model(model).as_ref(),
+        endpoint.protocol,
+        endpoint.url.as_ref(),
         request_limit,
         native_headers,
     )
