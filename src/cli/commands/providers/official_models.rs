@@ -1,22 +1,25 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::HashSet;
+use std::path::Path;
 use std::time::SystemTime;
 
-use codex_mixin::catalog::{apply_official_context_overrides, load_template_catalog};
-use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
+use codex_mixin::catalog::load_template_catalog;
+use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::{ProviderModel, official_models_from_catalog};
 use serde_json::Value;
 
-use crate::cli::commands::connect::codex::is_managed_catalog_model;
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog, validate_catalog,
+};
+use codex_mixin::catalog::official_models::{
+    OFFICIAL_ACCOUNT_CATALOG_URL, catalog_for_current_account, is_official_account_catalog,
+};
+pub(in crate::cli) use codex_mixin::catalog::official_models::{
+    apply_account_model_metadata, official_models_cache_path, official_template_cache_path,
+    selected_official_models,
 };
 use codex_mixin::platform::write_atomic_if_changed;
 
 pub(in crate::cli) const OFFICIAL_PROVIDER_ID: &str = "official";
-const OFFICIAL_ACCOUNT_CATALOG_URL: &str = "https://chatgpt.com/backend-api/codex/models";
-const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";
-const OFFICIAL_TEMPLATE_CACHE_FILE: &str = "official-template.json";
 
 pub(in crate::cli) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
     load_official_catalog()?.map_or_else(
@@ -25,40 +28,8 @@ pub(in crate::cli) fn load_official_models() -> anyhow::Result<Vec<ProviderModel
     )
 }
 pub(in crate::cli) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
-    let catalog = match load_template_catalog(Some(&official_models_cache_path()))? {
-        Some(catalog) => Some(catalog),
-        None => load_template_catalog(None)?,
-    };
-    let account_catalog = catalog_for_current_account(catalog, || {
-        codex_mixin::provider::official_account_id(
-            &crate::cli::commands::connect::codex::codex_home_path().join("auth.json"),
-        )
-    })?;
-    if let Some(account_catalog) = account_catalog.as_ref()
-        && is_official_account_catalog(account_catalog)
-        && let Some(mut template) = load_template_catalog(Some(&official_template_cache_path()))?
-    {
-        apply_account_model_metadata(&mut template, account_catalog)?;
-        template["codex_mixin_source"] = account_catalog["codex_mixin_source"].clone();
-        template["codex_mixin_account_id"] = account_catalog["codex_mixin_account_id"].clone();
-        return Ok(Some(template));
-    }
-    Ok(account_catalog)
-}
-
-fn catalog_for_current_account(
-    catalog: Option<Value>,
-    current_account: impl FnOnce() -> anyhow::Result<Option<String>>,
-) -> anyhow::Result<Option<Value>> {
-    if let Some(account) = catalog
-        .as_ref()
-        .and_then(|catalog| catalog.get("codex_mixin_account_id"))
-        .and_then(Value::as_str)
-        && current_account()?.as_deref() != Some(account)
-    {
-        return Ok(None);
-    }
-    Ok(catalog)
+    let auth_path = crate::cli::commands::connect::codex::codex_home_path().join("auth.json");
+    codex_mixin::catalog::official_models::load_official_catalog(&auth_path)
 }
 
 pub(in crate::cli) fn load_official_account_catalog() -> anyhow::Result<Option<Value>> {
@@ -78,14 +49,6 @@ pub(in crate::cli) fn load_official_account_catalog() -> anyhow::Result<Option<V
     Ok(catalog)
 }
 
-pub(in crate::cli) fn is_official_account_catalog(catalog: &Value) -> bool {
-    catalog.get("codex_mixin_source").and_then(Value::as_str) == Some(OFFICIAL_ACCOUNT_CATALOG_URL)
-        && catalog
-            .get("codex_mixin_account_id")
-            .and_then(Value::as_str)
-            .is_some_and(|account| !account.is_empty())
-}
-
 pub(in crate::cli) async fn refresh_official_models() -> anyhow::Result<usize> {
     let auth = crate::cli::commands::connect::codex::codex_home_path().join("auth.json");
     if codex_mixin::provider::official_auth_available(&auth)? {
@@ -94,14 +57,6 @@ pub(in crate::cli) async fn refresh_official_models() -> anyhow::Result<usize> {
         return write_official_models_cache(&catalog, &official_models_cache_path());
     }
     refresh_official_models_to_path(OFFICIAL_CATALOG_URL, &official_models_cache_path()).await
-}
-
-pub(in crate::cli) fn official_models_cache_path() -> PathBuf {
-    stored_config_path().with_file_name(OFFICIAL_MODELS_CACHE_FILE)
-}
-
-pub(in crate::cli) fn official_template_cache_path() -> PathBuf {
-    stored_config_path().with_file_name(OFFICIAL_TEMPLATE_CACHE_FILE)
 }
 
 pub(in crate::cli) fn same_account_catalog(previous: &Value, current: &Value) -> bool {
@@ -148,30 +103,6 @@ async fn refresh_official_models_to_path(
     let cached = load_template_catalog(Some(cache_path))?;
     let catalog = fetch_catalog(source_url, OFFICIAL_CATALOG_TIMEOUT, cached.as_ref()).await?;
     write_official_models_cache(&catalog, cache_path)
-}
-
-// Only advertise official models when a ChatGPT OAuth login can actually serve
-// them. A plain auth.json (auth_mode=apikey, no tokens) exists for every Codex
-// user yet routes nothing, so file presence alone is not enough.
-pub(in crate::cli) fn selected_official_models(
-    config: &GatewayConfig,
-) -> anyhow::Result<Vec<ProviderModel>> {
-    if !config.accept_codex_oauth
-        || !codex_mixin::provider::official_auth_available(&config.codex_auth_path)?
-    {
-        return Ok(Vec::new());
-    }
-    let Some(mut catalog) = load_official_catalog()? else {
-        return Ok(Vec::new());
-    };
-    let stored = load_stored_config()?
-        .ok_or_else(|| anyhow::anyhow!("provider configuration is missing"))?;
-    apply_official_context_overrides(&mut catalog, &stored.official_model_contexts)?;
-    let models = official_models_from_catalog(&catalog)?;
-    Ok(filter_selected_models(
-        models,
-        config.official_selected_models.as_deref(),
-    ))
 }
 
 pub(in crate::cli) fn filter_official_catalog(
@@ -260,128 +191,4 @@ pub(in crate::cli) fn selected_catalog_models(
 
 pub(in crate::cli) fn available_official_ids(models: &[ProviderModel]) -> HashSet<&str> {
     models.iter().map(|model| model.id.as_str()).collect()
-}
-
-fn filter_selected_models(
-    mut models: Vec<ProviderModel>,
-    selected_models: Option<&[String]>,
-) -> Vec<ProviderModel> {
-    let Some(selected_models) = selected_models else {
-        models.sort_by(|left, right| codex_mixin::provider::compare_model_ids(&left.id, &right.id));
-        return models;
-    };
-    let positions = selected_models
-        .iter()
-        .enumerate()
-        .map(|(index, model)| (model.as_str(), index))
-        .collect::<std::collections::HashMap<_, _>>();
-    models.retain(|model| positions.contains_key(model.id.as_str()));
-    models.sort_by_key(|model| positions.get(model.id.as_str()).copied());
-    models
-}
-
-pub(in crate::cli) fn apply_account_model_metadata(
-    template: &mut serde_json::Value,
-    account_catalog: &serde_json::Value,
-) -> anyhow::Result<()> {
-    if !is_official_account_catalog(account_catalog) {
-        return Ok(());
-    }
-    codex_mixin::catalog::official::validate_catalog(account_catalog)?;
-    let account_models = account_catalog
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("official account catalog has no models array"))?;
-    anyhow::ensure!(
-        !account_models.iter().any(is_managed_catalog_model),
-        "official account catalog contains managed provider models"
-    );
-    let template_models = template
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("official template has no models array"))?;
-    let by_slug = template_models
-        .iter()
-        .filter_map(|model| Some((model.get("slug")?.as_str()?, model)))
-        .collect::<HashMap<_, _>>();
-    let mut merged = Vec::with_capacity(account_models.len());
-    for account_model in account_models {
-        let slug = account_model
-            .get("slug")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("official account model is missing slug"))?;
-        // A legacy mixed template may also contain provider-owned models.
-        // Account metadata must never replace their identity or capabilities.
-        if by_slug
-            .get(slug)
-            .is_some_and(|model| is_managed_catalog_model(model))
-        {
-            continue;
-        }
-        let mut model = by_slug
-            .get(slug)
-            .map_or_else(|| account_model.clone(), |model| (*model).clone());
-        let fields = model
-            .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("official template model must be an object"))?;
-        // An account may lose a tier or explicitly advertise none.
-        for field in [
-            "service_tiers",
-            "additional_speed_tiers",
-            "visibility",
-            "supported_in_api",
-            "priority",
-        ] {
-            match account_model.get(field) {
-                Some(value) => {
-                    fields.insert(field.to_owned(), value.clone());
-                }
-                None => {
-                    fields.remove(field);
-                }
-            }
-        }
-        // Missing context fields retain the template value; explicit nulls
-        // clear optional limits. Instructions and tools stay with the template.
-        for field in [
-            "context_window",
-            "max_context_window",
-            "auto_compact_token_limit",
-        ] {
-            if let Some(value) = account_model.get(field) {
-                anyhow::ensure!(
-                    value.is_null() || value.as_i64().is_some_and(|limit| limit > 0),
-                    "official account model {field} must be null or a positive 64-bit integer"
-                );
-                fields.insert(field.to_owned(), value.clone());
-            }
-        }
-        if let (Some(window), Some(maximum)) = (
-            fields
-                .get("context_window")
-                .and_then(serde_json::Value::as_i64),
-            fields
-                .get("max_context_window")
-                .and_then(serde_json::Value::as_i64),
-        ) {
-            anyhow::ensure!(
-                window <= maximum,
-                "official account context_window exceeds max_context_window"
-            );
-        }
-        merged.push(model);
-    }
-    merged.extend(
-        template_models
-            .iter()
-            .filter(|model| {
-                is_managed_catalog_model(model)
-                    || !account_models
-                        .iter()
-                        .any(|account| account["slug"] == model["slug"])
-            })
-            .cloned(),
-    );
-    template["models"] = serde_json::Value::Array(merged);
-    Ok(())
 }

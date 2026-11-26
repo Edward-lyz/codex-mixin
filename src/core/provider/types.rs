@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_VERSION: u32 = 2;
 pub const MANUAL_MODEL_CONTEXT_WINDOW: u64 = 128_000;
 pub(crate) const AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
+
+pub(crate) fn is_official_model_slug(model: &str) -> bool {
+    model
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
+        || model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL_ID)
+}
 pub(crate) const PI_BRIDGE_PROVIDER_ID: &str = "pi-bridge";
 pub(crate) const PI_BRIDGE_PLACEHOLDER_URL: &str = "http://127.0.0.1:0";
 

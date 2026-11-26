@@ -46,7 +46,7 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 ///
 /// The roster lives here because client-key authentication is the lowest layer
 /// that needs it. The Agents page enumerates the same ids in this order.
-pub const AGENT_VERSION_IDS: [&str; 50] = [
+pub const AGENT_VERSION_IDS: [&str; 51] = [
     "codex",
     "claude",
     "claude-desktop",
@@ -55,6 +55,7 @@ pub const AGENT_VERSION_IDS: [&str; 50] = [
     "pi",
     "gemini",
     "agy",
+    "antigravity",
     "openchamber",
     "mimocode",
     "aside",

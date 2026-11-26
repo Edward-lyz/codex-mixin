@@ -195,6 +195,7 @@ pub fn install(
         patches.push(engine::Patch {
             path: manifest.with_extension("launch.json"), format: engine::Format::Json,
             fields: vec![(vec![],json!({"environment":environment,"model":if id=="agy" {format!("{PROVIDER}/{}",models[0].id)} else {models[0].id.clone()}}))],
+            remove_fields: Vec::new(),
         });
     }
     engine::apply(manifest, patches)?;
@@ -340,6 +341,7 @@ fn native_model_at(
                 path: path.to_owned(),
                 format: Format::Json,
                 fields,
+                remove_fields: Vec::new(),
             }],
         )?;
     }

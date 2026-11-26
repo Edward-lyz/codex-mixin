@@ -1,4 +1,34 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v1.0.1
+
+Codex Mixin 现可为 Antigravity 桌面应用提供第三方模型，并新增 Pi 插件支持和桌面用量图表。
+
+### 特性新增
+
+- **Antigravity 桌面应用**。在「Agent」中连接 Antigravity，重启应用后即可从模型选择器使用 Mixin 网关的模型和路由。模型目录会提供上下文窗口和最大输出 Token 数。
+- **Pi 插件**。桌面控制台和 Web 面板支持搜索、安装和管理 Pi 插件，也可以通过 CLI 操作。插件在独立的 Pi 环境中运行。登录插件提供的服务商账号并同步模型后，即可在网关中使用这些模型。
+- **用量图表和额度卡片**。用量页可在同一时间范围内切换查看流量和 Token 用量。额度卡片同时显示剩余额度和距离重置的时间，方便判断当前消耗速度。
+
+### 体验优化
+
+- Pi 插件提供的模型现在会记录 Token 和费用。桌面端可在插件详情中运行命令、填写参数并查看结果。
+- 改进 Gemini 模型的工具兼容性，支持可空参数和按需查找工具。请求超过 128 个函数声明时，网关会明确提示。
+
+### BUG 修复
+
+- 修复 Gemini CLI 粘贴图片时网关返回 HTTP 400 的问题。图片可以随工具结果转发给上游（#167）。
+- 修复 Antigravity CLI 回放带签名的工具结果时，网关拒绝请求的问题。
+- 修复部分 Linux 发布包在已有用量数据库时启动崩溃的问题。打包前会用已有数据库验证网关能否正常启动。
+- 修复 Antigravity CLI 重装后，原有启动脚本只剩空的接入配置区块时无法断开接入的问题。
+- 修复桌面端 Pi 插件详情无法滚动的问题。额度条统一显示剩余百分比。
+
+### 致谢
+
+- @ZonzeeLi：反馈 Gemini CLI 粘贴图片报错并提供复现（#167）。
+- @sunstrikes：修复 Antigravity CLI 带签名的工具结果回放。
+- @kevincheng2：排查 Linux 网关启动崩溃并补充发布检查。
+- @Zachary-wW：修复 Antigravity CLI 重装后的断开接入问题。
+
 ## v1.0.0
 
 Codex Mixin 迎来首个正式版本。macOS、Windows 和 Linux 现在共用一套桌面控制台，可以管理模型、路由、网关和 Agent 接入。
@@ -442,6 +472,36 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v1.0.1
+
+Codex Mixin 現可為 Antigravity 桌面應用程式提供第三方模型，並新增 Pi 外掛支援和桌面用量圖表。
+
+### 新增功能
+
+- **Antigravity 桌面應用程式**。在「Agent」中連接 Antigravity，重新啟動應用程式後，即可從模型選擇器使用 Mixin 閘道的模型和路由。模型目錄會提供上下文視窗和最大輸出 Token 數。
+- **Pi 外掛**。桌面控制台和 Web 面板支援搜尋、安裝和管理 Pi 外掛，也可透過 CLI 操作。外掛在獨立的 Pi 環境中執行。登入外掛提供的服務商帳號並同步模型後，即可在閘道中使用這些模型。
+- **用量圖表和額度卡片**。用量頁可在同一時間範圍內切換檢視流量和 Token 用量。額度卡片同時顯示剩餘額度和距離重設的時間，方便判斷目前的消耗速度。
+
+### 體驗最佳化
+
+- Pi 外掛提供的模型現在會記錄 Token 和費用。桌面端可在外掛詳情中執行命令、填寫參數並檢視結果。
+- 改善 Gemini 模型的工具相容性，支援可為空的參數和按需搜尋工具。請求超過 128 個函式宣告時，閘道會明確提示。
+
+### 問題修正
+
+- 修正 Gemini CLI 貼上圖片時閘道回傳 HTTP 400 的問題。圖片可隨工具結果轉送給上游（#167）。
+- 修正 Antigravity CLI 重播帶簽章的工具結果時，閘道拒絕請求的問題。
+- 修正部分 Linux 發行套件在已有用量資料庫時啟動當機的問題。打包前會用現有資料庫驗證閘道能否正常啟動。
+- 修正 Antigravity CLI 重新安裝後，原有啟動指令碼只剩空的接入設定區塊時無法中斷連線的問題。
+- 修正桌面端 Pi 外掛詳情無法捲動的問題。額度條統一顯示剩餘百分比。
+
+### 致謝
+
+- @ZonzeeLi：回報 Gemini CLI 貼上圖片出錯並提供重現步驟（#167）。
+- @sunstrikes：修正 Antigravity CLI 帶簽章的工具結果重播。
+- @kevincheng2：排查 Linux 閘道啟動當機並補上發布檢查。
+- @Zachary-wW：修正 Antigravity CLI 重新安裝後的中斷連線問題。
+
 ## v1.0.0
 
 Codex Mixin 迎來首個正式版本。macOS、Windows 和 Linux 現在共用一套桌面控制台，可以管理模型、路由、閘道和 Agent 接入。
@@ -885,6 +945,36 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v1.0.1
+
+Codex Mixin now connects third-party models to the Antigravity desktop app and adds Pi plugin support and desktop usage charts.
+
+### New features
+
+- **Antigravity desktop app.** Connect Antigravity in Agents and restart the app to use Mixin gateway models and routes from its model picker. The catalog reports context windows and output token limits.
+- **Pi plugins.** Search for, install, and manage Pi plugins from the desktop console, Web panel, or CLI. Plugins run in an isolated Pi profile. Sign in to a provider and sync its models to use them through the gateway.
+- **Usage charts and quota cards.** Switch between traffic and token charts on the same time range. Quota cards show the remaining allowance and time to reset so you can see how quickly you are using it.
+
+### Improvements
+
+- Pi-backed models now report token usage and costs. The desktop console lets you run commands, enter arguments, and see results in plugin details.
+- Gemini models support nullable tool parameters and on-demand tool discovery. The gateway reports when a request exceeds 128 function declarations.
+
+### Bug fixes
+
+- Fixed HTTP 400 when pasting images into Gemini CLI. The gateway now forwards the image alongside tool results (#167).
+- Fixed Antigravity CLI replay of signed tool results.
+- Fixed startup crashes in some Linux packages with an existing usage database. Release builds now check gateway startup with an existing database before packaging.
+- Fixed disconnecting Antigravity CLI after a reinstall leaves an empty managed block in the shell startup file.
+- Restored scrolling in desktop Pi plugin details. Quota bars now consistently show the percentage remaining.
+
+### Thanks
+
+- @ZonzeeLi for reporting and reproducing the Gemini CLI image error (#167).
+- @sunstrikes for fixing signed tool result replay in Antigravity CLI.
+- @kevincheng2 for investigating the Linux startup crash and adding the release check.
+- @Zachary-wW for fixing Antigravity CLI disconnect after reinstalling.
+
 ## v1.0.0
 
 Codex Mixin reaches its first stable release. The same desktop console now manages models, routing, the gateway, and agent integrations across macOS, Windows, and Linux.

@@ -24,6 +24,11 @@ pub(super) const AGENT_ICONS: &[(&str, &str, &[u8])] = &[
         include_bytes!("../desktop/assets/agents/ante.svg"),
     ),
     (
+        "antigravity",
+        "image/svg+xml",
+        include_bytes!("../desktop/assets/agents/agy.svg"),
+    ),
+    (
         "aside",
         "image/svg+xml",
         include_bytes!("../desktop/assets/agents/aside.svg"),

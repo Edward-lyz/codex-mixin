@@ -2,16 +2,9 @@ use crate::config::{
     FUSION_MODEL_PREFIX, FailoverRoute, FusionProfile, LEGACY_FUSION_MODEL_PREFIX,
 };
 use crate::error::GatewayError;
-use crate::provider::{AUTO_REVIEW_MODEL_ID, ProviderRegistry};
+use crate::provider::{AUTO_REVIEW_MODEL_ID, ProviderRegistry, is_official_model_slug};
 
 pub(crate) const AUTO_REVIEW_MODEL_SLUG: &str = AUTO_REVIEW_MODEL_ID;
-
-pub(crate) fn is_official_model_slug(model: &str) -> bool {
-    model
-        .get(..4)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
-        || model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL_SLUG)
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ResolvedModelRoute {

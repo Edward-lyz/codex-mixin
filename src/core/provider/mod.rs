@@ -57,7 +57,9 @@ pub use types::{
 };
 
 pub(crate) use auth::aws_sigv4::sign_request as sign_aws_request;
-pub(crate) use types::{AUTO_REVIEW_MODEL_ID, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID};
+pub(crate) use types::{
+    AUTO_REVIEW_MODEL_ID, PI_BRIDGE_PLACEHOLDER_URL, PI_BRIDGE_PROVIDER_ID, is_official_model_slug,
+};
 
 pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 

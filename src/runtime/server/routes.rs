@@ -23,7 +23,7 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         // Empryo probes its configured base URL before fetching /models.
         .route("/v1", get(models))
-        .route("/v1/models", get(models))
+        .route("/v1/models", get(models_with_format))
         .route("/muse-code/models", get(muse_models))
         .route("/v1beta/models", get(super::gemini::models))
         .route(
@@ -219,6 +219,22 @@ async fn models(
     Ok(Json(json!({"object":"list","data":models})).into_response())
 }
 
+#[derive(Deserialize)]
+struct ModelsQuery {
+    format: Option<String>,
+}
+
+async fn models_with_format(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    query: Result<Query<ModelsQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, GatewayError> {
+    if query.is_ok_and(|Query(query)| query.format.as_deref() == Some("antigravity")) {
+        check_gateway_auth(&state, &headers).await?;
+        return Ok(Json(json!({"list":state.catalog.antigravity_models().await?})).into_response());
+    }
+    models(State(state), headers).await
+}
 async fn muse_models(
     State(state): State<AppState>,
     headers: HeaderMap,

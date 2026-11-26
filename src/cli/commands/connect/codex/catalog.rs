@@ -433,22 +433,7 @@ async fn load_preferred_official_catalog(
     Ok(template)
 }
 
-pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> bool {
-    model
-        .get("codex_mixin_managed")
-        .and_then(serde_json::Value::as_bool)
-        == Some(true)
-        || model
-            .get("description")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|description| {
-                description.starts_with("Custom upstream model exposed through codex-")
-            })
-        || model
-            .get("slug")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|slug| slug.ends_with("-custom"))
-}
+pub(in crate::cli) use codex_mixin::catalog::official_models::is_managed_catalog_model;
 
 pub(in crate::cli) fn select_codex_model(
     requested_model: Option<String>,

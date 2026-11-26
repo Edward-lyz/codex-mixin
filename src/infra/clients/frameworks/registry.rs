@@ -32,7 +32,7 @@ pub struct FrameworkSpec {
     pub id: &'static str,
     pub name: &'static str,
     pub kind: FrameworkKind,
-    pub free_fields: &'static [&'static str],
+    pub free_fields: &'static [&'static [&'static str]],
     pub launch_required: bool,
     pub client_auth_launch_required: bool,
     pub revoke_key_before_remove: bool,
@@ -144,8 +144,12 @@ pub const FRAMEWORKS: &[FrameworkSpec] = &[
     FrameworkSpec::schema("gemini", "Gemini CLI"),
     FrameworkSpec {
         // agy rewrites `model` on `/model`; launches pass the model from the launch journal.
-        free_fields: &["model"],
+        free_fields: &[&["model"]],
         ..FrameworkSpec::schema_launch("agy", "agy")
+    },
+    FrameworkSpec {
+        free_fields: &[&["models", "defaultModelId"]],
+        ..FrameworkSpec::schema("antigravity", "Antigravity Desktop")
     },
     FrameworkSpec::schema("openchamber", "OpenChamber"),
     FrameworkSpec::schema("mimocode", "MiMo Code"),

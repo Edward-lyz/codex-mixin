@@ -121,7 +121,7 @@ struct SelfUpdate {
 /// Fixed All() ids and Bin values from internal/agent/agents.go and the
 /// individual constructors. Upgrade packages and verbs are restricted to
 /// internal/agent/cliupdate.go; a missing source is deliberately unavailable.
-const SPECS: [AgentSpec; 50] = [
+const SPECS: [AgentSpec; AGENT_VERSION_IDS.len()] = [
     AgentSpec {
         id: "codex",
         command: Some("codex"),
@@ -198,6 +198,10 @@ const SPECS: [AgentSpec; 50] = [
         &["gemini-cli"],
     ),
     agent_spec("agy", Some("agy"), &[], &[]),
+    AgentSpec {
+        desktop_app: Some(DesktopApp::Antigravity),
+        ..agent_spec("antigravity", None, &[], &[])
+    },
     AgentSpec {
         desktop_app: Some(DesktopApp::OpenChamber),
         ..agent_spec("openchamber", Some("openchamber"), &[], &[])

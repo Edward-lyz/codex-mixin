@@ -21,6 +21,7 @@ pub(super) struct Patch {
     pub path: PathBuf,
     pub format: Format,
     pub fields: Vec<(Vec<String>, Value)>,
+    pub remove_fields: Vec<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -28,6 +29,14 @@ struct Field {
     path: Vec<String>,
     before: Option<Value>,
     after: Value,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    removed: bool,
+}
+
+impl Field {
+    fn applied_value(&self) -> Option<&Value> {
+        (!self.removed).then_some(&self.after)
+    }
 }
 #[derive(Serialize, Deserialize)]
 struct Entry {
@@ -341,7 +350,12 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
         let original = read(&patch.path)?;
         let mut value = parse(original.as_deref(), patch.format)?;
         let mut fields: Vec<Field> = Vec::new();
-        for (path, after) in patch.fields {
+        for (path, after) in patch
+            .fields
+            .into_iter()
+            .map(|(path, value)| (path, Some(value)))
+            .chain(patch.remove_fields.into_iter().map(|path| (path, None)))
+        {
             anyhow::ensure!(
                 !fields
                     .iter()
@@ -359,9 +373,10 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
             fields.push(Field {
                 path: path.clone(),
                 before,
-                after: after.clone(),
+                after: after.clone().unwrap_or(Value::Null),
+                removed: after.is_none(),
             });
-            set(&mut value, &path, Some(after))?;
+            set(&mut value, &path, after)?;
         }
         entries.push(Entry {
             path: patch.path,
@@ -381,11 +396,15 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// A field the agent rewrites during normal use, such as agy `/model`.
-/// It is excluded from drift detection; disconnect restores it only while it
-/// still names a Mixin model, so a user's own choice survives.
-fn is_free(field: &Field, free: &[&str]) -> bool {
-    field.path.len() == 1 && free.contains(&field.path[0].as_str())
+/// A field the agent rewrites during normal use. Ignore it in drift checks.
+fn is_free(field: &Field, free: &[&[&str]]) -> bool {
+    free.iter().any(|path| {
+        field
+            .path
+            .iter()
+            .map(String::as_str)
+            .eq(path.iter().copied())
+    })
 }
 
 fn names_mixin_model(value: &Value) -> bool {
@@ -399,7 +418,7 @@ pub(super) fn is_managed(manifest: &Path) -> anyhow::Result<bool> {
     is_managed_except(manifest, &[])
 }
 
-pub(super) fn is_managed_except(manifest: &Path, free: &[&str]) -> anyhow::Result<bool> {
+pub(super) fn is_managed_except(manifest: &Path, free: &[&[&str]]) -> anyhow::Result<bool> {
     let Some(text) = read(manifest)? else {
         return Ok(false);
     };
@@ -413,7 +432,7 @@ pub(super) fn is_managed_except(manifest: &Path, free: &[&str]) -> anyhow::Resul
             entry
                 .fields
                 .iter()
-                .all(|f| is_free(f, free) || get(&value, &f.path) == Some(&f.after)),
+                .all(|f| is_free(f, free) || get(&value, &f.path) == f.applied_value()),
             "managed fields changed or installation was interrupted at {}; disconnect to inspect recovery",
             entry.path.display()
         );
@@ -427,7 +446,7 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
 
 /// Read-only dry run of [`remove_except`], so callers can order other
 /// cleanup after the point where a conflict would be reported.
-pub(super) fn verify_removable(manifest: &Path, free: &[&str]) -> anyhow::Result<()> {
+pub(super) fn verify_removable(manifest: &Path, free: &[&[&str]]) -> anyhow::Result<()> {
     let Some(text) = read(manifest)? else {
         return Ok(());
     };
@@ -437,7 +456,7 @@ pub(super) fn verify_removable(manifest: &Path, free: &[&str]) -> anyhow::Result
 
 fn plan_removal<'a>(
     journal: &'a Journal,
-    free: &[&str],
+    free: &[&[&str]],
 ) -> anyhow::Result<Vec<(&'a Path, Option<String>)>> {
     let mut restores = Vec::new();
     for entry in &journal.entries {
@@ -448,20 +467,31 @@ fn plan_removal<'a>(
             entry.original.clone()
         } else {
             let mut value = parse(current.as_deref(), entry.format)?;
+            // The saved document distinguishes absent fields from explicit nulls
+            // even for journals that serialized both as `"before": null`.
+            let original = parse(entry.original.as_deref(), entry.format)?;
             for field in entry.fields.iter().filter(|f| !is_free(f, free)) {
                 let actual = get(&value, &field.path);
                 anyhow::ensure!(
-                    actual == Some(&field.after) || actual == field.before.as_ref(),
+                    actual == field.applied_value() || actual == get(&original, &field.path),
                     "refusing to overwrite edited managed field in {}",
                     entry.path.display()
                 );
             }
             for field in &entry.fields {
-                if is_free(field, free) && !get(&value, &field.path).is_some_and(names_mixin_model)
+                // agy allows native models while connected. Keep that choice.
+                // Desktop gateway selections belong to its temporary catalog.
+                if field.path == ["model"]
+                    && is_free(field, free)
+                    && !get(&value, &field.path).is_some_and(names_mixin_model)
                 {
                     continue;
                 }
-                set(&mut value, &field.path, field.before.clone())?;
+                set(
+                    &mut value,
+                    &field.path,
+                    get(&original, &field.path).cloned(),
+                )?;
             }
             Some(encode(&value, entry.format)?)
         };
@@ -470,7 +500,7 @@ fn plan_removal<'a>(
     Ok(restores)
 }
 
-pub(super) fn remove_except(manifest: &Path, free: &[&str]) -> anyhow::Result<()> {
+pub(super) fn remove_except(manifest: &Path, free: &[&[&str]]) -> anyhow::Result<()> {
     let Some(text) = read(manifest)? else {
         return Ok(());
     };

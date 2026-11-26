@@ -70,6 +70,81 @@ async fn api_base_probe_returns_real_models() {
 }
 
 #[tokio::test]
+async fn antigravity_desktop_catalog_models_stream_through_chat() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.accept_codex_oauth = false;
+    let model = &mut config.providers[0].cached_models[0];
+    model.context_window = Some(320_000);
+    model.max_output_tokens = Some(64_000);
+    model.supports_image = Some(true);
+    model.supports_thinking = Some(true);
+    let gateway = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let url = format!("{gateway}/v1/models?format=antigravity");
+    if cfg!(feature = "client-auth") {
+        let denied = client
+            .get(&url)
+            .bearer_auth("wrong-key")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    }
+    let catalog: Value = client
+        .get(url)
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let model = &catalog["list"][0];
+    assert_eq!(model["modelId"], "DeepSeek-V4-Flash-custom");
+    assert_eq!(model["maxTokens"], 320_000);
+    assert_eq!(model["maxOutputTokens"], 64_000);
+    assert_eq!(model["supportsImages"], true);
+    assert_eq!(model["supportsThinking"], true);
+    let ordinary: Value = client
+        .get(format!("{gateway}/v1/models"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ordinary["object"], "list");
+    assert_eq!(ordinary["data"][0]["id"], model["modelId"]);
+
+    let response = client
+        .post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model": model["modelId"], "stream":true,
+            "messages":[{"role":"user","content":"hello"}]}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    let stream = response.text().await.unwrap();
+    assert!(
+        stream.contains("hello") && stream.contains("data: [DONE]"),
+        "{stream}"
+    );
+    assert_eq!(requests.lock().unwrap()[0]["model"], "DeepSeek-V4-Flash");
+}
+
+#[tokio::test]
 async fn flat_model_aliases_preserve_upstream_ids_across_http_apis() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream);

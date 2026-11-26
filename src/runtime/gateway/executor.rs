@@ -156,7 +156,7 @@ impl GatewayExecutor {
         .resolve(model);
         if custom_result.is_ok()
             || self.providers.resolve_known(model).is_some()
-            || !super::is_official_model_slug(model)
+            || !crate::provider::is_official_model_slug(model)
         {
             return custom_result;
         }
