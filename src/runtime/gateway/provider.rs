@@ -494,6 +494,7 @@ async fn stream_openai_chat(
         body,
         advertised_thinking,
         headers,
+        wire_policy,
         ..
     } = ctx;
     let managed_native = executor.upstream.native_auth_headers(provider).await?;
@@ -512,7 +513,7 @@ async fn stream_openai_chat(
         CacheShape::from_openai_chat(&converted.request),
     );
     if let Some(observation) = observation.as_mut() {
-        observation.accept_pi_cost = crate::pi_plugins::is_managed_provider(provider.definition());
+        observation.accept_reported_cost = wire_policy.accept_upstream_reported_cost;
     }
     let upstream = executor
         .upstream

@@ -109,6 +109,7 @@ pub(super) fn base_wire_policy(def: &ProviderDefinition, model: &str) -> WirePol
             && model.to_ascii_lowercase().contains("fable"),
         unsigned_thinking_replay: false,
         retry_without_opaque_history: false,
+        accept_upstream_reported_cost: super::types::is_managed_pi_provider(def),
     }
 }
 

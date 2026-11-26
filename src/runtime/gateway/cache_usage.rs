@@ -647,7 +647,7 @@ impl TokenUsageAggregator {
     ) -> Option<f64> {
         // Priced when recorded: the request's own prompt size selects the tier.
         let cost = if completed {
-            usage.pi_cost_usd.or_else(|| {
+            usage.reported_cost_usd.or_else(|| {
                 self.prices.current().lookup(model_id).map(|price| {
                     price.cost_usd(
                         usage.input_tokens.unwrap_or(0),
@@ -1014,7 +1014,7 @@ pub(crate) struct UpstreamCacheUsage {
     pub(crate) cache_read_tokens: Option<u64>,
     pub(crate) cache_creation_tokens: Option<u64>,
     pub(crate) output_tokens: Option<u64>,
-    pub(crate) pi_cost_usd: Option<f64>,
+    pub(crate) reported_cost_usd: Option<f64>,
     pub(crate) ttft_micros: Option<u64>,
     pub(crate) generation_micros: Option<u64>,
 }
@@ -1080,10 +1080,10 @@ impl UpstreamCacheUsage {
         }
     }
 
-    /// True when the provider supplied counters or a Pi bridge cost. All-zero
-    /// placeholder usage on intermediate frames does not count by itself.
+    /// True when the provider supplied counters or an upstream-reported cost.
+    /// All-zero placeholder usage on intermediate frames does not count by itself.
     pub(crate) fn observed(&self) -> bool {
-        self.pi_cost_usd.is_some()
+        self.reported_cost_usd.is_some()
             || [
                 self.input_tokens,
                 self.cache_read_tokens,

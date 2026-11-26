@@ -86,6 +86,7 @@ classDiagram
         +bool mcp_bridge_names
         +bool unsigned_thinking_replay
         +bool retry_without_opaque_history
+        +bool accept_upstream_reported_cost
         +uses_session_affinity() bool
     }
 

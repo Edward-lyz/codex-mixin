@@ -15,6 +15,7 @@ pub struct WirePolicy {
     pub mcp_bridge_names: bool,
     pub unsigned_thinking_replay: bool,
     pub retry_without_opaque_history: bool,
+    pub accept_upstream_reported_cost: bool,
 }
 
 impl WirePolicy {
