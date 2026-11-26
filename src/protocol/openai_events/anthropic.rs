@@ -1,7 +1,8 @@
 use super::state::{AssistantMessagePhase, MapperState, ThinkingBlock, ToolBlock, ToolBlockKind};
 use super::*;
 use crate::protocol::convert::{
-    encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_unsigned_thinking,
+    encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_signed_thinking,
+    encode_baidu_unsigned_thinking,
 };
 
 pub fn map_anthropic_sse<S, E>(
@@ -13,15 +14,17 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: std::fmt::Display,
 {
-    map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None, false)
+    map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None, None)
 }
 
+/// `baidu_upstream_model` is the upstream model id when the provider is
+/// Baidu OneAPI, whose thinking signatures are valid only for that model.
 pub(crate) fn map_anthropic_sse_with_image_routes<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
     image_routes: Option<ImageRouteRegistry>,
-    baidu_oneapi_usage: bool,
+    baidu_upstream_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -62,7 +65,7 @@ where
                 match handle_anthropic_event(
                     &mut state,
                     &data,
-                    baidu_oneapi_usage,
+                    baidu_upstream_model.as_deref(),
                     replay_model.as_deref(),
                 ) {
                     Ok(events) => pending.extend(events),
@@ -140,7 +143,7 @@ where
 fn handle_anthropic_event(
     state: &mut MapperState,
     data: &Value,
-    baidu_oneapi_usage: bool,
+    baidu_upstream_model: Option<&str>,
     replay_model: Option<&str>,
 ) -> Result<Vec<Bytes>, String> {
     match data.get("type").and_then(Value::as_str) {
@@ -383,10 +386,15 @@ fn handle_anthropic_event(
                     .signature
                     .as_deref()
                     .filter(|signature| !signature.is_empty())
-                    .map(|signature| encode_anthropic_thinking(&block.thinking, signature))
+                    .map(|signature| match baidu_upstream_model {
+                        Some(model) => {
+                            encode_baidu_signed_thinking(model, &block.thinking, signature)
+                        }
+                        None => encode_anthropic_thinking(&block.thinking, signature),
+                    })
                     .or_else(|| {
                         replay_model
-                            .filter(|_| baidu_oneapi_usage)
+                            .filter(|_| baidu_upstream_model.is_some())
                             .map(|model| encode_baidu_unsigned_thinking(model, &block.thinking))
                     });
                 let item = json!({

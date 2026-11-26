@@ -421,7 +421,43 @@ async fn stream_anthropic_messages(
     let converted = convert(default_max_tokens)?;
     let requested = converted.request.max_tokens;
     let defaulted = converted.max_tokens_defaulted;
-    let (upstream, shape, tool_names) = match send(converted).await {
+    let baidu_oneapi = provider.definition().preset_id.as_deref() == Some("baidu-oneapi");
+    let sent = match send(converted).await {
+        // History from before Mixin recorded the signing model (or carried
+        // in from another gateway) can hold another model's signatures.
+        // Replay once without signed thinking instead of failing every turn.
+        Err(GatewayError::UpstreamStatus {
+            status,
+            body: error_body,
+            content_type,
+            context,
+        }) if baidu_oneapi
+            && native_messages.is_none()
+            && status == reqwest::StatusCode::BAD_REQUEST
+            && error_body.contains(THINKING_SIGNATURE_INVALID) =>
+        {
+            let mut retry = convert(default_max_tokens)?;
+            let dropped =
+                crate::protocol::convert::drop_signed_thinking(&mut retry.request.messages);
+            if dropped == 0 {
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    body: error_body,
+                    content_type,
+                    context,
+                });
+            }
+            tracing::warn!(
+                provider_id = provider.id(),
+                upstream_model_id = %upstream_model_id,
+                dropped_blocks = dropped,
+                "upstream rejected replayed thinking signatures; retrying without signed thinking"
+            );
+            send(retry).await
+        }
+        result => result,
+    };
+    let (upstream, shape, tool_names) = match sent {
         Err(GatewayError::UpstreamStatus {
             status,
             body: error_body,
@@ -469,7 +505,7 @@ async fn stream_anthropic_messages(
         downstream_body,
         tool_names,
         executor.custom_image_routes(provider),
-        provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
+        baidu_oneapi.then(|| upstream_model_id.to_owned()),
     )
     .boxed())
 }
@@ -700,6 +736,8 @@ async fn stream_openai_responses(
 }
 
 const INVALID_ENCRYPTED_CONTENT: &str = "invalid_encrypted_content";
+/// Baidu OneAPI's 400 for thinking signed by another model or account.
+const THINKING_SIGNATURE_INVALID: &str = "THINKING_SIGNATURE_INVALID";
 const UNREPLAYABLE_TOOL_OUTPUT: &str =
     "[Encrypted tool output could not be replayed on this upstream account.]";
 
