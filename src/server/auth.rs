@@ -84,4 +84,4 @@ pub(super) async fn check_gateway_auth(
     }
 }
 
-pub(super) use crate::gateway::stable_oneapi_routing;
+pub(super) use crate::gateway::stable_session_routing;

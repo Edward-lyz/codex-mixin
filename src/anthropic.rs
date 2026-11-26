@@ -162,28 +162,3 @@ pub struct OpenRouterModelArchitecture {
     #[serde(default)]
     pub input_modalities: Vec<String>,
 }
-
-#[derive(Debug, Deserialize)]
-pub struct BaiduAvailableModelsResponse {
-    pub data: Vec<BaiduAvailableModel>,
-    pub success: bool,
-    #[serde(default)]
-    pub message: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BaiduAvailableModel {
-    pub model: String,
-    pub capability: Option<BaiduModelCapability>,
-    #[serde(default)]
-    pub capability_set: Vec<String>,
-    pub price_type: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BaiduModelCapability {
-    pub supports_image: bool,
-    pub context_window: u64,
-    pub ratio: String,
-    pub model_description: String,
-}

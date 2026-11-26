@@ -73,7 +73,7 @@ async fn provider_image_request(
         .request(reqwest::Method::POST, url)
         .await?
         .header(header::ACCEPT, "application/json");
-    match state.upstream.baidu_native_headers(provider).await? {
+    match state.upstream.native_auth_headers(provider).await? {
         Some(native) => Ok(request.headers(native)),
         None => Ok(provider.apply_auth(request)),
     }

@@ -223,7 +223,7 @@ pub(super) fn fallback_plan(
         }
         return RequestPlan::official(body, downstream_model);
     }
-    let routing = super::stable_oneapi_routing(headers, &body)?;
+    let routing = super::stable_session_routing(headers, &body)?;
     let resolved = executor.resolved_provider_model(fallback)?;
     let native = primary.native_messages.clone().filter(|_| {
         resolved

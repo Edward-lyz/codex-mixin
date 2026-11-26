@@ -1,7 +1,7 @@
 use super::state::{AssistantMessagePhase, MapperState, ThinkingBlock, ToolBlock, ToolBlockKind};
 use super::*;
 use crate::protocol::convert::{
-    encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_unsigned_thinking,
+    encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_unsigned_thinking_replay,
 };
 
 pub fn map_anthropic_sse<S, E>(
@@ -353,7 +353,7 @@ fn handle_anthropic_event(
                     .or_else(|| {
                         replay_model
                             .filter(|_| unsigned_thinking_replay)
-                            .map(|model| encode_baidu_unsigned_thinking(model, &block.thinking))
+                            .map(|model| encode_unsigned_thinking_replay(model, &block.thinking))
                     });
                 let item = json!({
                     "id": block.item_id,

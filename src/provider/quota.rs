@@ -13,6 +13,35 @@ pub struct QuotaUsageSummary {
     pub currency: Option<String>,
 }
 
+/// JSON pointers, in priority order, that hold the used amount of a quota
+/// response for the given parser.
+pub fn quota_usage_pointers(parser: ProviderQuotaParser) -> &'static [&'static str] {
+    match parser {
+        ProviderQuotaParser::BaiduOneApi => super::baidu::quota::usage_pointers(),
+        ProviderQuotaParser::OpenRouter => &["/data/total_usage"],
+        ProviderQuotaParser::DeepSeek => &[],
+        ProviderQuotaParser::OpenCodeGo => &[],
+        ProviderQuotaParser::Generic => &[
+            "/data/used_quota",
+            "/data/total_usage",
+            "/data/total_used",
+            "/data/used",
+            "/data/spent",
+            "/data/cost",
+            "/data/actual_cost",
+            "/usage/total/actual_cost",
+            "/data/usage/total/actual_cost",
+            "/used_quota",
+            "/total_usage",
+            "/total_used",
+            "/used",
+            "/spent",
+            "/cost",
+            "/actual_cost",
+        ],
+    }
+}
+
 pub fn quota_usage(
     parser: ProviderQuotaParser,
     value: &serde_json::Value,
@@ -21,17 +50,7 @@ pub fn quota_usage(
         return deepseek_quota_usage(value);
     }
     let (used_fields, limit_fields, remaining_fields): (&[&str], &[&str], &[&str]) = match parser {
-        ProviderQuotaParser::BaiduOneApi => (
-            &["used_quota", "used", "usage"],
-            &[
-                "month_quota_limit",
-                "quota_limit",
-                "limit",
-                "total",
-                "quota",
-            ],
-            &["remaining_quota", "remaining", "available"],
-        ),
+        ProviderQuotaParser::BaiduOneApi => super::baidu::quota::quota_fields(),
         ProviderQuotaParser::OpenRouter => (
             &["total_usage", "used", "usage"],
             &["total_credits", "limit", "total", "budget"],

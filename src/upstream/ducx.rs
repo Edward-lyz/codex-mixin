@@ -9,35 +9,35 @@ use crate::provider::auth::ducx::DucxRuntime;
 use crate::provider::{ProviderRegistry, ProviderRuntime};
 
 impl UpstreamAccess {
-    /// Warm up every enabled DUCX-loopback provider once before the gateway
-    /// starts serving: persist data-report tokens and mint native headers.
-    pub(crate) async fn prewarm_ducx(
+    /// Warm up every enabled managed-auth provider once before the gateway
+    /// starts serving: persist telemetry tokens and mint native headers.
+    pub(crate) async fn prewarm_providers(
         &self,
         providers: &ProviderRegistry,
     ) -> Result<(), GatewayError> {
-        let ducx_providers = providers
+        let managed_providers = providers
             .providers()
             .iter()
-            .filter(|provider| provider.definition().enabled && provider.uses_ducx_loopback())
+            .filter(|provider| provider.definition().enabled && provider.uses_managed_auth_bridge())
             .collect::<Vec<_>>();
-        for provider in ducx_providers {
-            self.prewarm_ducx_report(provider).await?;
-            self.ducx_native_headers(provider).await?;
+        for provider in managed_providers {
+            self.prewarm_telemetry(provider).await?;
+            self.managed_native_headers(provider).await?;
         }
         Ok(())
     }
 
-    async fn prewarm_ducx_report(&self, provider: &ProviderRuntime) -> Result<(), GatewayError> {
-        if !provider.baidu_code_report() {
+    async fn prewarm_telemetry(&self, provider: &ProviderRuntime) -> Result<(), GatewayError> {
+        if !provider.reports_usage_telemetry() {
             return Ok(());
         }
         let provider_id = provider.id().to_owned();
-        tracing::info!(provider_id = %provider_id, "starting DUCX data-report token warmup");
-        let runtime = self.ducx_runtime_for(provider).await?;
+        tracing::info!(provider_id = %provider_id, "starting usage telemetry token warmup");
+        let runtime = self.managed_auth_runtime_for(provider).await?;
         let Some(token) = self.capture_report_token(&runtime).await else {
             return Ok(());
         };
-        tracing::info!(provider_id = %provider_id, "DUCX data-report token warmup captured a token");
+        tracing::info!(provider_id = %provider_id, "usage telemetry token warmup captured a token");
         persist_report_token_async(provider_id, token).await;
         Ok(())
     }
@@ -51,28 +51,27 @@ impl UpstreamAccess {
             Err(error) => {
                 tracing::error!(
                     error = %format!("{error:#}"),
-                    "failed to warm up DUCX data-report client token"
+                    "failed to warm up managed auth telemetry client token"
                 );
                 None
             }
         }
     }
 
-    async fn ducx_runtime_for(
+    async fn managed_auth_runtime_for(
         &self,
         provider: &ProviderRuntime,
     ) -> Result<Arc<DucxRuntime>, GatewayError> {
         let executable = provider
-            .ducx_executable()
+            .auth_bridge_executable()
             .map(PathBuf::from)
             .or_else(crate::provider::auth::ducx::default_ducx_executable)
             .ok_or_else(|| {
                 GatewayError::Upstream(
-                    "DUCX loopback is enabled but the managed ducx executable was not found"
-                        .to_owned(),
+                    "managed auth bridge is enabled but its executable was not found".to_owned(),
                 )
             })?;
-        let mut runtimes = self.ducx_runtimes.lock().await;
+        let mut runtimes = self.managed_auth_runtimes.lock().await;
         if let Some(runtime) = runtimes.get(provider.id()) {
             return Ok(Arc::clone(runtime));
         }
@@ -81,35 +80,35 @@ impl UpstreamAccess {
         Ok(runtime)
     }
 
-    /// Fetch the DUCX-native authentication headers (cached, minted on demand).
-    pub(crate) async fn ducx_native_headers(
+    /// Fetch the bridge-native authentication headers (cached, minted on demand).
+    pub(crate) async fn managed_native_headers(
         &self,
         provider: &ProviderRuntime,
     ) -> Result<axum::http::HeaderMap, GatewayError> {
-        self.ducx_runtime_for(provider)
+        self.managed_auth_runtime_for(provider)
             .await?
             .native_headers(self.config.request_timeout)
             .await
             .map_err(GatewayError::Other)
     }
 
-    pub(crate) async fn invalidate_ducx_headers(
+    pub(crate) async fn invalidate_native_auth_headers(
         &self,
         provider: &ProviderRuntime,
     ) -> Result<(), GatewayError> {
-        self.ducx_runtime_for(provider)
+        self.managed_auth_runtime_for(provider)
             .await?
             .invalidate_headers()
             .await;
         Ok(())
     }
 
-    pub(crate) async fn baidu_native_headers(
+    pub(crate) async fn native_auth_headers(
         &self,
         provider: &ProviderRuntime,
     ) -> Result<Option<axum::http::HeaderMap>, GatewayError> {
-        if provider.uses_ducx_loopback() {
-            Ok(Some(self.ducx_native_headers(provider).await?))
+        if provider.uses_managed_auth_bridge() {
+            Ok(Some(self.managed_native_headers(provider).await?))
         } else {
             Ok(None)
         }
@@ -117,31 +116,29 @@ impl UpstreamAccess {
 }
 
 async fn persist_report_token_async(provider_id: String, token: String) {
-    let result =
-        tokio::task::spawn_blocking(move || persist_ducx_report_token(&provider_id, token))
-            .await
-            .context("join DUCX report token persistence task");
+    let result = tokio::task::spawn_blocking(move || persist_report_token(&provider_id, token))
+        .await
+        .context("join telemetry token persistence task");
     if let Err(error) = result.and_then(|inner| inner) {
         tracing::error!(
             error = %format!("{error:#}"),
-            "failed to persist DUCX data-report client token"
+            "failed to persist usage telemetry client token"
         );
     }
 }
 
-fn persist_ducx_report_token(provider_id: &str, token: String) -> anyhow::Result<()> {
+fn persist_report_token(provider_id: &str, token: String) -> anyhow::Result<()> {
     crate::config::mutate_stored_config(|config| {
         let stored_provider = config
             .providers
             .iter_mut()
             .find(|candidate| candidate.id == provider_id)
-            .with_context(|| format!("DUCX reporting provider disappeared: {provider_id}"))?;
+            .with_context(|| format!("telemetry provider disappeared: {provider_id}"))?;
         anyhow::ensure!(
             stored_provider.enabled
-                && stored_provider.request_policy.baidu_code_report
-                && stored_provider.request_policy.effective_baidu_auth_bridge()
-                    == crate::provider::BaiduAuthBridge::DucxLoopback,
-            "DUCX reporting provider changed during warmup: {provider_id}"
+                && crate::provider::provider_reports_usage_telemetry(stored_provider)
+                && crate::provider::provider_uses_managed_auth_bridge(stored_provider),
+            "telemetry provider changed during warmup: {provider_id}"
         );
         stored_provider.request_policy.data_report_client_token = Some(token);
         Ok(())

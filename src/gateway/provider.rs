@@ -62,7 +62,7 @@ async fn authorize_provider_request(
     if authorized_control_plane {
         return Ok(());
     }
-    executor.require_ducx_client(provider, headers).await
+    executor.require_managed_client(provider, headers).await
 }
 
 pub(crate) async fn stream_provider_response(
@@ -358,11 +358,11 @@ async fn stream_anthropic_messages(
             && wire_policy.uses_session_affinity()
             && let Some(routing) = routing
         {
-            // OneAPI's Anthropic-to-OpenAI conversion accepts only an
-            // optional string `metadata.user_id`. `session_id` is a 400
+            // Upstreams that convert Anthropic Messages to OpenAI accept only
+            // an optional string `metadata.user_id`. `session_id` is a 400
             // ("Anthropic feature at \"metadata\" ... is not supported")
             // on models behind that conversion, such as GLM-5.3.
-            // Session affinity still travels in `x-hash-key`.
+            // Session affinity still travels in the configured header.
             converted.request.metadata = Some(json!({"user_id": routing.hash_key}));
         }
         Ok::<_, GatewayError>(converted)
@@ -496,7 +496,7 @@ async fn stream_openai_chat(
         headers,
         ..
     } = ctx;
-    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
+    let managed_native = executor.upstream.native_auth_headers(provider).await?;
     let downstream_body = response_metadata_request(body, downstream_model);
     let saved_reasoning = prepare_reasoning(body, advertised_thinking);
     let converted = responses_to_openai_chat(body, Some(upstream_model_id), &compaction_secret);
@@ -518,7 +518,7 @@ async fn stream_openai_chat(
             ProviderProtocol::OpenAiChat,
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
-            baidu_native.as_ref(),
+            managed_native.as_ref(),
             converted.request,
         )
         .await
@@ -565,7 +565,7 @@ async fn stream_openai_responses(
         wire_policy,
         ..
     } = ctx;
-    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
+    let managed_native = executor.upstream.native_auth_headers(provider).await?;
     let official_native = executor
         .upstream
         .official_account_headers(provider, headers)
@@ -615,7 +615,7 @@ async fn stream_openai_responses(
             ProviderProtocol::OpenAiResponses,
             upstream_model_id,
             routing.map(|routing| routing.hash_key.as_str()),
-            official_native.as_ref().or(baidu_native.as_ref()),
+            official_native.as_ref().or(managed_native.as_ref()),
             wire_body.clone(),
         )
         .await
@@ -637,9 +637,10 @@ async fn stream_openai_responses(
             .get(reqwest::header::CONTENT_TYPE)
             .cloned();
         let error_text = crate::upstream::body::read_error_text(upstream).await?;
-        // OneAPI may serve a thread from another backend account than the
-        // one that encrypted its history; that account cannot decrypt it.
-        // Replay once without the opaque items rather than fail every turn.
+        // A session-affinity upstream may serve a thread from another backend
+        // account than the one that encrypted its history; that account cannot
+        // decrypt it. Replay once without the opaque items rather than fail
+        // every turn.
         let mut retry_body = Value::Null;
         let dropped = if error_text.contains(INVALID_ENCRYPTED_CONTENT) {
             retry_body = wire_body.clone();
@@ -668,7 +669,7 @@ async fn stream_openai_responses(
                     ProviderProtocol::OpenAiResponses,
                     upstream_model_id,
                     routing.map(|routing| routing.hash_key.as_str()),
-                    official_native.as_ref().or(baidu_native.as_ref()),
+                    official_native.as_ref().or(managed_native.as_ref()),
                     retry_body,
                 )
                 .await

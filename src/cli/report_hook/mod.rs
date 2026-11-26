@@ -37,13 +37,37 @@ const REPORT_EVENTS: [(&str, &str); 4] = [
     ("Stop", "stop"),
 ];
 
-pub(super) fn sync_installation() -> anyhow::Result<()> {
-    installation::sync_installation()?;
+struct ReportingHookTarget {
+    sync: fn() -> anyhow::Result<()>,
+}
+
+fn sync_claude_if_installed() -> anyhow::Result<()> {
     if crate::cli::claude::claude_is_installed()? {
         crate::cli::claude::sync_claude_hooks(None)?;
     }
-    crate::cli::opencode::sync_installed_opencode_reporting()?;
-    crate::cli::pi::sync_installed_pi_reporting()
+    Ok(())
+}
+
+const REPORTING_HOOK_TARGETS: &[ReportingHookTarget] = &[
+    ReportingHookTarget {
+        sync: installation::sync_installation,
+    },
+    ReportingHookTarget {
+        sync: sync_claude_if_installed,
+    },
+    ReportingHookTarget {
+        sync: crate::cli::opencode::sync_installed_opencode_reporting,
+    },
+    ReportingHookTarget {
+        sync: crate::cli::pi::sync_installed_pi_reporting,
+    },
+];
+
+pub(super) fn sync_installation() -> anyhow::Result<()> {
+    for target in REPORTING_HOOK_TARGETS {
+        (target.sync)()?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -349,7 +373,9 @@ pub(super) async fn replay(
         codex_mixin::config::mutate_stored_config(|config| {
             let mut cleared = 0;
             for provider in &mut config.providers {
-                if provider.enabled && provider.request_policy.baidu_code_report {
+                if provider.enabled
+                    && codex_mixin::provider::provider_reports_usage_telemetry(provider)
+                {
                     provider.request_policy.data_report_client_token = None;
                     cleared += 1;
                 }

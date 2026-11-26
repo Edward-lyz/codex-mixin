@@ -129,7 +129,7 @@ const CODEX_PARENT_THREAD_ID: &str = "x-codex-parent-thread-id";
 
 /// Derive the per-session upstream routing (cache namespace) from the client
 /// headers and body, mirroring how the official client keys its sessions.
-pub(crate) fn stable_oneapi_routing(
+pub(crate) fn stable_session_routing(
     headers: &axum::http::HeaderMap,
     body: &serde_json::Value,
 ) -> Result<Option<super::UpstreamRouting>, GatewayError> {
@@ -167,10 +167,11 @@ pub(crate) fn stable_oneapi_routing(
     };
 
     if let Some(thread_id) = thread_id {
-        // OneAPI picks the backend account from this key, and opaque
-        // reasoning only decrypts on the account that produced it. Forked
-        // subagents, reviews and compactions replay the parent's history, so
-        // they share the root thread's key instead of deriving their own.
+        // Upstreams with session affinity pick the backend account from this
+        // key, and opaque reasoning only decrypts on the account that produced
+        // it. Forked subagents, reviews and compactions replay the parent's
+        // history, so they share the root thread's key instead of deriving
+        // their own.
         let affinity_thread = parent_thread_id.unwrap_or(thread_id);
         let mut cache_namespace = format!("thread-id\0{affinity_thread}");
         let mut context_namespace = format!("thread-id\0{thread_id}");

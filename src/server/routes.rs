@@ -111,16 +111,16 @@ pub async fn serve_on_listener(
             }
         })
     });
-    let ducx_warmup_state = state.clone();
-    let ducx_warmup_task = tokio::spawn(async move {
-        if let Err(error) = ducx_warmup_state
+    let auth_warmup_state = state.clone();
+    let auth_warmup_task = tokio::spawn(async move {
+        if let Err(error) = auth_warmup_state
             .upstream
-            .prewarm_ducx(&ducx_warmup_state.providers)
+            .prewarm_providers(&auth_warmup_state.providers)
             .await
         {
             tracing::warn!(
                 error = %format!("{error:#}"),
-                "managed DUCX warmup failed"
+                "managed provider auth warmup failed"
             );
         }
     });
@@ -177,7 +177,7 @@ pub async fn serve_on_listener(
     if let Some(probe_task) = probe_task {
         probe_task.abort();
     }
-    ducx_warmup_task.abort();
+    auth_warmup_task.abort();
     result?;
     Ok(if reload_requested.load(Ordering::Acquire) {
         ServeExit::Reload

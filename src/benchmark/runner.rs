@@ -75,30 +75,7 @@ pub(super) fn used_quota_from_json(
             .unwrap_or("quota endpoint reported failure");
         anyhow::bail!("quota endpoint failed: {message}");
     }
-    let pointers: &[&str] = match parser {
-        ProviderQuotaParser::BaiduOneApi => &["/data/used_quota"],
-        ProviderQuotaParser::OpenRouter => &["/data/total_usage"],
-        ProviderQuotaParser::DeepSeek => &[],
-        ProviderQuotaParser::OpenCodeGo => &[],
-        ProviderQuotaParser::Generic => &[
-            "/data/used_quota",
-            "/data/total_usage",
-            "/data/total_used",
-            "/data/used",
-            "/data/spent",
-            "/data/cost",
-            "/data/actual_cost",
-            "/usage/total/actual_cost",
-            "/data/usage/total/actual_cost",
-            "/used_quota",
-            "/total_usage",
-            "/total_used",
-            "/used",
-            "/spent",
-            "/cost",
-            "/actual_cost",
-        ],
-    };
+    let pointers = crate::provider::quota_usage_pointers(parser);
     let used = pointers.iter().find_map(|pointer| {
         payload.pointer(pointer).and_then(|value| match value {
             Value::Number(number) => number.as_f64(),
@@ -144,7 +121,7 @@ pub(super) async fn benchmark_request(
         reqwest::header::HeaderValue::from_str(&session)
             .map_err(|error| attempt_failure(false, error.to_string(), started, None))?,
     );
-    let routing = crate::gateway::stable_oneapi_routing(&headers, &body)
+    let routing = crate::gateway::stable_session_routing(&headers, &body)
         .map_err(|error| attempt_failure(false, error.to_string(), started, None))?;
     let send = async {
         if target.provider.is_none() {

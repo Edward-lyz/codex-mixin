@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::clients::{claude_desktop, dsh, grok};
 use crate::config::load_stored_config_read_only;
 use crate::platform::write_atomic_if_changed;
-use crate::provider::{ProviderDefinition, ProviderModelSource, catalog_model_slug};
+use crate::provider::{ProviderDefinition, catalog_model_slug};
 use crate::usage::latest_session_turn;
 
 /// Per-session cache of the last model resolved for reporting.
@@ -316,9 +316,7 @@ pub fn reporting_providers() -> anyhow::Result<Vec<ProviderDefinition>> {
         .providers
         .into_iter()
         .filter(|provider| {
-            provider.enabled
-                && provider.request_policy.baidu_code_report
-                && provider.model_source == ProviderModelSource::BaiduOneApi
+            provider.enabled && crate::provider::provider_reports_usage_telemetry(provider)
         })
         .collect())
 }

@@ -204,6 +204,9 @@ pub struct ProviderSpec {
     /// The provider's model catalog states each model's real capabilities, so
     /// the gateway trusts it and never sends paid probe requests.
     pub declares_model_capabilities: bool,
+    /// Managed authentication bridge provisioned during `setup` when the preset
+    /// uses a local auth carrier (e.g. `"ducx_loopback"`).
+    pub default_managed_auth_bridge: Option<&'static str>,
     /// Catalog seeded at creation so a new provider routes before the first
     /// successful model refresh.
     seed_models: fn() -> Vec<ProviderModel>,
@@ -281,6 +284,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: false,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -305,6 +309,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -329,6 +334,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -353,6 +359,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -377,6 +384,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -403,6 +411,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: Some("CNY"),
         quota_parser: ProviderQuotaParser::BaiduOneApi,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: Some("ducx_loopback"),
         seed_models: Vec::new,
         request_policy: baidu_request_policy,
     },
@@ -427,6 +436,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenRouter,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -453,6 +463,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::DeepSeek,
         declares_model_capabilities: false,
+        default_managed_auth_bridge: None,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -479,6 +490,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenCodeGo,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: open_code_go_seed_models,
         request_policy: || ProviderRequestPolicy {
             session_affinity_header: Some(super::OPENCODE_SESSION_HEADER.to_owned()),
@@ -506,6 +518,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: false,
+        default_managed_auth_bridge: None,
         seed_models: bedrock_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -532,6 +545,7 @@ static SPECS: [ProviderSpec; 11] = [
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: true,
+        default_managed_auth_bridge: None,
         seed_models: claude_code_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
