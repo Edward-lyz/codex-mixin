@@ -23,6 +23,17 @@ pub(super) enum AssistantMessagePhase {
     FinalAnswer,
 }
 
+/// Outer response lifecycle phase. Guarantees at most one terminal event
+/// (`response.completed`, `response.incomplete`, or `response.failed`) is emitted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ResponsePhase {
+    Idle,
+    Streaming,
+    Completed,
+    Incomplete,
+    Failed,
+}
+
 impl AssistantMessagePhase {
     fn as_str(self) -> &'static str {
         match self {
@@ -58,6 +69,7 @@ pub(super) struct MapperState {
     pub(super) response_id: String,
     pub(super) created_at: u64,
     response_metadata: Value,
+    phase: ResponsePhase,
     pub(super) output: Vec<Value>,
     pub(super) current_text: Option<TextBlock>,
     pub(super) chat_reasoning: Option<TextBlock>,
@@ -96,6 +108,7 @@ impl MapperState {
                 .unwrap_or_default()
                 .as_secs(),
             response_metadata,
+            phase: ResponsePhase::Idle,
             output: Vec::new(),
             current_text: None,
             chat_reasoning: None,
@@ -118,6 +131,140 @@ impl MapperState {
             native_delta: Value::Null,
             native_id: None,
         }
+    }
+
+    pub(super) fn is_terminal(&self) -> bool {
+        matches!(
+            self.phase,
+            ResponsePhase::Completed | ResponsePhase::Incomplete | ResponsePhase::Failed
+        )
+    }
+
+    /// Transition `Idle -> Streaming` and return the opening lifecycle events.
+    pub(super) fn begin_stream(&mut self) -> Vec<Bytes> {
+        if self.phase != ResponsePhase::Idle {
+            return Vec::new();
+        }
+        self.phase = ResponsePhase::Streaming;
+        let created = self.response_base_initial("in_progress");
+        vec![
+            encode_event(
+                "response.created",
+                &json!({"type":"response.created","response":created}),
+            )
+            .unwrap(),
+            encode_event(
+                "response.in_progress",
+                &json!({"type":"response.in_progress","response":self.response_base_initial("in_progress")}),
+            )
+            .unwrap(),
+        ]
+    }
+
+    pub(super) fn emit_completed(&mut self) -> Option<Bytes> {
+        if self.is_terminal() {
+            return None;
+        }
+        self.phase = ResponsePhase::Completed;
+        let completed = self.completed_response();
+        Some(
+            encode_event(
+                "response.completed",
+                &json!({"type":"response.completed","response":completed}),
+            )
+            .unwrap(),
+        )
+    }
+
+    pub(super) fn emit_incomplete_chat(&mut self, reason: &str) -> Option<Bytes> {
+        if self.is_terminal() {
+            return None;
+        }
+        self.phase = ResponsePhase::Incomplete;
+        Some(self.incomplete_chat(reason))
+    }
+
+    pub(super) fn emit_failed(&mut self, message: impl Into<String>) -> Option<Bytes> {
+        if self.is_terminal() {
+            return None;
+        }
+        self.phase = ResponsePhase::Failed;
+        Some(self.failed_event(message))
+    }
+
+    /// Close all open Anthropic-style items and emit a single terminal event
+    /// (`response.completed` or `response.failed`).
+    pub(super) fn finalize_anthropic(
+        &mut self,
+        image_routes: Option<&ImageRouteRegistry>,
+    ) -> Vec<Bytes> {
+        if self.is_terminal() {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        let phase = self.fallback_text_phase();
+        events.extend(self.finish_text(phase));
+        match self.finish_tools(image_routes) {
+            Ok(tool_events) => events.extend(tool_events),
+            Err(err) => {
+                if let Some(failed) = self.emit_failed(err) {
+                    events.push(failed);
+                }
+                return events;
+            }
+        }
+        if let Err(err) = self.ensure_web_searches_finished() {
+            if let Some(failed) = self.emit_failed(err) {
+                events.push(failed);
+            }
+            return events;
+        }
+        if let Some(completed) = self.emit_completed() {
+            events.push(completed);
+        }
+        events
+    }
+
+    /// Close all open Chat/Gemini-style items and emit a single terminal event
+    /// (`response.completed` or `response.failed`).
+    pub(super) fn finalize_chat_completed(
+        &mut self,
+        image_routes: Option<&ImageRouteRegistry>,
+    ) -> Vec<Bytes> {
+        if self.is_terminal() {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        events.extend(self.finish_chat_reasoning());
+        let phase = self.fallback_text_phase();
+        events.extend(self.finish_text(phase));
+        match self.finish_chat_tools(image_routes) {
+            Ok(tool_events) => events.extend(tool_events),
+            Err(err) => {
+                if let Some(failed) = self.emit_failed(err) {
+                    events.push(failed);
+                }
+                return events;
+            }
+        }
+        if let Some(completed) = self.emit_completed() {
+            events.push(completed);
+        }
+        events
+    }
+
+    /// Close open reasoning/text and emit a single `response.incomplete` event.
+    pub(super) fn finalize_chat_incomplete(&mut self, reason: &str) -> Vec<Bytes> {
+        if self.is_terminal() {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        events.extend(self.finish_chat_reasoning());
+        events.extend(self.finish_text(AssistantMessagePhase::FinalAnswer));
+        if let Some(incomplete) = self.emit_incomplete_chat(reason) {
+            events.push(incomplete);
+        }
+        events
     }
 
     pub(super) fn response_base(&self, status: &str) -> Value {

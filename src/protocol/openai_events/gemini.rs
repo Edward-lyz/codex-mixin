@@ -1,4 +1,4 @@
-use super::state::{AssistantMessagePhase, MapperState};
+use super::state::MapperState;
 use super::*;
 
 #[derive(Default)]
@@ -36,17 +36,7 @@ where
         .to_owned();
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
-        let created = state.response_base_initial("in_progress");
-        if let Ok(event) = encode_event(
-            "response.created",
-            &json!({"type":"response.created","response":created}),
-        ) {
-            yield Ok(event);
-        }
-        if let Ok(event) = encode_event(
-            "response.in_progress",
-            &json!({"type":"response.in_progress","response":state.response_base_initial("in_progress")}),
-        ) {
+        for event in state.begin_stream() {
             yield Ok(event);
         }
 
@@ -65,19 +55,20 @@ where
                              finish_reason: Option<&str>,
                              grounding: &GroundingState|
          -> Result<(), String> {
-            pending.extend(state.finish_chat_reasoning());
+            if state.is_terminal() {
+                return Ok(());
+            }
             match finish_reason {
                 Some("MAX_TOKENS") => {
-                    pending.extend(state.finish_text(AssistantMessagePhase::FinalAnswer));
-                    pending.push(state.incomplete_chat("max_output_tokens"));
+                    pending.extend(state.finalize_chat_incomplete("max_output_tokens"));
                     Ok(())
                 }
                 Some("SAFETY") => {
-                    pending.extend(state.finish_text(AssistantMessagePhase::FinalAnswer));
-                    pending.push(state.incomplete_chat("content_filter"));
+                    pending.extend(state.finalize_chat_incomplete("content_filter"));
                     Ok(())
                 }
                 _ => {
+                    pending.extend(state.finish_chat_reasoning());
                     let phase = state.fallback_text_phase();
                     pending.extend(state.finish_text(phase));
                     let events = state.finish_chat_tools(image_routes)?;
@@ -93,12 +84,8 @@ where
                         pending.push(chat_event("response.output_item.done", json!({"type":"response.output_item.done","output_index":index,"item":item})));
                         state.output.push(item);
                     }
-                    let completed = state.completed_response();
-                    if let Ok(event) = encode_event(
-                        "response.completed",
-                        &json!({"type":"response.completed","response":completed}),
-                    ) {
-                        pending.push(event);
+                    if let Some(completed) = state.emit_completed() {
+                        pending.push(completed);
                     }
                     Ok(())
                 }
@@ -112,7 +99,9 @@ where
                     if let Some(combined) = coalesce_events(&mut pending) {
                         yield Ok(combined);
                     }
-                    yield Ok(state.failed_event(err.to_string()));
+                    if let Some(failed) = state.emit_failed(err.to_string()) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
             };
@@ -133,7 +122,9 @@ where
                         if let Some(combined) = coalesce_events(&mut pending) {
                             yield Ok(combined);
                         }
-                        yield Ok(state.failed_event(err));
+                        if let Some(failed) = state.emit_failed(err) {
+                            yield Ok(failed);
+                        }
                         return;
                     }
                     if let Some(combined) = coalesce_events(&mut pending) {
@@ -145,7 +136,9 @@ where
                     Ok(data) => data,
                     Err(error) => {
                         if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                        yield Ok(state.failed_event(format!("invalid upstream SSE JSON: {error}")));
+                        if let Some(failed) = state.emit_failed(format!("invalid upstream SSE JSON: {error}")) {
+                            yield Ok(failed);
+                        }
                         return;
                     }
                 };
@@ -158,7 +151,9 @@ where
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("Gemini upstream returned an error");
-                    yield Ok(state.failed_event(message));
+                    if let Some(failed) = state.emit_failed(message) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
                 let usage = data
@@ -224,7 +219,9 @@ where
                             && let Err(error) = add_grounding(&mut state, &mut grounding, &mut pending, metadata)
                         {
                             if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                            yield Ok(state.failed_event(error));
+                            if let Some(failed) = state.emit_failed(error) {
+                                yield Ok(failed);
+                            }
                             return;
                         }
 
@@ -287,7 +284,9 @@ where
                                     Ok(events) => pending.extend(events),
                                     Err(err) => {
                                         if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                                        yield Ok(state.failed_event(err));
+                                        if let Some(failed) = state.emit_failed(err) {
+                                            yield Ok(failed);
+                                        }
                                         return;
                                     }
                                 }
@@ -300,7 +299,9 @@ where
                     && let Err(error) = add_grounding(&mut state, &mut grounding, &mut pending, metadata)
                 {
                     if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
-                    yield Ok(state.failed_event(error));
+                    if let Some(failed) = state.emit_failed(error) {
+                        yield Ok(failed);
+                    }
                     return;
                 }
                 if let Some(combined) = coalesce_events(&mut pending) {
@@ -312,7 +313,9 @@ where
             if let Some(combined) = coalesce_events(&mut pending) {
                 yield Ok(combined);
             }
-            yield Ok(state.failed_event("Gemini stream ended unexpectedly"));
+            if let Some(failed) = state.emit_failed("Gemini stream ended unexpectedly") {
+                yield Ok(failed);
+            }
             return;
         }
         if let Err(err) = finish_stream(
@@ -325,7 +328,9 @@ where
             if let Some(combined) = coalesce_events(&mut pending) {
                 yield Ok(combined);
             }
-            yield Ok(state.failed_event(err));
+            if let Some(failed) = state.emit_failed(err) {
+                yield Ok(failed);
+            }
             return;
         }
         if let Some(combined) = coalesce_events(&mut pending) {

@@ -586,10 +586,7 @@ impl TokenUsageAggregator {
         );
         self.oneapi_providers = providers
             .iter()
-            .filter(|provider| {
-                provider.model_source == crate::provider::ProviderModelSource::BaiduOneApi
-                    || provider.preset_id.as_deref() == Some("baidu-oneapi")
-            })
+            .filter(|provider| crate::provider::is_baidu_provider(provider))
             .map(|provider| provider.id.clone())
             .collect();
         self

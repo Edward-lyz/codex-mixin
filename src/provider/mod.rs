@@ -13,6 +13,7 @@ pub use claude_code::fetch_claude_code_quota;
 pub use kiro::fetch_kiro_quota;
 pub mod capabilities;
 mod discovery;
+mod endpoint;
 pub(crate) mod local_oauth;
 mod model_alias;
 mod model_order;
@@ -37,6 +38,7 @@ pub use discovery::{
     AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
     discover_provider_models, official_models_from_catalog, redact_provider_error,
 };
+pub use endpoint::{EndpointSpec, WirePolicy, is_baidu_provider};
 pub use models_dev::{MODELS_DEV_API_URL, default_metadata_cache_path, metadata_catalog_path};
 pub use quota::{QuotaUsageSummary, quota_usage};
 pub use registry::{
@@ -63,9 +65,7 @@ pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 
 /// Client-facing label; routing continues to use the separate catalog slug.
 pub fn provider_model_display_name(model: &ProviderModel, provider: &ProviderDefinition) -> String {
-    if provider.model_source != ProviderModelSource::BaiduOneApi
-        && provider.preset_id.as_deref() != Some("baidu-oneapi")
-    {
+    if !is_baidu_provider(provider) {
         return format!("{} \u{b7} {}", model.id, provider.display_name);
     }
     let base = model

@@ -140,6 +140,7 @@ fn collaboration_converted_schemas_and_plaintext_history_stay_readable() {
         1024,
         None,
         false,
+        false,
         None,
         &secret,
     )
@@ -422,6 +423,7 @@ fn opaque_agent_messages_are_rejected_by_plaintext_protocols() {
         ThinkingMode::Off,
         1024,
         None,
+        false,
         false,
         None,
         &secret,

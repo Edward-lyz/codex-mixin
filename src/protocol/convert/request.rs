@@ -19,6 +19,7 @@ pub(crate) fn native_messages_body(
     body: &Value,
     request: &MessageRequest,
     original: &Value,
+    allow_baidu_unsigned_thinking_replay: bool,
     compaction_secret: SecretSource<'_>,
 ) -> Result<Value, GatewayError> {
     let original_fields = original.as_object().ok_or_else(|| {
@@ -73,6 +74,7 @@ pub(crate) fn native_messages_body(
             &mut converted,
             false,
             body.get("model").and_then(Value::as_str),
+            allow_baidu_unsigned_thinking_replay,
             compaction_secret,
         )?;
         for message in converted {
@@ -159,6 +161,7 @@ pub(crate) fn responses_to_anthropic(
     default_max_tokens: u64,
     web_search: Option<WebSearchTool<'_>>,
     use_mcp_bridge_names: bool,
+    allow_baidu_unsigned_thinking_replay: bool,
     auto_thinking_kind: Option<AnthropicThinkingKind>,
     compaction_secret: SecretSource<'_>,
 ) -> Result<ConvertedRequest, GatewayError> {
@@ -198,6 +201,7 @@ pub(crate) fn responses_to_anthropic(
                     &mut messages,
                     use_mcp_bridge_names,
                     replay_model,
+                    allow_baidu_unsigned_thinking_replay,
                     compaction_secret,
                 )?;
             }
@@ -339,6 +343,7 @@ mod tests {
             4096,
             None,
             false,
+            false,
             Some(AnthropicThinkingKind::Adaptive),
             &test_secret,
         )
@@ -363,6 +368,7 @@ mod tests {
             ThinkingMode::Off,
             4096,
             None,
+            false,
             false,
             Some(AnthropicThinkingKind::Adaptive),
             &test_secret,
@@ -411,6 +417,7 @@ mod tests {
                     max_uses: None,
                 }),
                 false,
+                false,
                 Some(AnthropicThinkingKind::Adaptive),
                 &test_secret,
             )
@@ -430,6 +437,7 @@ mod tests {
             4096,
             None,
             false,
+            false,
             Some(AnthropicThinkingKind::Adaptive),
             &test_secret,
         )
@@ -445,6 +453,7 @@ mod tests {
                 ThinkingMode::Off,
                 4096,
                 None,
+                false,
                 false,
                 Some(AnthropicThinkingKind::Adaptive),
                 &test_secret,

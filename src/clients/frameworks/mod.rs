@@ -13,6 +13,7 @@ mod dotenv;
 mod engine;
 mod hanako;
 mod native_http;
+mod registry;
 mod schemas;
 mod startup;
 mod zed;
@@ -36,53 +37,15 @@ pub struct FrameworkModel {
 }
 
 pub fn name(id: &str) -> anyhow::Result<&'static str> {
-    Ok(match id {
-        "gemini" => "Gemini CLI",
-        "agy" => "agy",
-        "openchamber" => "OpenChamber",
-        "mimocode" => "MiMo Code",
-        "aside" => "Aside",
-        "omo" => "OmO",
-        "goose" => "Goose",
-        "cursor" => "Cursor CLI",
-        "cursor-local" => "Cursor",
-        "zed" => "Zed",
-        "vscode" => "VS Code",
-        "vscode-insiders" => "VS Code Insiders",
-        "vscodium" => "VSCodium",
-        "copilot-jetbrains" => "Copilot for JetBrains",
-        "air" => "Air",
-        "copilot" => "Copilot CLI",
-        "crush" => "Crush",
-        "reasonix" => "Reasonix",
-        "commandcode" => "Command Code",
-        "fx" => "fx",
-        "omp" => "Oh My Pi",
-        "devin" => "Devin",
-        "hermes" => "Hermes Agent",
-        "morph" => "Mister Morph",
-        "kimi" => "Kimi Code",
-        "qwen" => "Qwen Code",
-        "muse" => "Muse",
-        "empryo" => "Empryo",
-        "ante" => "Ante",
-        "minimax-code" => "MiniMax Code",
-        "droid" => "Droid",
-        "cline" => "Cline",
-        "qoder" => "Qoder",
-        "qoder-cn" => "Qoder CN",
-        "grok" => "Grok Build",
-        "zcode" => "ZCode",
-        "workbuddy" => "WorkBuddy",
-        "codebuddy" => "CodeBuddy",
-        "pencil" => "Pencil",
-        "t3code" => "T3 Code",
-        "hanako" => "Hanako",
-        "atomcode" => "AtomCode",
-        "alma" => "Alma",
-        "cindy" => "Cindy",
-        _ => anyhow::bail!("unknown framework: {id}"),
-    })
+    Ok(registry::spec(id)?.name)
+}
+
+pub fn is_native_models(id: &str) -> bool {
+    registry::spec(id).is_ok_and(|spec| spec.is_native_models())
+}
+
+pub fn revoke_key_before_remove(id: &str) -> bool {
+    registry::spec(id).is_ok_and(|spec| spec.revoke_key_before_remove)
 }
 
 pub fn limitation(_id: &str) -> Option<&'static str> {
@@ -104,30 +67,17 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
         .join(format!("{id}.json")))
 }
 
-/// agy rewrites `model` on `/model`; launches pass the model from the launch journal.
-fn free_fields(id: &str) -> &'static [&'static str] {
-    if id == "agy" { &["model"] } else { &[] }
-}
-
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
-    name(id)?;
-    let native_status = match id {
-        "zed" => Some(zed::status(manifest)),
-        "aside" => Some(aside::status(manifest)),
-        "cindy" => Some(cindy::status(manifest)),
-        "alma" => Some(alma::status(manifest)),
-        "hanako" => Some(hanako::status(manifest)),
-        _ => None,
-    };
-    if let Some(result) = native_status {
-        return Ok(result.unwrap_or_else(|error| IntegrationStatus {
+    let spec = registry::spec(id)?;
+    if let Some(driver) = spec.native_app_driver() {
+        return Ok((driver.status)(manifest).unwrap_or_else(|error| IntegrationStatus {
             state: "error",
             mode: Some("native_app"),
             detail: "Native integration could not be inspected.",
             error: Some(format!("{error:#}")),
         }));
     }
-    let native = matches!(id, "cursor" | "copilot" | "devin");
+    let native = spec.is_native_models();
     if let Some(detail) = limitation(id).filter(|_| !manifest.exists()) {
         return Ok(IntegrationStatus {
             state: "unsupported",
@@ -136,9 +86,8 @@ pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
             error: None,
         });
     }
-    let launch_required = matches!(id, "agy" | "cursor-local" | "muse" | "commandcode")
-        || (cfg!(feature = "client-auth") && matches!(id, "fx" | "empryo" | "ante"));
-    let managed = engine::is_managed_except(manifest, free_fields(id)).and_then(|managed| {
+    let launch_required = spec.requires_launch();
+    let managed = engine::is_managed_except(manifest, spec.free_fields).and_then(|managed| {
         if managed && launch_required {
             let journal = engine::read_record(manifest)?.context("missing integration journal")?;
             anyhow::ensure!(
@@ -187,15 +136,11 @@ pub fn install(
     models: &[FrameworkModel],
 ) -> anyhow::Result<()> {
     require_supported(id)?;
-    match id {
-        "zed" => return zed::install(manifest, base, key, models),
-        "aside" => return aside::install(manifest, base, key, models),
-        "cindy" => return cindy::install(manifest, base, key),
-        "alma" => return alma::install(manifest, base, key, models),
-        "hanako" => return hanako::install(manifest, base, key, models),
-        _ => {}
+    let spec = registry::spec(id)?;
+    if let Some(driver) = spec.native_app_driver() {
+        return (driver.install)(manifest, base, key, models);
     }
-    if matches!(id, "cursor" | "copilot" | "devin") {
+    if spec.is_native_models() {
         let selected = native_model(id, manifest, None, None)?;
         if selected["managed"] == true {
             return Ok(());
@@ -410,22 +355,15 @@ fn native_model_at(
 }
 
 pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
-    name(id)?;
-    match id {
-        "zed" => zed::remove(manifest),
-        "aside" => aside::remove(manifest),
-        "cindy" => cindy::remove(manifest),
-        "alma" => alma::remove(manifest),
-        "hanako" => hanako::remove(manifest),
-        _ => {
-            // Report a managed-field conflict before startup entries are removed,
-            // so a refused disconnect leaves the integration fully connected.
-            let free = free_fields(id);
-            engine::verify_removable(manifest, free)?;
-            startup::remove(manifest)?;
-            engine::remove_except(manifest, free)
-        }
+    let spec = registry::spec(id)?;
+    if let Some(driver) = spec.native_app_driver() {
+        return (driver.remove)(manifest);
     }
+    // Report a managed-field conflict before startup entries are removed,
+    // so a refused disconnect leaves the integration fully connected.
+    engine::verify_removable(manifest, spec.free_fields)?;
+    startup::remove(manifest)?;
+    engine::remove_except(manifest, spec.free_fields)
 }
 
 fn field(keys: &[&str], value: Value) -> (Vec<String>, Value) {

@@ -228,7 +228,8 @@ pub(super) fn fallback_plan(
     let native = primary.native_messages.clone().filter(|_| {
         resolved
             .provider
-            .protocol_for_model(resolved.upstream_model_id)
+            .endpoint_for_model(resolved.upstream_model_id)
+            .protocol
             == crate::provider::ProviderProtocol::AnthropicMessages
     });
     body["model"] = Value::String(fallback.to_owned());

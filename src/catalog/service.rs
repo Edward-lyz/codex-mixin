@@ -98,6 +98,7 @@ impl CatalogService {
                     continue;
                 };
                 let model = resolved.model.expect("routable model has cached metadata");
+                let endpoint = provider.endpoint_for_model(upstream_model_id);
                 models.push(ModelInfo {
                     // Public /v1/models IDs stay provider-qualified catalog slugs.
                     // Catalog generation strips the provider suffix via owned_by when it
@@ -118,8 +119,8 @@ impl CatalogService {
                     price_type: model.price_type.clone(),
                     context_window: model.context_window,
                     max_output_tokens: model.max_output_tokens,
-                    protocol: model.protocol,
-                    api_path: model.api_path.clone(),
+                    protocol: Some(endpoint.protocol),
+                    api_path: Some(endpoint.api_path().to_owned()),
                     supports_image: model.supports_image,
                     supports_thinking: model.supports_thinking,
                     supports_web_search: model.supports_web_search,
