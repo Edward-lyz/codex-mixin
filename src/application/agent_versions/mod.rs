@@ -46,59 +46,10 @@ const UPGRADE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const NPM_REGISTRY: &str = "https://registry.npmjs.org/";
 
 /// Agents the version core covers, in the order [`check_versions`] reports
-/// them. The ids match the Agents page.
-pub const AGENT_VERSION_IDS: [&str; 50] = [
-    "codex",
-    "claude",
-    "claude-desktop",
-    "dsh",
-    "opencode",
-    "pi",
-    "gemini",
-    "agy",
-    "openchamber",
-    "mimocode",
-    "aside",
-    "omo",
-    "goose",
-    "cursor",
-    "cursor-local",
-    "zed",
-    "vscode",
-    "vscode-insiders",
-    "vscodium",
-    "copilot-jetbrains",
-    "air",
-    "copilot",
-    "crush",
-    "reasonix",
-    "commandcode",
-    "fx",
-    "omp",
-    "devin",
-    "hermes",
-    "morph",
-    "kimi",
-    "qwen",
-    "muse",
-    "empryo",
-    "ante",
-    "minimax-code",
-    "droid",
-    "cline",
-    "qoder",
-    "qoder-cn",
-    "grok",
-    "zcode",
-    "workbuddy",
-    "codebuddy",
-    "pencil",
-    "t3code",
-    "hanako",
-    "atomcode",
-    "alma",
-    "cindy",
-];
+/// them. The ids match the Agents page. The roster itself lives in
+/// [`crate::gateway_access`] so client-key authentication can use it without
+/// depending on this module.
+pub use crate::gateway_access::AGENT_VERSION_IDS;
 
 /// One agent's CLI and native desktop installation, as the Agents page shows it.
 ///

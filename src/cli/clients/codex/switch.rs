@@ -137,9 +137,9 @@ pub(in crate::cli) async fn switch_to_official() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("managed Codex mode could not be determined"))?;
     let previous_restore_mode = before.restore_mode;
 
-    super::super::progress_step("Saving the current Codex integration mode");
+    crate::cli::progress_step("Saving the current Codex integration mode");
     save_restore_mode(mode)?;
-    super::super::progress_step("Resetting Codex to the official OpenAI configuration");
+    crate::cli::progress_step("Resetting Codex to the official OpenAI configuration");
     if let Err(error) = uninstall_codex_preserving_restore_mode(None, None) {
         rollback_restore_mode_if_still_managed(previous_restore_mode)?;
         return Err(error);
@@ -148,15 +148,15 @@ pub(in crate::cli) async fn switch_to_official() -> anyhow::Result<()> {
         codex_mixin::gateway_access::GatewayClient::Codex,
     )?;
 
-    super::super::progress_step("Validating the official Codex configuration");
+    crate::cli::progress_step("Validating the official Codex configuration");
     let restored = current_codex_status()?;
     anyhow::ensure!(
         restored.integration == CodexIntegration::Unmanaged && !restored.gateway_required,
         "Codex configuration is still managed; the gateway remains running"
     );
 
-    super::super::progress_step("Stopping the Mixin gateway");
-    super::super::service::stop_managed(true).await?;
+    crate::cli::progress_step("Stopping the Mixin gateway");
+    crate::cli::service::stop_managed(true).await?;
     Ok(())
 }
 
@@ -174,11 +174,11 @@ pub(in crate::cli) async fn switch_to_mixin() -> anyhow::Result<()> {
         .or(before.mode)
         .ok_or_else(|| anyhow::anyhow!("no previous managed Codex mode is available to restore"))?;
 
-    super::super::progress_step("Starting the Mixin gateway");
-    super::super::service::ensure_ready().await?;
-    super::super::progress_step("Restoring the previous Codex Mixin integration");
+    crate::cli::progress_step("Starting the Mixin gateway");
+    crate::cli::service::ensure_ready().await?;
+    crate::cli::progress_step("Restoring the previous Codex Mixin integration");
     install_codex(mode.install_options()).await?;
-    super::super::progress_step("Validating the managed Codex configuration");
+    crate::cli::progress_step("Validating the managed Codex configuration");
     let restored = current_codex_status()?;
     anyhow::ensure!(
         restored.integration == CodexIntegration::Managed
@@ -214,7 +214,7 @@ pub(in crate::cli) fn restore_codex_for_quit() -> anyhow::Result<bool> {
 }
 
 pub(super) fn switch_state_path() -> PathBuf {
-    super::super::runtime::state_dir().join(SWITCH_STATE_FILE)
+    crate::cli::runtime::state_dir().join(SWITCH_STATE_FILE)
 }
 
 fn mode_name(mode: ManagedCodexMode) -> &'static str {

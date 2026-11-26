@@ -42,6 +42,63 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         })
 }
 
+/// Framework-agent ids that can hold a `GatewayClient::Framework` client key.
+///
+/// The roster lives here because client-key authentication is the lowest layer
+/// that needs it. The Agents page enumerates the same ids in this order.
+pub const AGENT_VERSION_IDS: [&str; 50] = [
+    "codex",
+    "claude",
+    "claude-desktop",
+    "dsh",
+    "opencode",
+    "pi",
+    "gemini",
+    "agy",
+    "openchamber",
+    "mimocode",
+    "aside",
+    "omo",
+    "goose",
+    "cursor",
+    "cursor-local",
+    "zed",
+    "vscode",
+    "vscode-insiders",
+    "vscodium",
+    "copilot-jetbrains",
+    "air",
+    "copilot",
+    "crush",
+    "reasonix",
+    "commandcode",
+    "fx",
+    "omp",
+    "devin",
+    "hermes",
+    "morph",
+    "kimi",
+    "qwen",
+    "muse",
+    "empryo",
+    "ante",
+    "minimax-code",
+    "droid",
+    "cline",
+    "qoder",
+    "qoder-cn",
+    "grok",
+    "zcode",
+    "workbuddy",
+    "codebuddy",
+    "pencil",
+    "t3code",
+    "hanako",
+    "atomcode",
+    "alma",
+    "cindy",
+];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GatewayClient {
     Codex,
@@ -153,7 +210,7 @@ impl GatewayClientKeys {
         .into_iter()
         .find(|client| self.matches(*client, bearer))
         .or_else(|| {
-            crate::application::agent_versions::AGENT_VERSION_IDS
+            AGENT_VERSION_IDS
                 .into_iter()
                 .map(GatewayClient::Framework)
                 .find(|client| self.matches(*client, bearer))

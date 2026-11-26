@@ -4,7 +4,7 @@ use std::path::Path;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
 
-pub(super) fn is_logged_in(isolated_home: &Path) -> bool {
+pub(in crate::cli) fn is_logged_in(isolated_home: &Path) -> bool {
     // DUCX writes the signed-in identity under HOME/.comate/login-user/<username>.
     let login_dir = isolated_home.join(".comate/login-user");
     fs::read_dir(&login_dir)

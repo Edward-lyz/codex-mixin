@@ -40,7 +40,8 @@ impl AppState {
         mut config: GatewayConfig,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
-        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
+        ProviderCapabilities::from_default_path(&config.providers)?
+            .annotate_providers(&mut config.providers);
         let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
         Self::build(config, web_search_capabilities, env_lookup)
     }

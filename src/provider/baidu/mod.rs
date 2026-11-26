@@ -6,6 +6,7 @@
 //! `ProviderRuntime` interface.
 
 pub(crate) mod adapter;
+pub mod auth_carrier;
 pub(crate) mod discovery;
 pub(crate) mod quota;
 

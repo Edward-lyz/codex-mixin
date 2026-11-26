@@ -5,16 +5,26 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use fs2::FileExt;
 
-use crate::config::stored_config_path;
-
 use super::types::{CAPABILITY_FILE_VERSION, CapabilityFile};
 
+/// Directory holding the stored gateway configuration.
+///
+/// `provider` sits below `config`, so this repeats `config::stored_config_path`
+/// location rule instead of importing it.
+fn state_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("CODEX_GATEWAY_CONFIG")
+        && !path.is_empty()
+    {
+        return PathBuf::from(path)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+    }
+    crate::platform::home_dir().join(".codex-mixin")
+}
+
 pub(super) fn default_capability_path() -> PathBuf {
-    stored_config_path()
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("provider-capabilities.json")
+    state_dir().join("provider-capabilities.json")
 }
 
 pub(super) fn load_file(path: &Path) -> anyhow::Result<CapabilityFile> {

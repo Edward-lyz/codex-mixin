@@ -10,7 +10,6 @@ use anyhow::Context;
 use futures_util::{StreamExt, stream};
 use reqwest::Client;
 
-use crate::config::GatewayConfig;
 use crate::provider::{ProviderDefinition, ProviderModel, ProviderProtocol, ProviderRegistry};
 
 use storage::{default_capability_path, load_file, unix_milliseconds, update_file};
@@ -31,15 +30,14 @@ pub struct ProviderCapabilities {
 }
 
 impl ProviderCapabilities {
-    pub fn from_default_path(config: &GatewayConfig) -> anyhow::Result<Self> {
-        Self::load(default_capability_path(), config)
+    pub fn from_default_path(providers: &[ProviderDefinition]) -> anyhow::Result<Self> {
+        Self::load(default_capability_path(), providers)
     }
 
-    pub fn load(path: PathBuf, config: &GatewayConfig) -> anyhow::Result<Self> {
+    pub fn load(path: PathBuf, providers: &[ProviderDefinition]) -> anyhow::Result<Self> {
         let mut file = load_file(&path)?;
         file.providers.retain(|provider_id, record| {
-            config
-                .providers
+            providers
                 .iter()
                 .find(|provider| provider.id == *provider_id)
                 .is_some_and(|provider| {
@@ -49,8 +47,8 @@ impl ProviderCapabilities {
         Ok(Self { path, file })
     }
 
-    pub fn annotate_config(&self, config: &mut GatewayConfig) {
-        for provider in &mut config.providers {
+    pub fn annotate_providers(&self, providers: &mut [ProviderDefinition]) {
+        for provider in providers {
             if matches!(
                 provider.preset_id.as_deref(),
                 Some("agy" | "agy-business" | "kiro")
@@ -123,12 +121,6 @@ impl ProviderCapabilities {
         models: &[ProviderModel],
         progress: Option<ProbeProgress>,
     ) -> anyhow::Result<ProviderProbeSummary> {
-        let client = crate::ech::provider_http_client(
-            &client,
-            &reqwest::Url::parse(&provider.base_url)?,
-            std::time::Duration::from_secs(30),
-        )
-        .await?;
         let mut definition = provider.clone();
         definition.cached_models = models.to_vec();
         let registry = ProviderRegistry::new(vec![definition])?;
@@ -212,30 +204,29 @@ impl ProviderCapabilities {
     pub fn replace_provider_results(
         &mut self,
         expected_provider: &ProviderDefinition,
-        current_config: &GatewayConfig,
+        current_providers: &[ProviderDefinition],
         results: &[ModelCapabilities],
     ) -> anyhow::Result<()> {
-        self.update_provider_results(expected_provider, current_config, results, false)
+        self.update_provider_results(expected_provider, current_providers, results, false)
     }
 
     pub fn merge_provider_results(
         &mut self,
         expected_provider: &ProviderDefinition,
-        current_config: &GatewayConfig,
+        current_providers: &[ProviderDefinition],
         results: &[ModelCapabilities],
     ) -> anyhow::Result<()> {
-        self.update_provider_results(expected_provider, current_config, results, true)
+        self.update_provider_results(expected_provider, current_providers, results, true)
     }
 
     fn update_provider_results(
         &mut self,
         expected_provider: &ProviderDefinition,
-        current_config: &GatewayConfig,
+        current_providers: &[ProviderDefinition],
         results: &[ModelCapabilities],
         preserve_unprobed: bool,
     ) -> anyhow::Result<()> {
-        let current = current_config
-            .providers
+        let current = current_providers
             .iter()
             .find(|provider| provider.id == expected_provider.id)
             .context("provider was removed while capability probing was running")?;

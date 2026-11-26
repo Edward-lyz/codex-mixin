@@ -25,14 +25,7 @@ pub fn is_auto_review_model_id(model_id: &str) -> bool {
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderProtocol {
-    AnthropicMessages,
-    OpenAiChat,
-    OpenAiResponses,
-    GoogleGemini,
-}
+pub use crate::protocol::ProviderProtocol;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]

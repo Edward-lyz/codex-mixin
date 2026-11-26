@@ -20,8 +20,10 @@ use crate::provider::{ProviderQuotaParser, ProviderRuntime};
 
 mod manager;
 mod runner;
+mod targets;
 mod types;
 
+pub(crate) use targets::resolve_targets;
 pub(crate) use types::BenchmarkTarget;
 pub use types::{
     BENCHMARK_TARGET_OUTPUT_TOKENS, BenchmarkResultStatus, BenchmarkRunStatus,

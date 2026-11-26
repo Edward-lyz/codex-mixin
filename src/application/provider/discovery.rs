@@ -119,8 +119,20 @@ pub async fn refresh_provider_models(id: &str) -> anyhow::Result<ProviderRefresh
             Ok(None)
         }
     };
-    let (models, discovered_quota) =
-        tokio::join!(discover_provider_models(&client, &provider), quota_probe);
+    // The catalog request may need the official ECH transport; quota probing
+    // keeps the plain client it was built with. Building the ECH client inside
+    // this future keeps a construction failure on the same recorded
+    // refresh-failure path as a failed catalog request.
+    let discovery = async {
+        let discovery_client = crate::ech::provider_http_client(
+            &client,
+            &reqwest::Url::parse(&provider.base_url)?,
+            Duration::from_secs(30),
+        )
+        .await?;
+        discover_provider_models(&discovery_client, &provider).await
+    };
+    let (models, discovered_quota) = tokio::join!(discovery, quota_probe);
     let discovered_quota = match discovered_quota {
         Ok(discovered) => discovered,
         Err(error) => {
@@ -146,7 +158,7 @@ pub async fn refresh_provider_models(id: &str) -> anyhow::Result<ProviderRefresh
         }
     };
     let runtime_config = GatewayConfig::from_stored_config()?;
-    let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+    let capabilities = ProviderCapabilities::from_default_path(&runtime_config.providers)?;
     let mut annotated_provider = provider.clone();
     annotated_provider.cached_models = models;
     capabilities.annotate_provider(&mut annotated_provider);

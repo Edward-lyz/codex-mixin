@@ -429,9 +429,7 @@ async fn fetch_openai_catalog(
         .models_url()
         .context("provider models URL is not configured")?
         .clone();
-    let request_client =
-        crate::ech::provider_http_client(client, &url, std::time::Duration::from_secs(30)).await?;
-    let mut request = provider.apply_auth(request_client.get(url)).build()?;
+    let mut request = provider.apply_auth(client.get(url)).build()?;
     let request_headers = request.headers().clone();
     let request_url = request.url().clone();
     let cache = MODELS_HTTP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -455,7 +453,7 @@ async fn fetch_openai_catalog(
                 .insert(reqwest::header::IF_MODIFIED_SINCE, modified.clone());
         }
     }
-    let response = request_client.execute(request).await?;
+    let response = client.execute(request).await?;
     let status = response.status();
     let response_headers = response.headers().clone();
     let body = if status == reqwest::StatusCode::NOT_MODIFIED {

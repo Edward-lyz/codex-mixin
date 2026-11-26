@@ -1,13 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEFAULT_GROWTH_THRESHOLD_TOKENS: u64 = 100_000;
-pub const DEFAULT_PRESSURE_RATIO: f64 = 0.75;
-pub const DEFAULT_URGENT_RATIO: f64 = 0.95;
-pub const DEFAULT_PROTECTED_MESSAGES: usize = 3;
-pub const DEFAULT_PROTECTED_TOKENS: u64 = 10_000;
-pub const DEFAULT_MAX_INTERNAL_ROUNDS: usize = 10;
-pub const DEFAULT_MAX_TIER: u8 = 3;
+pub use crate::config::{
+    DEFAULT_GROWTH_THRESHOLD_TOKENS, DEFAULT_MAX_INTERNAL_ROUNDS, DEFAULT_MAX_TIER,
+    DEFAULT_PRESSURE_RATIO, DEFAULT_PROTECTED_MESSAGES, DEFAULT_PROTECTED_TOKENS,
+    DEFAULT_URGENT_RATIO,
+};
 
 pub const TOOL_COMPRESS: &str = "mixin_context_compress";
 pub const TOOL_DECOMPRESS: &str = "mixin_context_decompress";

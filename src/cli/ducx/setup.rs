@@ -22,7 +22,7 @@ use tokio::process::Command;
 
 use codex_mixin::ducx_auth_carrier::UPDATE_GUARDS;
 
-use super::ducx_session::is_logged_in;
+use super::session::is_logged_in;
 
 const DOWNLOAD_BASE_URL: &str = "https://baidu-cc-client.bj.bcebos.com/baidu-cx";
 const DOWNLOAD_ATTEMPTS: usize = 3;
@@ -37,7 +37,7 @@ const PACKAGE_LAUNCHER_STEMS: [&str; 2] = ["baidu-codex", "codex"];
 const BUNDLED_STATE_FILES: [&str; 4] = ["config.toml", "auth.json", "hooks.json", "user.json"];
 
 /// Install the managed DUCX when missing and make sure it is signed in.
-pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
+pub(in crate::cli) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
     let ducx_root = home_dir_required()
         .context("a home directory is required to install managed DUCX")?
         .join(".codex-mixin/ducx");
@@ -47,7 +47,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         .join(executable_file_name("ducx"));
     let client = download_client()?;
     if !executable.is_file() {
-        super::progress_step("Preparing DUCX authentication");
+        crate::cli::progress_step("Preparing DUCX authentication");
         let version = latest_version(&client).await?;
         install_package(&client, &version, &ducx_root, &install_home, &executable).await?;
     } else if let Err(error) =
@@ -101,7 +101,7 @@ async fn upgrade_if_outdated(
     if installed.trim() == latest {
         return Ok(());
     }
-    super::progress_step("Updating DUCX authentication package");
+    crate::cli::progress_step("Updating DUCX authentication package");
     install_package(client, &latest, ducx_root, install_home, executable).await
 }
 
@@ -139,7 +139,7 @@ async fn install_package(
     tokio::fs::create_dir_all(&download_dir).await?;
     set_owner_only_dir_mode(&download_dir)?;
     let archive = download_dir.join(&archive_name);
-    super::progress_step("Downloading DUCX authentication package");
+    crate::cli::progress_step("Downloading DUCX authentication package");
     download_archive(
         client,
         &format!("{DOWNLOAD_BASE_URL}/{archive_name}"),
@@ -155,7 +155,7 @@ async fn install_package(
     let root = install_home.join(".baidu-cx");
     tokio::fs::create_dir_all(&root).await?;
     let staging = root.join(format!(".baidu-cx-staging-{}", std::process::id()));
-    super::progress_step("Installing DUCX authentication package");
+    crate::cli::progress_step("Installing DUCX authentication package");
     let archive_path = archive.clone();
     let staging_dir = staging.clone();
     let active = root.join("baidu-cx");
@@ -308,10 +308,12 @@ async fn download_archive_once(client: &Client, url: &str, partial: &Path) -> an
         if downloaded_bytes >= next_progress {
             let downloaded_mib = downloaded_bytes / (1024 * 1024);
             match expected_bytes.map(|bytes| bytes.div_ceil(1024 * 1024)) {
-                Some(total_mib) => super::progress_step(&format!(
+                Some(total_mib) => crate::cli::progress_step(&format!(
                     "Downloading DUCX {downloaded_mib}/{total_mib} MiB"
                 )),
-                None => super::progress_step(&format!("Downloading DUCX {downloaded_mib} MiB")),
+                None => {
+                    crate::cli::progress_step(&format!("Downloading DUCX {downloaded_mib} MiB"))
+                }
             }
             next_progress = downloaded_bytes + DOWNLOAD_PROGRESS_INTERVAL;
         }
@@ -337,7 +339,7 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
         return Ok(());
     }
     let codex_home = home.join(".baidu-cx");
-    super::progress_step("Waiting for DUCX login");
+    crate::cli::progress_step("Waiting for DUCX login");
     let login_stdio = std::env::var("CODEX_MIXIN_LOGIN_STDIO").as_deref() == Ok("1");
     if std::io::stdin().is_terminal() || login_stdio {
         eprintln!("\nDUCX login is required. Scan the QR code below to continue.");
@@ -384,6 +386,6 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
         is_logged_in(home),
         "DUCX login did not complete; finish the QR-code login and try again"
     );
-    super::progress_step("DUCX authentication completed");
+    crate::cli::progress_step("DUCX authentication completed");
     Ok(())
 }

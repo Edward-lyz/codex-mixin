@@ -300,6 +300,41 @@ classDiagram
 
 ---
 
+## MIT 公理设计：FRS → DP 下三角依赖矩阵
+
+为满足 MIT 公理设计第一公理（Independence Axiom，独立公理），`codex-mixin` 的库模块依赖矩阵必须为**严格下三角（Decoupled / Uncoupled DAG）**，禁止任意跨模块强连通环（SCC size > 1）。
+
+### 1. 功能需求（FRS）与设计参数（DP）分层映射
+
+| 层级 | 模块（DP） | 核心功能需求（FR） | 允许依赖下层 |
+|---|---|---|---|
+| L0 | `error`, `gateway_access`, `usage` | 错误边界、客户端访问凭据与 Agent 标识、Token/费用统计 | 无（纯内核） |
+| L1 | `images` | 图片规范化与解码边界 | `error` |
+| L2 | `protocol` | 共享协议类型（`ProviderProtocol` / `ThinkingMode`）、DTO（`anthropic`）、请求转换与两层流式 FSM | `error`, `images` |
+| L3 | `provider` | Provider 规范、Adapter（含 `provider/baidu/`）、`EndpointSpec`/`WirePolicy`、模型发现与探测 | `error`, `protocol` |
+| L4 | `config` | 配置持久化、校验、迁移、路由/长上下文默认参数 | `gateway_access`, `provider` |
+| L5 | `clients`, `ech`, `pi_plugins`, `web_search` | 编码客户端接入、ECH DNS/HTTP 客户端、Pi 插件、联网搜索探测 | `config`, `provider`, `protocol`, `error` |
+| L6 | `catalog`, `context`, `upstream` | 模型目录缓存、长上下文归档与压缩、上游 HTTP/托管认证运行时 | `L0..L5` |
+| L7 | `application`, `gateway` | 应用用例编排、单次请求路由/执行/故障转移/缓存观测 | `L0..L6` |
+| L8 | `benchmark`, `fusion` | 压测目标解析与执行、多模型融合编排 | `L0..L7` |
+| L9 | `server` | HTTP/WS 网关入口与 `AppState` 组合根 | `L0..L8` |
+
+### 2. 解耦改造（7 条回边切断）
+
+此前静态扫描存在 12 模块强连通块与 3 模块强连通块，现已通过以下 7 处解耦全部消除：
+
+1. `anthropic -> provider` & `protocol -> config`：`ProviderProtocol` 与 `ThinkingMode` 下沉到 `protocol/types.rs`，`anthropic.rs` 迁入 `protocol/anthropic.rs`（`lib.rs` 保留 `pub use protocol::anthropic;`）。
+2. `provider -> config`：`ProviderCapabilities` 改为接收 `&[ProviderDefinition]` / `&mut [ProviderDefinition]`，默认缓存路径不再反向调用 `config::stored_config_path`。
+3. `provider -> ech`：`provider` 不再直接构造 ECH HTTP 客户端，由上层调用方（`application/ech.rs`）构造并传入 `reqwest::Client`。
+4. `gateway_access -> application`：`AGENT_VERSION_IDS` 下沉至 `gateway_access.rs` 并在 `application/agent_versions` 重导出。
+5. `config -> context`：7 个 `DEFAULT_*` 上下文常量下沉至 `config/context.rs` 并在 `context/types.rs` 重导出。
+6. `catalog -> benchmark`：压测目标解析从 `CatalogService::benchmark_targets` 迁至 `benchmark/targets.rs::resolve_targets`。
+7. 目录收敛：`catalog/`、`config/`、`ech/` 统一 `mod.rs`；`ducx_auth_carrier.rs` 归入 `provider/baidu/auth_carrier.rs`；`listener.rs` 归入 `cli/service/listener.rs`；`cli/` 按 `clients/`、`config/`、`ducx/` 分领域组织。
+
+该下三角约束已固化为 `scripts/check_arch.sh` 的 Tarjan SCC 自动门禁（0 个环方可合入）。
+
+---
+
 ## 验证门禁
 
 修改上述任一抽象层后，在仓库根目录运行：

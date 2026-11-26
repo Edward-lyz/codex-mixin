@@ -1,9 +1,9 @@
 use codex_mixin::config::{load_stored_config, mutate_stored_config};
 use serde_json::json;
 
-use super::args::CorsCommand;
+use crate::cli::args::CorsCommand;
 
-pub(super) fn run(command: CorsCommand) -> anyhow::Result<()> {
+pub(in crate::cli) fn run(command: CorsCommand) -> anyhow::Result<()> {
     let (origins, changed, json_output) = match command {
         CorsCommand::Get { json } => (
             load_stored_config()?

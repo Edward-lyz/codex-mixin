@@ -181,7 +181,7 @@ pub async fn probe_provider_models(
     );
     if fallback_only {
         let config = GatewayConfig::from_stored_config()?;
-        let capabilities = ProviderCapabilities::from_default_path(&config)?;
+        let capabilities = ProviderCapabilities::from_default_path(&config.providers)?;
         let needing = capabilities
             .models_needing_probe(&provider, &models)?
             .into_iter()
@@ -194,13 +194,21 @@ pub async fn probe_provider_models(
     let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
         .timeout(Duration::from_secs(30))
         .build()?;
+    // Official GPT hosts may need the ECH transport; probing owns that wrapping
+    // now that `provider` no longer reaches into `ech`.
+    let client = crate::ech::provider_http_client(
+        &client,
+        &reqwest::Url::parse(&provider.base_url)?,
+        Duration::from_secs(30),
+    )
+    .await?;
     let summary = ProviderCapabilities::probe_provider(client, &provider, &models).await?;
     let config = GatewayConfig::from_stored_config()?;
-    let mut capabilities = ProviderCapabilities::from_default_path(&config)?;
+    let mut capabilities = ProviderCapabilities::from_default_path(&config.providers)?;
     if replace_results {
-        capabilities.replace_provider_results(&provider, &config, &summary.results)?;
+        capabilities.replace_provider_results(&provider, &config.providers, &summary.results)?;
     } else {
-        capabilities.merge_provider_results(&provider, &config, &summary.results)?;
+        capabilities.merge_provider_results(&provider, &config.providers, &summary.results)?;
     }
     mutate_stored_config(|stored| {
         let current = provider_mut(stored, id)?;
@@ -343,6 +351,12 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
             let client = crate::platform::proxy::auto_proxy(reqwest::Client::builder())
                 .timeout(Duration::from_secs(10))
                 .build()?;
+            let client = crate::ech::provider_http_client(
+                &client,
+                &reqwest::Url::parse(&provider.base_url)?,
+                Duration::from_secs(10),
+            )
+            .await?;
             let models = discover_provider_models(&client, &provider)
                 .await
                 .with_context(|| {

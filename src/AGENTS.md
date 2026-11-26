@@ -3,8 +3,8 @@
 继承根规范。本目录容纳库核心与 CLI 二进制，不能把目录相邻当作允许任意互调。
 
 - `lib.rs` 声明库模块和最小导出；`main.rs` 只组合 CLI 与 Web 面板。具体交互壳不能成为库依赖。
-- 根级 `anthropic.rs` 是协议 DTO，`error.rs` 是错误边界，`gateway_access.rs` 是客户端访问凭据语义，`ducx_auth_carrier.rs` 是内部认证载体；新增逻辑按领域归属，不继续堆根级杂项工具。
-- `config.rs`、`catalog.rs`、`ech.rs` 与同名目录共同组成一个模块；配置规则见 `config/AGENTS.md`，目录和 ECH 规则在本文件统一表达。
+- `protocol/anthropic.rs` 是协议 DTO（根级 `crate::anthropic` 由它重导出以保持既有路径），`protocol/types.rs` 是协议与思考模式的共享词汇，`error.rs` 是错误边界，`gateway_access.rs` 是客户端访问凭据语义，`provider/baidu/auth_carrier.rs` 是内部认证载体（根级 `crate::ducx_auth_carrier` 由它重导出以保持既有路径）；新增逻辑按领域归属，不继续堆根级杂项工具。
+- `config/`、`catalog/`、`ech/` 均统一采用 `mod.rs` 目录组织；配置规则见 `config/AGENTS.md`，目录和 ECH 规则在本文件统一表达。
 - 请求处理使用已组合的组件，不创建全局可变服务定位器。能力模块不引用 server、CLI 或具体 UI；OS 差异收敛到 platform。
 - 跨模块类型默认限制在 crate 内；共享类型放在拥有该语义的模块，不借助重导出制造依赖环。
 - catalog 保留模型来源、稳定 ID 和真实能力，目录缓存随配置/能力变化失效，不参与请求执行。

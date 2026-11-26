@@ -12,7 +12,11 @@ mod context;
 mod cors;
 mod failover;
 mod fusion;
-pub use context::ContextSettings;
+pub use context::{
+    ContextSettings, DEFAULT_GROWTH_THRESHOLD_TOKENS, DEFAULT_MAX_INTERNAL_ROUNDS,
+    DEFAULT_MAX_TIER, DEFAULT_PRESSURE_RATIO, DEFAULT_PROTECTED_MESSAGES, DEFAULT_PROTECTED_TOKENS,
+    DEFAULT_URGENT_RATIO,
+};
 pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
 pub use failover::{
     FailoverActivity, FailoverRoute, FailoverSwitch, MAX_FAILOVER_FALLBACKS,
@@ -57,11 +61,7 @@ pub fn client_address(bind: SocketAddr) -> SocketAddr {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ThinkingMode {
-    Off,
-    Auto,
-}
+pub use crate::protocol::ThinkingMode;
 
 #[derive(Clone, Debug)]
 pub struct GatewayConfig {

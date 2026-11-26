@@ -47,11 +47,9 @@ pub(crate) async fn discover_baidu_models(
         .models_url()
         .context("provider available-models URL is not configured")?
         .clone();
-    let request_client =
-        crate::ech::provider_http_client(client, &url, std::time::Duration::from_secs(30)).await?;
     let request = match native_headers {
-        Some(headers) => request_client.post(url).headers(headers.clone()),
-        None => provider.apply_auth(request_client.post(url)),
+        Some(headers) => client.post(url).headers(headers.clone()),
+        None => provider.apply_auth(client.post(url)),
     };
     let response = request.json(&json!({})).send().await?;
     let status = response.status();

@@ -12,7 +12,7 @@ pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
 pub use claude_code::fetch_claude_code_quota;
 pub use kiro::fetch_kiro_quota;
 mod adapter;
-pub(crate) mod baidu;
+pub mod baidu;
 pub mod capabilities;
 mod discovery;
 mod endpoint;
