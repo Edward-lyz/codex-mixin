@@ -3,15 +3,18 @@
 //! Wire contract: https://ai.google.dev/api/generate-content
 //! CLI API-key transport: google-gemini/gemini-cli packages/core/src/core/contentGenerator.ts.
 //! Sampling and thinking use canonical options across protocols. Exact Gemini
-//! generation options survive a Gemini upstream roundtrip. Media, server tools,
-//! caching and CloudCode still require their own supported wire contracts.
+//! generation options survive a Gemini upstream roundtrip. Inline images use
+//! Responses image inputs. Other media, server tools, caching and CloudCode
+//! still require their own supported wire contracts.
 use crate::error::GatewayError;
 use crate::protocol::sse::SseDecoder;
 use crate::protocol::{CollectedResponse, ResponseStream};
+use base64::{engine::general_purpose::STANDARD, read::DecoderReader};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::io::Read;
 
 fn bad(message: impl Into<String>) -> GatewayError {
     GatewayError::BadRequest(message.into())
@@ -74,6 +77,7 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
         .and_then(Value::as_array)
         .filter(|c| !c.is_empty())
         .ok_or_else(|| bad("contents must be a nonempty array"))?;
+    let mut has_image = false;
     for (turn, content) in contents.iter().enumerate() {
         fields(content, &["role", "parts"], "content")?;
         let role = match content.get("role") {
@@ -95,19 +99,20 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
                 part,
                 &[
                     "text",
+                    "inlineData",
                     "functionCall",
                     "functionResponse",
                     "thoughtSignature",
                 ],
                 "part",
             )?;
-            let count = ["text", "functionCall", "functionResponse"]
+            let count = ["text", "inlineData", "functionCall", "functionResponse"]
                 .iter()
                 .filter(|key| part.get(**key).is_some())
                 .count();
             if count != 1 {
                 return Err(bad(
-                    "part requires exactly one of text/functionCall/functionResponse",
+                    "part requires exactly one of text/inlineData/functionCall/functionResponse",
                 ));
             }
             if let Some(text) = part.get("text") {
@@ -118,6 +123,39 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
                     .as_str()
                     .ok_or_else(|| bad("part.text must be a string"))?;
                 input.push(json!({"type":"message", "role":if role == "model" {"assistant"} else {"user"}, "content":[{"type":if role == "model" {"output_text"} else {"input_text"}, "text":text}]}));
+            } else if let Some(blob) = part.get("inlineData") {
+                if role != "user" || part.get("thoughtSignature").is_some() {
+                    return Err(bad("inlineData requires an unsigned user part"));
+                }
+                fields(blob, &["mimeType", "data"], "inlineData")?;
+                let mime_type = string(blob, "mimeType")?;
+                if !matches!(
+                    mime_type,
+                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                ) {
+                    return Err(bad(
+                        "inlineData.mimeType must be image/png, image/jpeg, image/gif or image/webp",
+                    ));
+                }
+                let data = string(blob, "data")?;
+                let mut decoder = DecoderReader::new(data.as_bytes(), &STANDARD);
+                let mut header = [0; 12];
+                decoder
+                    .read_exact(&mut header)
+                    .map_err(|_| bad("inlineData.data must be a valid base64-encoded image"))?;
+                if !image::guess_format(&header)
+                    .is_ok_and(|format| format.to_mime_type() == mime_type)
+                {
+                    return Err(bad("inlineData.mimeType does not match the image data"));
+                }
+                std::io::copy(&mut decoder, &mut std::io::sink())
+                    .map_err(|_| bad("inlineData.data must be valid base64"))?;
+                has_image = true;
+                input.push(json!({
+                    "type":"message", "role":"user", "content":[{
+                        "type":"input_image", "image_url":format!("data:{mime_type};base64,{data}")
+                    }]
+                }));
             } else if let Some(call) = part.get("functionCall") {
                 if role != "model" {
                     return Err(bad("functionCall requires model role"));
@@ -179,6 +217,20 @@ pub(crate) fn to_responses(body: &Value, model: &str) -> Result<Value, GatewayEr
                 }
                 let (id, _) = pending.remove(matches[0]);
                 input.push(json!({"type":"function_call_output", "call_id":id, "output":output.to_string()}));
+            }
+        }
+    }
+    if has_image {
+        // A user turn can span multiple Gemini contents. Anthropic and Chat
+        // Completions need its tool results together before text and images.
+        for turn in
+            input.split_mut(|item| item["role"] == "assistant" || item["type"] == "function_call")
+        {
+            if turn
+                .iter()
+                .any(|item| item["content"][0]["type"] == "input_image")
+            {
+                turn.sort_by_key(|item| item["type"] != "function_call_output");
             }
         }
     }

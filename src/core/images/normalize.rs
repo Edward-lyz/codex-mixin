@@ -70,7 +70,7 @@ pub(crate) async fn normalize_anthropic_images_blocking(
     .await
 }
 
-async fn run_image_work<T, F>(work: F) -> Result<T, GatewayError>
+pub(crate) async fn run_image_work<T, F>(work: F) -> Result<T, GatewayError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, GatewayError> + Send + 'static,

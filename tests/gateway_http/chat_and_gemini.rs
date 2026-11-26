@@ -146,6 +146,90 @@ async fn gemini_inbound_accepts_signed_function_response_replay() {
 }
 
 #[tokio::test]
+async fn gemini_inbound_forwards_inline_image_after_parallel_tool_responses() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway = spawn_gateway(upstream).await;
+    let image = png_data_url(16, 16);
+    let (_, data) = image.split_once(',').unwrap();
+    let image_result = json!({"functionResponse":{
+        "id":"call_1","name":"read_file","response":{"output":"read image"}
+    }});
+    let image_part = json!({"inlineData":{"mimeType":"image/png","data":data}});
+    let text_result = json!({"functionResponse":{
+        "id":"call_2","name":"read_file","response":{"output":"read notes"}
+    }});
+    let client = reqwest::Client::new();
+    for results in [
+        vec![json!({"role":"user","parts":[image_result,image_part,text_result]})],
+        vec![
+            json!({"role":"user","parts":[image_result,image_part]}),
+            json!({"role":"user","parts":[text_result]}),
+        ],
+    ] {
+        let mut contents = vec![
+            json!({"role":"user","parts":[{"text":"describe the screenshot"}]}),
+            json!({"role":"model","parts":[
+                {"functionCall":{"id":"call_1","name":"read_file","args":{"file_path":"clipboard.png"}}},
+                {"functionCall":{"id":"call_2","name":"read_file","args":{"file_path":"notes.txt"}}}
+            ]}),
+        ];
+        contents.extend(results);
+        let response = client
+            .post(format!(
+                "{gateway}/v1beta/models/DeepSeek-V4-Flash-custom:streamGenerateContent?alt=sse"
+            ))
+            .header("x-goog-api-key", "gateway-key")
+            .json(&json!({"contents":contents}))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let events = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{events}");
+        assert!(events.contains("\"finishReason\":\"STOP\""), "{events}");
+    }
+
+    let sent = requests.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    for body in sent.iter() {
+        let parts = body["messages"][2]["content"].as_array().unwrap();
+        assert_eq!(parts[0]["type"], "tool_result");
+        assert_eq!(parts[0]["tool_use_id"], "call_1");
+        assert_eq!(parts[1]["type"], "tool_result");
+        assert_eq!(parts[1]["tool_use_id"], "call_2");
+        assert_eq!(parts[2]["type"], "image");
+        assert_eq!(
+            parts[2]["source"],
+            json!({"type":"base64","media_type":"image/png","data":data})
+        );
+    }
+}
+
+#[tokio::test]
+async fn gemini_inbound_counts_inline_image_without_counting_base64_as_text() {
+    let gateway = spawn_gateway("http://127.0.0.1:1".to_owned()).await;
+    let image = png_data_url(256, 256);
+    let (_, data) = image.split_once(',').unwrap();
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway}/v1beta/models/DeepSeek-V4-Flash-custom:countTokens"
+        ))
+        .header("x-goog-api-key", "gateway-key")
+        .json(&json!({"contents":[{"parts":[
+            {"text":"describe the screenshot"},
+            {"inlineData":{"mimeType":"image/png","data":data}}
+        ]}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-codex-mixin-token-count"], "estimated");
+    let body: Value = response.json().await.unwrap();
+    let total = body["totalTokens"].as_u64().unwrap();
+    assert!((258..2000).contains(&total), "{body}");
+}
+
+#[tokio::test]
 async fn chat_endpoint_returns_json_or_sse_and_real_usage() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway = spawn_gateway(upstream).await;
