@@ -27,7 +27,9 @@ if [[ -n "${CARGO_BUILD_FEATURES:-}" ]]; then
 fi
 
 cd "$ROOT_DIR"
-cargo build "${CLI_ARGS[@]}" --bin codex-mixin
+if [[ "${CODEX_MIXIN_SKIP_CLI_BUILD:-0}" != "1" ]]; then
+  cargo build "${CLI_ARGS[@]}" --bin codex-mixin
+fi
 cargo build "${DESKTOP_ARGS[@]}" --manifest-path "$DESKTOP_DIR/Cargo.toml"
 "$ROOT_DIR/scripts/check_localizations.sh"
 

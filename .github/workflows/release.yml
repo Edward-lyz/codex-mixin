@@ -47,45 +47,19 @@ jobs:
   publish:
     name: Publish release
     needs: [version, build]
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: codex-mixin-*
           path: dist/release
           merge-multiple: true
       - name: Prepare current release notes
         shell: bash
         run: |
-          tag="${{ needs.version.outputs.tag }}"
-          # Publish only the current version. The zh-Hans block holds every
-          # version, so select the section headed by the release tag and stop
-          # at the next version heading.
-          awk -v heading="## $tag" '
-            /^<!-- codex-mixin:[A-Za-z-]+:start -->$/ {
-              locale = $0
-              sub(/^<!-- codex-mixin:/, "", locale)
-              sub(/:start -->$/, "", locale)
-              next
-            }
-            /^<!-- codex-mixin:[A-Za-z-]+:end -->$/ { locale = ""; emit = 0; next }
-            locale == "zh-Hans" && $0 == heading { emit = 1 }
-            locale == "zh-Hans" && emit && /^## / && $0 != heading { emit = 0 }
-            locale == "zh-Hans" && emit { print }
-          ' RELEASE_NOTES.md > .current-release-notes.md
-
-          source_count="$(grep -Fxc "## $tag" RELEASE_NOTES.md || true)"
-          if [[ "$source_count" != "3" ]]; then
-            echo "expected three localized headings for $tag in RELEASE_NOTES.md, found ${source_count:-0}" >&2
-            exit 1
-          fi
-          output_count="$(grep -Fxc "## $tag" .current-release-notes.md || true)"
-          version_count="$(grep -Ec '^## v' .current-release-notes.md || true)"
-          if [[ "$output_count" != "1" || "$version_count" != "1" ]]; then
-            echo "expected only the $tag section in the release notes, found ${output_count:-0} tag headings and ${version_count:-0} version headings" >&2
-            exit 1
-          fi
+          ./scripts/extract_release_notes.sh "${{ needs.version.outputs.tag }}" .current-release-notes.md
       - name: Verify desktop update signatures
         shell: bash
         run: |
@@ -105,47 +79,37 @@ jobs:
               exit 1
             }
           done
-      - name: Sign macOS update feeds for Sparkle clients
+      - name: Combine macOS Sparkle update feeds
         shell: bash
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          RELEASE_TAG: ${{ needs.version.outputs.tag }}
-          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          : "${SPARKLE_PRIVATE_KEY:?missing SPARKLE_PRIVATE_KEY for 0.x macOS clients}"
-          sparkle_dir="$(./scripts/fetch_sparkle.sh)"
-          appcasts="$(mktemp -d)"
-          trap 'rm -rf "$appcasts"' EXIT
-          releases="https://github.com/Edward-lyz/codex-mixin/releases"
           for arch in aarch64 x86_64; do
-            mkdir "$appcasts/$arch"
-            dmg="codex-mixin-$VERSION-$arch-apple-darwin.dmg"
-            cp "dist/release/$dmg" "$appcasts/$arch/"
-            cp .current-release-notes.md "$appcasts/$arch/${dmg%.dmg}.md"
-            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
-              --ed-key-file - --download-url-prefix "$releases/download/$RELEASE_TAG/" \
-              --embed-release-notes --maximum-deltas 0 --link "$releases/tag/$RELEASE_TAG" \
-              -o "dist/release/appcast-$arch.xml" "$appcasts/$arch"
-            xmllint --noout "dist/release/appcast-$arch.xml"
+            test -s "dist/release/appcast-$arch.xml"
             test "$(grep -c '<item>' "dist/release/appcast-$arch.xml")" = 1
-            grep -Fq "$dmg" "dist/release/appcast-$arch.xml"
             grep -Fq 'sparkle:edSignature=' "dist/release/appcast-$arch.xml"
           done
           # Older releases share a feed and rely on the arm64 hardware requirement.
+          intel_item="$(mktemp)"
+          trap 'rm -f "$intel_item"' EXIT
           awk '/<item>/{copy=1} copy{print} /<\/item>/{exit}' \
-            dist/release/appcast-x86_64.xml > "$appcasts/intel.xml"
-          awk -v item="$appcasts/intel.xml" '
+            dist/release/appcast-x86_64.xml > "$intel_item"
+          awk -v item="$intel_item" '
             /<\/channel>/ { while ((getline line < item) > 0) print line }
             { print }
           ' dist/release/appcast-aarch64.xml > dist/release/appcast.xml
-          xmllint --noout dist/release/appcast.xml
           test "$(grep -c 'sparkle:edSignature=' dist/release/appcast.xml)" = 2
-          first_arch="$(xmllint --xpath 'string(/rss/channel/item[1]/*[local-name()="hardwareRequirements"])' dist/release/appcast.xml)"
-          if [[ "$first_arch" != arm64 ]]; then
-            echo "expected the ARM64 update first in the combined Sparkle feed" >&2
-            exit 1
-          fi
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("dist/release/appcast.xml")
+          items = tree.getroot().findall("./channel/item")
+          assert len(items) == 2, f"expected 2 items, found {len(items)}"
+          first_arch = next(
+              (el.text for el in items[0] if el.tag.endswith("hardwareRequirements")),
+              None,
+          )
+          assert first_arch == "arm64", f"expected arm64 first, got {first_arch!r}"
+          PY
       - name: Write package manager manifests
         shell: bash
         run: |
@@ -156,8 +120,9 @@ jobs:
         shell: bash
         run: |
           cd dist/release
+          hash_cmd="sha256sum"; command -v sha256sum >/dev/null 2>&1 || hash_cmd="shasum -a 256"
           find . -maxdepth 1 -type f ! -name SHA256SUMS -exec basename {} \; | LC_ALL=C sort \
-            | xargs shasum -a 256 > SHA256SUMS
+            | xargs $hash_cmd > SHA256SUMS
           test -s SHA256SUMS
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
