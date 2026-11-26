@@ -11,6 +11,7 @@ pub use agy::{AgyQuotaWindow, fetch_agy_quota};
 pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
 pub use claude_code::fetch_claude_code_quota;
 pub use kiro::fetch_kiro_quota;
+mod adapter;
 pub mod capabilities;
 mod discovery;
 mod endpoint;
@@ -34,11 +35,12 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use reqwest::header::HeaderMap;
 
+pub(crate) use adapter::{ProviderAdapter, adapter_for};
 pub use discovery::{
     AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
     discover_provider_models, official_models_from_catalog, redact_provider_error,
 };
-pub use endpoint::{EndpointSpec, WirePolicy, is_baidu_provider};
+pub use endpoint::{EndpointSpec, WirePolicy};
 pub use models_dev::{MODELS_DEV_API_URL, default_metadata_cache_path, metadata_catalog_path};
 pub use quota::{QuotaUsageSummary, quota_usage};
 pub use registry::{
@@ -65,45 +67,7 @@ pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
 
 /// Client-facing label; routing continues to use the separate catalog slug.
 pub fn provider_model_display_name(model: &ProviderModel, provider: &ProviderDefinition) -> String {
-    if !is_baidu_provider(provider) {
-        return format!("{} \u{b7} {}", model.id, provider.display_name);
-    }
-    let base = model
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or(&model.id);
-    let gpt = base
-        .get(..4)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"));
-    let mut name = String::new();
-    for (index, word) in base.split('-').enumerate() {
-        if index > 0 {
-            name.push(if gpt && index == 1 { '-' } else { ' ' });
-        }
-        match word.to_ascii_lowercase().as_str() {
-            "gpt" => name.push_str("GPT"),
-            "deepseek" => name.push_str("DeepSeek"),
-            _ => {
-                let mut chars = word.chars();
-                if let Some(first) = chars.next() {
-                    name.extend(first.to_uppercase());
-                    name.extend(chars);
-                }
-            }
-        }
-    }
-    if let Some(ratio) = model
-        .ratio
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
-        name.push_str(&format!(" ({ratio})"));
-    }
-    name.push_str(" \u{b7} oneapi");
-    name
+    adapter::adapter_for(provider).format_model_display_name(provider, model)
 }
 
 /// Mint the native auth headers for the selected Baidu auth core.

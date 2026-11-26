@@ -11,9 +11,7 @@ use futures_util::{StreamExt, stream};
 use reqwest::Client;
 
 use crate::config::GatewayConfig;
-use crate::provider::{
-    ProviderDefinition, ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry,
-};
+use crate::provider::{ProviderDefinition, ProviderModel, ProviderProtocol, ProviderRegistry};
 
 use storage::{default_capability_path, load_file, unix_milliseconds, update_file};
 use types::{
@@ -140,10 +138,8 @@ impl ProviderCapabilities {
                 .context("capability probe provider is missing from registry")?
                 .clone(),
         );
-        let native_headers = if provider.model_source == ProviderModelSource::BaiduOneApi
-            && runtime.uses_ducx_loopback()
-        {
-            Some(crate::provider::native_baidu_headers(&runtime).await?)
+        let native_headers = if let Some(headers) = runtime.native_auth_headers().await? {
+            Some(headers)
         } else if provider.preset_id.as_deref() == Some("agy")
             && provider.auth.api_key.trim().is_empty()
         {

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use url::Url;
 
-use super::{ProviderDefinition, ProviderModelSource, ProviderProtocol};
+use super::ProviderProtocol;
 
 /// Upstream wire-behavior policy for a resolved `(provider, model)` pair.
 ///
@@ -13,7 +13,6 @@ use super::{ProviderDefinition, ProviderModelSource, ProviderProtocol};
 pub struct WirePolicy {
     pub session_affinity_header: Option<String>,
     pub mcp_bridge_names: bool,
-    pub baidu_oneapi_usage: bool,
     pub unsigned_thinking_replay: bool,
     pub retry_without_opaque_history: bool,
 }
@@ -39,12 +38,4 @@ impl<'a> EndpointSpec<'a> {
     pub fn api_path(&self) -> &str {
         self.url.path()
     }
-}
-
-/// Returns true when the provider is backed by Baidu OneAPI (by model source,
-/// preset ID, or legacy `baidu-oneapi` provider ID).
-pub fn is_baidu_provider(provider: &ProviderDefinition) -> bool {
-    provider.model_source == ProviderModelSource::BaiduOneApi
-        || provider.preset_id.as_deref() == Some("baidu-oneapi")
-        || provider.id == "baidu-oneapi"
 }

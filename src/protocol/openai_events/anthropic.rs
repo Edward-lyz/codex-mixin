@@ -21,7 +21,7 @@ pub(crate) fn map_anthropic_sse_with_image_routes<S, E>(
     original_request: Value,
     tool_names: ToolNameMap,
     image_routes: Option<ImageRouteRegistry>,
-    baidu_oneapi_usage: bool,
+    unsigned_thinking_replay: bool,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
@@ -64,7 +64,7 @@ where
                 match handle_anthropic_event(
                     &mut state,
                     &data,
-                    baidu_oneapi_usage,
+                    unsigned_thinking_replay,
                     replay_model.as_deref(),
                 ) {
                     Ok(events) => pending.extend(events),
@@ -106,7 +106,7 @@ where
 fn handle_anthropic_event(
     state: &mut MapperState,
     data: &Value,
-    baidu_oneapi_usage: bool,
+    unsigned_thinking_replay: bool,
     replay_model: Option<&str>,
 ) -> Result<Vec<Bytes>, String> {
     match data.get("type").and_then(Value::as_str) {
@@ -352,7 +352,7 @@ fn handle_anthropic_event(
                     .map(|signature| encode_anthropic_thinking(&block.thinking, signature))
                     .or_else(|| {
                         replay_model
-                            .filter(|_| baidu_oneapi_usage)
+                            .filter(|_| unsigned_thinking_replay)
                             .map(|model| encode_baidu_unsigned_thinking(model, &block.thinking))
                     });
                 let item = json!({

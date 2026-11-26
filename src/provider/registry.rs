@@ -5,11 +5,12 @@ use anyhow::{Context, ensure};
 use reqwest::header::HeaderMap;
 use reqwest::{RequestBuilder, Url};
 
+use super::adapter::{ProviderAdapter, adapter_for};
 use super::auth::external::resolve_custom_headers_from_env;
-use super::endpoint::{EndpointSpec, WirePolicy, is_baidu_provider};
+use super::endpoint::{EndpointSpec, WirePolicy};
 use super::types::{
-    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelSource,
-    ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
+    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderProtocol,
+    ProviderQuotaParser, is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "auto/";
@@ -26,6 +27,7 @@ struct ProviderRouteTarget {
 #[derive(Clone, Debug)]
 pub struct ProviderRuntime {
     definition: ProviderDefinition,
+    adapter: &'static dyn ProviderAdapter,
     api_url: Url,
     openai_responses_url: Option<Url>,
     models_url: Option<Url>,
@@ -40,27 +42,19 @@ impl ProviderRuntime {
         env_lookup: &dyn Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
         definition.validate()?;
+        let adapter = adapter_for(&definition);
         let api_url = endpoint_url(&definition.base_url, &definition.api_path)
             .with_context(|| format!("provider {} API URL", definition.id))?;
-        let openai_responses_url = match &definition.model_source {
-            ProviderModelSource::BaiduOneApi => Some(
-                endpoint_url(&definition.base_url, "/v1/responses")
-                    .with_context(|| format!("provider {} Responses URL", definition.id))?,
-            ),
-            _ => None,
-        };
-        let models_url = match &definition.model_source {
-            ProviderModelSource::OpenAiCompatible { path } => Some(
-                endpoint_url(&definition.base_url, path)
-                    .with_context(|| format!("provider {} models URL", definition.id))?,
-            ),
-            ProviderModelSource::BaiduOneApi => Some(
-                endpoint_url(&definition.base_url, "/openapi/v2/available_models")
-                    .with_context(|| format!("provider {} available-models URL", definition.id))?,
-            ),
-            ProviderModelSource::AwsBedrock => None,
-            ProviderModelSource::Static => None,
-        };
+        let openai_responses_url = adapter
+            .responses_api_path(&definition)
+            .map(|path| endpoint_url(&definition.base_url, path))
+            .transpose()
+            .with_context(|| format!("provider {} Responses URL", definition.id))?;
+        let models_url = adapter
+            .models_api_path(&definition)
+            .map(|path| endpoint_url(&definition.base_url, path))
+            .transpose()
+            .with_context(|| format!("provider {} models URL", definition.id))?;
         let image_generation_url = definition
             .image_generation_path
             .as_deref()
@@ -84,6 +78,7 @@ impl ProviderRuntime {
         };
         Ok(Self {
             definition,
+            adapter,
             api_url,
             openai_responses_url,
             models_url,
@@ -110,11 +105,7 @@ impl ProviderRuntime {
     }
 
     pub fn protocol_for_model(&self, model: &str) -> ProviderProtocol {
-        if self.is_baidu_model_source() && model.trim().to_ascii_lowercase().starts_with("gpt-") {
-            ProviderProtocol::OpenAiResponses
-        } else {
-            self.protocol()
-        }
+        self.adapter.protocol_for_model(&self.definition, model)
     }
 
     pub fn api_url(&self) -> &Url {
@@ -122,39 +113,16 @@ impl ProviderRuntime {
     }
 
     pub fn api_url_for_model(&self, model: &str) -> Cow<'_, Url> {
-        if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
-            && let Some(url) = &self.openai_responses_url
-        {
-            Cow::Borrowed(url)
-        } else {
-            let url_str = self.api_url.as_str();
-            if url_str.contains("{model}") || url_str.contains("%7Bmodel%7D") {
-                let replaced = url_str
-                    .replace("{model}", model)
-                    .replace("%7Bmodel%7D", model);
-                match Url::parse(&replaced) {
-                    Ok(parsed) => Cow::Owned(parsed),
-                    Err(_) => Cow::Borrowed(&self.api_url),
-                }
-            } else {
-                Cow::Borrowed(&self.api_url)
-            }
-        }
+        self.adapter.api_url_for_model(
+            &self.definition,
+            &self.api_url,
+            self.openai_responses_url.as_ref(),
+            model,
+        )
     }
 
     pub fn wire_policy_for_model(&self, model: &str) -> WirePolicy {
-        let baidu = self.is_baidu_oneapi();
-        WirePolicy {
-            session_affinity_header: self
-                .definition
-                .request_policy
-                .session_affinity_header
-                .clone(),
-            mcp_bridge_names: self.uses_mcp_bridge_names(model),
-            baidu_oneapi_usage: baidu,
-            unsigned_thinking_replay: baidu,
-            retry_without_opaque_history: baidu,
-        }
+        self.adapter.wire_policy_for_model(&self.definition, model)
     }
 
     /// Single-source-of-truth upstream endpoint specification for `(self, model)`.
@@ -293,11 +261,6 @@ impl ProviderRuntime {
             .is_some()
     }
 
-    pub fn uses_mcp_bridge_names(&self, model: &str) -> bool {
-        self.definition.request_policy.mcp_bridge_for_fable
-            && model.to_ascii_lowercase().contains("fable")
-    }
-
     pub fn uses_ducx_loopback(&self) -> bool {
         self.definition.request_policy.effective_baidu_auth_bridge()
             == BaiduAuthBridge::DucxLoopback
@@ -336,12 +299,16 @@ impl ProviderRuntime {
             })
     }
 
-    pub fn is_baidu_model_source(&self) -> bool {
-        self.definition.model_source == ProviderModelSource::BaiduOneApi
+    pub fn cache_metrics_available(&self, model_id: &str) -> bool {
+        self.adapter.cache_metrics_available(model_id)
     }
 
-    pub fn is_baidu_oneapi(&self) -> bool {
-        is_baidu_provider(&self.definition)
+    pub(crate) async fn native_auth_headers(&self) -> anyhow::Result<Option<HeaderMap>> {
+        if self.adapter.uses_native_auth_headers(&self.definition) {
+            Ok(Some(super::native_baidu_headers(self).await?))
+        } else {
+            Ok(None)
+        }
     }
 }
 

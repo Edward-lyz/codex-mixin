@@ -6,6 +6,7 @@
 - 不认识的格式在边界明确处理，不用空回复或正常结束掩盖解析失败；兼容规则需具体来源与 E2E。
 - SSE 按任意 byte chunk 增量解码，覆盖 UTF-8 拆分、CRLF、多个事件、空 delta 与 EOF。
 - 事件映射使用状态结构和 enum，维护稳定 item ID/index 及 created/delta/done/completed 次序。
+- OpenAI Responses 流式映射统一通过 `MapperState` 两层状态机（外层 `ResponsePhase` + 内层 item 收尾 `finalize_*` / `emit_*`）保证单终态与一致清理，禁止在正常结束与 EOF 分支复制收尾逻辑，详见 `docs/abstraction-architecture.md`。
 - prompt 前缀不随轮次随意重排；协议转换修改同时检查工具 schema、历史和 cache shape。
 - 请求转换、事件映射与 SSE 各自保持归属，不引入 provider runtime 或网关执行依赖。
 - 运行 `cargo test --locked --test gateway_http` 与根级门禁；流式或前缀改动运行 `./scripts/e2e_prompt_cache.sh`。
