@@ -759,18 +759,12 @@ impl PluginsPage {
                 })
                 .when_some(info.readme.clone(), |body, readme| {
                     body.child(
-                        div()
-                            .id("plugin-readme-scroll")
-                            .max_h(gpui_kit::px(320.))
-                            .overflow_y_scroll()
-                            .child(
-                                TextView::markdown(format!("plugin-readme-{package}"), readme)
-                                    .on_link_click(|url, _, _, cx| {
-                                        if is_web_url(url) {
-                                            cx.open_url(url);
-                                        }
-                                    }),
-                            ),
+                        TextView::markdown(format!("plugin-readme-{package}"), readme)
+                            .on_link_click(|url, _, _, cx| {
+                                if is_web_url(url) {
+                                    cx.open_url(url);
+                                }
+                            }),
                     )
                 })
             });
@@ -859,6 +853,7 @@ impl PluginsPage {
                     })),
             );
         v_flex()
+            .flex_none()
             .gap_4()
             .child(actions)
             .child(self.render_overview(package, cx))
