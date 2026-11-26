@@ -12,5 +12,5 @@ mod normalize;
 pub(crate) use generation::ImageRouteRegistry;
 pub(crate) use normalize::{
     ImageCompressionProfile, normalize_anthropic_images_blocking,
-    normalize_provider_images_blocking, normalize_provider_images_for_fallback,
+    normalize_provider_images_blocking, normalize_provider_images_for_fallback, run_image_work,
 };

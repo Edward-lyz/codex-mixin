@@ -5,6 +5,9 @@ use crate::protocol::gemini::inbound;
 use axum::extract::Query;
 use std::collections::HashMap;
 
+// Models count image tiles differently. Use four Gemini 258-token tiles as a local estimate.
+const ESTIMATED_TOKENS_PER_IMAGE: u64 = 4 * 258;
+
 // Normalize the Gemini header only inside this adapter; never forward the client key.
 fn auth_headers(mut headers: HeaderMap) -> Result<HeaderMap, GatewayError> {
     if let Some(key) = headers.remove("x-goog-api-key") {
@@ -74,14 +77,32 @@ pub(super) async fn generate(
         ));
     }
     let body = super::request_body::parse_json(body).await?;
-    let converted = inbound::to_responses(&body, model)?;
+    let has_inline_data = body["contents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|content| content["parts"].as_array())
+        .flatten()
+        .any(|part| part.get("inlineData").is_some());
+    let converted = if has_inline_data {
+        let model = model.to_owned();
+        crate::images::run_image_work(move || inbound::to_responses(&body, &model)).await?
+    } else {
+        inbound::to_responses(&body, model)?
+    };
     if action == "countTokens" {
         state.gateway.resolve_model_route(model).await?;
         let input = converted["input"]
             .as_array()
             .into_iter()
             .flatten()
-            .map(crate::context::types::estimate_item_tokens)
+            .map(|item| {
+                if item["content"][0]["type"] == "input_image" {
+                    ESTIMATED_TOKENS_PER_IMAGE
+                } else {
+                    crate::context::types::estimate_item_tokens(item)
+                }
+            })
             .fold(0_u64, u64::saturating_add);
         let tools = converted
             .get("tools")
