@@ -25,31 +25,21 @@ const COUNT_UNITS: [(u64, &str); 6] = [
     (1_000, "K"),
 ];
 
-mod agents;
-mod benchmark_proxy;
-mod clients;
-mod config;
-mod context;
-mod doctor;
-mod ducx;
+pub(crate) mod commands;
 mod interface;
-mod maintenance;
 mod metadata;
-mod official_models;
-mod plugin;
-mod providers;
-mod report_hook;
 mod runtime;
-pub(crate) mod service;
-mod setup;
-mod status;
-mod update;
 
-use clients::{claude, claude_desktop, codex, dsh, opencode, pi};
-use config::{
+use commands::{
+    benchmark_proxy, connect, context, doctor, maintenance, plugin, providers, report_hook,
+    service, settings, status, update,
+};
+use connect::{agents, claude, claude_desktop, codex, dsh, managed_auth, opencode, pi};
+use managed_auth::setup as ducx_setup;
+use providers::setup;
+use settings::{
     apply as config_apply, cors, ech, fusion as fusion_config, keys, route as route_config,
 };
-use ducx::setup as ducx_setup;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{

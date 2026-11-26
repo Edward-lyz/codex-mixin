@@ -1,0 +1,36 @@
+use std::path::PathBuf;
+
+use crate::cli::commands::connect::codex::history::migrate_history_to_mixin_provider;
+
+use crate::cli::commands::connect::codex::codex_home_path;
+
+pub(in crate::cli) fn migrate_history(codex_home: Option<PathBuf>) -> anyhow::Result<()> {
+    let codex_home = codex_home.unwrap_or_else(codex_home_path);
+    let outcome = migrate_history_to_mixin_provider(&codex_home)?;
+    println!(
+        "history jsonl files changed: {}",
+        outcome.jsonl_files_changed
+    );
+    println!(
+        "history jsonl lines changed: {}",
+        outcome.jsonl_lines_changed
+    );
+    println!(
+        "history sqlite rows changed: {}",
+        outcome.sqlite_rows_changed
+    );
+    if let Some(backup_root) = outcome.backup_root {
+        println!("history backup: {}", backup_root.display());
+    } else {
+        println!("history backup: <none; no changes>");
+    }
+    for failure in &outcome.failures {
+        eprintln!("warning: history not migrated: {failure}");
+    }
+    anyhow::ensure!(
+        outcome.failures.is_empty(),
+        "{} history items were not migrated; rerun to retry",
+        outcome.failures.len()
+    );
+    Ok(())
+}

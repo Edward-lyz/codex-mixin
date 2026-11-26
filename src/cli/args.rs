@@ -7,9 +7,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 use codex_mixin::provider::{ModelOrder, ProviderPreset};
 
-use super::InteractiveStart;
-use super::codex::InstallCodexOptions;
-use super::plugin::PluginCommand;
+use crate::cli::InteractiveStart;
+use crate::cli::commands::connect::codex::InstallCodexOptions;
+use crate::cli::commands::plugin::PluginCommand;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -703,7 +703,7 @@ pub(super) enum ProviderCommand {
     /// Re-probe capabilities for models currently added to Codex, replacing cached results.
     Probe { id: String },
     /// Test provider authentication and model access.
-    Test(super::providers::TestProviderOptions),
+    Test(crate::cli::commands::providers::TestProviderOptions),
     /// Select models exposed by a provider.
     Select {
         id: String,

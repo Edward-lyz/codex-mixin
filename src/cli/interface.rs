@@ -5,16 +5,16 @@ use serde_json::{Value, json};
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 
 pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
-    let paths = super::codex::resolve_codex_install_paths(None, None)?;
+    let paths = crate::cli::commands::connect::codex::resolve_codex_install_paths(None, None)?;
     let value = json!({
         "protocol_version": PROTOCOL_VERSION,
         "version": env!("CARGO_PKG_VERSION"),
         "provider_catalog": provider_catalog(),
         "paths": {
-            "state": std::path::absolute(super::runtime::state_dir())?,
+            "state": std::path::absolute(crate::cli::runtime::state_dir())?,
             "config": std::path::absolute(codex_mixin::config::stored_config_path())?,
-            "gateway_log": std::path::absolute(super::runtime::default_log_file_path())?,
-            "report_log": std::path::absolute(super::runtime::default_report_hook_log_path())?,
+            "gateway_log": std::path::absolute(crate::cli::runtime::default_log_file_path())?,
+            "report_log": std::path::absolute(crate::cli::runtime::default_report_hook_log_path())?,
             "codex_models_cache": std::path::absolute(paths.models_cache)?,
             "context_db": std::path::absolute(codex_mixin::context::database_path()?)?,
         },
@@ -38,7 +38,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "cors_configuration": true,
             "claude_desktop_routing": true,
             "official_ech_proxy": true,
-            "cli_update": super::update::cli_release_target().is_ok(),
+            "cli_update": crate::cli::commands::update::cli_release_target().is_ok(),
         },
     });
     if json_output {
@@ -105,7 +105,7 @@ fn provider_catalog() -> Value {
 
 pub(super) fn command_error(error: &anyhow::Error) -> Value {
     let (code, committed, stage) = if error
-        .downcast_ref::<super::codex::CodexRequiresGatewayError>()
+        .downcast_ref::<crate::cli::commands::connect::codex::CodexRequiresGatewayError>()
         .is_some()
     {
         ("codex_requires_gateway", Some(false), None)

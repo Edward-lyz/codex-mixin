@@ -4,7 +4,7 @@ mod cli;
 #[path = "../panel/mod.rs"]
 mod panel;
 
-pub(crate) use cli::service::listener;
+pub(crate) use cli::commands::service::listener;
 
 #[tokio::main]
 async fn main() {

@@ -1,0 +1,473 @@
+use std::path::PathBuf;
+
+use anyhow::Context;
+use codex_mixin::application::agent_versions::{self, AGENT_VERSION_IDS};
+use codex_mixin::application::agents::{agent_name, integration_status};
+use serde_json::{Value, json};
+
+use crate::cli::args::{AgentCommand, AgentConnectMode, ConnectCommand};
+
+pub(in crate::cli) async fn run(command: AgentCommand) -> anyhow::Result<()> {
+    match command {
+        AgentCommand::List { json } => {
+            let workers = AGENT_VERSION_IDS
+                .into_iter()
+                .map(|id| tokio::task::spawn_blocking(move || snapshot(id)));
+            let mut agents = Vec::new();
+            for worker in futures_util::future::join_all(workers).await {
+                agents.push(worker.context("agent inspection worker failed")??);
+            }
+            output(&json!({"agents": agents}), json)
+        }
+        AgentCommand::Versions { json, refresh } => output(
+            &json!({"agents": agent_versions::check_versions(refresh).await}),
+            json,
+        ),
+        AgentCommand::Upgrade { id, all, json } => {
+            if all {
+                return upgrade_all(json).await;
+            }
+            let id = id.context("an agent id or --all is required")?;
+            let cli = agent_versions::upgrade_agent(&id).await?;
+            output(&json!({"id": id, "cli": cli}), json)
+        }
+        AgentCommand::Connect { id, mode } => connect(&id, mode).await,
+        AgentCommand::Disconnect { id } => disconnect(&id).await,
+        AgentCommand::Model {
+            id,
+            model,
+            effort,
+            json,
+        } => {
+            let _lock = integration_lock()?;
+            let (manifest, _) = integration_paths(&id)?;
+            output(
+                &codex_mixin::clients::frameworks::native_model(
+                    &id,
+                    &manifest,
+                    model.as_deref(),
+                    effort.as_deref(),
+                )?,
+                json,
+            )
+        }
+        AgentCommand::Run { id, arguments } => run_agent(&id, &arguments).await,
+        AgentCommand::Launch { id } => {
+            let executable = std::env::current_exe()?;
+            let directory = crate::cli::runtime::state_dir()
+                .join("agent-launchers")
+                .join(&id);
+            codex_mixin::platform::ensure_owner_only_dir(&directory)?;
+            codex_mixin::platform::open_terminal_window(&codex_mixin::platform::TerminalCommand {
+                title: agent_name(&id)?,
+                script_directory: &directory,
+                home: None,
+                environment: &[],
+                program: &executable,
+                arguments: &["--no-tui", "agent", "run", &id],
+            })?;
+            Ok(())
+        }
+    }
+}
+
+async fn run_agent(id: &str, arguments: &[String]) -> anyhow::Result<()> {
+    let (environment, model) = if is_legacy(id) {
+        (std::collections::BTreeMap::new(), None)
+    } else {
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let (manifest, _) = integration_paths(&id)?;
+            codex_mixin::clients::frameworks::launch_environment(&id, &manifest)
+        })
+        .await
+        .context("managed launch inspection worker failed")??
+    };
+    let program = if id == "cursor-local" {
+        codex_mixin::platform::agent_cli::cursor_editor_program()?
+    } else {
+        PathBuf::from(
+            agent_versions::discover_agent(id)?
+                .path
+                .context("agent executable is not installed")?,
+        )
+    };
+    let mut command = codex_mixin::platform::launcher_command(&program);
+    command.envs(environment);
+    if id == "agy" {
+        command.args([
+            "--model",
+            model.as_deref().context("managed AGY model is missing")?,
+        ]);
+    }
+    command.args(arguments);
+    let mut command = tokio::process::Command::from(command);
+    command.kill_on_drop(true);
+    let status = command
+        .status()
+        .await
+        .context("start managed agent session")?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+fn output(value: &Value, json_output: bool) -> anyhow::Result<()> {
+    if json_output {
+        println!("{}", serde_json::to_string(value)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    }
+    Ok(())
+}
+
+fn integration_paths(id: &str) -> anyhow::Result<(PathBuf, Option<PathBuf>)> {
+    let stored = std::path::absolute(codex_mixin::config::stored_config_path())?;
+    let path = match id {
+        "codex" => crate::cli::commands::connect::codex::resolve_codex_config_path(None)?,
+        "claude" => crate::cli::commands::connect::claude::resolve_claude_settings_path(None)?,
+        "claude-desktop" => codex_mixin::platform::claude_desktop_config_root()?,
+        "dsh" => std::path::absolute(codex_mixin::platform::dsh_home())?,
+        "opencode" => {
+            return Ok((
+                crate::cli::commands::connect::opencode::resolve_opencode_config_path(None)?,
+                Some(stored.with_file_name("opencode-api-key")),
+            ));
+        }
+        "pi" => {
+            return Ok((
+                crate::cli::commands::connect::pi::resolve_pi_agent_dir(None)?.join("models.json"),
+                Some(stored.with_file_name("pi-api-key")),
+            ));
+        }
+        _ => {
+            codex_mixin::clients::frameworks::manifest_path(id, &crate::cli::runtime::state_dir())?
+        }
+    };
+    Ok((path, None))
+}
+
+fn snapshot(id: &str) -> anyhow::Result<Value> {
+    let name = agent_name(id)?;
+    let cli = agent_versions::discover_agent(id)?;
+    let integration = match integration_paths(id) {
+        Ok((path, _)) if id == "codex" => {
+            crate::cli::commands::connect::codex::integration_status(&path)?
+        }
+        Ok((path, key)) if is_legacy(id) => integration_status(id, &path, key.as_deref())?,
+        Ok((path, _)) => codex_mixin::clients::frameworks::status(id, &path)?,
+        Err(error) => codex_mixin::clients::IntegrationStatus {
+            state: "error",
+            mode: None,
+            detail: "Cannot resolve agent configuration paths.",
+            error: Some(format!("{error:#}")),
+        },
+    };
+    // Configuration presence and an installed program are independent facts.
+    let detected = cli.path.is_some() || cli.app_path.is_some() || cli.app_version.is_some();
+    Ok(
+        json!({"id": id, "name": name, "detected": detected, "integration": integration, "cli": cli}),
+    )
+}
+
+async fn upgrade_all(json_output: bool) -> anyhow::Result<()> {
+    let mut results = Vec::new();
+    for entry in agent_versions::check_versions(true).await {
+        if let Some(error) = &entry.cli.error {
+            results.push(json!({"id": entry.id, "cli": entry.cli, "error": error}));
+            continue;
+        }
+        if !entry.cli.update {
+            continue;
+        }
+        crate::cli::progress_step(&format!("Upgrading {}", entry.id));
+        match agent_versions::upgrade_agent(&entry.id).await {
+            Ok(cli) => results.push(json!({"id": entry.id, "error": null, "cli": cli})),
+            Err(error) => {
+                let id = entry.id.clone();
+                let cli = tokio::task::spawn_blocking(move || agent_versions::discover_agent(&id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(entry.cli);
+                results.push(json!({"id": entry.id, "cli": cli, "error": format!("{error:#}")}));
+            }
+        }
+    }
+    // A batch has explicit per-agent outcomes, including partial completion.
+    output(&json!({"results": results}), json_output)
+}
+
+fn integration_lock() -> anyhow::Result<std::fs::File> {
+    let directory = crate::cli::runtime::state_dir();
+    std::fs::create_dir_all(&directory)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(directory.join("agent-integration.lock"))?;
+    // The clients share gateway credentials/catalogs; serialize mutations.
+    fs2::FileExt::try_lock_exclusive(&file)
+        .context("another agent integration operation is running")?;
+    Ok(file)
+}
+
+async fn connect(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<()> {
+    agent_name(id)?;
+    if !is_legacy(id) {
+        return connect_framework(id, mode).await;
+    }
+    let command = connect_command(id, mode)?;
+    let _lock = integration_lock()?;
+    crate::cli::commands::service::ensure_ready().await?;
+    crate::cli::progress_step("Applying agent configuration");
+    // Retain existing install/auth/reporting transactions instead of duplicating them.
+    Box::pin(crate::cli::run(crate::cli::Cli {
+        no_tui: true,
+        json_errors: true,
+        command: Some(crate::cli::Command::Connect { command }),
+    }))
+    .await?;
+    verify_integration(id, "managed").await
+}
+
+fn connect_command(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<ConnectCommand> {
+    anyhow::ensure!(
+        id == "codex" || mode.is_none(),
+        "--mode applies only to Codex"
+    );
+    Ok(match id {
+        "codex" => {
+            let mode =
+                mode.context("Codex requires --mode official-account or --mode custom-only")?;
+            ConnectCommand::Codex(crate::cli::commands::connect::codex::InstallCodexOptions {
+                requested_model: None,
+                set_default: mode == AgentConnectMode::CustomOnly,
+                codex_oauth_proxy: mode == AgentConnectMode::OfficialAccount,
+                custom_only: mode == AgentConnectMode::CustomOnly,
+                config_path: None,
+                catalog_path: None,
+                base_url: None,
+                web_search: "live".to_owned(),
+                env_key: None,
+                no_env_key: false,
+            })
+        }
+        "claude" => ConnectCommand::Claude {
+            settings_path: None,
+        },
+        "claude-desktop" => ConnectCommand::ClaudeDesktop {
+            config_root: None,
+            status: false,
+            json: false,
+        },
+        "dsh" => ConnectCommand::Dsh { dsh_home: None },
+        "opencode" => ConnectCommand::Opencode { config_path: None },
+        "pi" => ConnectCommand::Pi { agent_dir: None },
+        _ => anyhow::bail!("unsupported agent: {id}"),
+    })
+}
+
+async fn disconnect(id: &str) -> anyhow::Result<()> {
+    agent_name(id)?;
+    if !is_legacy(id) {
+        let (manifest, _) = integration_paths(id)?;
+        let client = framework_client(id)?;
+        let owned_id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let _lock = integration_lock()?;
+            // Manual native cleanup can outlive this command. Revoke access
+            // before publishing its pending-removal state.
+            if codex_mixin::clients::frameworks::revoke_key_before_remove(&owned_id) {
+                codex_mixin::config::revoke_gateway_client_key(client)?;
+            }
+            codex_mixin::clients::frameworks::remove(&owned_id, &manifest)?;
+            codex_mixin::config::revoke_gateway_client_key(client)
+        })
+        .await
+        .context("native disconnect worker failed")??;
+        return verify_integration(id, "unmanaged").await;
+    }
+    let id = id.to_owned();
+    let verified_id = id.clone();
+    tokio::task::spawn_blocking(move || {
+        let _lock = integration_lock()?;
+        crate::cli::progress_step("Restoring agent configuration");
+        crate::cli::remove_client_integration(&id, None, None, None, None, None)
+    })
+    .await
+    .context("agent disconnect worker failed")??;
+    // Do not use codex-switch official: it stops the shared gateway.
+    verify_integration(&verified_id, "unmanaged").await
+}
+
+async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
+    let (path, key) = integration_paths(id)?;
+    let owned_id = id.to_owned();
+    let state = tokio::task::spawn_blocking(move || {
+        if owned_id == "codex" {
+            crate::cli::commands::connect::codex::integration_status(&path)
+        } else if is_legacy(&owned_id) {
+            integration_status(&owned_id, &path, key.as_deref())
+        } else {
+            codex_mixin::clients::frameworks::status(&owned_id, &path)
+        }
+    })
+    .await
+    .context("native status worker failed")??;
+    if (expected == "managed" && state.state == "pending")
+        || (expected == "unmanaged" && state.state == "pending_removal")
+    {
+        crate::cli::progress_step(state.detail);
+        return Ok(());
+    }
+    anyhow::ensure!(
+        state.state == expected,
+        "{id} integration did not become {expected}: {}",
+        state.error.as_deref().unwrap_or(state.detail)
+    );
+    crate::cli::progress_step("Agent configuration verified");
+    Ok(())
+}
+
+fn is_legacy(id: &str) -> bool {
+    codex_mixin::application::agents::manifest(id).is_some()
+}
+
+fn framework_client(id: &str) -> anyhow::Result<codex_mixin::gateway_access::GatewayClient> {
+    let id = AGENT_VERSION_IDS
+        .into_iter()
+        .find(|known| *known == id)
+        .context("unknown framework client")?;
+    Ok(codex_mixin::gateway_access::GatewayClient::Framework(id))
+}
+
+async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<()> {
+    use codex_mixin::clients::frameworks;
+    anyhow::ensure!(mode.is_none(), "--mode applies only to Codex");
+    frameworks::require_supported(id)?;
+    let _lock = integration_lock()?;
+    let (manifest, _) = integration_paths(id)?;
+    let inspected_id = id.to_owned();
+    let inspected_path = manifest.clone();
+    if tokio::task::spawn_blocking(move || frameworks::status(&inspected_id, &inspected_path))
+        .await
+        .context("native status worker failed")??
+        .state
+        == "managed"
+    {
+        return Ok(());
+    }
+    if frameworks::is_native_models(id) {
+        frameworks::install(id, &manifest, "", "", &[])?;
+        return verify_integration(id, "managed").await;
+    }
+    // Resolve an automatic listener port before persisting a client endpoint.
+    crate::cli::commands::service::ensure_ready().await?;
+    let client = framework_client(id)?;
+    let id_owned = id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        codex_mixin::application::client::install_with_client_key(client, || {
+            let config = codex_mixin::config::GatewayConfig::from_stored_config()?;
+            let bind = crate::cli::runtime::effective_gateway_bind(&config)?;
+            let mut models = Vec::new();
+            for provider in config.providers.iter().filter(|p| p.enabled) {
+                for selected in &provider.selected_models {
+                    let model = provider
+                        .cached_models
+                        .iter()
+                        .find(|m| m.id == *selected)
+                        .with_context(|| {
+                            format!("missing cached model {selected} for {}", provider.id)
+                        })?;
+                    let name = codex_mixin::provider::provider_model_display_name(model, provider);
+                    models.push(framework_model(
+                        codex_mixin::provider::catalog_model_slug(selected, &provider.id),
+                        name,
+                        model,
+                        &config,
+                        provider.protocol,
+                    ));
+                }
+            }
+            for model in
+                crate::cli::commands::providers::official_models::selected_official_models(&config)?
+            {
+                models.push(framework_model(
+                    model.id.clone(),
+                    model
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| model.id.clone()),
+                    &model,
+                    &config,
+                    codex_mixin::provider::ProviderProtocol::OpenAiResponses,
+                ));
+            }
+            for route in config.route_models() {
+                models.push(framework_model(
+                    route.id.clone(),
+                    route.id.clone(),
+                    &route,
+                    &config,
+                    codex_mixin::provider::ProviderProtocol::OpenAiResponses,
+                ));
+            }
+            frameworks::install(
+                &id_owned,
+                &manifest,
+                &format!("http://{bind}"),
+                &config.require_client_key(client)?,
+                &models,
+            )
+        })
+    })
+    .await
+    .context("framework install worker failed")??;
+    crate::cli::commands::service::ensure_ready().await?;
+    verify_integration(id, "managed").await
+}
+
+fn framework_model(
+    id: String,
+    name: String,
+    model: &codex_mixin::provider::ProviderModel,
+    config: &codex_mixin::config::GatewayConfig,
+    protocol: codex_mixin::provider::ProviderProtocol,
+) -> codex_mixin::clients::frameworks::FrameworkModel {
+    let context = model
+        .context_window
+        .unwrap_or(config.default_context_window);
+    let reasoning = if model.supports_thinking == Some(false) {
+        None
+    } else {
+        codex_mixin::protocol::model_reasoning::resolve_model_reasoning(
+            &model.id,
+            model.supports_thinking,
+        )
+    };
+    codex_mixin::clients::frameworks::FrameworkModel {
+        id,
+        name,
+        ratio: model.ratio.clone(),
+        context_window: context,
+        max_tokens: model
+            .max_output_tokens
+            .unwrap_or(config.default_max_tokens)
+            .min(context),
+        supports_image: model.supports_image.unwrap_or(false),
+        protocol: model.protocol.unwrap_or(protocol),
+        efforts: reasoning
+            .map(|c| {
+                c.supported_levels
+                    .iter()
+                    .filter(|l| l.effort != "ultra")
+                    .map(|l| l.effort.to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        default_effort: reasoning.map(|c| c.default_effort.to_owned()),
+    }
+}
