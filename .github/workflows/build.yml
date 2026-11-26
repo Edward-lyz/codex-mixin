@@ -121,6 +121,9 @@ jobs:
           echo "key=${ImageOS:-$RUNNER_OS}-$fingerprint" >>"$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: |
+            .
+            desktop
           shared-key: release-${{ matrix.target }}-${{ steps.native-toolchain.outputs.key }}
       - name: Install musl linker and desktop libraries
         if: matrix.os == 'linux'
@@ -189,6 +192,7 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
+          CODEX_MIXIN_SKIP_CLI_BUILD: "1"
           # Ad-hoc signing unless a Developer ID certificate is configured.
           CODE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
@@ -239,6 +243,42 @@ jobs:
       - name: Package macOS installer
         if: matrix.os == 'macos'
         run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "$VERSION" dist/release
+      - name: Sign macOS Sparkle update feed
+        if: matrix.os == 'macos'
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          RELEASE_TAG: v${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::warning::SPARKLE_PRIVATE_KEY is not set; skipping Sparkle appcast generation"
+            exit 0
+          fi
+          arch="${{ matrix.target }}"
+          arch="${arch%%-*}"
+          if ! ./scripts/extract_release_notes.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md"; then
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              echo "::warning::release notes for $RELEASE_TAG not found; skipping Sparkle appcast on manual build"
+              exit 0
+            fi
+            exit 1
+          fi
+          sparkle_dir="$(./scripts/fetch_sparkle.sh)"
+          appcast_dir="$(mktemp -d)"
+          trap 'rm -rf "$appcast_dir"' EXIT
+          releases="https://github.com/Edward-lyz/codex-mixin/releases"
+          dmg="codex-mixin-$VERSION-${{ matrix.target }}.dmg"
+          cp "dist/release/$dmg" "$appcast_dir/"
+          cp "$RUNNER_TEMP/release-notes.md" "$appcast_dir/${dmg%.dmg}.md"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
+            --ed-key-file - --download-url-prefix "$releases/download/$RELEASE_TAG/" \
+            --embed-release-notes --maximum-deltas 0 --link "$releases/tag/$RELEASE_TAG" \
+            -o "dist/release/appcast-$arch.xml" "$appcast_dir"
+          xmllint --noout "dist/release/appcast-$arch.xml"
+          test "$(grep -c '<item>' "dist/release/appcast-$arch.xml")" = 1
+          grep -Fq "$dmg" "dist/release/appcast-$arch.xml"
+          grep -Fq 'sparkle:edSignature=' "dist/release/appcast-$arch.xml"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -268,6 +308,9 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: |
+            .
+            desktop
           shared-key: release-${{ matrix.target }}
       - name: Refresh bundled models.dev snapshot
         shell: bash

@@ -20,7 +20,11 @@ sha() {
     echo "missing release asset: $1" >&2
     exit 1
   fi
-  shasum -a 256 "$file" | awk '{print $1}'
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  else
+    shasum -a 256 "$file" | awk '{print $1}'
+  fi
 }
 
 cli_mac_arm="codex-mixin-cli-$VERSION-aarch64-apple-darwin.tar.gz"
