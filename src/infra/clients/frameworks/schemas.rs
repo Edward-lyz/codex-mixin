@@ -8,6 +8,7 @@ fn patch(path: PathBuf, format: Format, fields: Vec<(Vec<String>, Value)>) -> Pa
         path,
         format,
         fields,
+        remove_fields: Vec::new(),
     }
 }
 
@@ -52,6 +53,7 @@ pub(super) fn patches(
     Ok(match id {
         "gemini" => gemini_at(&home_path("", ".gemini")?, base, key, models),
         "agy" => agy_at(&home_path("", ".gemini/antigravity-cli")?, models),
+        "antigravity" => antigravity_at(&home_path("", "")?, base, key, first),
         "muse" => muse_at(&config_home()?.join("muse"), &v1, first)?,
         "cursor-local" => Vec::new(),
         "reasonix" => reasonix(&crate::platform::reasonix_home()?, &v1, key, models)?,
@@ -134,6 +136,30 @@ pub(super) fn patches(
         "t3code" => t3code(base, key, models)?,
         _ => anyhow::bail!("no source-verified configuration adapter for {id}"),
     })
+}
+
+fn antigravity_at(home: &Path, base: &str, key: &str, first: &FrameworkModel) -> Vec<Patch> {
+    // Antigravity Desktop switched settings files in version 2.30.
+    [".gemini/config/config.json", ".antigravity/settings.json"]
+        .into_iter()
+        .map(|path| Patch {
+            path: home.join(path),
+            format: Format::Json,
+            fields: vec![
+                field(&["gateway", "enabled"], json!(true)),
+                field(&["gateway", "url"], json!(base)),
+                field(&["gateway", "apiKey"], json!(key)),
+                field(&["gateway", "wireProtocol"], json!("openai")),
+                field(&["models", "defaultModelId"], json!(first.id)),
+                field(
+                    &["models", "listSource"],
+                    json!(format!("{base}/v1/models?format=antigravity")),
+                ),
+            ],
+            // The app reads an inline list before its remote catalog.
+            remove_fields: vec![vec!["models".to_owned(), "list".to_owned()]],
+        })
+        .collect()
 }
 
 fn gemini_at(dir: &Path, base: &str, key: &str, models: &[FrameworkModel]) -> Vec<Patch> {

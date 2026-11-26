@@ -18,6 +18,7 @@ use super::agent_cli::run_command;
 pub enum DesktopApp {
     Codex,
     ClaudeDesktop,
+    Antigravity,
     Dsh,
     OpenCode,
     OpenChamber,
@@ -45,6 +46,7 @@ impl DesktopApp {
     const ALL: &'static [Self] = &[
         Self::Codex,
         Self::ClaudeDesktop,
+        Self::Antigravity,
         Self::Dsh,
         Self::OpenCode,
         Self::OpenChamber,
@@ -72,6 +74,7 @@ impl DesktopApp {
         match self {
             Self::Codex => &["Codex", "ChatGPT"],
             Self::ClaudeDesktop => &["Claude", "Claude Desktop"],
+            Self::Antigravity => &["Antigravity"],
             Self::Dsh => &["DeepSeek Harness"],
             Self::OpenCode => &["OpenCode", "opencode"],
             Self::OpenChamber => &["OpenChamber"],
@@ -113,6 +116,7 @@ impl DesktopApp {
                 "OpenAI.Codex",
             ],
             Self::ClaudeDesktop => &["com.anthropic.claudefordesktop", "Claude"],
+            Self::Antigravity => &["com.google.antigravity", "antigravity"],
             Self::Cursor => &["com.todesktop.230313mzl4w4u92", "cursor"],
             Self::Zed => &["dev.zed.Zed", "dev.zed.Zed-Preview", "zed"],
             Self::VsCode => &["com.microsoft.VSCode", "code"],
@@ -137,6 +141,7 @@ impl DesktopApp {
             Self::VsCodium => &["VSCodium.exe"],
             Self::Dsh => &["DeepSeek Harness.exe"],
             Self::ClaudeDesktop => &["Claude.exe"],
+            Self::Antigravity => &["Antigravity.exe"],
             Self::Codex => &["Codex.exe", "ChatGPT.exe"],
             Self::Cindy => &["Cindy.exe", "CindyGlobal.exe"],
             Self::Cursor => &["Cursor.exe"],
@@ -178,7 +183,7 @@ pub fn desktop_app_installation(
 }
 
 fn native_inventory() -> anyhow::Result<&'static NativeInventory> {
-    // A CLI invocation is a snapshot. All 50 concurrent agent inspections share
+    // A CLI invocation is a snapshot. Concurrent agent inspections share
     // one native query rather than spawning one inventory process per row.
     static INVENTORY: OnceLock<Result<NativeInventory, String>> = OnceLock::new();
     INVENTORY

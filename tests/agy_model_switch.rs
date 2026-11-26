@@ -100,6 +100,92 @@ async fn stop_gateway(root: &Path) {
 }
 
 #[tokio::test]
+async fn antigravity_desktop_connect_discovers_models_and_restores_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let root = root.as_path();
+    prepare(root);
+    let settings = [
+        root.join("home/.gemini/config/config.json"),
+        root.join("home/.antigravity/settings.json"),
+    ];
+    let original = json!({
+        "gateway":{"enabled":false,"wireProtocol":"genai"},
+        "models":{"defaultModelId":"previous","list":[{"modelId":"previous"}],"other":null},
+        "plugins":{"enabled":true}
+    });
+    for path in &settings {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, serde_json::to_vec(&original).unwrap()).unwrap();
+    }
+
+    let connected = run_cli(root, &["--no-tui", "agent", "connect", "antigravity"]).await;
+    assert!(
+        connected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    let cli_after_connect = read_settings(root);
+    let managed: Value = serde_json::from_slice(&fs::read(&settings[0]).unwrap()).unwrap();
+    assert_eq!(managed["gateway"]["enabled"], true);
+    assert_eq!(managed["gateway"]["wireProtocol"], "openai");
+    assert!(managed["models"].get("list").is_none());
+    let catalog = reqwest::Client::new()
+        .get(managed["models"]["listSource"].as_str().unwrap())
+        .bearer_auth(managed["gateway"]["apiKey"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog["list"][0]["modelId"],
+        managed["models"]["defaultModelId"]
+    );
+    assert_eq!(catalog["list"][0]["maxTokens"], 200_000);
+    assert_eq!(catalog["list"].as_array().unwrap().len(), 2);
+    let legacy: Value = serde_json::from_slice(&fs::read(&settings[1]).unwrap()).unwrap();
+    assert_eq!(legacy, managed);
+
+    let mut edited = managed;
+    edited["models"]["defaultModelId"] = catalog["list"][1]["modelId"].clone();
+    edited["plugins"]["new"] = json!(true);
+    fs::write(&settings[0], serde_json::to_vec(&edited).unwrap()).unwrap();
+    let reconnected = run_cli(root, &["--no-tui", "agent", "connect", "antigravity"]).await;
+    assert!(
+        reconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reconnected.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&settings[0]).unwrap()).unwrap(),
+        edited
+    );
+    let disconnected = run_cli(root, &["--no-tui", "agent", "disconnect", "antigravity"]).await;
+    stop_gateway(root).await;
+    assert!(
+        disconnected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disconnected.stderr)
+    );
+    assert_eq!(read_settings(root), cli_after_connect);
+    assert_eq!(cli_after_connect["model"], ORIGINAL_MODEL);
+    let mut expected = original.clone();
+    expected["plugins"]["new"] = json!(true);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&settings[0]).unwrap()).unwrap(),
+        expected
+    );
+    assert_eq!(
+        fs::read(&settings[1]).unwrap(),
+        serde_json::to_vec(&original).unwrap()
+    );
+}
+
+#[tokio::test]
 async fn agy_model_switch_keeps_integration_managed_and_disconnectable() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();

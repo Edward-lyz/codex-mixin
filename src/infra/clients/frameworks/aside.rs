@@ -99,11 +99,13 @@ fn install_at(
                     json!({"baseUrl":format!("{}/v1",binding.0),"api":"openai-completions",
                 "apiKey":binding.1,"models":super::pi_models(models,&format!("{}/v1",binding.0))}),
                 )],
+                remove_fields: Vec::new(),
             },
             engine::Patch {
                 path: directory.join("settings.json"),
                 format: engine::Format::Json,
                 fields: vec![field(&["defaultModel"], record["after"].clone())],
+                remove_fields: Vec::new(),
             },
         ],
     )?;

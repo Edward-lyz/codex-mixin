@@ -2,11 +2,12 @@
 //! Codex catalog response. Owns the catalog caches that used to live on the
 //! server composition; it never depends on the server or CLI layers.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::anthropic::ModelInfo;
 use crate::config::GatewayConfig;
@@ -89,6 +90,13 @@ impl CatalogService {
     }
 
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
+        let mut models = self.provider_models();
+        self.web_search_capabilities.annotate_models(&mut models);
+        self.append_fusion_models(&mut models);
+        Ok(models)
+    }
+
+    fn provider_models(&self) -> Vec<ModelInfo> {
         let mut models = Vec::new();
         for provider in self.providers.providers() {
             for upstream_model_id in &provider.definition().selected_models {
@@ -133,9 +141,66 @@ impl CatalogService {
                 });
             }
         }
-        self.web_search_capabilities.annotate_models(&mut models);
+        models
+    }
+
+    pub(crate) async fn antigravity_models(&self) -> Result<Vec<Value>, GatewayError> {
+        // Antigravity Desktop allocates up to 32 entries for gateway models.
+        const MODEL_LIMIT: usize = 32;
+        let mut models = self.provider_models();
+        if models.len() < MODEL_LIMIT && self.config.accept_codex_oauth {
+            let config = Arc::clone(&self.config);
+            let official = tokio::task::spawn_blocking(move || {
+                super::official_models::selected_official_models(&config)
+            })
+            .await
+            .map_err(|error| anyhow::anyhow!("official catalog loader failed: {error}"))??;
+            models.extend(
+                official
+                    .into_iter()
+                    .filter(|model| {
+                        crate::provider::is_official_model_slug(&model.id)
+                            && self.providers.resolve_known(&model.id).is_none()
+                    })
+                    .map(|model| ModelInfo {
+                        id: model.id,
+                        display_name: model.display_name,
+                        context_window: model.context_window,
+                        max_output_tokens: model.max_output_tokens,
+                        supports_image: model.supports_image,
+                        supports_thinking: model.supports_thinking,
+                        ..ModelInfo::default()
+                    }),
+            );
+        }
         self.append_fusion_models(&mut models);
-        Ok(models)
+        let mut seen = HashSet::new();
+        let mut catalog = Vec::new();
+        for model in models
+            .iter()
+            .filter(|model| seen.insert(model.id.as_str()))
+            .take(MODEL_LIMIT)
+        {
+            let context = match model.context_window.filter(|window| *window > 0) {
+                Some(window) => window,
+                None => self.context_window(&model.id).await?,
+            };
+            let output = model
+                .max_output_tokens
+                .filter(|tokens| *tokens > 0)
+                .unwrap_or(self.config.default_max_tokens)
+                .min(context);
+            let thinking = model.supports_thinking == Some(true);
+            catalog.push(json!({
+                "modelId":model.id,
+                "displayName":model.display_name.as_deref().unwrap_or(&model.id),
+                "maxTokens":context,
+                "maxOutputTokens":output,
+                "supportsImages":model.supports_image.unwrap_or(false),
+                "supportsThinking":thinking,
+            }));
+        }
+        Ok(catalog)
     }
 
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {

@@ -148,6 +148,7 @@ fn install_at(
                     }),
                 ),
             ],
+            remove_fields: Vec::new(),
         }],
     )?;
     let current = read(&server)?;

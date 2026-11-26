@@ -230,10 +230,10 @@ The Claude Code subscription reuses your local login and runs the official inter
 
 ## Agent Integrations
 
-50 agents are supported. 47 of them use custom models through the gateway, and disconnecting restores the managed fields while keeping unrelated configuration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Prerequisites for each client are in the [Agent contracts](docs/agent-integration-contracts.md).
+51 agents are supported. 48 of them use custom models through the gateway, and disconnecting restores the managed fields while keeping unrelated configuration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Prerequisites for each client are in the [Agent contracts](docs/agent-integration-contracts.md).
 
 <details>
-<summary>Show all 50 agents</summary>
+<summary>Show all 51 agents</summary>
 
 <table>
   <tr>
@@ -456,6 +456,12 @@ The Claude Code subscription reuses your local login and runs the official inter
       <sub>Cindy</sub>
     </td>
   </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="desktop/assets/agents/agy.svg" width="36" height="36" alt="Antigravity logo"><br>
+      <sub>Antigravity</sub>
+    </td>
+  </tr>
 </table>
 
 </details>
@@ -498,9 +504,9 @@ Yes. Connect Codex in Official Account mode. Custom models join the official mod
 </details>
 
 <details>
-<summary>Do all 50 agents use custom gateway models?</summary>
+<summary>Do all 51 agents use custom gateway models?</summary>
 
-47 support gateway configuration or native-app integration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Native applications and terminal launches have specific prerequisites; see the [Agent contracts](docs/agent-integration-contracts.md).
+48 support gateway configuration or native-app integration. Cursor CLI, Copilot CLI, and Devin manage vendor-native models through vendor accounts. Native applications and terminal launches have specific prerequisites; see the [Agent contracts](docs/agent-integration-contracts.md).
 
 </details>
 

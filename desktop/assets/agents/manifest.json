@@ -39,6 +39,11 @@
     "template": false,
     "source": "magpie/internal/gui/assets/icons/antigravity-color.svg"
   },
+  "antigravity": {
+    "file": "agy.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/antigravity-color.svg"
+  },
   "openchamber": {
     "file": "openchamber.svg",
     "template": false,

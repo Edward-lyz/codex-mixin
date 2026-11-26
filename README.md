@@ -229,10 +229,10 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
 
 ## Agent 接入
 
-支持 50 款 Agent。其中 47 款经网关使用自定义模型，断开时恢复托管字段并保留无关配置；Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型。各客户端的接入前提见 [接入契约](docs/agent-integration-contracts.md)。
+支持 51 款 Agent。其中 48 款经网关使用自定义模型，断开时恢复托管字段并保留无关配置；Cursor CLI、Copilot CLI、Devin 使用厂商账号管理厂商原生模型。各客户端的接入前提见 [接入契约](docs/agent-integration-contracts.md)。
 
 <details>
-<summary>展开 50 款 Agent 列表</summary>
+<summary>展开 51 款 Agent 列表</summary>
 
 <table>
   <tr>
@@ -455,6 +455,12 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
       <sub>Cindy</sub>
     </td>
   </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="desktop/assets/agents/agy.svg" width="36" height="36" alt="Antigravity logo"><br>
+      <sub>Antigravity</sub>
+    </td>
+  </tr>
 </table>
 
 </details>
@@ -497,9 +503,9 @@ Claude Code 订阅复用本机登录，通过内置的 PTY／ConPTY 桥接运行
 </details>
 
 <details>
-<summary>50 款 Agent 都能使用自定义网关模型吗？</summary>
+<summary>51 款 Agent 都能使用自定义网关模型吗？</summary>
 
-47 款支持网关配置或原生应用接入；Cursor CLI、Copilot CLI、Devin 通过厂商账号管理厂商原生模型。原生应用和终端启动各有前提，见 [接入契约](docs/agent-integration-contracts.md)。
+48 款支持网关配置或原生应用接入；Cursor CLI、Copilot CLI、Devin 通过厂商账号管理厂商原生模型。原生应用和终端启动各有前提，见 [接入契约](docs/agent-integration-contracts.md)。
 
 </details>
 
