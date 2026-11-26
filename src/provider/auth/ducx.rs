@@ -20,7 +20,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use super::capture::{CaptureProxy, REPORT_CLIENT_TOKEN_HEADER};
-use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, UPDATE_GUARDS, VERSION};
+use crate::provider::baidu::auth_carrier::{DucxAuthCarrier, PREFIX, UPDATE_GUARDS, VERSION};
 
 /// DUCX platform identity required for the comate source-auth handshake.
 const DUCX_PLATFORM: &str = "AIIDE-terminal";

@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 const FIRST_PORT: u16 = 8000;
 const LAST_PORT: u16 = 9000;
 
-pub(super) async fn bind(address: SocketAddr, automatic: bool) -> anyhow::Result<TcpListener> {
+pub(crate) async fn bind(address: SocketAddr, automatic: bool) -> anyhow::Result<TcpListener> {
     if !automatic {
         return TcpListener::bind(address)
             .await

@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 
 mod cli;
-mod listener;
 #[path = "../panel/mod.rs"]
 mod panel;
+
+pub(crate) use cli::service::listener;
 
 #[tokio::main]
 async fn main() {

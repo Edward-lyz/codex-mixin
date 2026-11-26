@@ -1,20 +1,20 @@
 mod app_server;
 mod bin;
 mod catalog;
-pub(super) mod history;
+pub(in crate::cli) mod history;
 mod install;
 mod managed_auth;
 mod managed_config;
 mod restore;
 mod switch;
 
-pub(super) use app_server::*;
-pub(super) use bin::*;
-pub(super) use catalog::*;
-pub(super) use codex_mixin::application::provider::skill::reconcile_managed_skills;
-pub(super) use install::*;
-pub(super) use managed_auth::*;
-pub(super) use managed_config::*;
+pub(in crate::cli) use app_server::*;
+pub(in crate::cli) use bin::*;
+pub(in crate::cli) use catalog::*;
+pub(in crate::cli) use codex_mixin::application::provider::skill::reconcile_managed_skills;
+pub(in crate::cli) use install::*;
+pub(in crate::cli) use managed_auth::*;
+pub(in crate::cli) use managed_config::*;
 pub(in crate::cli) use restore::integration_status;
 pub(in crate::cli) use switch::{
     CodexRequiresGatewayError, codex_status, ensure_codex_allows_gateway_stop,

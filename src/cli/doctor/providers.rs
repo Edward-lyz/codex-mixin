@@ -92,7 +92,25 @@ pub(super) async fn check_doctor_provider(
         };
     }
     let started = Instant::now();
-    match discover_provider_models(&client, &provider).await {
+    // Official GPT hosts may need the ECH transport for the catalog request.
+    let discovery_client = match reqwest::Url::parse(&provider.base_url) {
+        Ok(url) => codex_mixin::application::ech::http_client_for_url(
+            &client,
+            &url,
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                provider_id = %provider.id,
+                error = %format!("{error:#}"),
+                "doctor could not prepare the ECH client; using the plain client"
+            );
+            client.clone()
+        }),
+        Err(_) => client.clone(),
+    };
+    match discover_provider_models(&discovery_client, &provider).await {
         Ok(models) => DoctorProviderCheck {
             message: format!(
                 "models endpoint healthy; returned {} model(s) in {} ms; no paid inference was performed",

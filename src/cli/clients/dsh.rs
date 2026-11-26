@@ -5,8 +5,8 @@ use serde_yaml::{Mapping, Value};
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::gateway_access::GatewayClient;
 
-use super::official_models::{selected_catalog_models, selected_official_models};
-use super::runtime::effective_gateway_bind;
+use crate::cli::official_models::{selected_catalog_models, selected_official_models};
+use crate::cli::runtime::effective_gateway_bind;
 
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
 

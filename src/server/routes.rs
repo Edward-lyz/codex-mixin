@@ -287,10 +287,13 @@ async fn start_model_benchmarks(
             "model benchmark timeout must be between 1 and 300 seconds".to_owned(),
         ));
     }
-    let targets = state
-        .catalog
-        .benchmark_targets(&request.providers, &request.models)
-        .await?;
+    let targets = crate::benchmark::resolve_targets(
+        &state.config,
+        &state.providers,
+        &request.providers,
+        &request.models,
+    )
+    .await?;
     let snapshot = state
         .benchmarks
         .start(

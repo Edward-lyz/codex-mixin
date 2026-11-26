@@ -11,6 +11,7 @@
 //! provider switches.
 //! model_reasoning: per-model reasoning-effort mapping.
 
+pub mod anthropic;
 pub(crate) mod anthropic_compat;
 pub(crate) mod chat_compat;
 pub(crate) mod compaction;
@@ -21,6 +22,9 @@ pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;
 pub mod sse;
+mod types;
+
+pub use types::{ProviderProtocol, ThinkingMode};
 
 use std::convert::Infallible;
 

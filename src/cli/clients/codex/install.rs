@@ -89,13 +89,13 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         paths.config.display(),
         paths.catalog.display()
     );
-    super::super::progress_step("Checking local config and gateway state");
+    crate::cli::progress_step("Checking local config and gateway state");
     let client_key = codex_mixin::config::ensure_gateway_client_key(
         codex_mixin::gateway_access::GatewayClient::Codex,
     )?;
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
-    super::super::progress_step("Loading Codex config template");
+    crate::cli::progress_step("Loading Codex config template");
     let account_catalog = if codex_oauth_proxy {
         tokio::task::spawn_blocking(load_official_account_catalog).await??
     } else {
@@ -112,12 +112,12 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     if let Some(template) = &mut template {
         filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
     }
-    super::super::progress_step("Fetching available models");
+    crate::cli::progress_step("Fetching available models");
     let models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");
     }
-    super::super::progress_step("Loading model metadata");
+    crate::cli::progress_step("Loading model metadata");
     let metadata = load_model_metadata_resolver().await?;
     let mut catalog = generated_codex_catalog(
         &models,
@@ -170,7 +170,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     )?;
     let serialized_config = codex_mixin::clients::codex::serialize(&doc);
     serialized_config.parse::<DocumentMut>()?;
-    super::super::progress_step("Writing Codex config and model catalog");
+    crate::cli::progress_step("Writing Codex config and model catalog");
     super::restore::install(
         &paths,
         &raw_config,

@@ -11,7 +11,7 @@ use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slug};
 
-use super::official_models::selected_official_models;
+use crate::cli::official_models::selected_official_models;
 
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = codex_mixin::clients::claude::MANAGED_MARKER;
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
@@ -110,7 +110,7 @@ pub(in crate::cli) fn sync_claude_models(
     )
 }
 
-pub(super) fn claude_model_picker(
+pub(in crate::cli) fn claude_model_picker(
     config: &GatewayConfig,
     official_models: &[ProviderModel],
 ) -> anyhow::Result<(Value, String)> {

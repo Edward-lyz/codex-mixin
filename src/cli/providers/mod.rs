@@ -67,7 +67,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let codex_install_mode =
         managed_codex_install_mode(&resolve_codex_config_path(None)?).unwrap_or(None);
     if let Some(runtime_config) = runtime_config {
-        let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+        let capabilities = ProviderCapabilities::from_default_path(&runtime_config.providers)?;
         for provider in &mut config.providers {
             capabilities.annotate_provider(provider);
         }

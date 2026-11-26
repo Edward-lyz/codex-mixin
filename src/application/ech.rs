@@ -29,6 +29,19 @@ pub fn status() -> anyhow::Result<EchStatus> {
     })
 }
 
+/// Wrap `default` with the official-host ECH transport when the stored
+/// configuration enables it. Every other host keeps `default` unchanged.
+///
+/// The binary crate cannot reach `crate::ech` directly, so callers outside the
+/// library use this entry point instead.
+pub async fn http_client_for_url(
+    default: &reqwest::Client,
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> anyhow::Result<reqwest::Client> {
+    crate::ech::provider_http_client(default, url, timeout).await
+}
+
 pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
     mutate_stored_config(|stored| {
         stored.official_ech_proxy = enabled;

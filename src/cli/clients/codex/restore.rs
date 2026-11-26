@@ -49,7 +49,7 @@ pub(super) fn directory(config: &Path) -> PathBuf {
         &uuid::Uuid::NAMESPACE_URL,
         config.as_os_str().as_encoded_bytes(),
     );
-    super::super::runtime::state_dir()
+    crate::cli::runtime::state_dir()
         .join("codex-restore")
         .join(key.to_string())
 }
@@ -237,7 +237,7 @@ impl ManagedCodexRestore {
 
 fn validate_paths(config: &Path, catalog: &Path) -> anyhow::Result<()> {
     let auth = config.with_file_name("auth.json");
-    let state = absolute_path(super::super::runtime::state_dir())?;
+    let state = absolute_path(crate::cli::runtime::state_dir())?;
     let gateway_config = absolute_path(codex_mixin::config::stored_config_path())?;
     let mut gateway_key = gateway_config.as_os_str().to_os_string();
     gateway_key.push(".key");
@@ -245,8 +245,8 @@ fn validate_paths(config: &Path, catalog: &Path) -> anyhow::Result<()> {
         gateway_config,
         PathBuf::from(gateway_key),
         absolute_path(super::switch::switch_state_path())?,
-        absolute_path(super::super::runtime::runtime_metadata_path())?,
-        absolute_path(super::super::runtime::daemon_metadata_path())?,
+        absolute_path(crate::cli::runtime::runtime_metadata_path())?,
+        absolute_path(crate::cli::runtime::daemon_metadata_path())?,
     ];
     ensure!(
         config.is_absolute()

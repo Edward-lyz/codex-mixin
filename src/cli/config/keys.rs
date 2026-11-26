@@ -2,9 +2,9 @@ use codex_mixin::config::{load_stored_config, mutate_stored_config};
 use codex_mixin::gateway_access::{GatewayApiKey, generate_gateway_api_key};
 use serde_json::{Value, json};
 
-use super::args::KeysCommand;
+use crate::cli::args::KeysCommand;
 
-pub(super) fn run(command: KeysCommand) -> anyhow::Result<()> {
+pub(in crate::cli) fn run(command: KeysCommand) -> anyhow::Result<()> {
     match command {
         KeysCommand::List { json } => {
             let mut config = load_stored_config()?.unwrap_or_default();

@@ -27,34 +27,29 @@ const COUNT_UNITS: [(u64, &str); 6] = [
 
 mod agents;
 mod benchmark_proxy;
-mod claude;
-mod claude_desktop;
-mod codex;
-mod config_apply;
+mod clients;
+mod config;
 mod context;
-mod cors;
 mod doctor;
-mod dsh;
-mod ducx_session;
-mod ducx_setup;
-mod ech;
-mod fusion_config;
+mod ducx;
 mod interface;
-mod keys;
 mod maintenance;
 mod metadata;
 mod official_models;
-mod opencode;
-mod pi;
 mod plugin;
 mod providers;
 mod report_hook;
-mod route_config;
 mod runtime;
-mod service;
+pub(crate) mod service;
 mod setup;
 mod status;
 mod update;
+
+use clients::{claude, claude_desktop, codex, dsh, opencode, pi};
+use config::{
+    apply as config_apply, cors, ech, fusion as fusion_config, keys, route as route_config,
+};
+use ducx::setup as ducx_setup;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{

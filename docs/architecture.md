@@ -75,8 +75,9 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
   provider/官方发送与认证；`server` 与 `gateway` 都通过它发请求。
 - `gateway::GatewayExecutor`：路由解析、请求计划、单请求流式执行、缓存观测；
   是 fusion 与 server 唯一的网关执行入口。
-- `catalog::CatalogService`：模型枚举、benchmark 目标、目录响应缓存与模型窗口解析；
+- `catalog::CatalogService`：模型枚举、目录响应缓存与模型窗口解析；
   server 和 gateway 共享同一实例及元数据缓存。
+- `benchmark::resolve_targets`：结合 `CatalogService` 与筛选条件解析压测目标，避免 `catalog` 反向依赖 `benchmark`。
 - `context::ContextEngine`：按会话同步原始消息、渲染压缩视图、校验并提交压缩、
   提供检索、导出与压缩/缓存统计；网关内部回路通过它执行四个 context 工具。
 - `server::AppState`：纯组合对象，持有上述组件与 benchmark/图片路由等
@@ -110,3 +111,4 @@ clippy 与测试仍是权威检查。当前规则：
 - core/CLI 不得引用具体 `panel` 壳；面板不得访问 CLI 私有实现。
 - `crates/platform` 以外的代码不得出现平台条件编译、平台工具名、平台路径或平台
   环境变量。
+- MIT 公理设计下三角依赖矩阵门禁：`src/` 全部库模块（不含 `lib.rs`、`main.rs`、`cli/`）的 `crate::*` 跨模块依赖必须构成严格有向无环图（0 个长度 > 1 的强连通分量），由 `scripts/check_arch.sh` 自动用 Tarjan SCC 校验。

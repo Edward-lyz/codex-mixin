@@ -1,13 +1,11 @@
 #![forbid(unsafe_code)]
 
-pub mod anthropic;
 pub mod application;
 pub mod benchmark;
 pub mod catalog;
 pub mod clients;
 pub mod config;
 pub mod context;
-pub mod ducx_auth_carrier;
 mod ech;
 pub mod error;
 pub mod fusion;
@@ -17,7 +15,9 @@ mod images;
 mod pi_plugins;
 pub use codex_mixin_platform as platform;
 pub mod protocol;
+pub use protocol::anthropic;
 pub mod provider;
+pub use provider::baidu::auth_carrier as ducx_auth_carrier;
 pub mod server;
 mod upstream;
 mod usage;

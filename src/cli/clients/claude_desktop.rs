@@ -17,7 +17,7 @@ fn config_root(root: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 fn install_config(root: Option<PathBuf>, announce: bool) -> anyhow::Result<bool> {
     let root = config_root(root)?;
     let config = GatewayConfig::from_stored_config()?;
-    let official = super::official_models::selected_official_models(&config)?;
+    let official = crate::cli::official_models::selected_official_models(&config)?;
     let (picker, _) = super::claude::claude_model_picker(&config, &official)?;
     let models = picker["options"]
         .as_array()
@@ -37,7 +37,7 @@ fn install_config(root: Option<PathBuf>, announce: bool) -> anyhow::Result<bool>
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let bind = super::runtime::effective_gateway_bind(&config)?;
+    let bind = crate::cli::runtime::effective_gateway_bind(&config)?;
     anyhow::ensure!(
         bind.ip().is_loopback(),
         "Claude Desktop routing requires a loopback gateway bind"
@@ -60,17 +60,17 @@ fn install_config(root: Option<PathBuf>, announce: bool) -> anyhow::Result<bool>
     Ok(changed)
 }
 
-pub(super) fn install(root: Option<PathBuf>) -> anyhow::Result<()> {
+pub(in crate::cli) fn install(root: Option<PathBuf>) -> anyhow::Result<()> {
     codex_mixin::application::client::install_with_client_key(GatewayClient::ClaudeDesktop, || {
         install_config(root, true).map(|_| ())
     })
 }
 
-pub(super) fn is_installed() -> anyhow::Result<bool> {
+pub(in crate::cli) fn is_installed() -> anyhow::Result<bool> {
     claude_desktop::is_managed(&config_root(None)?)
 }
 
-pub(super) fn sync_installed() -> anyhow::Result<bool> {
+pub(in crate::cli) fn sync_installed() -> anyhow::Result<bool> {
     if !is_installed()? {
         return Ok(false);
     }
@@ -79,14 +79,14 @@ pub(super) fn sync_installed() -> anyhow::Result<bool> {
     })
 }
 
-pub(super) fn uninstall(root: Option<PathBuf>) -> anyhow::Result<()> {
+pub(in crate::cli) fn uninstall(root: Option<PathBuf>) -> anyhow::Result<()> {
     claude_desktop::uninstall(&config_root(root)?)?;
     codex_mixin::config::revoke_gateway_client_key(GatewayClient::ClaudeDesktop)?;
     println!("Claude Desktop configuration restored; fully quit and reopen Claude Desktop");
     Ok(())
 }
 
-pub(super) fn status(root: Option<PathBuf>, json_output: bool) -> anyhow::Result<()> {
+pub(in crate::cli) fn status(root: Option<PathBuf>, json_output: bool) -> anyhow::Result<()> {
     let root = config_root(root)?;
     let managed = claude_desktop::is_managed(&root)?;
     if json_output {

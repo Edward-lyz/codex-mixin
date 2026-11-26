@@ -132,7 +132,7 @@ pub struct ModelInfo {
     )]
     pub max_output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protocol: Option<crate::provider::ProviderProtocol>,
+    pub protocol: Option<super::types::ProviderProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
